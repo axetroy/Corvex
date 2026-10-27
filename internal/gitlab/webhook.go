@@ -69,11 +69,46 @@ type Project struct {
 	HTTPURLToRepo string `json:"http_url_to_repo"`
 }
 
+type DiscussionPosition struct {
+	BaseSHA  string
+	StartSHA string
+	HeadSHA  string
+	OldPath  string
+	NewPath  string
+	NewLine  int
+}
+
 func (mr MergeRequest) HeadSHA() string {
 	if mr.DiffRefs.HeadSHA != "" {
 		return mr.DiffRefs.HeadSHA
 	}
 	return mr.SHA
+}
+
+func isFullSHA(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') ||
+			(character >= 'a' && character <= 'f') ||
+			(character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func validDiscussionPath(value string) bool {
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 type MergeRequestDiff struct {
@@ -148,6 +183,51 @@ func (c *Client) PostNote(ctx context.Context, projectID, mrIID int64, body stri
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("post GitLab MR note: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("GitLab API returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func (c *Client) PostDiscussion(
+	ctx context.Context,
+	projectID, mrIID int64,
+	body string,
+	position DiscussionPosition,
+) error {
+	if projectID <= 0 || mrIID <= 0 {
+		return errors.New("project ID and MR IID must be positive")
+	}
+	if !isFullSHA(position.BaseSHA) || !isFullSHA(position.StartSHA) || !isFullSHA(position.HeadSHA) {
+		return errors.New("discussion position requires full base, start, and head SHAs")
+	}
+	if !validDiscussionPath(position.OldPath) || !validDiscussionPath(position.NewPath) || position.NewLine <= 0 {
+		return errors.New("discussion position has an invalid path or new line")
+	}
+	endpoint := c.baseURL + "/api/v4/projects/" + strconv.FormatInt(projectID, 10) +
+		"/merge_requests/" + strconv.FormatInt(mrIID, 10) + "/discussions"
+	form := url.Values{
+		"body":                    {body},
+		"position[position_type]": {"text"},
+		"position[base_sha]":      {position.BaseSHA},
+		"position[start_sha]":     {position.StartSHA},
+		"position[head_sha]":      {position.HeadSHA},
+		"position[old_path]":      {position.OldPath},
+		"position[new_path]":      {position.NewPath},
+		"position[new_line]":      {strconv.Itoa(position.NewLine)},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("create GitLab discussion request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.writeToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post GitLab MR discussion: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

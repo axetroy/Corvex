@@ -19,6 +19,7 @@ type gitLabReviewClient interface {
 	GetProject(context.Context, int64) (gitlab.Project, error)
 	GetMergeRequest(context.Context, int64, int64) (gitlab.MergeRequest, error)
 	PostNote(context.Context, int64, int64, string) error
+	PostDiscussion(context.Context, int64, int64, string, gitlab.DiscussionPosition) error
 }
 
 type repositoryManager interface {
@@ -157,6 +158,7 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	if err := w.transition(ctx, job.ID, stage, jobs.StatusAnalyzing); err != nil {
 		return err
 	}
+	reviewStarted := time.Now()
 	outcome, err := w.reviewer.Review(ctx, review.Context{
 		ProjectID: job.ProjectID, MRIID: job.MRIID, Title: mergeRequest.Title,
 		Description: mergeRequest.Description, SourceBranch: mergeRequest.SourceBranch,
@@ -164,23 +166,53 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 		HeadSHA: job.HeadSHA,
 	}, diff)
 	if err != nil {
+		w.logger.Warn("review model call failed",
+			"job_id", job.ID, "duration", time.Since(reviewStarted), "error", err)
 		return err
 	}
+	w.logger.Info("review model call completed",
+		"job_id", job.ID, "model", outcome.Model, "duration", time.Since(reviewStarted),
+		"input_tokens", outcome.Usage.InputTokens, "output_tokens", outcome.Usage.OutputTokens,
+		"total_tokens", outcome.Usage.TotalTokens, "findings", len(outcome.Result.Findings),
+		"rejected_findings", outcome.Rejected, "omitted_files", outcome.OmittedFiles)
 
 	latest, err := w.gitlab.GetMergeRequest(ctx, job.ProjectID, job.MRIID)
 	if err != nil {
-		return fmt.Errorf("recheck MR Head before publishing: %w", err)
+		return fmt.Errorf("recheck MR diff snapshot before publishing: %w", err)
 	}
-	if latest.State != "opened" || !strings.EqualFold(latest.HeadSHA(), job.HeadSHA) {
+	if !sameReviewSnapshot(mergeRequest, latest, job.HeadSHA) {
 		return w.markStale(ctx, job, stage, "The MR changed while the review was running; no result was published.")
 	}
 	if err := w.transition(ctx, job.ID, stage, jobs.StatusPublishing); err != nil {
 		return err
 	}
-	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatReview(job, outcome)); err != nil {
+	fallback := make([]fallbackFinding, 0)
+	inlinePosted := 0
+	for _, finding := range outcome.Result.Findings {
+		position := gitlab.DiscussionPosition{
+			BaseSHA: mergeRequest.DiffRefs.BaseSHA, StartSHA: mergeRequest.DiffRefs.StartSHA,
+			HeadSHA: job.HeadSHA, OldPath: finding.FilePath, NewPath: finding.FilePath, NewLine: finding.Line,
+		}
+		if err := w.gitlab.PostDiscussion(ctx, job.ProjectID, job.MRIID, formatFinding(finding), position); err != nil {
+			w.logger.Warn("could not publish inline review finding; using summary fallback",
+				"job_id", job.ID, "file", finding.FilePath, "line", finding.Line, "error", err)
+			fallback = append(fallback, fallbackFinding{finding: finding, reason: err.Error()})
+			continue
+		}
+		inlinePosted++
+	}
+	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatReview(job, outcome, inlinePosted, fallback)); err != nil {
 		return fmt.Errorf("publish review summary: %w", err)
 	}
 	return w.transition(ctx, job.ID, stage, jobs.StatusCompleted)
+}
+
+func sameReviewSnapshot(before, after gitlab.MergeRequest, expectedHeadSHA string) bool {
+	return after.State == "opened" &&
+		strings.EqualFold(before.HeadSHA(), expectedHeadSHA) &&
+		strings.EqualFold(after.HeadSHA(), expectedHeadSHA) &&
+		strings.EqualFold(before.DiffRefs.BaseSHA, after.DiffRefs.BaseSHA) &&
+		strings.EqualFold(before.DiffRefs.StartSHA, after.DiffRefs.StartSHA)
 }
 
 func (w *Worker) transition(ctx context.Context, jobID string, stage *string, next string) error {
@@ -202,14 +234,22 @@ func (w *Worker) markStale(ctx context.Context, job jobs.Job, stage *string, mes
 	return nil
 }
 
-func formatReview(job jobs.Job, outcome review.Outcome) string {
+type fallbackFinding struct {
+	finding review.Finding
+	reason  string
+}
+
+func formatReview(job jobs.Job, outcome review.Outcome, inlinePosted int, fallback []fallbackFinding) string {
 	var report strings.Builder
 	fmt.Fprintf(&report, "## Corvex review for `%s`\n\n", job.HeadSHA[:min(12, len(job.HeadSHA))])
 	report.WriteString(escapeReviewText(outcome.Result.Summary))
 	if len(outcome.Result.Findings) == 0 {
 		report.WriteString("\n\nNo validated findings.")
+	} else if inlinePosted > 0 {
+		fmt.Fprintf(&report, "\n\n%d finding(s) were posted as inline discussions.", inlinePosted)
 	}
-	for _, finding := range outcome.Result.Findings {
+	for _, item := range fallback {
+		finding := item.finding
 		fmt.Fprintf(&report, "\n\n- **%s** — `%s:%d`: %s",
 			strings.ToUpper(finding.Severity), escapeReviewText(finding.FilePath), finding.Line,
 			escapeReviewText(finding.Title))
@@ -218,6 +258,7 @@ func formatReview(job jobs.Job, outcome review.Outcome) string {
 		if finding.Suggestion != "" {
 			fmt.Fprintf(&report, "\n  Suggestion: %s", escapeReviewText(finding.Suggestion))
 		}
+		fmt.Fprintf(&report, "\n  Inline comment fallback: %s", escapeReviewText(item.reason))
 	}
 	if outcome.OmittedFiles > 0 {
 		fmt.Fprintf(&report, "\n\n%d changed file(s) were omitted by the review limits.", outcome.OmittedFiles)
@@ -226,6 +267,17 @@ func formatReview(job jobs.Job, outcome review.Outcome) string {
 		fmt.Fprintf(&report, "\n%d unsupported finding(s) were discarded.", outcome.Rejected)
 	}
 	return report.String()
+}
+
+func formatFinding(finding review.Finding) string {
+	var comment strings.Builder
+	fmt.Fprintf(&comment, "**%s — %s**\n\n%s\n\nEvidence: `%s`",
+		strings.ToUpper(finding.Severity), escapeReviewText(finding.Title),
+		escapeReviewText(finding.Explanation), escapeReviewText(finding.Evidence))
+	if finding.Suggestion != "" {
+		fmt.Fprintf(&comment, "\n\nSuggestion: %s", escapeReviewText(finding.Suggestion))
+	}
+	return comment.String()
 }
 
 func escapeReviewText(value string) string {

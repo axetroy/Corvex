@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,71 @@ func TestReadAndWriteTokensAreSeparated(t *testing.T) {
 	}
 	if err := client.PostNote(context.Background(), 10, 8, "feedback"); err != nil {
 		t.Fatalf("PostNote() error = %v", err)
+	}
+}
+
+func TestPostDiscussionUsesWriteTokenAndExactDiffPosition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost ||
+			r.URL.Path != "/api/v4/projects/10/merge_requests/8/discussions" {
+			t.Errorf("unexpected discussion request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("PRIVATE-TOKEN"); got != "write-token" {
+			t.Errorf("discussion token = %q, want write-token", got)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse discussion form: %v", err)
+			return
+		}
+		for key, want := range map[string]string{
+			"body":                    "Finding details",
+			"position[position_type]": "text",
+			"position[base_sha]":      strings.Repeat("a", 40),
+			"position[start_sha]":     strings.Repeat("b", 40),
+			"position[head_sha]":      strings.Repeat("c", 40),
+			"position[old_path]":      "src/main.go",
+			"position[new_path]":      "src/main.go",
+			"position[new_line]":      "27",
+		} {
+			if got := r.Form.Get(key); got != want {
+				t.Errorf("form field %q = %q, want %q", key, got, want)
+			}
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client, err := NewClientWithTokens(server.URL, "read-token", "write-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.PostDiscussion(context.Background(), 10, 8, "Finding details", DiscussionPosition{
+		BaseSHA: strings.Repeat("a", 40), StartSHA: strings.Repeat("b", 40),
+		HeadSHA: strings.Repeat("c", 40), OldPath: "src/main.go", NewPath: "src/main.go", NewLine: 27,
+	})
+	if err != nil {
+		t.Fatalf("PostDiscussion() error = %v", err)
+	}
+}
+
+func TestPostDiscussionRejectsInvalidPositionBeforeRequest(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.PostDiscussion(context.Background(), 10, 8, "body", DiscussionPosition{
+		BaseSHA: strings.Repeat("a", 40), StartSHA: strings.Repeat("b", 40),
+		HeadSHA: strings.Repeat("c", 40), OldPath: "../outside.go", NewPath: "../outside.go", NewLine: 1,
+	})
+	if err == nil {
+		t.Fatal("PostDiscussion accepted an unsafe path")
+	}
+	if requests != 0 {
+		t.Fatalf("invalid position caused %d HTTP requests", requests)
 	}
 }

@@ -16,7 +16,7 @@ The implementation currently provides:
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
 - An OpenAI-compatible chat client and review workflow with bounded context, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
 
-The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR Head SHA before review and again before publishing, uses an isolated worktree, and posts a validated summary note. Findings are not yet published as line-level discussions. The `fix` command remains intentionally disabled.
+The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. The `fix` command remains intentionally disabled.
 
 To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. Webhook handling only queues work; the worker performs model calls.
 

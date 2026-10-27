@@ -29,7 +29,7 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 				BaseSHA  string `json:"base_sha"`
 				StartSHA string `json:"start_sha"`
 				HeadSHA  string `json:"head_sha"`
-			}{BaseSHA: baseSHA, HeadSHA: headSHA},
+			}{BaseSHA: baseSHA, StartSHA: strings.Repeat("c", 40), HeadSHA: headSHA},
 		},
 		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
 	}
@@ -50,12 +50,22 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processNext() error = %v", err)
 	}
-	if !worked || !repository.cleaned || reviewer.calls != 1 || len(api.notes) != 1 {
-		t.Fatalf("review did not complete: worked=%t cleaned=%t reviewCalls=%d notes=%d",
-			worked, repository.cleaned, reviewer.calls, len(api.notes))
+	if !worked || !repository.cleaned || reviewer.calls != 1 || len(api.notes) != 1 || len(api.discussions) != 1 {
+		t.Fatalf("review did not complete: worked=%t cleaned=%t reviewCalls=%d notes=%d discussions=%d",
+			worked, repository.cleaned, reviewer.calls, len(api.notes), len(api.discussions))
 	}
-	if strings.Contains(api.notes[0], "@all") || !strings.Contains(api.notes[0], "&#64;all") {
-		t.Fatalf("review comment did not neutralize mentions: %s", api.notes[0])
+	if strings.Contains(api.discussions[0], "@all") || !strings.Contains(api.discussions[0], "&#64;all") {
+		t.Fatalf("inline review comment did not neutralize mentions: %s", api.discussions[0])
+	}
+	if len(api.positions) != 1 || api.positions[0] != (gitlab.DiscussionPosition{
+		BaseSHA: baseSHA, StartSHA: strings.Repeat("c", 40), HeadSHA: headSHA,
+		OldPath: "main.go", NewPath: "main.go", NewLine: 2,
+	}) {
+		t.Fatalf("discussion position = %#v", api.positions)
+	}
+	if !strings.Contains(api.notes[0], "1 finding(s) were posted as inline discussions") ||
+		strings.Contains(api.notes[0], "can panic") {
+		t.Fatalf("summary note should describe inline findings without duplicating them: %s", api.notes[0])
 	}
 	job, err := store.GetJob(context.Background(), jobID)
 	if err != nil {
@@ -63,6 +73,55 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 	}
 	if job.Status != jobs.StatusCompleted || job.AttemptCount != 1 {
 		t.Fatalf("unexpected completed job: %#v", job)
+	}
+}
+
+func TestWorkerFallsBackToSummaryWhenInlinePositionCannotBePublished(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedReviewJob(t, headSHA)
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened",
+			DiffRefs: struct {
+				BaseSHA  string `json:"base_sha"`
+				StartSHA string `json:"start_sha"`
+				HeadSHA  string `json:"head_sha"`
+			}{BaseSHA: baseSHA, StartSHA: strings.Repeat("c", 40), HeadSHA: headSHA},
+		},
+		project:       gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+		discussionErr: errors.New("position no longer exists"),
+	}
+	repository := &fakeRepository{}
+	reviewer := &fakeReviewer{outcome: review.Outcome{Result: review.Result{
+		Summary: "Concrete bug found.",
+		Findings: []review.Finding{{
+			Severity: "high", Title: "Nil access", FilePath: "main.go", Line: 2,
+			Evidence: "if value == nil", Explanation: "This value is unsafe here.",
+		}},
+	}}}
+	worker := newTestWorker(t, store, api, repository, reviewer)
+
+	worked, err := worker.processNext(context.Background())
+	if err != nil {
+		t.Fatalf("processNext() error = %v", err)
+	}
+	if !worked || len(api.discussions) != 1 || len(api.notes) != 1 {
+		t.Fatalf("review fallback did not complete: worked=%t discussions=%d notes=%d",
+			worked, len(api.discussions), len(api.notes))
+	}
+	for _, expected := range []string{"Nil access", "main.go:2", "if value == nil", "position no longer exists"} {
+		if !strings.Contains(api.notes[0], expected) {
+			t.Errorf("fallback summary does not contain %q: %s", expected, api.notes[0])
+		}
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCompleted {
+		t.Fatalf("job status = %s, want completed", job.Status)
 	}
 }
 
@@ -156,7 +215,7 @@ func TestWorkerDoesNotPublishWhenMRChangesDuringReview(t *testing.T) {
 					BaseSHA  string `json:"base_sha"`
 					StartSHA string `json:"start_sha"`
 					HeadSHA  string `json:"head_sha"`
-				}{BaseSHA: baseSHA, HeadSHA: strings.Repeat("c", 40)},
+				}{BaseSHA: strings.Repeat("d", 40), HeadSHA: headSHA},
 			},
 		},
 		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
@@ -229,7 +288,10 @@ type fakeGitLab struct {
 	mergeCalls    int
 	project       gitlab.Project
 	notes         []string
+	discussions   []string
+	positions     []gitlab.DiscussionPosition
 	postErr       error
+	discussionErr error
 }
 
 func (f *fakeGitLab) GetProject(context.Context, int64) (gitlab.Project, error) {
@@ -251,6 +313,14 @@ func (f *fakeGitLab) GetMergeRequest(context.Context, int64, int64) (gitlab.Merg
 func (f *fakeGitLab) PostNote(_ context.Context, _, _ int64, body string) error {
 	f.notes = append(f.notes, body)
 	return f.postErr
+}
+
+func (f *fakeGitLab) PostDiscussion(
+	_ context.Context, _, _ int64, body string, position gitlab.DiscussionPosition,
+) error {
+	f.discussions = append(f.discussions, body)
+	f.positions = append(f.positions, position)
+	return f.discussionErr
 }
 
 type fakeRepository struct {
