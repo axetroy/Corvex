@@ -30,7 +30,7 @@ response="$(curl --fail-with-body --silent --show-error \
   --data-urlencode "url=${CORVEX_WEBHOOK_URL}" \
   --data-urlencode "token=${CORVEX_WEBHOOK_SECRET}" \
   --data-urlencode "note_events=true" \
-  --data-urlencode "merge_requests_events=true" \
+  --data-urlencode "merge_requests_events=false" \
   --data-urlencode "push_events=false" \
   --data-urlencode "enable_ssl_verification=true" \
   "$endpoint")"
@@ -46,7 +46,7 @@ fi
 verified="$(curl --fail-with-body --silent --show-error \
   --header "PRIVATE-TOKEN: ${GITLAB_ADMIN_TOKEN}" "${api}/${hook_id}")"
 if ! printf '%s' "$verified" | jq -e --arg url "$CORVEX_WEBHOOK_URL" \
-  '.url == $url and .note_events == true and .merge_requests_events == true and
+  '.url == $url and .note_events == true and .merge_requests_events == false and
    .push_events == false and .enable_ssl_verification == true' >/dev/null; then
   echo "GitLab webhook configuration did not match the requested settings." >&2
   exit 1

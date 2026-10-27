@@ -1,0 +1,100 @@
+# Runtime and operations
+
+## Runtime requirements
+
+- Use the Go version declared in [`go.mod`](https://github.com/axetroy/Corvex/blob/main/go.mod) to build or run from source.
+- The Server needs outbound access to the configured GitLab API and inbound access from GitLab to its webhook URL.
+- The Worker needs the `git` executable, outbound GitLab access for API and repository fetches, and outbound HTTPS access to the configured model API when the agent is enabled. The supplied Docker image installs Git.
+- SQLite and Git data need persistent, writable storage. Avoid ephemeral container filesystems. Since Corvex uses SQLite WAL mode, use a local filesystem/volume with reliable SQLite locking rather than assuming arbitrary network filesystems are suitable.
+- Keep system time synchronized. Daily model budget accounting uses UTC.
+
+The Go SQLite driver is pure Go; the application does not require a separate SQLite service. The Server and Worker are separate modes of the same executable:
+
+```sh
+corvex --config configs/config.yaml server
+corvex --config configs/config.yaml worker
+```
+
+The default config path is `configs/config.yaml`; pass `--config /path/to/config.yaml` to use another file. The Worker refuses to start unless `agent.enabled: true`.
+
+## Docker Compose
+
+1. Copy `.env.example` to `.env` and set the GitLab tokens and webhook secret. Keep this file private and do not commit it.
+2. Copy `configs/config.example.yaml` to `configs/config.yaml`; set the GitLab URL and explicit project/user allowlists.
+3. Start the Server:
+
+   ```sh
+   docker compose --env-file .env -f deploy/compose.yaml up --build -d
+   ```
+
+4. To process model tasks, set `agent.enabled: true`, configure the model URL/name, set `CORVEX_MODEL_API_KEY` in `.env`, then enable the worker profile:
+
+   ```sh
+   docker compose --env-file .env -f deploy/compose.yaml --profile worker up --build -d
+   ```
+
+Both services mount the same named `corvex-data` volume at `/data/corvex`; Compose points both the database and Git root into that volume. Only the Server publishes port 8080. The sample Compose setup uses a read-only container root filesystem, a temporary `/tmp`, drops Linux capabilities, and enables `no-new-privileges`.
+
+Compose resource defaults are 1 CPU/1 GiB and 256 PIDs for the Server, and 2 CPUs/2 GiB and 256 PIDs for the Worker. Override them with `CORVEX_MEM_LIMIT`, `CORVEX_CPUS`, `CORVEX_PIDS_LIMIT`, and the corresponding `CORVEX_WORKER_MEM_LIMIT`, `CORVEX_WORKER_CPUS`, and `CORVEX_WORKER_PIDS_LIMIT`. JSON logs rotate at 10 MiB with three files retained.
+
+Expose the webhook through HTTPS and keep the GitLab API, database volume, and metrics endpoint restricted to trusted networks. The compose port mapping is plain HTTP; terminate TLS at a trusted reverse proxy or load balancer.
+
+## HTTP endpoints
+
+| Method and path | Purpose |
+|---|---|
+| `POST /webhooks/gitlab` | GitLab merge-request Note Hook endpoint. Requires the matching `X-Gitlab-Token`; only Note Hook events are supported. |
+| `GET /healthz` | Process liveness check; returns `200 ok`. |
+| `GET /readyz` | Readiness check that pings SQLite; returns `503` if the database is unavailable. |
+| `GET /metrics` | Prometheus text metrics for job counts and model call counts, duration, and token totals. |
+
+Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
+
+## Logs and troubleshooting
+
+Corvex writes structured JSON logs to stdout. In Compose, inspect logs with:
+
+```sh
+docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
+docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f corvex-worker
+```
+
+| Symptom | Checks |
+|---|---|
+| Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |
+| Webhook returns `400` | The endpoint only accepts valid merge-request Note Hook payloads. Disable unsupported event types and ensure the request is a merge-request comment. |
+| Webhook returns `403` | Confirm the webhook's project ID and comment author's user ID are in the configured allowlists. |
+| Tasks stay queued | Confirm a Worker is running with `agent.enabled: true`, using the same database volume/config, and that model settings are valid. |
+| Worker cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the worker has Git installed. |
+| Task becomes stale | The MR was closed or its diff changed after the command was queued; submit a new command on the current revision. |
+| `readyz` returns `503` | Check the database path, persistent volume mount, and filesystem permissions. |
+
+## Backup, restore, and retention
+
+Create an online SQLite backup while the service is running. The destination must not already exist:
+
+```sh
+go run ./cmd/corvex backup \
+  --database ./data/state/corvex.db \
+  --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
+```
+
+For a container deployment, run the backup command in an environment that can access the mounted database and has the Corvex executable. Protect backups with the same encryption and access controls as the live database.
+
+To restore, stop both Server and Worker, preserve the current database for rollback, replace it with a verified backup at the configured database path, and restart both processes. Do not overwrite a live database.
+
+The Server runs cleanup at startup and then approximately every 24 hours. Terminal jobs, attempts, webhook delivery records, and daily token usage use `storage.retention_days` (90 days by default). Audit events use `storage.audit_retention_days` (365 days by default). Queued and active jobs are retained. Git mirrors under `storage.root` are not covered by this database cleanup; monitor disk use and define a separate mirror maintenance policy.
+
+## Upgrades and development
+
+Back up the database before upgrading. The application applies SQLite schema migrations at startup; deploy the same application version to Server and Worker and keep their shared data volume. Test the upgrade and restore procedure against a backup before relying on it in production.
+
+From a source checkout, the usual checks are:
+
+```sh
+go test ./...
+go vet ./...
+go build ./cmd/corvex
+```
+
+The repository CI also tests on Linux, macOS, and Windows and builds release binaries for Linux, macOS, and Windows on amd64 and arm64.

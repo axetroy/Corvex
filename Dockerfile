@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/corvex 
 
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates git \
     && addgroup -S corvex && adduser -S -G corvex corvex \
     && mkdir -p /data/corvex/state \
     && chown -R corvex:corvex /data/corvex
