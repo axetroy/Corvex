@@ -76,3 +76,9 @@ make build
 ```
 
 Server 和 Worker 使用分开的 GitLab 读写令牌变量：读取操作使用只读令牌，发布评论使用写令牌。尚未实现不可信代码执行器。
+
+## CI 与发布
+
+GitHub Actions 会在 Linux、macOS 和 Windows 上运行测试及 `go vet`，并构建 Linux、macOS、Windows 的 amd64 和 arm64 二进制文件。向 `main` 推送、创建 Pull Request 或推送版本标签都会触发 CI。
+
+推送版本标签（例如 `v1.0.0`）即可发布 GitHub Release。GoReleaser 会附上六种平台/架构组合的压缩二进制包以及 SHA-256 校验和文件。

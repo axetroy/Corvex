@@ -76,3 +76,9 @@ make build
 ```
 
 The server and worker use separate read/write GitLab token variables; read requests use the read token, while note publication uses the write token. No untrusted-code executor is included.
+
+## CI and releases
+
+GitHub Actions runs tests and `go vet` on Linux, macOS, and Windows, and builds Linux, macOS, and Windows binaries for amd64 and arm64. Pushes to `main`, pull requests, and version tags run CI.
+
+To publish a GitHub Release, push a version tag such as `v1.0.0`. GoReleaser attaches compressed binaries for all six platform/architecture combinations and a SHA-256 checksum file.
