@@ -5,6 +5,7 @@ import "time"
 const (
 	TypeReview       = "review"
 	TypeFix          = "fix"
+	TypeExplain      = "explain"
 	StatusQueued     = "queued"
 	StatusPreparing  = "preparing"
 	StatusAnalyzing  = "analyzing"
@@ -29,6 +30,7 @@ type Job struct {
 	CreatedAt    time.Time `json:"created_at"`
 	AttemptCount int       `json:"attempt_count,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
+	LeaseToken   string    `json:"-"`
 }
 
 type EventResult struct {

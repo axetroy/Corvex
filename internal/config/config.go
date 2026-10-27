@@ -58,11 +58,13 @@ type StorageConfig struct {
 }
 
 type AgentConfig struct {
-	Enabled        bool     `yaml:"enabled"`
-	BaseURL        string   `yaml:"base_url"`
-	Model          string   `yaml:"model"`
-	APIKey         string   `yaml:"-"`
-	RequestTimeout Duration `yaml:"request_timeout"`
+	Enabled          bool     `yaml:"enabled"`
+	BaseURL          string   `yaml:"base_url"`
+	Model            string   `yaml:"model"`
+	APIKey           string   `yaml:"-"`
+	RequestTimeout   Duration `yaml:"request_timeout"`
+	MaxOutputTokens  int      `yaml:"max_output_tokens"`
+	DailyTokenBudget int64    `yaml:"daily_token_budget"`
 }
 
 type ReviewConfig struct {
@@ -93,7 +95,7 @@ func Load(path string) (Config, error) {
 			ReadTimeout:     Duration(5 * time.Second),
 			ShutdownTimeout: Duration(30 * time.Second),
 		},
-		Agent: AgentConfig{RequestTimeout: Duration(120 * time.Second)},
+		Agent: AgentConfig{RequestTimeout: Duration(120 * time.Second), MaxOutputTokens: 4096},
 		Review: ReviewConfig{
 			MaxFiles:        100,
 			MaxFindings:     30,
@@ -218,6 +220,12 @@ func (c Config) Validate() error {
 		}
 		if c.Agent.RequestTimeout <= 0 {
 			problems = append(problems, "agent.request_timeout must be positive")
+		}
+		if c.Agent.MaxOutputTokens <= 0 || c.Agent.MaxOutputTokens > 8192 {
+			problems = append(problems, "agent.max_output_tokens must be between 1 and 8192")
+		}
+		if c.Agent.DailyTokenBudget < 0 || c.Agent.DailyTokenBudget > 1_000_000_000 {
+			problems = append(problems, "agent.daily_token_budget must be between 0 and 1000000000")
 		}
 	}
 	if len(problems) > 0 {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -130,9 +131,8 @@ func (m *Manager) ReadFile(ctx context.Context, workspace Workspace, name string
 	if maxBytes <= 0 || maxBytes > maxReadFileBytes {
 		return nil, fmt.Errorf("maxBytes must be between 1 and %d", maxReadFileBytes)
 	}
-	if filepath.IsAbs(name) || strings.Contains(name, "\\") || filepath.Clean(name) != name ||
-		name == "." || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
-		return nil, errors.New("file path must be relative to the workspace")
+	if err := validateWorkspaceFilePath(name); err != nil {
+		return nil, err
 	}
 	content, truncated, err := m.run(ctx, workspace.Path, int(maxBytes), "cat-file", "blob", workspace.HeadSHA+":"+name)
 	if err != nil {
@@ -142,6 +142,14 @@ func (m *Manager) ReadFile(ctx context.Context, workspace Workspace, name string
 		return nil, fmt.Errorf("file exceeds %d-byte read limit", maxBytes)
 	}
 	return content, nil
+}
+
+func validateWorkspaceFilePath(name string) error {
+	if name == "" || path.IsAbs(name) || strings.Contains(name, "\\") || strings.ContainsRune(name, 0) ||
+		path.Clean(name) != name || name == "." || name == ".." || strings.HasPrefix(name, "../") {
+		return errors.New("file path must be relative to the workspace")
+	}
+	return nil
 }
 
 func (m *Manager) ApplyPatch(

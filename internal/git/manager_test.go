@@ -11,6 +11,22 @@ import (
 	"testing"
 )
 
+func TestValidateWorkspaceFilePathUsesGitPathSeparators(t *testing.T) {
+	for _, filePath := range []string{"main.go", "internal/app/server.go"} {
+		if err := validateWorkspaceFilePath(filePath); err != nil {
+			t.Errorf("valid repository path %q rejected: %v", filePath, err)
+		}
+	}
+	for _, filePath := range []string{
+		"", ".", "..", "../secret", "internal/../secret", "/etc/passwd", `C:\Windows\win.ini`,
+		`internal\server.go`, "internal//server.go", "file\x00name",
+	} {
+		if err := validateWorkspaceFilePath(filePath); err == nil {
+			t.Errorf("invalid repository path %q accepted", filePath)
+		}
+	}
+}
+
 func TestPrepareWorkspaceDiffReadAndCleanup(t *testing.T) {
 	requireGit(t)
 	root := t.TempDir()

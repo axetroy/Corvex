@@ -7,13 +7,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 func Open(path string) (*Store, error) {
@@ -29,7 +33,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("configure SQLite: %w", err)
 	}
-	store := &Store{db: db}
+	store := &Store{db: db, path: path}
 	if err := store.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, err
@@ -79,6 +83,11 @@ CREATE TABLE IF NOT EXISTS job_attempts (
   finished_at TEXT,
   error TEXT NOT NULL DEFAULT '',
   UNIQUE(job_id, attempt)
+);
+CREATE TABLE IF NOT EXISTS model_token_usage (
+  day TEXT PRIMARY KEY,
+  used_tokens INTEGER NOT NULL DEFAULT 0,
+  reserved_tokens INTEGER NOT NULL DEFAULT 0
 );`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate task store: %w", err)
@@ -90,6 +99,8 @@ CREATE TABLE IF NOT EXISTS job_attempts (
 		{name: "attempt_count", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "last_error", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "request", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "lease_token", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "lease_until", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureJobColumn(ctx, column.name, column.definition); err != nil {
 			return err
@@ -106,7 +117,123 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+func (s *Store) JobCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM jobs GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count jobs by status: %w", err)
+	}
+	defer rows.Close()
+	counts := make(map[string]int64)
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("read job status count: %w", err)
+		}
+		counts[status] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job status counts: %w", err)
+	}
+	return counts, nil
+}
+
+func (s *Store) ReserveModelTokens(ctx context.Context, dailyLimit, tokens int64) (string, error) {
+	if dailyLimit <= 0 || tokens <= 0 {
+		return "", errors.New("daily model token limit and reservation must be positive")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin model budget reservation: %w", err)
+	}
+	defer tx.Rollback()
+	day := time.Now().UTC().Format("2006-01-02")
+	if _, err := tx.ExecContext(ctx, `INSERT INTO model_token_usage(day) VALUES (?) ON CONFLICT(day) DO NOTHING`, day); err != nil {
+		return "", fmt.Errorf("initialize model token budget: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE model_token_usage
+		SET reserved_tokens = reserved_tokens + ?
+		WHERE day = ? AND used_tokens + reserved_tokens + ? <= ?`, tokens, day, tokens, dailyLimit)
+	if err != nil {
+		return "", fmt.Errorf("reserve model tokens: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("check model token reservation: %w", err)
+	}
+	if updated != 1 {
+		return "", fmt.Errorf("daily model token budget of %d tokens would be exceeded", dailyLimit)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit model token reservation: %w", err)
+	}
+	return day, nil
+}
+
+func (s *Store) SettleModelTokens(ctx context.Context, day string, reserved, actual int64) error {
+	if day == "" || reserved <= 0 || actual < 0 {
+		return errors.New("model token reservation settlement is invalid")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE model_token_usage
+		SET reserved_tokens = reserved_tokens - ?, used_tokens = used_tokens + ?
+		WHERE day = ? AND reserved_tokens >= ?`, reserved, actual, day, reserved)
+	if err != nil {
+		return fmt.Errorf("settle model token reservation: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check model token settlement: %w", err)
+	}
+	if updated != 1 {
+		return errors.New("model token reservation no longer exists")
+	}
+	return nil
+}
+
+func (s *Store) Backup(ctx context.Context, destination string) error {
+	if strings.TrimSpace(destination) == "" {
+		return errors.New("backup destination is required")
+	}
+	absoluteDestination, err := filepath.Abs(destination)
+	if err != nil {
+		return fmt.Errorf("resolve backup destination: %w", err)
+	}
+	if s.path != ":memory:" {
+		absoluteSource, err := filepath.Abs(s.path)
+		if err != nil {
+			return fmt.Errorf("resolve database path: %w", err)
+		}
+		if absoluteDestination == absoluteSource {
+			return errors.New("backup destination must differ from the database path")
+		}
+	}
+	if _, err := os.Lstat(absoluteDestination); err == nil {
+		return fmt.Errorf("backup destination %q already exists", absoluteDestination)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect backup destination: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, absoluteDestination); err != nil {
+		return fmt.Errorf("create SQLite backup: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) CreateReview(ctx context.Context, eventID, key string, job Job) (EventResult, error) {
+	return s.createQueuedTask(ctx, eventID, key, job, TypeReview)
+}
+
+func (s *Store) CreateExplain(ctx context.Context, eventID, key string, job Job) (EventResult, error) {
+	return s.createQueuedTask(ctx, eventID, key, job, TypeExplain)
+}
+
+func (s *Store) createQueuedTask(ctx context.Context, eventID, key string, job Job, taskType string) (EventResult, error) {
+	if taskType != TypeReview && taskType != TypeExplain {
+		return EventResult{}, fmt.Errorf("unsupported queued task type %q", taskType)
+	}
+	taskLabel := "Review"
+	if taskType == TypeExplain {
+		taskLabel = "Explain"
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return EventResult{}, err
@@ -124,7 +251,7 @@ func (s *Store) CreateReview(ctx context.Context, eventID, key string, job Job) 
 		return EventResult{}, err
 	}
 	if err == nil {
-		response := fmt.Sprintf("Review task `%s` is already queued for this comment.", existing.ID)
+		response := fmt.Sprintf("%s task `%s` is already queued for this comment.", taskLabel, existing.ID)
 		if err := insertEvent(ctx, tx, eventID, response); err != nil {
 			return EventResult{}, err
 		}
@@ -138,7 +265,7 @@ func (s *Store) CreateReview(ctx context.Context, eventID, key string, job Job) 
 	if err != nil {
 		return EventResult{}, err
 	}
-	job.Type = TypeReview
+	job.Type = taskType
 	job.Status = StatusQueued
 	job.CreatedAt = time.Now().UTC()
 	_, err = tx.ExecContext(ctx, `INSERT INTO jobs
@@ -147,9 +274,10 @@ func (s *Store) CreateReview(ctx context.Context, eventID, key string, job Job) 
 		job.ID, key, eventID, job.Type, job.Status, job.ProjectID, job.MRIID, job.HeadSHA, job.ActorID, job.Request,
 		job.CreatedAt.Format(time.RFC3339Nano), job.CreatedAt.Format(time.RFC3339Nano))
 	if err != nil {
-		return EventResult{}, fmt.Errorf("insert review task: %w", err)
+		return EventResult{}, fmt.Errorf("insert %s task: %w", taskType, err)
 	}
-	response := fmt.Sprintf("Queued review task `%s` for MR !%d at `%s`.", job.ID, job.MRIID, shortSHA(job.HeadSHA))
+	response := fmt.Sprintf("Queued %s task `%s` for MR !%d at `%s`.",
+		taskType, job.ID, job.MRIID, shortSHA(job.HeadSHA))
 	if err := insertEvent(ctx, tx, eventID, response); err != nil {
 		return EventResult{}, err
 	}
@@ -329,24 +457,50 @@ func (s *Store) CreateFix(
 }
 
 func (s *Store) ClaimNext(ctx context.Context) (Job, bool, error) {
+	return s.claimNext(ctx, 0)
+}
+
+func (s *Store) ClaimNextWithLease(ctx context.Context, leaseDuration time.Duration) (Job, bool, error) {
+	if leaseDuration <= 0 {
+		return Job{}, false, errors.New("job lease duration must be positive")
+	}
+	return s.claimNext(ctx, leaseDuration)
+}
+
+func (s *Store) claimNext(ctx context.Context, leaseDuration time.Duration) (Job, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	nowTime := time.Now().UTC()
+	now := nowTime.Format(time.RFC3339Nano)
+	leaseToken, leaseUntil := "", int64(0)
+	if leaseDuration > 0 {
+		leaseToken, err = newID()
+		if err != nil {
+			return Job{}, false, err
+		}
+		leaseUntil = nowTime.Add(leaseDuration).UnixNano()
+		if err := recoverExpiredLeases(ctx, tx, now, nowTime.UnixNano()); err != nil {
+			return Job{}, false, err
+		}
+	}
 	var job Job
 	var created string
 	err = tx.QueryRowContext(ctx, `UPDATE jobs
-		SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-		WHERE id = (SELECT id FROM jobs WHERE status = ? AND type IN (?, ?) ORDER BY created_at LIMIT 1)
+		SET status = ?, attempt_count = attempt_count + 1, updated_at = ?, lease_token = ?, lease_until = ?
+		WHERE id = (SELECT id FROM jobs WHERE status = ? AND type IN (?, ?, ?) ORDER BY created_at LIMIT 1)
 		  AND status = ?
 		RETURNING id, type, status, project_id, mr_iid, head_sha, actor_id, request, created_at, attempt_count, last_error`,
-		StatusPreparing, now, StatusQueued, TypeReview, TypeFix, StatusQueued).Scan(
+		StatusPreparing, now, leaseToken, leaseUntil, StatusQueued, TypeReview, TypeFix, TypeExplain, StatusQueued).Scan(
 		&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID,
 		&job.Request, &created, &job.AttemptCount, &job.LastError)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
 		return Job{}, false, nil
 	}
 	if err != nil {
@@ -356,6 +510,7 @@ func (s *Store) ClaimNext(ctx context.Context) (Job, bool, error) {
 	if err != nil {
 		return Job{}, false, fmt.Errorf("parse job creation time: %w", err)
 	}
+	job.LeaseToken = leaseToken
 	if _, err := tx.ExecContext(ctx, `INSERT INTO job_attempts(job_id, attempt, started_at) VALUES (?, ?, ?)`,
 		job.ID, job.AttemptCount, now); err != nil {
 		return Job{}, false, fmt.Errorf("record job attempt: %w", err)
@@ -367,6 +522,17 @@ func (s *Store) ClaimNext(ctx context.Context) (Job, bool, error) {
 }
 
 func (s *Store) UpdateStatus(ctx context.Context, jobID, from, to, failure string) error {
+	return s.updateStatus(ctx, jobID, "", from, to, failure)
+}
+
+func (s *Store) UpdateLeasedStatus(ctx context.Context, jobID, leaseToken, from, to, failure string) error {
+	if leaseToken == "" {
+		return errors.New("job lease token is required")
+	}
+	return s.updateStatus(ctx, jobID, leaseToken, from, to, failure)
+}
+
+func (s *Store) updateStatus(ctx context.Context, jobID, leaseToken, from, to, failure string) error {
 	if !validTransition(from, to) {
 		return fmt.Errorf("invalid job transition %q -> %q", from, to)
 	}
@@ -376,8 +542,11 @@ func (s *Store) UpdateStatus(ctx context.Context, jobID, from, to, failure strin
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, last_error = ?, updated_at = ?
-		WHERE id = ? AND status = ?`, to, failure, now, jobID, from)
+	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, last_error = ?, updated_at = ?,
+		lease_token = CASE WHEN ? THEN '' ELSE lease_token END,
+		lease_until = CASE WHEN ? THEN 0 ELSE lease_until END
+		WHERE id = ? AND status = ? AND lease_token = ?`,
+		to, failure, now, isTerminal(to), isTerminal(to), jobID, from, leaseToken)
 	if err != nil {
 		return fmt.Errorf("update job status: %w", err)
 	}
@@ -399,6 +568,82 @@ func (s *Store) UpdateStatus(ctx context.Context, jobID, from, to, failure strin
 	}
 	return nil
 }
+
+func (s *Store) RenewLease(ctx context.Context, jobID, leaseToken string, leaseDuration time.Duration) error {
+	if leaseToken == "" || leaseDuration <= 0 {
+		return errors.New("job lease token and positive duration are required")
+	}
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx, `UPDATE jobs SET lease_until = ?, updated_at = ?
+		WHERE id = ? AND lease_token = ? AND status IN (?, ?, ?, ?, ?)`,
+		now.Add(leaseDuration).UnixNano(), now.Format(time.RFC3339Nano), jobID, leaseToken,
+		StatusPreparing, StatusAnalyzing, StatusFixing, StatusVerifying, StatusPublishing)
+	if err != nil {
+		return fmt.Errorf("renew job lease: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return fmt.Errorf("job %q lease is no longer owned", jobID)
+	}
+	return nil
+}
+
+func recoverExpiredLeases(ctx context.Context, tx *sql.Tx, now string, nowUnixNano int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, status, attempt_count FROM jobs
+		WHERE lease_token != '' AND lease_until > 0 AND lease_until <= ?
+		  AND status IN (?, ?, ?, ?, ?)`,
+		nowUnixNano, StatusPreparing, StatusAnalyzing, StatusFixing, StatusVerifying, StatusPublishing)
+	if err != nil {
+		return fmt.Errorf("find expired job leases: %w", err)
+	}
+	type expiredJob struct {
+		id      string
+		status  string
+		attempt int
+	}
+	var expired []expiredJob
+	for rows.Next() {
+		var job expiredJob
+		if err := rows.Scan(&job.id, &job.status, &job.attempt); err != nil {
+			rows.Close()
+			return fmt.Errorf("read expired job lease: %w", err)
+		}
+		expired = append(expired, job)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate expired job leases: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close expired job leases: %w", err)
+	}
+	for _, job := range expired {
+		reason := "Worker lease expired; task will be retried."
+		nextStatus := StatusQueued
+		if job.status == StatusPublishing {
+			reason = "Worker lease expired during publishing; outcome is uncertain, so automatic retry was skipped to prevent duplicate GitLab comments."
+			nextStatus = StatusFailed
+		} else if job.attempt >= maxJobAttempts {
+			reason = "Worker lease expired and the maximum number of attempts was reached."
+			nextStatus = StatusFailed
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, last_error = ?, updated_at = ?,
+			lease_token = '', lease_until = 0 WHERE id = ? AND status = ?`,
+			nextStatus, reason, now, job.id, job.status); err != nil {
+			return fmt.Errorf("recover expired job %q: %w", job.id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE job_attempts SET finished_at = ?, error = ?
+			WHERE job_id = ? AND attempt = ? AND finished_at IS NULL`, now, reason, job.id, job.attempt); err != nil {
+			return fmt.Errorf("finish expired job attempt %q: %w", job.id, err)
+		}
+	}
+	return nil
+}
+
+const maxJobAttempts = 3
 
 func (s *Store) GetJob(ctx context.Context, jobID string) (Job, error) {
 	var job Job

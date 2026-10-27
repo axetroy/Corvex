@@ -29,6 +29,9 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		return runBackup(os.Args[2:])
+	}
 	flags := flag.NewFlagSet("corvex", flag.ContinueOnError)
 	configPath := flags.String("config", "configs/config.yaml", "path to YAML configuration")
 	if err := flags.Parse(os.Args[1:]); err != nil {
@@ -74,8 +77,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create Git manager: %w", err)
 	}
-	modelClient, err := agent.NewClient(cfg.Agent.BaseURL, cfg.Agent.APIKey, cfg.Agent.Model,
-		time.Duration(cfg.Agent.RequestTimeout))
+	modelClient, err := agent.NewClientWithTokenBudget(cfg.Agent.BaseURL, cfg.Agent.APIKey, cfg.Agent.Model,
+		time.Duration(cfg.Agent.RequestTimeout), cfg.Agent.MaxOutputTokens, store, cfg.Agent.DailyTokenBudget)
 	if err != nil {
 		return fmt.Errorf("create model client: %w", err)
 	}
@@ -96,4 +99,26 @@ func run() error {
 		return fmt.Errorf("create worker: %w", err)
 	}
 	return worker.Run(ctx)
+}
+
+func runBackup(args []string) error {
+	flags := flag.NewFlagSet("corvex backup", flag.ContinueOnError)
+	databasePath := flags.String("database", "", "path to the Corvex SQLite database")
+	outputPath := flags.String("output", "", "path for the new SQLite backup file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *databasePath == "" || *outputPath == "" {
+		return errors.New("usage: corvex backup --database <path> --output <new-path>")
+	}
+	store, err := jobs.Open(*databasePath)
+	if err != nil {
+		return fmt.Errorf("open task store: %w", err)
+	}
+	defer store.Close()
+	if err := store.Backup(context.Background(), *outputPath); err != nil {
+		return err
+	}
+	slog.Info("SQLite backup created", "output", *outputPath)
+	return nil
 }

@@ -79,6 +79,48 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 	}
 }
 
+func TestWorkerProcessesExplainAtPinnedHead(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedExplainJob(t, headSHA, "internal/server.go")
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened", Title: "Feature",
+			DiffRefs: mrRefs(baseSHA, strings.Repeat("c", 40), headSHA),
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	repository := &fakeRepository{fileContent: []byte("package app\nfunc Serve() {}")}
+	reviewer := &fakeReviewer{explanation: review.Explanation{
+		Text: "This file handles HTTP requests.", Model: "explain-model",
+		Usage: agent.ModelUsage{TotalTokens: 10},
+	}}
+	worker := newTestWorker(t, store, api, repository, reviewer)
+
+	worked, err := worker.processNext(context.Background())
+	if err != nil {
+		t.Fatalf("processNext() error = %v", err)
+	}
+	if !worked || !repository.prepared || !repository.cleaned || repository.readPath != "internal/server.go" ||
+		repository.diffCalls != 0 || reviewer.explainCalls != 1 || len(api.notes) != 1 {
+		t.Fatalf("explanation did not complete as expected: worked=%t prepared=%t cleaned=%t path=%q diffs=%d calls=%d notes=%d",
+			worked, repository.prepared, repository.cleaned, repository.readPath,
+			repository.diffCalls, reviewer.explainCalls, len(api.notes))
+	}
+	if !strings.Contains(api.notes[0], "internal/server.go") ||
+		!strings.Contains(api.notes[0], "This file handles HTTP requests.") {
+		t.Fatalf("unexpected explanation note: %s", api.notes[0])
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCompleted || job.Type != jobs.TypeExplain {
+		t.Fatalf("unexpected explain task: %#v", job)
+	}
+}
+
 func TestWorkerFallsBackToSummaryWhenInlinePositionCannotBePublished(t *testing.T) {
 	headSHA := strings.Repeat("b", 40)
 	baseSHA := strings.Repeat("a", 40)
@@ -444,6 +486,9 @@ type fakeRepository struct {
 	baseSHA      string
 	prepared     bool
 	cleaned      bool
+	fileContent  []byte
+	readPath     string
+	diffCalls    int
 	patchApplied bool
 	allowedPaths string
 	patchResult  string
@@ -463,6 +508,7 @@ func (f *fakeRepository) PrepareWorkspace(
 func (f *fakeRepository) Diff(
 	_ context.Context, workspace git.Workspace, baseSHA string, _, _ int,
 ) (git.DiffResult, error) {
+	f.diffCalls++
 	f.baseSHA = baseSHA
 	return git.DiffResult{
 		BaseSHA: baseSHA, HeadSHA: workspace.HeadSHA,
@@ -471,6 +517,11 @@ func (f *fakeRepository) Diff(
 			Patch: "@@ -1,2 +1,3 @@\n package sample\n+if value == nil { return 0 }\n return value\n",
 		}},
 	}, nil
+}
+
+func (f *fakeRepository) ReadFile(_ context.Context, _ git.Workspace, name string, _ int64) ([]byte, error) {
+	f.readPath = name
+	return f.fileContent, nil
 }
 
 func (f *fakeRepository) CleanupWorkspace(context.Context, git.Workspace) error {
@@ -490,13 +541,20 @@ func (f *fakeRepository) ApplyPatch(
 }
 
 type fakeReviewer struct {
-	outcome review.Outcome
-	calls   int
+	outcome      review.Outcome
+	explanation  review.Explanation
+	calls        int
+	explainCalls int
 }
 
 func (f *fakeReviewer) Review(context.Context, review.Context, git.DiffResult) (review.Outcome, error) {
 	f.calls++
 	return f.outcome, nil
+}
+
+func (f *fakeReviewer) Explain(context.Context, review.Context, string, []byte) (review.Explanation, error) {
+	f.explainCalls++
+	return f.explanation, nil
 }
 
 type fakeFixer struct {
@@ -554,6 +612,27 @@ func queuedFixJob(t *testing.T, headSHA, request string) (*jobs.Store, string) {
 	if len(parts) < 2 {
 		store.Close()
 		t.Fatalf("could not parse queued fix ID from %q", result.Response)
+	}
+	return store, parts[1]
+}
+
+func queuedExplainJob(t *testing.T, headSHA, path string) (*jobs.Store, string) {
+	t.Helper()
+	store, err := jobs.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.CreateExplain(context.Background(), "explain-note-1", "explain-key-1", jobs.Job{
+		ProjectID: 10, MRIID: 8, HeadSHA: headSHA, ActorID: 42, Request: path,
+	})
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	parts := strings.Split(result.Response, "`")
+	if len(parts) < 2 {
+		store.Close()
+		t.Fatalf("could not parse queued explain ID from %q", result.Response)
 	}
 	return store, parts[1]
 }
