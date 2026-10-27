@@ -1,0 +1,135 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { JobStore } from "../../src/jobs/store.js";
+
+describe("JobStore", () => {
+  let directory = "";
+  let store: JobStore | undefined;
+
+  afterEach(async () => {
+    store?.close();
+    store = undefined;
+    if (directory) await rm(directory, { recursive: true, force: true });
+    directory = "";
+  });
+
+  it("persists idempotent jobs and enforces leased status transitions", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    store = await JobStore.open(join(directory, "state.db"));
+    const queued = store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    expect(queued.response).toContain("Queued review task");
+    const duplicate = store.createReview("event-2", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    expect(duplicate.response).toContain("already queued");
+
+    const job = store.claimNextWithLease(30_000);
+    expect(job?.status).toBe("preparing");
+    expect(job?.attemptCount).toBe(1);
+    expect(() =>
+      store!.updateLeasedStatus(job!.id, job!.leaseToken, "preparing", "publishing"),
+    ).toThrow("invalid job transition");
+    store.updateLeasedStatus(job!.id, job!.leaseToken, "preparing", "analyzing");
+    expect(store.getJob(job!.id).status).toBe("analyzing");
+    expect(store.jobCounts().analyzing).toBe(1);
+  });
+
+  it("checks token reservations and records model call metrics", async () => {
+    store = await JobStore.open(":memory:");
+    const day = store.reserveModelTokens(1000, 100);
+    expect(() => store.reserveModelTokens(100, 1)).toThrow("budget");
+    store.settleModelTokens(day, 100, 25);
+    store.recordModelCall("review", "success", 1250, 70, 25);
+    expect(store.modelCallMetrics()).toEqual([
+      {
+        taskType: "review",
+        outcome: "success",
+        calls: 1,
+        durationMs: 1250,
+        inputTokens: 70,
+        outputTokens: 25,
+      },
+    ]);
+  });
+
+  it("requests and finalizes cancellation while a task is leased", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    expect(store.cancel("event-2", 7, 3, 11).response).toContain("Cancellation requested");
+    expect(store.cancellationRequested(job.id, job.leaseToken)).toBe(true);
+    expect(() =>
+      store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "publishing"),
+    ).toThrow("job cancellation requested");
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "cancelled");
+    expect(store.getJob(job.id).status).toBe("cancelled");
+  });
+
+  it("does not retry after an expired publishing lease", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(250);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "publishing");
+    await sleep(300);
+    expect(store.claimNextWithLease(30_000)).toBeUndefined();
+    expect(store.getJob(job.id).status).toBe("failed");
+    expect(store.getJob(job.id).lastError).toContain("outcome is uncertain");
+  });
+
+  it("migrates an existing legacy SQLite job database without losing queued jobs", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-legacy-store-"));
+    const databasePath = join(directory, "state.db");
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
+        head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO jobs
+        (id,idempotency_key,event_id,type,status,project_id,mr_iid,head_sha,actor_id,request,created_at,updated_at)
+      VALUES
+        ('legacy-job','legacy-key','legacy-event','review','queued',9,5,'${"c".repeat(40)}',12,'','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    store = await JobStore.open(databasePath);
+    expect(store.getJob("legacy-job")).toMatchObject({
+      projectId: 9,
+      mrIid: 5,
+      status: "queued",
+      attemptCount: 0,
+      leaseToken: "",
+      cancellationRequested: false,
+    });
+    expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
+  });
+});

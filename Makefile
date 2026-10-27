@@ -1,13 +1,16 @@
-.PHONY: build test lint run
+.PHONY: build test lint typecheck run
 
 build:
-	go build -trimpath -o corvex ./cmd/corvex
+	npm run build
 
 test:
-	go test ./...
+	npm test
 
 lint:
-	go vet ./...
+	npm run lint
+
+typecheck:
+	npm run typecheck
 
 run:
-	go run ./cmd/corvex --config configs/config.yaml server
+	npm start -- --config configs/config.yaml server

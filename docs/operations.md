@@ -2,17 +2,19 @@
 
 ## Runtime requirements
 
-- Use the Go version declared in [`go.mod`](https://github.com/axetroy/Corvex/blob/main/go.mod) to build or run from source.
+- Use Node.js 26.12.1 and npm to build or run from source. `npm ci` installs the locked dependencies.
 - The Server needs outbound access to the configured GitLab API and inbound access from GitLab to its webhook URL.
 - The Worker needs the `git` executable, outbound GitLab access for API and repository fetches, and outbound HTTPS access to the configured model API when the agent is enabled. The supplied Docker image installs Git.
 - SQLite and Git data need persistent, writable storage. Avoid ephemeral container filesystems. Since Corvex uses SQLite WAL mode, use a local filesystem/volume with reliable SQLite locking rather than assuming arbitrary network filesystems are suitable.
 - Keep system time synchronized. Daily model budget accounting uses UTC.
 
-The Go SQLite driver is pure Go; the application does not require a separate SQLite service. The Server and Worker are separate modes of the same executable:
+SQLite is embedded through Node's built-in `node:sqlite` module; the application does not require a native addon or separate SQLite service. Build the TypeScript application and start the Server or Worker as separate processes:
 
 ```sh
-corvex --config configs/config.yaml server
-corvex --config configs/config.yaml worker
+npm ci
+npm run build
+npm start -- --config configs/config.yaml server
+npm start -- --config configs/config.yaml worker
 ```
 
 The default config path is `configs/config.yaml`; pass `--config /path/to/config.yaml` to use another file. The Worker refuses to start unless `agent.enabled: true`.
@@ -74,7 +76,7 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 Create an online SQLite backup while the service is running. The destination must not already exist:
 
 ```sh
-go run ./cmd/corvex backup \
+npm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
@@ -92,9 +94,11 @@ Back up the database before upgrading. The application applies SQLite schema mig
 From a source checkout, the usual checks are:
 
 ```sh
-go test ./...
-go vet ./...
-go build ./cmd/corvex
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-The repository CI also tests on Linux, macOS, and Windows and builds release binaries for Linux, macOS, and Windows on amd64 and arm64.
+The repository CI runs these checks on Node.js 26.12.1. Git must be installed on any host that runs a Worker.

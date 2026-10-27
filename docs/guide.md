@@ -9,11 +9,11 @@ The server can run without a worker, but review, explain, and fix tasks remain q
 
 ## Requirements
 
-- Go toolchain declared in [`go.mod`](https://github.com/axetroy/Corvex/blob/main/go.mod) to run from source.
+- Node.js 26.12.1 and npm to run from source. Install the locked dependencies with `npm ci`.
 - GitLab access from the server and worker, including a reachable webhook URL.
 - A GitLab read token for API reads and repository fetches; a separate write token for MR notes and discussions.
 - The `git` executable on the worker host. The supplied Docker image includes it.
-- If using an agent, an OpenAI-compatible Chat Completions endpoint and an API key.
+- If using an agent, an OpenAI-compatible Chat Completions endpoint and an API key. Pi SDK provides the agent runtime.
 - Persistent writable storage for the SQLite database and Git mirrors. Keep it across restarts.
 
 ## 1. Prepare configuration and secrets
@@ -39,7 +39,9 @@ The read token is used for project/MR API reads and repository fetches. The writ
 ## 2. Start the server
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml server
+npm ci
+npm run build
+npm start -- --config configs/config.yaml server
 ```
 
 The default listener is `0.0.0.0:8080`. Put it behind HTTPS when exposing it to GitLab; do not expose the service directly to an untrusted network without appropriate network controls.
@@ -74,7 +76,7 @@ Commands must start with `@corvex` as the first token in a merge request comment
 | Command | Behavior |
 |---|---|
 | `@corvex review` | Queue a review of the current merge request revision. |
-| `@corvex explain path/to/file.go` | Explain a file at the pinned merge request Head SHA. |
+| `@corvex explain path/to/file.ts` | Explain a file at the pinned merge request Head SHA. |
 | `@corvex status` | Show the latest task state for the merge request. |
 | `@corvex cancel` | Cancel a queued task or request cancellation of an active task you started. |
 | `@corvex fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are allowlisted. |
@@ -88,7 +90,7 @@ Reviews, explanations, and fix proposals require a worker and a model configurat
 In another process, start:
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml worker
+npm start -- --config configs/config.yaml worker
 ```
 
 When the agent is disabled, the server can still accept events and persist tasks, but a worker will refuse to start. For local-only server testing, use the health endpoints described in [Runtime and operations](./operations).
@@ -96,6 +98,8 @@ When the agent is disabled, the server can still accept events and persist tasks
 ## Enable fix proposals carefully
 
 Fix mode is disabled by default. To enable it, set `fix.enabled: true`, enable the agent, and populate `fix.allowed_user_ids`. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
+
+The Pi session exposes no built-in shell, edit, or write tools. Its custom `read_file` tool is read-only, restricted to the pinned worktree and configured trusted skill directories, and limited to 64 KiB per file. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP servers from the service's Pi agent directory. MCP server processes run with the worker's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
 
 ## Next steps
 

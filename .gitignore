@@ -1,8 +1,9 @@
 /configs/config.yaml
 /.env
 /data/
-/corvex
-/coverage.out
+/dist/
+/coverage/
+*.tsbuildinfo
 /node_modules/
 /docs/.vitepress/cache/
 /docs/.vitepress/dist/

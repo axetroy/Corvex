@@ -1,6 +1,6 @@
 # Corvex
 
-Corvex is a self-hosted GitLab code review and repair agent. This repository is implementing the MVP in phases described in [design.md](design.md). Read the [documentation](https://axetroy.github.io/Corvex/).
+Corvex is a self-hosted GitLab code review and repair agent built as a single TypeScript application powered by the Pi SDK. See [design.md](design.md) for the architecture and the [documentation](https://axetroy.github.io/Corvex/).
 
 ## Current implementation
 
@@ -14,30 +14,34 @@ The implementation currently provides:
 - YAML configuration with secrets supplied only through environment variables.
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
-- An OpenAI-compatible chat client and review workflow with bounded context, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
+- Pi SDK agent sessions using an OpenAI-compatible provider, with bounded context, a 64 KiB read-only file tool restricted to the pinned worktree and trusted skill paths, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
 
 The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push. SQLite records review/explain/fix requests, authorization and cancellation outcomes, and job status transitions; a curated review-quality benchmark dataset is not yet included.
 
 Workers use a 30-second renewable job lease. After a worker interruption, tasks that have not entered publishing are retried up to three attempts. An expired publishing lease fails without automatic retry because the comment outcome may be uncertain, avoiding duplicate GitLab comments.
 
-To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. `agent.max_output_tokens` bounds each completion's output (4096 by default, maximum 8192). Set `agent.daily_token_budget` to reserve a UTC-day token budget (`0` disables it); the client conservatively reserves prompt bytes plus maximum output tokens and settles against provider usage, retaining the reservation when a request's outcome is uncertain. This is a token budget, not a price-based spend cap. Webhook handling only queues work; the worker performs model calls. To enable fix proposals, additionally set `fix.enabled: true` and populate `fix.allowed_user_ids` with the permitted GitLab user IDs. The fix allowlist must be non-empty, and the agent must be enabled.
+To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. Corvex runs model requests through Pi SDK sessions and applies `agent.request_timeout` to each session. `agent.max_output_tokens` bounds each completion's output (4096 by default, maximum 8192). Set `agent.daily_token_budget` to reserve a UTC-day token budget (`0` disables it); the client conservatively reserves prompt bytes plus maximum output tokens and settles against provider usage, retaining the reservation when a request's outcome is uncertain. This is a token budget, not a price-based spend cap. Configured `agent.skill_paths` are loaded as trusted Pi skills. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP configuration from the service's Pi agent directory. MCP servers run with the worker's operating-system permissions and are not sandboxed. Webhook handling only queues work; the worker performs model calls. To enable fix proposals, additionally set `fix.enabled: true` and populate `fix.allowed_user_ids` with the permitted GitLab user IDs. The fix allowlist must be non-empty, and the agent must be enabled.
 
 ## Run locally
 
+Requires Node.js 26.12.1 and npm. SQLite is provided by Node's built-in `node:sqlite` module.
+
 ```sh
 cp configs/config.example.yaml configs/config.yaml
+npm ci
+npm run build
 ```
 
 Set `CORVEX_GITLAB_READ_TOKEN` to a read-only GitLab token, `CORVEX_GITLAB_TOKEN` to a token permitted to post MR notes, and `CORVEX_WEBHOOK_SECRET` to the same secret configured on the project webhook. Keep read and write tokens separate and grant each only the required scopes. Then start the server:
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml server
+npm start -- --config configs/config.yaml server
 ```
 
 For asynchronous reviews or fix proposals, enable the agent configuration and run the worker in a second process:
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml worker
+npm start -- --config configs/config.yaml worker
 ```
 
 The configured project IDs and user IDs are explicit allowlists. Both must be non-empty; an empty list never means unrestricted access.
@@ -45,7 +49,7 @@ The configured project IDs and user IDs are explicit allowlists. Both must be no
 An online SQLite backup can be created while the service is running. The destination must not already exist:
 
 ```sh
-go run ./cmd/corvex backup \
+npm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
@@ -86,15 +90,16 @@ Compose defaults to 1 CPU/1 GiB for the server and 2 CPU/2 GiB for the worker, w
 ## Development
 
 ```sh
-make test
-make lint
-make build
+npm test
+npm run lint
+npm run typecheck
+npm run build
 ```
 
 The server and worker use separate read/write GitLab token variables; read requests use the read token, while note publication uses the write token. No untrusted-code executor is included.
 
 ## CI and releases
 
-GitHub Actions runs tests and `go vet` on Linux, macOS, and Windows, and builds Linux, macOS, and Windows binaries for amd64 and arm64. Pushes to `main`, pull requests, and version tags run CI.
+GitHub Actions runs lint, type checking, tests, and a production build on Node.js 26.12.1. Pushes to `main`, pull requests, and version tags run CI.
 
-To publish a GitHub Release, push a version tag such as `v1.0.0`. GoReleaser attaches compressed binaries for all six platform/architecture combinations and a SHA-256 checksum file.
+To publish a GitHub Release, push a version tag such as `v1.0.0`. The release workflow publishes the source archive; deploy the application with the provided Docker image or Node.js 26.12.1.

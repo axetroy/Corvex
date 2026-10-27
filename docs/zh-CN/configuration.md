@@ -4,7 +4,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 表格中的示例 URL 和路径来自示例 YAML，并非都属于程序运行时默认值；运行时默认值会明确标注。特别是 `gitlab.base_url`、`storage.root` 和 `storage.database` 必须配置。
 
-时长使用 Go 时长格式，例如 `5s`、`30s` 或 `2m`。相对路径以进程的当前工作目录为基准。
+时长格式为数字加 `ns`、`us`、`µs`、`ms`、`s`、`m` 或 `h`，例如 `5s`、`30s` 或 `2m`。相对路径以进程的当前工作目录为基准。
 
 ## Server
 
