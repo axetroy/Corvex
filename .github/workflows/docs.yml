@@ -2,8 +2,8 @@ name: Deploy documentation
 
 on:
   push:
-  pull_request:
-  workflow_dispatch:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -33,14 +33,12 @@ jobs:
         run: npm run docs:build
 
       - name: Upload Pages artifact
-        if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     environment:
