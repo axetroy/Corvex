@@ -175,6 +175,131 @@ func TestModelTokenBudgetReservesAndSettlesDailyUsage(t *testing.T) {
 	}
 }
 
+func TestModelCallMetricsAggregateSuccessesAndFailures(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	calls := []struct {
+		taskType     string
+		outcome      string
+		duration     time.Duration
+		inputTokens  int64
+		outputTokens int64
+	}{
+		{TypeReview, "success", 1500 * time.Millisecond, 20, 5},
+		{TypeReview, "failure", 500 * time.Millisecond, 8, 0},
+		{TypeReview, "success", 2 * time.Second, 30, 10},
+	}
+	for _, call := range calls {
+		if err := store.RecordModelCall(ctx, call.taskType, call.outcome, call.duration,
+			call.inputTokens, call.outputTokens); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics, err := store.ModelCallMetrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 2 {
+		t.Fatalf("got %d metric series, want success and failure", len(metrics))
+	}
+	if metrics[0].Outcome != "failure" || metrics[0].Calls != 1 ||
+		metrics[0].DurationMS != 500 || metrics[0].InputTokens != 8 || metrics[0].OutputTokens != 0 {
+		t.Errorf("failure metric = %#v", metrics[0])
+	}
+	if metrics[1].Outcome != "success" || metrics[1].Calls != 2 ||
+		metrics[1].DurationMS != 3500 || metrics[1].InputTokens != 50 || metrics[1].OutputTokens != 15 {
+		t.Errorf("success metric = %#v", metrics[1])
+	}
+	if err := store.RecordModelCall(ctx, "unknown", "success", time.Second, 1, 1); err == nil {
+		t.Fatal("accepted an unsupported task type")
+	}
+	if err := store.RecordModelCall(ctx, TypeReview, "success", -time.Second, 1, 1); err == nil {
+		t.Fatal("accepted a negative duration")
+	}
+}
+
+func TestPruneHistoryUsesSeparateRetentionCutoffsAndKeepsActiveJobs(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	old, err := store.CreateReview(ctx, "old-job-event", "old-job-key", Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("a", 40), ActorID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldJobID := strings.Split(old.Response, "`")[1]
+	const oldTimestamp = "2020-01-01T00:00:00Z"
+	if _, err := store.db.ExecContext(ctx, `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?`,
+		StatusCompleted, oldTimestamp, oldJobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO job_attempts(job_id, attempt, started_at, finished_at)
+		VALUES (?, 1, ?, ?)`, oldJobID, oldTimestamp, oldTimestamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateReview(ctx, "active-job-event", "active-job-key", Job{
+		ProjectID: 10, MRIID: 6, HeadSHA: strings.Repeat("b", 40), ActorID: 42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordResponse(ctx, "old-webhook-event", "old response"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordResponse(ctx, "new-webhook-event", "new response"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE webhook_events SET received_at = ? WHERE event_id = ?`,
+		oldTimestamp, "old-webhook-event"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO model_token_usage(day, used_tokens) VALUES (?, ?), (?, ?)`,
+		"2020-01-01", 100, time.Now().UTC().Format("2006-01-02"), 50); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO audit_events(actor_id, action, resource, result, created_at)
+		VALUES (42, 'old', 'resource', 'done', ?), (42, 'new', 'resource', 'done', ?)`,
+		oldTimestamp, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	if err := store.PruneHistory(ctx, now.AddDate(0, 0, -90), now.AddDate(0, 0, -365)); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		query string
+		args  []any
+		want  int
+	}{
+		{`SELECT COUNT(*) FROM jobs WHERE id = ?`, []any{oldJobID}, 0},
+		{`SELECT COUNT(*) FROM jobs WHERE status = ?`, []any{StatusQueued}, 1},
+		{`SELECT COUNT(*) FROM job_attempts WHERE job_id = ?`, []any{oldJobID}, 0},
+		{`SELECT COUNT(*) FROM webhook_events WHERE event_id = ?`, []any{"old-webhook-event"}, 0},
+		{`SELECT COUNT(*) FROM webhook_events WHERE event_id = ?`, []any{"new-webhook-event"}, 1},
+		{`SELECT COUNT(*) FROM model_token_usage WHERE day = ?`, []any{"2020-01-01"}, 0},
+		{`SELECT COUNT(*) FROM audit_events WHERE action = ?`, []any{"old"}, 0},
+		{`SELECT COUNT(*) FROM audit_events WHERE action = ?`, []any{"new"}, 1},
+	} {
+		var count int
+		if err := store.db.QueryRowContext(ctx, check.query, check.args...).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != check.want {
+			t.Errorf("%s count = %d, want %d", check.query, count, check.want)
+		}
+	}
+}
+
 func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {
@@ -213,6 +338,15 @@ func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	}
 	if stored.Status != StatusCompleted || stored.AttemptCount != 1 {
 		t.Fatalf("unexpected stored job: %#v", stored)
+	}
+	var auditCount int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_events WHERE action = 'job_status' AND resource = ?`, job.ID).
+		Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 4 {
+		t.Fatalf("status audit entries = %d, want queued->preparing plus three transitions", auditCount)
 	}
 }
 

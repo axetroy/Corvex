@@ -4,6 +4,14 @@ services:
       context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: ${CORVEX_MEM_LIMIT:-1g}
+    cpus: ${CORVEX_CPUS:-1.0}
+    pids_limit: ${CORVEX_PIDS_LIMIT:-256}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     read_only: true
     tmpfs:
       - /tmp
@@ -36,6 +44,14 @@ services:
     command: ["--config", "/etc/corvex/config.yaml", "worker"]
     profiles: ["worker"]
     restart: unless-stopped
+    mem_limit: ${CORVEX_WORKER_MEM_LIMIT:-2g}
+    cpus: ${CORVEX_WORKER_CPUS:-2.0}
+    pids_limit: ${CORVEX_WORKER_PIDS_LIMIT:-256}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     read_only: true
     tmpfs:
       - /tmp

@@ -15,6 +15,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var ErrCancellationRequested = errors.New("job cancellation requested")
+
 type Store struct {
 	db   *sql.DB
 	path string
@@ -88,6 +90,15 @@ CREATE TABLE IF NOT EXISTS model_token_usage (
   day TEXT PRIMARY KEY,
   used_tokens INTEGER NOT NULL DEFAULT 0,
   reserved_tokens INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS model_call_metrics (
+  task_type TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  calls INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(task_type, outcome)
 );`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrate task store: %w", err)
@@ -101,6 +112,7 @@ CREATE TABLE IF NOT EXISTS model_token_usage (
 		{name: "request", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "lease_token", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "lease_until", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "cancel_requested", definition: "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureJobColumn(ctx, column.name, column.definition); err != nil {
 			return err
@@ -136,6 +148,99 @@ func (s *Store) JobCounts(ctx context.Context) (map[string]int64, error) {
 		return nil, fmt.Errorf("iterate job status counts: %w", err)
 	}
 	return counts, nil
+}
+
+func (s *Store) RecordModelCall(
+	ctx context.Context,
+	taskType string,
+	outcome string,
+	duration time.Duration,
+	inputTokens, outputTokens int64,
+) error {
+	if taskType != TypeReview && taskType != TypeExplain && taskType != TypeFix {
+		return fmt.Errorf("unsupported model call task type %q", taskType)
+	}
+	if outcome != "success" && outcome != "failure" {
+		return fmt.Errorf("unsupported model call outcome %q", outcome)
+	}
+	if duration < 0 || inputTokens < 0 || outputTokens < 0 {
+		return errors.New("model call metrics cannot be negative")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO model_call_metrics
+		(task_type, outcome, calls, duration_ms, input_tokens, output_tokens)
+		VALUES (?, ?, 1, ?, ?, ?)
+		ON CONFLICT(task_type, outcome) DO UPDATE SET
+		  calls = calls + 1,
+		  duration_ms = duration_ms + excluded.duration_ms,
+		  input_tokens = input_tokens + excluded.input_tokens,
+		  output_tokens = output_tokens + excluded.output_tokens`,
+		taskType, outcome, duration.Milliseconds(), inputTokens, outputTokens)
+	if err != nil {
+		return fmt.Errorf("record model call metrics: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ModelCallMetrics(ctx context.Context) ([]ModelCallMetric, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT task_type, outcome, calls, duration_ms, input_tokens, output_tokens
+		FROM model_call_metrics ORDER BY task_type, outcome`)
+	if err != nil {
+		return nil, fmt.Errorf("query model call metrics: %w", err)
+	}
+	defer rows.Close()
+	var metrics []ModelCallMetric
+	for rows.Next() {
+		var metric ModelCallMetric
+		if err := rows.Scan(&metric.TaskType, &metric.Outcome, &metric.Calls, &metric.DurationMS,
+			&metric.InputTokens, &metric.OutputTokens); err != nil {
+			return nil, fmt.Errorf("read model call metrics: %w", err)
+		}
+		metrics = append(metrics, metric)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate model call metrics: %w", err)
+	}
+	return metrics, nil
+}
+
+func (s *Store) PruneHistory(ctx context.Context, historyBefore, auditBefore time.Time) error {
+	if historyBefore.IsZero() || auditBefore.IsZero() {
+		return errors.New("history and audit retention cutoffs are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin history cleanup: %w", err)
+	}
+	defer tx.Rollback()
+
+	historyCutoff := historyBefore.UTC().Format(time.RFC3339Nano)
+	auditCutoff := auditBefore.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM job_attempts
+		WHERE job_id IN (
+			SELECT id FROM jobs
+			WHERE status IN (?, ?, ?, ?) AND updated_at < ?
+		)`, StatusCompleted, StatusFailed, StatusStale, StatusCancelled, historyCutoff); err != nil {
+		return fmt.Errorf("prune old job attempts: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM jobs
+		WHERE status IN (?, ?, ?, ?) AND updated_at < ?`,
+		StatusCompleted, StatusFailed, StatusStale, StatusCancelled, historyCutoff); err != nil {
+		return fmt.Errorf("prune old terminal jobs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM webhook_events WHERE received_at < ?`, historyCutoff); err != nil {
+		return fmt.Errorf("prune old webhook events: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM model_token_usage WHERE day < ?`,
+		historyBefore.UTC().Format("2006-01-02")); err != nil {
+		return fmt.Errorf("prune old model token usage: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_events WHERE created_at < ?`, auditCutoff); err != nil {
+		return fmt.Errorf("prune old audit events: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit history cleanup: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) ReserveModelTokens(ctx context.Context, dailyLimit, tokens int64) (string, error) {
@@ -250,9 +355,14 @@ func (s *Store) createQueuedTask(ctx context.Context, eventID, key string, job J
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return EventResult{}, err
 	}
+	auditResult := "queued"
 	if err == nil {
+		auditResult = "authorized_duplicate"
 		response := fmt.Sprintf("%s task `%s` is already queued for this comment.", taskLabel, existing.ID)
 		if err := insertEvent(ctx, tx, eventID, response); err != nil {
+			return EventResult{}, err
+		}
+		if err := insertAudit(ctx, tx, job.ActorID, "request_"+taskType, fmt.Sprintf("%d:%d", job.ProjectID, job.MRIID), auditResult); err != nil {
 			return EventResult{}, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -281,6 +391,9 @@ func (s *Store) createQueuedTask(ctx context.Context, eventID, key string, job J
 	if err := insertEvent(ctx, tx, eventID, response); err != nil {
 		return EventResult{}, err
 	}
+	if err := insertAudit(ctx, tx, job.ActorID, "request_"+taskType, fmt.Sprintf("%d:%d", job.ProjectID, job.MRIID), auditResult); err != nil {
+		return EventResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return EventResult{}, err
 	}
@@ -306,6 +419,9 @@ func (s *Store) Status(ctx context.Context, eventID string, projectID, mrIID, ac
 		return EventResult{}, err
 	} else {
 		response = fmt.Sprintf("Latest task `%s`: **%s** (requested by user %d).", job.ID, job.Status, job.ActorID)
+		if job.CancellationRequested {
+			response += " Cancellation has been requested."
+		}
 	}
 	if err := insertEvent(ctx, tx, eventID, response); err != nil {
 		return EventResult{}, err
@@ -332,30 +448,66 @@ func (s *Store) Cancel(ctx context.Context, eventID string, projectID, mrIID, ac
 	var response string
 	if errors.Is(err, sql.ErrNoRows) {
 		response = "There is no task to cancel for this MR."
+		err = insertAudit(ctx, tx, actorID, "cancel_job", fmt.Sprintf("%d:%d", projectID, mrIID), "no_task")
 	} else if err != nil {
 		return EventResult{}, err
 	} else if job.ActorID != actorID {
 		response = "You can only cancel a task that you started."
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
-			actorID, "cancel_job", job.ID, "denied_not_owner", time.Now().UTC().Format(time.RFC3339Nano))
-		if err != nil {
+		if err := insertAudit(ctx, tx, actorID, "cancel_job", job.ID, "denied_not_owner"); err != nil {
 			return EventResult{}, err
 		}
 	} else if job.Status != StatusQueued {
-		response = fmt.Sprintf("Task `%s` is %s and can no longer be cancelled.", job.ID, job.Status)
+		if cancellableStatus(job.Status) {
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			result, err := tx.ExecContext(ctx, `UPDATE jobs SET cancel_requested = 1, updated_at = ?
+				WHERE id = ? AND status = ? AND cancel_requested = 0`, now, job.ID, job.Status)
+			if err != nil {
+				return EventResult{}, fmt.Errorf("request task cancellation: %w", err)
+			}
+			updated, err := result.RowsAffected()
+			if err != nil {
+				return EventResult{}, fmt.Errorf("check task cancellation request: %w", err)
+			}
+			auditResult := "cancellation_requested"
+			if updated != 1 {
+				response = fmt.Sprintf("Task `%s` changed state before it could be cancelled.", job.ID)
+				auditResult = "denied_state_changed"
+			} else {
+				response = fmt.Sprintf("Cancellation requested for task `%s`.", job.ID)
+			}
+			if err := insertAudit(ctx, tx, actorID, "cancel_job", job.ID, auditResult); err != nil {
+				return EventResult{}, err
+			}
+		} else {
+			response = fmt.Sprintf("Task `%s` is %s and can no longer be cancelled.", job.ID, job.Status)
+			if err := insertAudit(ctx, tx, actorID, "cancel_job", job.ID, "denied_status_"+job.Status); err != nil {
+				return EventResult{}, err
+			}
+		}
 	} else {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
-			StatusCancelled, now, job.ID, StatusQueued); err != nil {
+		result, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+			StatusCancelled, now, job.ID, StatusQueued)
+		if err != nil {
 			return EventResult{}, err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
-			actorID, "cancel_job", job.ID, "cancelled", now); err != nil {
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return EventResult{}, fmt.Errorf("check queued task cancellation: %w", err)
+		}
+		auditResult := "cancelled"
+		if updated != 1 {
+			response = fmt.Sprintf("Task `%s` changed state before it could be cancelled.", job.ID)
+			auditResult = "denied_state_changed"
+		} else {
+			response = fmt.Sprintf("Cancelled task `%s`.", job.ID)
+		}
+		if err := insertAudit(ctx, tx, actorID, "cancel_job", job.ID, auditResult); err != nil {
 			return EventResult{}, err
 		}
-		response = fmt.Sprintf("Cancelled task `%s`.", job.ID)
+	}
+	if err != nil {
+		return EventResult{}, fmt.Errorf("record cancellation audit: %w", err)
 	}
 	if err := insertEvent(ctx, tx, eventID, response); err != nil {
 		return EventResult{}, err
@@ -445,10 +597,8 @@ func (s *Store) CreateFix(
 		return EventResult{}, err
 	}
 	resource := fmt.Sprintf("%d:%d", job.ProjectID, job.MRIID)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
-		job.ActorID, "request_fix", resource, auditResult, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		return EventResult{}, fmt.Errorf("record fix authorization audit: %w", err)
+	if err := insertAudit(ctx, tx, job.ActorID, "request_fix", resource, auditResult); err != nil {
+		return EventResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return EventResult{}, err
@@ -506,6 +656,9 @@ func (s *Store) claimNext(ctx context.Context, leaseDuration time.Duration) (Job
 	if err != nil {
 		return Job{}, false, fmt.Errorf("claim queued review task: %w", err)
 	}
+	if err := insertAudit(ctx, tx, job.ActorID, "job_status", job.ID, StatusQueued+"->"+StatusPreparing); err != nil {
+		return Job{}, false, err
+	}
 	job.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	if err != nil {
 		return Job{}, false, fmt.Errorf("parse job creation time: %w", err)
@@ -541,12 +694,22 @@ func (s *Store) updateStatus(ctx context.Context, jobID, leaseToken, from, to, f
 		return err
 	}
 	defer tx.Rollback()
+	var actorID int64
+	var cancellationRequested int
+	if err := tx.QueryRowContext(ctx, `SELECT actor_id, cancel_requested FROM jobs
+		WHERE id = ? AND status = ? AND lease_token = ?`, jobID, from, leaseToken).
+		Scan(&actorID, &cancellationRequested); err != nil {
+		return fmt.Errorf("read job actor for status audit: %w", err)
+	}
+	if cancellationRequested != 0 && to != StatusCancelled {
+		return ErrCancellationRequested
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ?, last_error = ?, updated_at = ?,
 		lease_token = CASE WHEN ? THEN '' ELSE lease_token END,
 		lease_until = CASE WHEN ? THEN 0 ELSE lease_until END
-		WHERE id = ? AND status = ? AND lease_token = ?`,
-		to, failure, now, isTerminal(to), isTerminal(to), jobID, from, leaseToken)
+		WHERE id = ? AND status = ? AND lease_token = ? AND (? OR cancel_requested = 0)`,
+		to, failure, now, isTerminal(to), isTerminal(to), jobID, from, leaseToken, to == StatusCancelled)
 	if err != nil {
 		return fmt.Errorf("update job status: %w", err)
 	}
@@ -562,6 +725,9 @@ func (s *Store) updateStatus(ctx context.Context, jobID, leaseToken, from, to, f
 			WHERE job_id = ? AND finished_at IS NULL`, now, failure, jobID); err != nil {
 			return fmt.Errorf("finish job attempt: %w", err)
 		}
+	}
+	if err := insertAudit(ctx, tx, actorID, "job_status", jobID, from+"->"+to); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -591,8 +757,21 @@ func (s *Store) RenewLease(ctx context.Context, jobID, leaseToken string, leaseD
 	return nil
 }
 
+func (s *Store) CancellationRequested(ctx context.Context, jobID, leaseToken string) (bool, error) {
+	if leaseToken == "" {
+		return false, errors.New("job lease token is required")
+	}
+	var requested int
+	err := s.db.QueryRowContext(ctx, `SELECT cancel_requested FROM jobs WHERE id = ? AND lease_token = ?`,
+		jobID, leaseToken).Scan(&requested)
+	if err != nil {
+		return false, fmt.Errorf("read cancellation request for job %q: %w", jobID, err)
+	}
+	return requested != 0, nil
+}
+
 func recoverExpiredLeases(ctx context.Context, tx *sql.Tx, now string, nowUnixNano int64) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, status, attempt_count FROM jobs
+	rows, err := tx.QueryContext(ctx, `SELECT id, status, attempt_count, cancel_requested FROM jobs
 		WHERE lease_token != '' AND lease_until > 0 AND lease_until <= ?
 		  AND status IN (?, ?, ?, ?, ?)`,
 		nowUnixNano, StatusPreparing, StatusAnalyzing, StatusFixing, StatusVerifying, StatusPublishing)
@@ -600,17 +779,20 @@ func recoverExpiredLeases(ctx context.Context, tx *sql.Tx, now string, nowUnixNa
 		return fmt.Errorf("find expired job leases: %w", err)
 	}
 	type expiredJob struct {
-		id      string
-		status  string
-		attempt int
+		id              string
+		status          string
+		attempt         int
+		cancelRequested bool
 	}
 	var expired []expiredJob
 	for rows.Next() {
 		var job expiredJob
-		if err := rows.Scan(&job.id, &job.status, &job.attempt); err != nil {
+		var cancelRequested int
+		if err := rows.Scan(&job.id, &job.status, &job.attempt, &cancelRequested); err != nil {
 			rows.Close()
 			return fmt.Errorf("read expired job lease: %w", err)
 		}
+		job.cancelRequested = cancelRequested != 0
 		expired = append(expired, job)
 	}
 	if err := rows.Err(); err != nil {
@@ -623,7 +805,10 @@ func recoverExpiredLeases(ctx context.Context, tx *sql.Tx, now string, nowUnixNa
 	for _, job := range expired {
 		reason := "Worker lease expired; task will be retried."
 		nextStatus := StatusQueued
-		if job.status == StatusPublishing {
+		if job.cancelRequested {
+			reason = "Worker lease expired after cancellation was requested; task was cancelled."
+			nextStatus = StatusCancelled
+		} else if job.status == StatusPublishing {
 			reason = "Worker lease expired during publishing; outcome is uncertain, so automatic retry was skipped to prevent duplicate GitLab comments."
 			nextStatus = StatusFailed
 		} else if job.attempt >= maxJobAttempts {
@@ -639,6 +824,9 @@ func recoverExpiredLeases(ctx context.Context, tx *sql.Tx, now string, nowUnixNa
 			WHERE job_id = ? AND attempt = ? AND finished_at IS NULL`, now, reason, job.id, job.attempt); err != nil {
 			return fmt.Errorf("finish expired job attempt %q: %w", job.id, err)
 		}
+		if err := insertAudit(ctx, tx, 0, "job_status_recovery", job.id, job.status+"->"+nextStatus); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -648,13 +836,15 @@ const maxJobAttempts = 3
 func (s *Store) GetJob(ctx context.Context, jobID string) (Job, error) {
 	var job Job
 	var created string
+	var cancellationRequested int
 	err := s.db.QueryRowContext(ctx, `SELECT id, type, status, project_id, mr_iid, head_sha, actor_id,
-		request, created_at, attempt_count, last_error FROM jobs WHERE id = ?`, jobID).Scan(
+		request, created_at, attempt_count, last_error, cancel_requested FROM jobs WHERE id = ?`, jobID).Scan(
 		&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID,
-		&job.Request, &created, &job.AttemptCount, &job.LastError)
+		&job.Request, &created, &job.AttemptCount, &job.LastError, &cancellationRequested)
 	if err != nil {
 		return Job{}, err
 	}
+	job.CancellationRequested = cancellationRequested != 0
 	job.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	return job, err
 }
@@ -696,15 +886,24 @@ func validTransition(from, to string) bool {
 	case StatusQueued:
 		return to == StatusPreparing || to == StatusCancelled
 	case StatusPreparing:
-		return to == StatusAnalyzing || to == StatusStale || to == StatusFailed
+		return to == StatusAnalyzing || to == StatusStale || to == StatusFailed || to == StatusCancelled
 	case StatusAnalyzing:
-		return to == StatusFixing || to == StatusPublishing || to == StatusStale || to == StatusFailed
+		return to == StatusFixing || to == StatusPublishing || to == StatusStale || to == StatusFailed || to == StatusCancelled
 	case StatusFixing:
-		return to == StatusVerifying || to == StatusStale || to == StatusFailed
+		return to == StatusVerifying || to == StatusStale || to == StatusFailed || to == StatusCancelled
 	case StatusVerifying:
-		return to == StatusPublishing || to == StatusStale || to == StatusFailed
+		return to == StatusPublishing || to == StatusStale || to == StatusFailed || to == StatusCancelled
 	case StatusPublishing:
 		return to == StatusCompleted || to == StatusStale || to == StatusFailed
+	default:
+		return false
+	}
+}
+
+func cancellableStatus(status string) bool {
+	switch status {
+	case StatusPreparing, StatusAnalyzing, StatusFixing, StatusVerifying:
+		return true
 	default:
 		return false
 	}
@@ -741,6 +940,16 @@ func insertEvent(ctx context.Context, tx *sql.Tx, eventID, response string) erro
 	return nil
 }
 
+func insertAudit(ctx context.Context, tx *sql.Tx, actorID int64, action, resource, result string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
+		actorID, action, resource, result, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("record %s audit event: %w", action, err)
+	}
+	return nil
+}
+
 type querier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -761,12 +970,16 @@ func getJobByKey(ctx context.Context, q querier, key string) (Job, error) {
 func latestJob(ctx context.Context, q querier, projectID, mrIID int64) (Job, error) {
 	var job Job
 	var created string
-	err := q.QueryRowContext(ctx, `SELECT id, type, status, project_id, mr_iid, head_sha, actor_id, created_at
+	var cancellationRequested int
+	err := q.QueryRowContext(ctx, `SELECT id, type, status, project_id, mr_iid, head_sha, actor_id, created_at,
+		cancel_requested
 		FROM jobs WHERE project_id = ? AND mr_iid = ? ORDER BY created_at DESC LIMIT 1`, projectID, mrIID).
-		Scan(&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID, &created)
+		Scan(&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID, &created,
+			&cancellationRequested)
 	if err != nil {
 		return Job{}, err
 	}
+	job.CancellationRequested = cancellationRequested != 0
 	job.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 	return job, err
 }

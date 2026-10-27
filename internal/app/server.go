@@ -36,6 +36,16 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", httpServer.Addr, err)
 	}
+	retentionCtx, stopRetention := context.WithCancel(ctx)
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		s.runRetention(retentionCtx)
+	}()
+	defer func() {
+		stopRetention()
+		<-retentionDone
+	}()
 	s.logger.Info("Corvex server listening", "address", httpServer.Addr)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
@@ -53,6 +63,26 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
+	}
+}
+
+func (s *Server) runRetention(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		now := time.Now().UTC()
+		historyBefore := now.AddDate(0, 0, -s.cfg.Storage.RetentionDays)
+		auditBefore := now.AddDate(0, 0, -s.cfg.Storage.AuditRetentionDays)
+		cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := s.store.PruneHistory(cleanupCtx, historyBefore, auditBefore); err != nil {
+			s.logger.Error("prune persisted history", "error", err)
+		}
+		cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -84,6 +114,12 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	modelCalls, err := s.store.ModelCallMetrics(r.Context())
+	if err != nil {
+		s.logger.Error("collect model call metrics", "error", err)
+		http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = fmt.Fprintln(w, "# HELP corvex_jobs Number of persisted tasks by lifecycle status.")
 	_, _ = fmt.Fprintln(w, "# TYPE corvex_jobs gauge")
@@ -93,6 +129,22 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		jobs.StatusStale, jobs.StatusCancelled,
 	} {
 		_, _ = fmt.Fprintf(w, "corvex_jobs{status=%q} %d\n", status, counts[status])
+	}
+	_, _ = fmt.Fprintln(w, "# HELP corvex_model_calls_total Model API calls by task type and outcome.")
+	_, _ = fmt.Fprintln(w, "# TYPE corvex_model_calls_total counter")
+	_, _ = fmt.Fprintln(w, "# HELP corvex_model_call_duration_seconds_sum Total duration of model API calls.")
+	_, _ = fmt.Fprintln(w, "# TYPE corvex_model_call_duration_seconds_sum counter")
+	_, _ = fmt.Fprintln(w, "# HELP corvex_model_input_tokens_total Input tokens reported for model API calls.")
+	_, _ = fmt.Fprintln(w, "# TYPE corvex_model_input_tokens_total counter")
+	_, _ = fmt.Fprintln(w, "# HELP corvex_model_output_tokens_total Output tokens reported for model API calls.")
+	_, _ = fmt.Fprintln(w, "# TYPE corvex_model_output_tokens_total counter")
+	for _, metric := range modelCalls {
+		labels := fmt.Sprintf(`task_type=%q,outcome=%q`, metric.TaskType, metric.Outcome)
+		_, _ = fmt.Fprintf(w, "corvex_model_calls_total{%s} %d\n", labels, metric.Calls)
+		_, _ = fmt.Fprintf(w, "corvex_model_call_duration_seconds_sum{%s} %.3f\n",
+			labels, float64(metric.DurationMS)/1000)
+		_, _ = fmt.Fprintf(w, "corvex_model_input_tokens_total{%s} %d\n", labels, metric.InputTokens)
+		_, _ = fmt.Fprintf(w, "corvex_model_output_tokens_total{%s} %d\n", labels, metric.OutputTokens)
 	}
 }
 
