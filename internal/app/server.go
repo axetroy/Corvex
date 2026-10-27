@@ -63,6 +63,7 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /readyz", s.ready)
+	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("POST /webhooks/gitlab", s.webhook)
 	return mux
 }
@@ -74,6 +75,25 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ready\n"))
+}
+
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	counts, err := s.store.JobCounts(r.Context())
+	if err != nil {
+		s.logger.Error("collect job metrics", "error", err)
+		http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = fmt.Fprintln(w, "# HELP corvex_jobs Number of persisted tasks by lifecycle status.")
+	_, _ = fmt.Fprintln(w, "# TYPE corvex_jobs gauge")
+	for _, status := range []string{
+		jobs.StatusQueued, jobs.StatusPreparing, jobs.StatusAnalyzing, jobs.StatusFixing,
+		jobs.StatusVerifying, jobs.StatusPublishing, jobs.StatusCompleted, jobs.StatusFailed,
+		jobs.StatusStale, jobs.StatusCancelled,
+	} {
+		_, _ = fmt.Fprintf(w, "corvex_jobs{status=%q} %d\n", status, counts[status])
+	}
 }
 
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +133,10 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		s.reply(w, r, event, err.Error())
 		return
 	}
+	if command.Name == "explain" && len(command.Args) == 0 {
+		s.reply(w, r, event, "Usage: `@corvex explain <path>`.")
+		return
+	}
 	if len(command.Args) > 1 || (len(command.Args) == 1 && command.Name != "fix" && command.Name != "explain") {
 		s.reply(w, r, event, "This command does not accept arguments.")
 		return
@@ -141,7 +165,12 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 			Request: strings.Join(command.Args, " "),
 		}, s.cfg.Fix.Enabled, contains(s.cfg.Fix.AllowedUserIDs, event.User.ID))
 	case "explain":
-		result, err = s.recordResponse(ctx, eventID, "The `explain` command is not implemented yet.")
+		key := fmt.Sprintf("%d:%d:explain:%s", event.Project.ID, event.MergeRequest.IID, eventID)
+		result, err = s.store.CreateExplain(ctx, eventID, key, jobs.Job{
+			ProjectID: event.Project.ID, MRIID: event.MergeRequest.IID,
+			HeadSHA: event.MergeRequest.LastCommit.ID, ActorID: event.User.ID,
+			Request: command.Args[0],
+		})
 	default:
 		result, err = s.recordResponse(ctx, eventID, fmt.Sprintf("The `%s` command is not implemented yet.", command.Name))
 	}

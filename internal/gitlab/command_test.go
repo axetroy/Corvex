@@ -16,6 +16,7 @@ func TestParseCommand(t *testing.T) {
 		{note: "  @Corvex   REVIEW \n", name: "review"},
 		{note: "@corvex status", name: "status"},
 		{note: "@corvex fix bug-123", name: "fix", args: []string{"bug-123"}},
+		{note: "@corvex explain internal/server.go", name: "explain", args: []string{"internal/server.go"}},
 		{note: "hello @corvex review", wantErr: true},
 		{note: "@corvex unknown", wantErr: true},
 		{note: "@corvex", wantErr: true},

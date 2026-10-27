@@ -19,10 +19,18 @@ const (
 )
 
 type Client struct {
-	endpoint   string
-	apiKey     string
-	model      string
-	httpClient *http.Client
+	endpoint         string
+	apiKey           string
+	model            string
+	maxTokens        int
+	tokenBudget      TokenBudget
+	dailyTokenBudget int64
+	httpClient       *http.Client
+}
+
+type TokenBudget interface {
+	ReserveModelTokens(context.Context, int64, int64) (string, error)
+	SettleModelTokens(context.Context, string, int64, int64) error
 }
 
 type ModelRequest struct {
@@ -66,6 +74,20 @@ type chatCompletionResponse struct {
 }
 
 func NewClient(baseURL, apiKey, model string, timeout time.Duration) (*Client, error) {
+	return NewClientWithMaxTokens(baseURL, apiKey, model, timeout, 4096)
+}
+
+func NewClientWithMaxTokens(baseURL, apiKey, model string, timeout time.Duration, maxTokens int) (*Client, error) {
+	return NewClientWithTokenBudget(baseURL, apiKey, model, timeout, maxTokens, nil, 0)
+}
+
+func NewClientWithTokenBudget(
+	baseURL, apiKey, model string,
+	timeout time.Duration,
+	maxTokens int,
+	budget TokenBudget,
+	dailyTokenBudget int64,
+) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" ||
 		parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" ||
@@ -81,17 +103,27 @@ func NewClient(baseURL, apiKey, model string, timeout time.Duration) (*Client, e
 	if timeout <= 0 {
 		return nil, errors.New("model request timeout must be positive")
 	}
+	if maxTokens <= 0 || maxTokens > 8192 {
+		return nil, errors.New("model max output tokens must be between 1 and 8192")
+	}
+	if dailyTokenBudget < 0 {
+		return nil, errors.New("daily model token budget must not be negative")
+	}
+	if dailyTokenBudget > 0 && budget == nil {
+		return nil, errors.New("daily model token budget requires a persistent budget store")
+	}
 	return &Client{
 		endpoint: strings.TrimRight(baseURL, "/") + "/chat/completions",
-		apiKey:   apiKey,
-		model:    model,
+		apiKey:   apiKey, model: model,
+		maxTokens:   maxTokens,
+		tokenBudget: budget, dailyTokenBudget: dailyTokenBudget,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 	}, nil
 }
 
-func (c *Client) Generate(ctx context.Context, request ModelRequest) (ModelResponse, error) {
+func (c *Client) Generate(ctx context.Context, request ModelRequest) (result ModelResponse, resultErr error) {
 	if strings.TrimSpace(request.SystemPrompt) == "" || strings.TrimSpace(request.UserPrompt) == "" {
 		return ModelResponse{}, errors.New("system and user prompts are required")
 	}
@@ -102,13 +134,32 @@ func (c *Client) Generate(ctx context.Context, request ModelRequest) (ModelRespo
 			{Role: "user", Content: request.UserPrompt},
 		},
 		Temperature: 0,
-		MaxTokens:   4096,
+		MaxTokens:   c.maxTokens,
 	})
 	if err != nil {
 		return ModelResponse{}, fmt.Errorf("encode model request: %w", err)
 	}
 	if len(payload) > maxPromptBytes {
 		return ModelResponse{}, fmt.Errorf("model request exceeds %d-byte limit", maxPromptBytes)
+	}
+	var budgetDay string
+	reservedTokens := int64(len(request.SystemPrompt) + len(request.UserPrompt) + c.maxTokens)
+	if c.dailyTokenBudget > 0 {
+		budgetDay, err = c.tokenBudget.ReserveModelTokens(ctx, c.dailyTokenBudget, reservedTokens)
+		if err != nil {
+			return ModelResponse{}, fmt.Errorf("reserve daily model token budget: %w", err)
+		}
+		defer func() {
+			actualTokens := reservedTokens
+			if resultErr == nil && result.Usage.TotalTokens > 0 {
+				actualTokens = int64(result.Usage.TotalTokens)
+			}
+			settleCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := c.tokenBudget.SettleModelTokens(settleCtx, budgetDay, reservedTokens, actualTokens); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("settle daily model token budget: %w", err))
+			}
+		}()
 	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
 	if err != nil {

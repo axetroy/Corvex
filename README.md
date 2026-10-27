@@ -9,8 +9,8 @@ The implementation currently provides:
 - A GitLab Note Hook endpoint with constant-time webhook-token validation.
 - Project and user allowlists, bot/system-note filtering, and strict `@corvex` command parsing.
 - SQLite persistence with durable event deduplication, queued review/fix tasks, and fix authorization auditing.
-- `review`, allowlisted `fix`, `status`, and owner-only `cancel` commands.
-- GitLab MR note replies, `/healthz` and database-backed `/readyz` endpoints.
+- `review`, `explain <path>` for a file at the MR's pinned Head SHA, allowlisted `fix`, `status`, and owner-only `cancel` commands.
+- GitLab MR note replies, `/healthz`, database-backed `/readyz`, and a Prometheus `/metrics` endpoint exposing only task-status counts.
 - YAML configuration with secrets supplied only through environment variables.
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
@@ -18,7 +18,9 @@ The implementation currently provides:
 
 The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push.
 
-To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. Webhook handling only queues work; the worker performs model calls. To enable fix proposals, additionally set `fix.enabled: true` and populate `fix.allowed_user_ids` with the permitted GitLab user IDs. The fix allowlist must be non-empty, and the agent must be enabled.
+Workers use a 30-second renewable job lease. After a worker interruption, tasks that have not entered publishing are retried up to three attempts. An expired publishing lease fails without automatic retry because the comment outcome may be uncertain, avoiding duplicate GitLab comments.
+
+To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. `agent.max_output_tokens` bounds each completion's output (4096 by default, maximum 8192). Set `agent.daily_token_budget` to reserve a UTC-day token budget (`0` disables it); the client conservatively reserves prompt bytes plus maximum output tokens and settles against provider usage, retaining the reservation when a request's outcome is uncertain. This is a token budget, not a price-based spend cap. Webhook handling only queues work; the worker performs model calls. To enable fix proposals, additionally set `fix.enabled: true` and populate `fix.allowed_user_ids` with the permitted GitLab user IDs. The fix allowlist must be non-empty, and the agent must be enabled.
 
 ## Run locally
 
@@ -39,6 +41,16 @@ go run ./cmd/corvex --config configs/config.yaml worker
 ```
 
 The configured project IDs and user IDs are explicit allowlists. Both must be non-empty; an empty list never means unrestricted access.
+
+An online SQLite backup can be created while the service is running. The destination must not already exist:
+
+```sh
+go run ./cmd/corvex backup \
+  --database ./data/state/corvex.db \
+  --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
+```
+
+To restore, stop both the server and worker, replace the configured database file with a verified backup, then restart the services. Apply your organization's encryption, access-control, and off-site retention policies to backup files.
 
 ## Docker Compose
 

@@ -67,3 +67,17 @@ func TestEnabledFixRequiresDedicatedUserAllowlist(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want required fix user allowlist", err)
 	}
 }
+
+func TestEnabledAgentBoundsMaximumOutputTokens(t *testing.T) {
+	err := (Config{Agent: AgentConfig{Enabled: true, MaxOutputTokens: 8193}}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "agent.max_output_tokens must be between 1 and 8192") {
+		t.Fatalf("Validate() error = %v, want bounded model output tokens", err)
+	}
+}
+
+func TestEnabledAgentRejectsNegativeDailyTokenBudget(t *testing.T) {
+	err := (Config{Agent: AgentConfig{Enabled: true, MaxOutputTokens: 4096, DailyTokenBudget: -1}}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "agent.daily_token_budget must be between 0 and 1000000000") {
+		t.Fatalf("Validate() error = %v, want bounded daily token budget", err)
+	}
+}

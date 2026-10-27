@@ -26,12 +26,14 @@ type gitLabReviewClient interface {
 type repositoryManager interface {
 	PrepareWorkspace(context.Context, int64, string, string, string) (git.Workspace, error)
 	Diff(context.Context, git.Workspace, string, int, int) (git.DiffResult, error)
+	ReadFile(context.Context, git.Workspace, string, int64) ([]byte, error)
 	ApplyPatch(context.Context, git.Workspace, string, []string, int) (string, error)
 	CleanupWorkspace(context.Context, git.Workspace) error
 }
 
 type reviewWorkflow interface {
 	Review(context.Context, review.Context, git.DiffResult) (review.Outcome, error)
+	Explain(context.Context, review.Context, string, []byte) (review.Explanation, error)
 }
 
 type fixWorkflow interface {
@@ -97,29 +99,67 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) processNext(ctx context.Context) (bool, error) {
-	job, found, err := w.store.ClaimNext(ctx)
+	const leaseDuration = 30 * time.Second
+	job, found, err := w.store.ClaimNextWithLease(ctx, leaseDuration)
 	if err != nil || !found {
 		return false, err
 	}
 	stage := job.Status
 	jobCtx, cancel := context.WithTimeout(ctx, time.Duration(w.cfg.Worker.JobTimeout))
-	defer cancel()
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	heartbeatDone := make(chan error, 1)
+	go w.maintainLease(heartbeatCtx, cancel, job, leaseDuration, heartbeatDone)
 	err = w.execute(jobCtx, job, &stage)
+	cancel()
+	stopHeartbeat()
+	if heartbeatErr := <-heartbeatDone; err == nil && heartbeatErr != nil {
+		err = heartbeatErr
+	}
 	if err == nil {
 		return true, nil
+	}
+	if ctx.Err() != nil {
+		return true, err
 	}
 	if !terminalStatus(stage) {
 		failureCtx, failureCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer failureCancel()
-		if updateErr := w.store.UpdateStatus(failureCtx, job.ID, stage, jobs.StatusFailed, err.Error()); updateErr != nil {
+		if updateErr := w.store.UpdateLeasedStatus(failureCtx, job.ID, job.LeaseToken, stage, jobs.StatusFailed, err.Error()); updateErr != nil {
 			return true, errors.Join(err, fmt.Errorf("mark task failed: %w", updateErr))
 		}
 	}
 	return true, err
 }
 
+func (w *Worker) maintainLease(
+	ctx context.Context,
+	cancelJob context.CancelFunc,
+	job jobs.Job,
+	leaseDuration time.Duration,
+	done chan<- error,
+) {
+	ticker := time.NewTicker(leaseDuration / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			done <- nil
+			return
+		case <-ticker.C:
+			renewCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := w.store.RenewLease(renewCtx, job.ID, job.LeaseToken, leaseDuration)
+			cancel()
+			if err != nil {
+				cancelJob()
+				done <- fmt.Errorf("renew worker lease for job %s: %w", job.ID, err)
+				return
+			}
+		}
+	}
+}
+
 func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resultErr error) {
-	if job.Type != jobs.TypeReview && job.Type != jobs.TypeFix {
+	if job.Type != jobs.TypeReview && job.Type != jobs.TypeFix && job.Type != jobs.TypeExplain {
 		return fmt.Errorf("unsupported task type %q", job.Type)
 	}
 	if job.Type == jobs.TypeFix && (!w.cfg.Fix.Enabled || w.fixer == nil) {
@@ -161,16 +201,19 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 		}
 	}()
 
-	diff, err := w.repo.Diff(ctx, workspace, mergeRequest.DiffRefs.BaseSHA,
-		w.cfg.Review.MaxFiles, w.cfg.Review.MaxContextBytes)
-	if err != nil {
-		return fmt.Errorf("build MR diff: %w", err)
-	}
 	reviewContext := review.Context{
 		ProjectID: job.ProjectID, MRIID: job.MRIID, Title: mergeRequest.Title,
 		Description: mergeRequest.Description, SourceBranch: mergeRequest.SourceBranch,
 		TargetBranch: mergeRequest.TargetBranch, BaseSHA: mergeRequest.DiffRefs.BaseSHA,
 		HeadSHA: job.HeadSHA,
+	}
+	if job.Type == jobs.TypeExplain {
+		return w.executeExplain(ctx, job, stage, mergeRequest, workspace, reviewContext, &cleaned)
+	}
+	diff, err := w.repo.Diff(ctx, workspace, mergeRequest.DiffRefs.BaseSHA,
+		w.cfg.Review.MaxFiles, w.cfg.Review.MaxContextBytes)
+	if err != nil {
+		return fmt.Errorf("build MR diff: %w", err)
 	}
 	if job.Type == jobs.TypeFix {
 		return w.executeFix(ctx, job, stage, mergeRequest, workspace, diff, reviewContext, &cleaned)
@@ -182,7 +225,7 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	if cleanupErr != nil {
 		return fmt.Errorf("clean review workspace before model call: %w", cleanupErr)
 	}
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusAnalyzing); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusAnalyzing); err != nil {
 		return err
 	}
 	reviewStarted := time.Now()
@@ -205,7 +248,7 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	if !sameReviewSnapshot(mergeRequest, latest, job.HeadSHA) {
 		return w.markStale(ctx, job, stage, "The MR changed while the review was running; no result was published.")
 	}
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusPublishing); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusPublishing); err != nil {
 		return err
 	}
 	fallback := make([]fallbackFinding, 0)
@@ -226,7 +269,62 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatReview(job, outcome, inlinePosted, fallback)); err != nil {
 		return fmt.Errorf("publish review summary: %w", err)
 	}
-	return w.transition(ctx, job.ID, stage, jobs.StatusCompleted)
+	return w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusCompleted)
+}
+
+func (w *Worker) executeExplain(
+	ctx context.Context,
+	job jobs.Job,
+	stage *string,
+	mergeRequest gitlab.MergeRequest,
+	workspace git.Workspace,
+	reviewContext review.Context,
+	workspaceCleaned *bool,
+) error {
+	source, err := w.repo.ReadFile(ctx, workspace, job.Request, int64(w.cfg.Review.MaxContextBytes))
+	if err != nil {
+		return fmt.Errorf("read requested file at pinned MR Head: %w", err)
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanupErr := w.repo.CleanupWorkspace(cleanupCtx, workspace)
+	cancel()
+	*workspaceCleaned = cleanupErr == nil
+	if cleanupErr != nil {
+		return fmt.Errorf("clean explain workspace before model call: %w", cleanupErr)
+	}
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusAnalyzing); err != nil {
+		return err
+	}
+	started := time.Now()
+	explanation, err := w.reviewer.Explain(ctx, reviewContext, job.Request, source)
+	if err != nil {
+		w.logger.Warn("explain model call failed",
+			"job_id", job.ID, "duration", time.Since(started), "error", err)
+		return err
+	}
+	w.logger.Info("explain model call completed",
+		"job_id", job.ID, "model", explanation.Model, "duration", time.Since(started),
+		"input_tokens", explanation.Usage.InputTokens, "output_tokens", explanation.Usage.OutputTokens,
+		"total_tokens", explanation.Usage.TotalTokens)
+	latest, err := w.gitlab.GetMergeRequest(ctx, job.ProjectID, job.MRIID)
+	if err != nil {
+		return fmt.Errorf("recheck MR snapshot before publishing explanation: %w", err)
+	}
+	if !sameReviewSnapshot(mergeRequest, latest, job.HeadSHA) {
+		return w.markStale(ctx, job, stage, "The MR changed while the explanation was being prepared; no result was published.")
+	}
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusPublishing); err != nil {
+		return err
+	}
+	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatExplanation(job, explanation)); err != nil {
+		return fmt.Errorf("publish file explanation: %w", err)
+	}
+	return w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusCompleted)
+}
+
+func formatExplanation(job jobs.Job, explanation review.Explanation) string {
+	return fmt.Sprintf("## Corvex explanation for `%s`\n\n%s",
+		escapeReviewText(job.Request), escapeReviewText(explanation.Text))
 }
 
 func (w *Worker) executeFix(
@@ -239,10 +337,10 @@ func (w *Worker) executeFix(
 	reviewContext review.Context,
 	workspaceCleaned *bool,
 ) error {
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusAnalyzing); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusAnalyzing); err != nil {
 		return err
 	}
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusFixing); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusFixing); err != nil {
 		return err
 	}
 	started := time.Now()
@@ -256,7 +354,7 @@ func (w *Worker) executeFix(
 		"job_id", job.ID, "model", outcome.Model, "duration", time.Since(started),
 		"input_tokens", outcome.Usage.InputTokens, "output_tokens", outcome.Usage.OutputTokens,
 		"total_tokens", outcome.Usage.TotalTokens, "patch_bytes", len(outcome.Patch))
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusVerifying); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusVerifying); err != nil {
 		return err
 	}
 	finalPatch := ""
@@ -286,13 +384,13 @@ func (w *Worker) executeFix(
 	if !sameReviewSnapshot(mergeRequest, latest, job.HeadSHA) {
 		return w.markStale(ctx, job, stage, "The MR changed while the fix proposal was being prepared; no patch was published.")
 	}
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusPublishing); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusPublishing); err != nil {
 		return err
 	}
 	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatFixProposal(job, outcome, finalPatch)); err != nil {
 		return fmt.Errorf("publish fix proposal: %w", err)
 	}
-	return w.transition(ctx, job.ID, stage, jobs.StatusCompleted)
+	return w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusCompleted)
 }
 
 func formatFixProposal(job jobs.Job, outcome fix.Outcome, patch string) string {
@@ -336,8 +434,8 @@ func sameReviewSnapshot(before, after gitlab.MergeRequest, expectedHeadSHA strin
 		strings.EqualFold(before.DiffRefs.StartSHA, after.DiffRefs.StartSHA)
 }
 
-func (w *Worker) transition(ctx context.Context, jobID string, stage *string, next string) error {
-	if err := w.store.UpdateStatus(ctx, jobID, *stage, next, ""); err != nil {
+func (w *Worker) transition(ctx context.Context, jobID, leaseToken string, stage *string, next string) error {
+	if err := w.store.UpdateLeasedStatus(ctx, jobID, leaseToken, *stage, next, ""); err != nil {
 		return err
 	}
 	*stage = next
@@ -345,11 +443,17 @@ func (w *Worker) transition(ctx context.Context, jobID string, stage *string, ne
 }
 
 func (w *Worker) markStale(ctx context.Context, job jobs.Job, stage *string, message string) error {
-	if err := w.transition(ctx, job.ID, stage, jobs.StatusStale); err != nil {
+	if err := w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusStale); err != nil {
 		return err
 	}
+	taskName := "review"
+	if job.Type == jobs.TypeExplain {
+		taskName = "explain"
+	} else if job.Type == jobs.TypeFix {
+		taskName = "fix"
+	}
 	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID,
-		fmt.Sprintf("Review task `%s` was skipped: %s", job.ID, message)); err != nil {
+		fmt.Sprintf("Corvex %s task `%s` was skipped: %s", taskName, job.ID, message)); err != nil {
 		return fmt.Errorf("publish stale-task notice: %w", err)
 	}
 	return nil

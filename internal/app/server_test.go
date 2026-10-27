@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,71 @@ func TestWebhookQueuesAndDeduplicatesReview(t *testing.T) {
 	}
 	if postedNotes != 1 {
 		t.Fatalf("posted note count = %d, want 1 after duplicate delivery", postedNotes)
+	}
+}
+
+func TestExplainCommandQueuesRequestedPath(t *testing.T) {
+	var postedNotes []string
+	gitlabAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse GitLab note form: %v", err)
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		postedNotes = append(postedNotes, r.Form.Get("body"))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer gitlabAPI.Close()
+
+	store, err := jobs.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	client, err := gitlab.NewClient(gitlabAPI.URL, "api-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(config.Config{
+		GitLab: config.GitLabConfig{
+			BaseURL: gitlabAPI.URL, WebhookSecret: "secret",
+			AllowedProjectIDs: []int64{10}, AllowedUserIDs: []int64{42},
+		},
+	}, store, client, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
+
+	for _, test := range []struct {
+		id      int
+		command string
+	}{
+		{id: 100, command: "@corvex explain internal/app/server.go"},
+		{id: 101, command: "@corvex explain"},
+	} {
+		payload := `{"object_kind":"note","user":{"id":42,"username":"developer"},"project":{"id":10},"object_attributes":{"id":` +
+			fmt.Sprint(test.id) + `,"note":"` + test.command + `","noteable_type":"MergeRequest"},"merge_request":{"iid":5,"last_commit":{"id":"` +
+			strings.Repeat("a", 40) + `"}}}`
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab", strings.NewReader(payload))
+		req.Header.Set("X-Gitlab-Token", "secret")
+		req.Header.Set("X-Gitlab-Event", "Note Hook")
+		res := httptest.NewRecorder()
+		server.Handler().ServeHTTP(res, req)
+		if res.Code != http.StatusAccepted {
+			t.Fatalf("webhook status = %d, want %d (body: %s)", res.Code, http.StatusAccepted, res.Body)
+		}
+	}
+	if len(postedNotes) != 2 || !strings.Contains(postedNotes[0], "Queued explain task") ||
+		!strings.Contains(postedNotes[1], "Usage:") {
+		t.Fatalf("unexpected explain command responses: %#v", postedNotes)
+	}
+	parts := strings.Split(postedNotes[0], "`")
+	if len(parts) < 2 {
+		t.Fatalf("could not parse queued explain ID from %q", postedNotes[0])
+	}
+	job, err := store.GetJob(context.Background(), parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Type != jobs.TypeExplain || job.Request != "internal/app/server.go" {
+		t.Fatalf("queued explain task = type %q, path %q", job.Type, job.Request)
 	}
 }
 
@@ -168,6 +234,29 @@ func TestReadinessChecksDatabase(t *testing.T) {
 	server.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+}
+
+func TestMetricsExposeJobCountsWithoutIdentifiers(t *testing.T) {
+	store, err := jobs.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.CreateReview(context.Background(), "metrics-note", "metrics-key", jobs.Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("a", 40), ActorID: 42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(config.Config{}, store, nil, slog.Default())
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	res := httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Header().Get("Content-Type"), "text/plain") ||
+		!strings.Contains(res.Body.String(), `corvex_jobs{status="queued"} 1`) ||
+		strings.Contains(res.Body.String(), "metrics-key") {
+		t.Fatalf("unexpected metrics response: status=%d type=%q body=%s",
+			res.Code, res.Header().Get("Content-Type"), res.Body.String())
 	}
 }
 

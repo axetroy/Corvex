@@ -2,8 +2,11 @@ package jobs
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCreateReviewIsIdempotentAndCancelChecksOwner(t *testing.T) {
@@ -91,6 +94,87 @@ func TestEventResponseCanBeRetriedUntilDelivered(t *testing.T) {
 	}
 }
 
+func TestBackupCreatesConsistentSQLiteCopy(t *testing.T) {
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "state.db")
+	backupPath := filepath.Join(root, "backup.db")
+	store, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.CreateReview(context.Background(), "backup-note", "backup-key", Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("a", 40), ActorID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Backup(context.Background(), backupPath); err != nil {
+		t.Fatalf("Backup() error = %v", err)
+	}
+	if err := store.Backup(context.Background(), backupPath); err == nil {
+		t.Fatal("Backup() overwrote an existing destination")
+	}
+	if err := store.Backup(context.Background(), databasePath); err == nil {
+		t.Fatal("Backup() accepted the source database as destination")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("backup database is empty")
+	}
+	backup, err := Open(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backup.Close()
+	jobID := strings.Split(result.Response, "`")[1]
+	job, err := backup.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("backed-up task cannot be read: %v", err)
+	}
+	if job.Status != StatusQueued || job.HeadSHA != strings.Repeat("a", 40) {
+		t.Fatalf("unexpected restored job: %#v", job)
+	}
+}
+
+func TestModelTokenBudgetReservesAndSettlesDailyUsage(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	day, err := store.ReserveModelTokens(ctx, 100, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReserveModelTokens(ctx, 100, 41); err == nil {
+		t.Fatal("reservation exceeded the remaining daily model budget")
+	}
+	if err := store.SettleModelTokens(ctx, day, 60, 25); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReserveModelTokens(ctx, 100, 76); err == nil {
+		t.Fatal("reservation ignored settled model usage")
+	}
+	secondReservation, err := store.ReserveModelTokens(ctx, 100, 75)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SettleModelTokens(ctx, secondReservation, 75, 75); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReserveModelTokens(ctx, 100, 1); err == nil {
+		t.Fatal("reservation succeeded after the daily budget was exhausted")
+	}
+}
+
 func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {
@@ -129,6 +213,169 @@ func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	}
 	if stored.Status != StatusCompleted || stored.AttemptCount != 1 {
 		t.Fatalf("unexpected stored job: %#v", stored)
+	}
+}
+
+func TestClaimNextWithLeaseRecoversExpiredAttemptAndFencesOldWorker(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	if _, err := store.CreateReview(ctx, "lease-note", "lease-key", Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("a", 40), ActorID: 42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, found, err := store.ClaimNextWithLease(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || first.LeaseToken == "" {
+		t.Fatalf("first leased task = %#v, found = %t", first, found)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE jobs SET lease_until = ? WHERE id = ?`,
+		time.Now().UTC().Add(-time.Minute).UnixNano(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, found, err := store.ClaimNextWithLease(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || second.ID != first.ID || second.AttemptCount != 2 || second.LeaseToken == first.LeaseToken {
+		t.Fatalf("recovered task = %#v, found = %t", second, found)
+	}
+	if err := store.UpdateLeasedStatus(ctx, first.ID, first.LeaseToken, StatusPreparing, StatusAnalyzing, ""); err == nil {
+		t.Fatal("expired worker unexpectedly retained ownership")
+	}
+	if err := store.UpdateLeasedStatus(ctx, second.ID, second.LeaseToken, StatusPreparing, StatusAnalyzing, ""); err != nil {
+		t.Fatalf("new worker could not advance recovered task: %v", err)
+	}
+
+	var finishedAt, attemptError string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT finished_at, error FROM job_attempts WHERE job_id = ? AND attempt = 1`, first.ID).
+		Scan(&finishedAt, &attemptError); err != nil {
+		t.Fatal(err)
+	}
+	if finishedAt == "" || !strings.Contains(attemptError, "will be retried") {
+		t.Fatalf("expired attempt was not closed with recovery reason: finished_at=%q error=%q", finishedAt, attemptError)
+	}
+}
+
+func TestExpiredPublishingLeaseFailsWithoutRetry(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	if _, err := store.CreateReview(ctx, "publishing-note", "publishing-key", Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("b", 40), ActorID: 42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, found, err := store.ClaimNextWithLease(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("expected task to be claimed")
+	}
+	if err := store.UpdateLeasedStatus(ctx, job.ID, job.LeaseToken, StatusPreparing, StatusAnalyzing, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateLeasedStatus(ctx, job.ID, job.LeaseToken, StatusAnalyzing, StatusPublishing, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE jobs SET lease_until = ? WHERE id = ?`,
+		time.Now().UTC().Add(-time.Minute).UnixNano(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	var leaseUntil int64
+	var leaseToken string
+	if err := store.db.QueryRowContext(ctx, `SELECT lease_until, lease_token FROM jobs WHERE id = ?`, job.ID).
+		Scan(&leaseUntil, &leaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if leaseUntil > time.Now().UTC().UnixNano() || leaseToken == "" {
+		t.Fatalf("test failed to expire lease: until=%d token=%q now=%d", leaseUntil, leaseToken, time.Now().UTC().UnixNano())
+	}
+
+	if _, found, err := store.ClaimNextWithLease(ctx, time.Minute); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatal("publishing task was retried after its outcome became uncertain")
+	}
+	stored, err := store.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != StatusFailed || !strings.Contains(stored.LastError, "outcome is uncertain") {
+		t.Fatalf("expired publishing task = %#v", stored)
+	}
+	if err := store.RenewLease(ctx, job.ID, job.LeaseToken, time.Minute); err == nil {
+		t.Fatalf("terminal job lease unexpectedly renewed: %v", err)
+	}
+}
+
+func TestExpiredLeaseStopsAfterMaximumAttempts(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	if _, err := store.CreateReview(ctx, "attempt-limit-note", "attempt-limit-key", Job{
+		ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("c", 40), ActorID: 42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, found, err := store.ClaimNextWithLease(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("expected initial attempt to be claimed")
+	}
+	for attempt := 1; attempt <= maxJobAttempts; attempt++ {
+		if job.AttemptCount != attempt {
+			t.Fatalf("attempt %d claim = %#v", attempt, job)
+		}
+		if _, err := store.db.ExecContext(ctx, `UPDATE jobs SET lease_until = ? WHERE id = ?`,
+			time.Now().UTC().Add(-time.Minute).UnixNano(), job.ID); err != nil {
+			t.Fatal(err)
+		}
+		next, found, err := store.ClaimNextWithLease(ctx, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt < maxJobAttempts {
+			if !found {
+				t.Fatalf("task was not recovered for attempt %d", attempt+1)
+			}
+			job = next
+		} else if found {
+			t.Fatal("task exceeded the configured maximum attempts")
+		}
+	}
+	var jobID string
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE idempotency_key = ?`, "attempt-limit-key").
+		Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != StatusFailed || stored.AttemptCount != maxJobAttempts ||
+		!strings.Contains(stored.LastError, "maximum number of attempts") {
+		t.Fatalf("task after attempt limit = %#v", stored)
 	}
 }
 
