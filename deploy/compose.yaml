@@ -1,0 +1,58 @@
+services:
+  corvex:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8080:8080"
+    environment:
+      CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
+      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN:?set CORVEX_GITLAB_READ_TOKEN}
+      CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET:?set CORVEX_WEBHOOK_SECRET}
+      CORVEX_STORAGE_ROOT: /data/corvex
+      CORVEX_DATABASE: /data/corvex/state/corvex.db
+      CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}
+    volumes:
+      - ../configs/config.yaml:/etc/corvex/config.yaml:ro
+      - corvex-data:/data/corvex
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  corvex-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["--config", "/etc/corvex/config.yaml", "worker"]
+    profiles: ["worker"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
+      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN:?set CORVEX_GITLAB_READ_TOKEN}
+      CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET:?set CORVEX_WEBHOOK_SECRET}
+      CORVEX_STORAGE_ROOT: /data/corvex
+      CORVEX_DATABASE: /data/corvex/state/corvex.db
+      CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}
+    volumes:
+      - ../configs/config.yaml:/etc/corvex/config.yaml:ro
+      - corvex-data:/data/corvex
+
+volumes:
+  corvex-data:

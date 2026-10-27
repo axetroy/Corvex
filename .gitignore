@@ -1,0 +1,5 @@
+/configs/config.yaml
+/.env
+/data/
+/corvex
+/coverage.out
