@@ -2,17 +2,19 @@
 
 ## 运行环境要求
 
-- 从源码构建或运行时，使用 [`go.mod`](https://github.com/axetroy/Corvex/blob/main/go.mod) 声明的 Go 版本。
+- 从源码构建或运行需要 Node.js 26.12.1 及 npm；使用 `npm ci` 按锁文件安装依赖。
 - Server 需要访问 GitLab API；GitLab 必须能访问 Server 的 Webhook 地址。
 - Worker 需要 `git` 可执行程序、GitLab API/仓库抓取的网络访问，以及（启用 Agent 时）访问模型 API 的 HTTPS 网络。项目提供的 Docker 镜像包含 Git。
 - SQLite 与 Git 数据必须存储在持久且可写的卷中，不能依赖容器临时文件系统。Corvex 使用 SQLite WAL 模式；应选择可靠支持 SQLite 锁定的本地文件系统/卷，不要假定任意网络文件系统都适用。
 - 保持系统时间同步。每日模型预算按 UTC 记账。
 
-Go SQLite 驱动是纯 Go 实现，不需要额外部署 SQLite 服务。Server 与 Worker 是同一个可执行文件的不同运行模式：
+SQLite 通过 Node.js 内置的 `node:sqlite` 模块运行，不需要原生扩展或额外部署 SQLite 服务。构建 TypeScript 应用后，Server 与 Worker 作为两个独立进程运行：
 
 ```sh
-corvex --config configs/config.yaml server
-corvex --config configs/config.yaml worker
+npm ci
+npm run build
+npm start -- --config configs/config.yaml server
+npm start -- --config configs/config.yaml worker
 ```
 
 默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。`agent.enabled` 未设为 `true` 时 Worker 会拒绝启动。
@@ -74,12 +76,12 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 服务运行期间可以创建 SQLite 在线备份；输出文件必须不存在：
 
 ```sh
-go run ./cmd/corvex backup \
+npm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
 
-容器部署时，应在可访问挂载数据库且安装了 Corvex 可执行文件的环境中运行备份命令。备份应采用与生产数据库相同的加密和访问控制策略。
+容器部署时，应在可访问挂载数据库且安装了项目依赖的环境中运行备份命令。备份应采用与生产数据库相同的加密和访问控制策略。
 
 恢复前停止 Server 和 Worker，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启两个进程。不要覆盖正在使用的数据库。
 
@@ -92,9 +94,11 @@ Server 启动时执行清理，之后约每 24 小时清理一次。终态任务
 在源码仓库中运行常用检查：
 
 ```sh
-go test ./...
-go vet ./...
-go build ./cmd/corvex
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-仓库 CI 还会在 Linux、macOS 和 Windows 上运行测试，并构建 Linux、macOS、Windows 的 amd64 和 arm64 发布二进制文件。
+仓库 CI 使用 Node.js 26.12.1 运行这些检查。Worker 主机必须安装 Git。

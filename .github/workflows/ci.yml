@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Test and build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -31,65 +31,23 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          go-version-file: go.mod
-          cache: true
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
 
       - name: Run tests
-        run: go test ./...
+        run: npm test
 
-      - name: Run race-enabled tests
-        if: runner.os == 'Linux'
-        run: go test -race ./...
-
-      - name: Check Go formatting
-        if: runner.os == 'Linux'
-        shell: bash
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
-
-      - name: Run static analysis
-        run: go vet ./...
-
-  build:
-    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        goos:
-          - linux
-          - darwin
-          - windows
-        goarch:
-          - amd64
-          - arm64
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build binary
-        shell: bash
-        run: |
-          mkdir -p dist
-          extension=""
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            extension=".exe"
-          fi
-          GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
-            go build -trimpath -o "dist/corvex-${{ matrix.goos }}-${{ matrix.goarch }}${extension}" ./cmd/corvex
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: corvex-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 7
+      - name: Build
+        run: npm run build

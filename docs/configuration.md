@@ -4,7 +4,7 @@ Corvex reads YAML from `configs/config.yaml` by default. Override the path with 
 
 In the tables, sample URLs and paths come from the example YAML; they are not all runtime defaults. Runtime defaults are called out explicitly. In particular, `gitlab.base_url`, `storage.root`, and `storage.database` must be configured.
 
-Duration values use Go duration syntax such as `5s`, `30s`, or `2m`. Paths are resolved relative to the process working directory when relative.
+Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `h`, such as `5s`, `30s`, or `2m`. Paths are resolved relative to the process working directory when relative.
 
 ## Server
 
@@ -52,8 +52,12 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request. |
 | `agent.max_output_tokens` | `4096` | 1–8192 when enabled | Maximum requested model output tokens. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
+| `agent.mcp_enabled` | `false` | Boolean | Enables Pi's MCP extension. MCP servers use the worker process's OS permissions and are not sandboxed. |
+| `agent.skill_paths` | `[]` | Array of paths | Additional trusted Pi Skill directories. These paths are also permitted roots for the bounded read-only `read_file` tool. |
 
 `CORVEX_MODEL_API_KEY` is required when the agent is enabled. The budget conservatively reserves prompt bytes plus the configured maximum output tokens, then settles against provider usage. If a request result is uncertain, the reservation is retained. It is a token limit, not a price-based spending cap.
+
+Pi sessions do not expose built-in shell, edit, or write tools. The custom `read_file` tool only reads UTF-8 text files inside the fixed-SHA worktree or configured Skill roots and rejects files larger than 64 KiB. When MCP is enabled, Pi reads its MCP configuration from the service's agent directory under `storage.root` (`pi-agent/mcp.json`); only administrator-controlled configurations should be used.
 
 ## Review limits
 

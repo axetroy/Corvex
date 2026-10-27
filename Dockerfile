@@ -1,20 +1,23 @@
-FROM golang:1.27-alpine AS builder
+FROM node:26.12.1-alpine AS builder
 
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/corvex ./cmd/corvex
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json eslint.config.js ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
 
-FROM alpine:3.22
+FROM node:26.12.1-alpine
 
 RUN apk add --no-cache ca-certificates git \
-    && addgroup -S corvex && adduser -S -G corvex corvex \
-    && mkdir -p /data/corvex/state \
-    && chown -R corvex:corvex /data/corvex
-COPY --from=builder /out/corvex /usr/local/bin/corvex
+    && mkdir -p /data/corvex/state /app \
+    && chown -R node:node /data/corvex /app
+WORKDIR /app
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node configs/config.example.yaml /etc/corvex/config.example.yaml
 
-USER corvex:corvex
+USER node:node
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/corvex"]
+ENTRYPOINT ["node", "/app/dist/cli.js"]
 CMD ["--config", "/etc/corvex/config.yaml", "server"]

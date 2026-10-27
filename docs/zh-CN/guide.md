@@ -9,11 +9,11 @@ Server 可以独立运行，但没有 Worker 时，审查、解释和修复任�
 
 ## 环境要求
 
-- 从源码运行时，需要使用 [`go.mod`](https://github.com/axetroy/Corvex/blob/main/go.mod) 声明的 Go 工具链版本。
+- 从源码运行需要 Node.js 26.12.1 和 npm；使用 `npm ci` 按锁文件安装依赖。
 - Server 和 Worker 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
 - GitLab 只读令牌用于 API 读取和仓库抓取；独立的写令牌用于发布 MR 评论和讨论。
 - Worker 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
-- 启用 Agent 时，需要 OpenAI 兼容 Chat Completions 接口及 API 密钥。
+- 启用 Agent 时，需要 OpenAI 兼容 Chat Completions 接口及 API 密钥；Agent Runtime 由 Pi SDK 提供。
 - SQLite 数据库和 Git 镜像目录必须位于重启后仍保留且可写的存储中。
 
 ## 1. 准备配置和密钥
@@ -39,7 +39,9 @@ export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
 ## 2. 启动 Server
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml server
+npm ci
+npm run build
+npm start -- --config configs/config.yaml server
 ```
 
 默认监听 `0.0.0.0:8080`。对 GitLab 提供公网服务时，应通过 HTTPS 暴露，并使用适当的网络访问控制；不要将服务直接暴露给不可信网络。
@@ -74,7 +76,7 @@ CORVEX_WEBHOOK_SECRET=... \
 | 命令 | 功能 |
 |---|---|
 | `@corvex review` | 将当前合并请求版本加入审查队列。 |
-| `@corvex explain path/to/file.go` | 解释合并请求固定 Head SHA 中的指定文件。 |
+| `@corvex explain path/to/file.ts` | 解释合并请求固定 Head SHA 中的指定文件。 |
 | `@corvex status` | 查看该合并请求最近任务的状态。 |
 | `@corvex cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
 | `@corvex fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 并在对应白名单中。 |
@@ -88,7 +90,7 @@ CORVEX_WEBHOOK_SECRET=... \
 在另一个进程中启动：
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml worker
+npm start -- --config configs/config.yaml worker
 ```
 
 Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会拒绝启动。可通过[运行环境与运维](./operations)中的健康检查接口测试本地 Server。
@@ -96,6 +98,8 @@ Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会�
 ## 谨慎启用修复提案
 
 Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true`、启用 Agent，并填写 `fix.allowed_user_ids`。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
+
+Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读工具仅允许读取固定 SHA worktree 和配置的可信 Skill 目录，单文件上限为 64 KiB。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 
 ## 后续阅读
 

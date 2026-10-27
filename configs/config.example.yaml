@@ -24,6 +24,8 @@ agent:
   request_timeout: 120s
   max_output_tokens: 4096
   daily_token_budget: 0
+  mcp_enabled: false
+  skill_paths: []
 
 review:
   max_files: 100

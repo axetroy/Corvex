@@ -1,6 +1,6 @@
 # Corvex
 
-Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [design.md](design.md) 中的路线图分阶段实现 MVP。请参阅[文档站点](https://axetroy.github.io/Corvex/)。
+Corvex 是基于单一 TypeScript 应用和 Pi SDK 构建的自托管 GitLab 代码审查与修复代理。架构说明请参阅 [design.md](design.md)，使用文档请参阅[文档站点](https://axetroy.github.io/Corvex/)。
 
 ## 当前实现
 
@@ -14,30 +14,34 @@ Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [
 - YAML 配置；密钥只通过环境变量注入。
 - GitLab MR/项目元信息与分页 Diff API。
 - Git 引擎：按项目维护镜像、按指定 SHA 创建隔离 detached worktree、限制 Diff 大小，并拒绝工作区外文件读取。
-- OpenAI 兼容 Chat API 客户端与审查工作流：限制上下文、严格解析结构化结果、校验新增行和证据、检查严重级别并去重。
+- 基于 Pi SDK Agent Session 和 OpenAI 兼容 Provider 的审查工作流：提供限制在固定 SHA worktree/可信 Skill 路径内、单文件最多 64 KiB 的只读工具；限制上下文、严格解析结构化结果、校验新增行和证据、检查严重级别并去重。
 
 `server` 会持久化审查任务，启用 `worker` 后可异步执行。Worker 会在审查前及发布前校验 MR Diff 版本，使用隔离 worktree，并将经过校验的问题发布为行级讨论；若 GitLab 拒绝讨论位置，则回退到摘要评论。Fix 提案默认关闭并使用独立用户白名单。启用后，Worker 会让模型生成受限 unified diff，仅在隔离 worktree 和 MR 已变更文件范围内应用，并运行内置的 `git apply --check` 与 `git diff --check`，最后将补丁发到 MR 供人工应用。不会运行仓库脚本、创建提交或推送代码。SQLite 会记录审查/解释/Fix 请求、授权与取消结果及任务状态迁移；审查质量基准数据集尚未提供。
 
 Worker 使用 30 秒任务租约并定期续租；进程中断后，未进入发布阶段的任务最多执行 3 次。发布阶段租约过期时，因评论结果可能不确定，任务会失败而不会自动重试，以避免重复评论。
 
-若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。`agent.max_output_tokens` 限制每次模型响应的最大输出 token 数（默认 4096，最大 8192）；可设置 `agent.daily_token_budget` 限制每日 token 预算（UTC，`0` 表示不启用）。预算按输入字节数加最大输出 token 数保守预留，收到模型用量后按实际 token 结算；请求结果不确定时会保留预留量。它是 token 预算，不是按模型价格计算的费用上限。Webhook 处理流程只负责入队；模型调用由 Worker 执行。若要启用 Fix 提案，还需设置 `fix.enabled: true`，并在 `fix.allowed_user_ids` 中配置允许的 GitLab 用户 ID；该白名单不能为空，且必须启用 Agent。
+若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。模型请求由 Pi SDK Session 执行，并受 `agent.request_timeout` 限制。`agent.max_output_tokens` 限制每次模型响应的最大输出 token 数（默认 4096，最大 8192）；可设置 `agent.daily_token_budget` 限制每日 token 预算（UTC，`0` 表示不启用）。预算按输入字节数加最大输出 token 数保守预留，收到模型用量后按实际 token 结算；请求结果不确定时会保留预留量。它是 token 预算，不是按模型价格计算的费用上限。`agent.skill_paths` 指定可信 Pi Skill 目录。MCP 默认关闭；启用 `agent.mcp_enabled` 后，会从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务以 Worker 的操作系统权限运行，并非沙箱。Webhook 处理流程只负责入队；模型调用由 Worker 执行。若要启用 Fix 提案，还需设置 `fix.enabled: true`，并在 `fix.allowed_user_ids` 中配置允许的 GitLab 用户 ID；该白名单不能为空，且必须启用 Agent。
 
 ## 本地运行
 
+需要 Node.js 26.12.1 及 npm。SQLite 使用 Node.js 内置的 `node:sqlite` 模块。
+
 ```sh
 cp configs/config.example.yaml configs/config.yaml
+npm ci
+npm run build
 ```
 
 设置 `CORVEX_GITLAB_READ_TOKEN`（只读）、`CORVEX_GITLAB_TOKEN`（允许发布 MR 评论）和 `CORVEX_WEBHOOK_SECRET`（须与 GitLab 项目 Webhook 配置一致）。读写令牌应分离，并仅授予所需权限，然后启动：
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml server
+npm start -- --config configs/config.yaml server
 ```
 
 要异步执行审查或 Fix 提案，启用 Agent 配置，并在另一个进程中启动 Worker：
 
 ```sh
-go run ./cmd/corvex --config configs/config.yaml worker
+npm start -- --config configs/config.yaml worker
 ```
 
 项目 ID 和用户 ID 必须显式加入配置白名单。两者都不能为空；空白名单不会被解释为允许所有访问。
@@ -45,7 +49,7 @@ go run ./cmd/corvex --config configs/config.yaml worker
 SQLite 在线备份可以在服务运行期间创建，目标文件必须不存在：
 
 ```sh
-go run ./cmd/corvex backup \
+npm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
@@ -86,15 +90,16 @@ Compose 默认限制 Server 为 1 CPU/1 GiB、Worker 为 2 CPU/2 GiB，PID 上�
 ## 开发
 
 ```sh
-make test
-make lint
-make build
+npm test
+npm run lint
+npm run typecheck
+npm run build
 ```
 
 Server 和 Worker 使用分开的 GitLab 读写令牌变量：读取操作使用只读令牌，发布评论使用写令牌。尚未实现不可信代码执行器。
 
 ## CI 与发布
 
-GitHub Actions 会在 Linux、macOS 和 Windows 上运行测试及 `go vet`，并构建 Linux、macOS、Windows 的 amd64 和 arm64 二进制文件。向 `main` 推送、创建 Pull Request 或推送版本标签都会触发 CI。
+GitHub Actions 使用 Node.js 26.12.1 运行 lint、类型检查、测试和生产构建。向 `main` 推送、创建 Pull Request 或推送版本标签都会触发 CI。
 
-推送版本标签（例如 `v1.0.0`）即可发布 GitHub Release。GoReleaser 会附上六种平台/架构组合的压缩二进制包以及 SHA-256 校验和文件。
+推送版本标签（例如 `v1.0.0`）即可发布 GitHub Release，Release 包含源码归档；请使用项目 Docker 镜像或 Node.js 26.12.1 环境部署。

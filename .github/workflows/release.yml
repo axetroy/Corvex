@@ -14,24 +14,10 @@ concurrency:
 
 jobs:
   release:
-    name: Publish GitHub release
+    name: Publish source release
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source and tags
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Create release artifacts
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          args: release --clean
+      - name: Create GitHub release
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
