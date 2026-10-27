@@ -13,11 +13,19 @@ export default defineConfig({
         nav: [
           { text: 'Home', link: '/' },
           { text: 'Guide', link: '/guide' },
+          { text: 'Architecture', link: '/architecture' },
+          { text: 'Configuration', link: '/configuration' },
+          { text: 'Operations', link: '/operations' },
         ],
         sidebar: [
           {
-            text: 'Guide',
-            items: [{ text: 'Getting started', link: '/guide' }],
+            text: 'Documentation',
+            items: [
+              { text: 'Getting started', link: '/guide' },
+              { text: 'Architecture and workflow', link: '/architecture' },
+              { text: 'Configuration reference', link: '/configuration' },
+              { text: 'Runtime and operations', link: '/operations' },
+            ],
           },
         ],
       },
@@ -31,11 +39,19 @@ export default defineConfig({
         nav: [
           { text: '首页', link: '/zh-CN/' },
           { text: '使用指南', link: '/zh-CN/guide' },
+          { text: '架构与流程', link: '/zh-CN/architecture' },
+          { text: '配置参考', link: '/zh-CN/configuration' },
+          { text: '运行与运维', link: '/zh-CN/operations' },
         ],
         sidebar: [
           {
-            text: '使用指南',
-            items: [{ text: '快速开始', link: '/zh-CN/guide' }],
+            text: '文档',
+            items: [
+              { text: '快速开始', link: '/zh-CN/guide' },
+              { text: '架构与工作流程', link: '/zh-CN/architecture' },
+              { text: '配置参考', link: '/zh-CN/configuration' },
+              { text: '运行环境与运维', link: '/zh-CN/operations' },
+            ],
           },
         ],
       },
