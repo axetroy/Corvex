@@ -1,0 +1,36 @@
+server:
+  listen: "0.0.0.0:8080"
+  read_timeout: 5s
+  shutdown_timeout: 30s
+
+gitlab:
+  base_url: "https://gitlab.example.com"
+  allowed_project_ids:
+    - 101
+  allowed_user_ids:
+    - 1001
+  bot_username: "corvex-bot"
+
+storage:
+  root: "./data/corvex"
+  database: "./data/state/corvex.db"
+
+agent:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  model: "your-model-name"
+  request_timeout: 120s
+
+review:
+  max_files: 100
+  max_findings: 30
+  max_context_bytes: 2097152
+
+worker:
+  poll_interval: 2s
+  job_timeout: 30m
+
+fix:
+  enabled: false
+  allowed_user_ids: []
+  max_patch_bytes: 131072
