@@ -248,12 +248,17 @@ func TestMetricsExposeJobCountsWithoutIdentifiers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.RecordModelCall(context.Background(), jobs.TypeReview, "failure", 1250*time.Millisecond, 12, 0); err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(config.Config{}, store, nil, slog.Default())
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	res := httptest.NewRecorder()
 	server.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Header().Get("Content-Type"), "text/plain") ||
 		!strings.Contains(res.Body.String(), `corvex_jobs{status="queued"} 1`) ||
+		!strings.Contains(res.Body.String(), `corvex_model_calls_total{task_type="review",outcome="failure"} 1`) ||
+		!strings.Contains(res.Body.String(), `corvex_model_call_duration_seconds_sum{task_type="review",outcome="failure"} 1.250`) ||
 		strings.Contains(res.Body.String(), "metrics-key") {
 		t.Fatalf("unexpected metrics response: status=%d type=%q body=%s",
 			res.Code, res.Header().Get("Content-Type"), res.Body.String())

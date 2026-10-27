@@ -9,14 +9,14 @@ The implementation currently provides:
 - A GitLab Note Hook endpoint with constant-time webhook-token validation.
 - Project and user allowlists, bot/system-note filtering, and strict `@corvex` command parsing.
 - SQLite persistence with durable event deduplication, queued review/fix tasks, and fix authorization auditing.
-- `review`, `explain <path>` for a file at the MR's pinned Head SHA, allowlisted `fix`, `status`, and owner-only `cancel` commands.
-- GitLab MR note replies, `/healthz`, database-backed `/readyz`, and a Prometheus `/metrics` endpoint exposing only task-status counts.
+- `review`, `explain <path>` for a file at the MR's pinned Head SHA, allowlisted `fix`, `status`, and owner-only `cancel` commands; cancellation is available until a task enters publishing.
+- GitLab MR note replies, `/healthz`, database-backed `/readyz`, and a Prometheus `/metrics` endpoint exposing job statuses plus model call successes/failures, duration, and token totals.
 - YAML configuration with secrets supplied only through environment variables.
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
 - An OpenAI-compatible chat client and review workflow with bounded context, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
 
-The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push.
+The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push. SQLite records review/explain/fix requests, authorization and cancellation outcomes, and job status transitions; a curated review-quality benchmark dataset is not yet included.
 
 Workers use a 30-second renewable job lease. After a worker interruption, tasks that have not entered publishing are retried up to three attempts. An expired publishing lease fails without automatic retry because the comment outcome may be uncertain, avoiding duplicate GitLab comments.
 
@@ -52,6 +52,8 @@ go run ./cmd/corvex backup \
 
 To restore, stop both the server and worker, replace the configured database file with a verified backup, then restart the services. Apply your organization's encryption, access-control, and off-site retention policies to backup files.
 
+The server prunes terminal jobs, job attempts, webhook events, and daily token usage older than `storage.retention_days` (90 days by default), and audit events older than `storage.audit_retention_days` (365 days by default). Queued and in-progress jobs are retained. Adjust these periods to match your organization's retention requirements. Project Git mirrors still require separate monitoring and maintenance.
+
 ## Docker Compose
 
 Copy `.env.example` to `.env`, set the GitLab read/write tokens and webhook secret, and provide `configs/config.yaml`. Then run:
@@ -78,6 +80,8 @@ CORVEX_WEBHOOK_SECRET=... \
 ```
 
 The registration token is used only by the one-time script and must not be given to the running Corvex service.
+
+Compose defaults to 1 CPU/1 GiB for the server and 2 CPU/2 GiB for the worker, with a 256 PID limit for each. JSON file logs are capped at 10 MiB per file with three files retained. Override these using `CORVEX_MEM_LIMIT`, `CORVEX_CPUS`, `CORVEX_PIDS_LIMIT`, and the corresponding `CORVEX_WORKER_*` variables.
 
 ## Development
 

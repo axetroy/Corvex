@@ -48,6 +48,9 @@ review:
 		cfg.GitLab.ReadToken != "read-token" {
 		t.Fatalf("unexpected loaded config: %#v", cfg)
 	}
+	if cfg.Storage.RetentionDays != 90 || cfg.Storage.AuditRetentionDays != 365 {
+		t.Fatalf("unexpected storage retention defaults: %#v", cfg.Storage)
+	}
 	if !cfg.Agent.Enabled || cfg.Agent.APIKey != "model-secret" ||
 		cfg.Agent.RequestTimeout != Duration(45*time.Second) || cfg.Review.MaxFindings != 7 ||
 		cfg.Review.MaxContextBytes != 4096 {

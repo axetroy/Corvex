@@ -44,7 +44,7 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 				Evidence: "if value == nil", Explanation: "The value is dereferenced on this path.",
 			}},
 		},
-		Model: "review-model", Usage: agent.ModelUsage{TotalTokens: 25},
+		Model: "review-model", Usage: agent.ModelUsage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25},
 	}}
 	worker := newTestWorker(t, store, api, repository, reviewer)
 
@@ -76,6 +76,114 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 	}
 	if job.Status != jobs.StatusCompleted || job.AttemptCount != 1 {
 		t.Fatalf("unexpected completed job: %#v", job)
+	}
+	modelCalls, err := store.ModelCallMetrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modelCalls) != 1 || modelCalls[0].TaskType != jobs.TypeReview ||
+		modelCalls[0].Outcome != "success" || modelCalls[0].Calls != 1 ||
+		modelCalls[0].InputTokens != 20 || modelCalls[0].OutputTokens != 5 {
+		t.Fatalf("review call metrics = %#v", modelCalls)
+	}
+}
+
+func TestWorkerRecordsFailedReviewModelCall(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedReviewJob(t, headSHA)
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened", DiffRefs: mrRefs(baseSHA, strings.Repeat("c", 40), headSHA),
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	worker := newTestWorker(t, store, api, &fakeRepository{},
+		&fakeReviewer{reviewErr: errors.New("model unavailable")})
+
+	worked, err := worker.processNext(context.Background())
+	if !worked || err == nil {
+		t.Fatalf("processNext() = (%t, %v), want a processed task and model error", worked, err)
+	}
+	metrics, err := store.ModelCallMetrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 1 || metrics[0].TaskType != jobs.TypeReview ||
+		metrics[0].Outcome != "failure" || metrics[0].Calls != 1 {
+		t.Fatalf("failed model call metrics = %#v", metrics)
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusFailed {
+		t.Fatalf("job status = %s, want failed", job.Status)
+	}
+}
+
+func TestWorkerCancelsInFlightReviewOnOwnerRequest(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedReviewJob(t, headSHA)
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened", DiffRefs: mrRefs(baseSHA, strings.Repeat("c", 40), headSHA),
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	started := make(chan struct{})
+	repository := &fakeRepository{}
+	worker := newTestWorker(t, store, api, repository, &fakeReviewer{reviewStarted: started})
+
+	workedCh := make(chan bool, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		worked, err := worker.processNext(context.Background())
+		workedCh <- worked
+		errCh <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("review model call did not start")
+	}
+	result, err := store.Cancel(context.Background(), "cancel-running", 10, 8, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Response, "Cancellation requested") {
+		t.Fatalf("cancel response = %q, want cancellation request", result.Response)
+	}
+	status, err := store.Status(context.Background(), "status-running", 10, 8, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Response, "Cancellation has been requested") {
+		t.Fatalf("status response = %q, want pending cancellation state", status.Response)
+	}
+	select {
+	case worked := <-workedCh:
+		if !worked {
+			t.Fatal("worker did not report processing a task")
+		}
+		if err := <-errCh; err != nil {
+			t.Fatalf("processNext() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop after cancellation")
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCancelled || !repository.cleaned {
+		t.Fatalf("cancelled job = %#v, workspace cleaned = %t", job, repository.cleaned)
+	}
+	if len(api.notes) != 0 {
+		t.Fatalf("cancelled review published notes: %v", api.notes)
 	}
 }
 
@@ -541,15 +649,22 @@ func (f *fakeRepository) ApplyPatch(
 }
 
 type fakeReviewer struct {
-	outcome      review.Outcome
-	explanation  review.Explanation
-	calls        int
-	explainCalls int
+	outcome       review.Outcome
+	explanation   review.Explanation
+	reviewErr     error
+	reviewStarted chan struct{}
+	calls         int
+	explainCalls  int
 }
 
-func (f *fakeReviewer) Review(context.Context, review.Context, git.DiffResult) (review.Outcome, error) {
+func (f *fakeReviewer) Review(ctx context.Context, _ review.Context, _ git.DiffResult) (review.Outcome, error) {
 	f.calls++
-	return f.outcome, nil
+	if f.reviewStarted != nil {
+		close(f.reviewStarted)
+		<-ctx.Done()
+		return review.Outcome{}, ctx.Err()
+	}
+	return f.outcome, f.reviewErr
 }
 
 func (f *fakeReviewer) Explain(context.Context, review.Context, string, []byte) (review.Explanation, error) {

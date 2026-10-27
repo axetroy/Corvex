@@ -53,8 +53,10 @@ type GitLabConfig struct {
 }
 
 type StorageConfig struct {
-	Root     string `yaml:"root"`
-	Database string `yaml:"database"`
+	Root               string `yaml:"root"`
+	Database           string `yaml:"database"`
+	RetentionDays      int    `yaml:"retention_days"`
+	AuditRetentionDays int    `yaml:"audit_retention_days"`
 }
 
 type AgentConfig struct {
@@ -106,6 +108,10 @@ func Load(path string) (Config, error) {
 			JobTimeout:   Duration(30 * time.Minute),
 		},
 		Fix: FixConfig{MaxPatchBytes: 128 << 10},
+		Storage: StorageConfig{
+			RetentionDays:      90,
+			AuditRetentionDays: 365,
+		},
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %q: %w", path, err)
@@ -183,6 +189,12 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Storage.Database) == "" {
 		problems = append(problems, "storage.database is required")
+	}
+	if c.Storage.RetentionDays < 1 || c.Storage.RetentionDays > 36500 {
+		problems = append(problems, "storage.retention_days must be between 1 and 36500")
+	}
+	if c.Storage.AuditRetentionDays < 1 || c.Storage.AuditRetentionDays > 36500 {
+		problems = append(problems, "storage.audit_retention_days must be between 1 and 36500")
 	}
 	if c.Review.MaxFiles <= 0 || c.Review.MaxFiles > 1000 {
 		problems = append(problems, "review.max_files must be between 1 and 1000")

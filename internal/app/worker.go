@@ -124,6 +124,20 @@ func (w *Worker) processNext(ctx context.Context) (bool, error) {
 	if !terminalStatus(stage) {
 		failureCtx, failureCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer failureCancel()
+		cancelRequested, checkErr := w.store.CancellationRequested(failureCtx, job.ID, job.LeaseToken)
+		if checkErr == nil && cancelRequested {
+			w.logger.Warn("task cancelled by owner request", "job_id", job.ID, "error", err)
+			if updateErr := w.store.UpdateLeasedStatus(
+				failureCtx, job.ID, job.LeaseToken, stage, jobs.StatusCancelled,
+				"Cancellation requested by task owner: "+err.Error(),
+			); updateErr != nil {
+				return true, errors.Join(err, fmt.Errorf("mark task cancelled: %w", updateErr))
+			}
+			return true, nil
+		}
+		if errors.Is(err, jobs.ErrCancellationRequested) {
+			return true, errors.Join(err, fmt.Errorf("check task cancellation: %w", checkErr))
+		}
 		if updateErr := w.store.UpdateLeasedStatus(failureCtx, job.ID, job.LeaseToken, stage, jobs.StatusFailed, err.Error()); updateErr != nil {
 			return true, errors.Join(err, fmt.Errorf("mark task failed: %w", updateErr))
 		}
@@ -140,11 +154,27 @@ func (w *Worker) maintainLease(
 ) {
 	ticker := time.NewTicker(leaseDuration / 3)
 	defer ticker.Stop()
+	cancellationTicker := time.NewTicker(time.Second)
+	defer cancellationTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			done <- nil
 			return
+		case <-cancellationTicker.C:
+			checkCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			requested, err := w.store.CancellationRequested(checkCtx, job.ID, job.LeaseToken)
+			cancel()
+			if err != nil {
+				cancelJob()
+				done <- fmt.Errorf("check cancellation request for job %s: %w", job.ID, err)
+				return
+			}
+			if requested {
+				cancelJob()
+				done <- jobs.ErrCancellationRequested
+				return
+			}
 		case <-ticker.C:
 			renewCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := w.store.RenewLease(renewCtx, job.ID, job.LeaseToken, leaseDuration)
@@ -230,6 +260,7 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	}
 	reviewStarted := time.Now()
 	outcome, err := w.reviewer.Review(ctx, reviewContext, diff)
+	err = w.recordModelCall(job, reviewStarted, outcome.Usage.InputTokens, outcome.Usage.OutputTokens, err)
 	if err != nil {
 		w.logger.Warn("review model call failed",
 			"job_id", job.ID, "duration", time.Since(reviewStarted), "error", err)
@@ -297,6 +328,7 @@ func (w *Worker) executeExplain(
 	}
 	started := time.Now()
 	explanation, err := w.reviewer.Explain(ctx, reviewContext, job.Request, source)
+	err = w.recordModelCall(job, started, explanation.Usage.InputTokens, explanation.Usage.OutputTokens, err)
 	if err != nil {
 		w.logger.Warn("explain model call failed",
 			"job_id", job.ID, "duration", time.Since(started), "error", err)
@@ -345,6 +377,7 @@ func (w *Worker) executeFix(
 	}
 	started := time.Now()
 	outcome, err := w.fixer.Fix(ctx, reviewContext, job.Request, diff)
+	err = w.recordModelCall(job, started, outcome.Usage.InputTokens, outcome.Usage.OutputTokens, err)
 	if err != nil {
 		w.logger.Warn("fix model call failed",
 			"job_id", job.ID, "duration", time.Since(started), "error", err)
@@ -391,6 +424,20 @@ func (w *Worker) executeFix(
 		return fmt.Errorf("publish fix proposal: %w", err)
 	}
 	return w.transition(ctx, job.ID, job.LeaseToken, stage, jobs.StatusCompleted)
+}
+
+func (w *Worker) recordModelCall(job jobs.Job, started time.Time, inputTokens, outputTokens int, callErr error) error {
+	outcome := "success"
+	if callErr != nil {
+		outcome = "failure"
+	}
+	metricCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := w.store.RecordModelCall(metricCtx, job.Type, outcome, time.Since(started),
+		int64(inputTokens), int64(outputTokens)); err != nil {
+		return errors.Join(callErr, fmt.Errorf("record model call metrics: %w", err))
+	}
+	return callErr
 }
 
 func formatFixProposal(job jobs.Job, outcome fix.Outcome, patch string) string {
