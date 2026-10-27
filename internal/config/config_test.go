@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,6 +34,7 @@ review:
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("CORVEX_GITLAB_TOKEN", "token")
 	t.Setenv("CORVEX_GITLAB_READ_TOKEN", "read-token")
 	t.Setenv("CORVEX_WEBHOOK_SECRET", "secret")
@@ -55,5 +57,13 @@ review:
 		if _, err := os.Stat(filepath.Join(cfg.Storage.Root, dir)); err != nil {
 			t.Fatalf("storage directory %q was not created: %v", dir, err)
 		}
+	}
+
+}
+
+func TestEnabledFixRequiresDedicatedUserAllowlist(t *testing.T) {
+	err := (Config{Fix: FixConfig{Enabled: true}}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "fix.allowed_user_ids must not be empty") {
+		t.Fatalf("Validate() error = %v, want required fix user allowlist", err)
 	}
 }

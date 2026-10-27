@@ -29,3 +29,7 @@ review:
 worker:
   poll_interval: 2s
   job_timeout: 30m
+
+fix:
+  enabled: false
+  allowed_user_ids: []

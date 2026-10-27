@@ -16,7 +16,7 @@ Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [
 - Git 引擎：按项目维护镜像、按指定 SHA 创建隔离 detached worktree、限制 Diff 大小，并拒绝工作区外文件读取。
 - OpenAI 兼容 Chat API 客户端与审查工作流：限制上下文、严格解析结构化结果、校验新增行和证据、检查严重级别并去重。
 
-`server` 会持久化审查任务，启用 `worker` 后可异步执行。Worker 会在审查前及发布前校验 MR Diff 版本，使用隔离 worktree，并将经过校验的问题发布为行级讨论；若 GitLab 拒绝讨论位置，则回退到摘要评论。`fix` 指令仍默认禁用。
+`server` 会持久化审查任务，启用 `worker` 后可异步执行。Worker 会在审查前及发布前校验 MR Diff 版本，使用隔离 worktree，并将经过校验的问题发布为行级讨论；若 GitLab 拒绝讨论位置，则回退到摘要评论。Fix 请求使用独立功能开关和用户白名单，但补丁生成与执行尚未实现；目前不会创建 Fix 任务，也不会修改代码。
 
 若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。Webhook 处理流程只负责入队；模型调用由 Worker 执行。
 

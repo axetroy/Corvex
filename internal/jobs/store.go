@@ -261,6 +261,47 @@ func (s *Store) RecordResponse(ctx context.Context, eventID, response string) (E
 	return EventResult{Response: response}, nil
 }
 
+func (s *Store) RecordFixAuthorization(
+	ctx context.Context,
+	eventID string,
+	projectID, mrIID, actorID int64,
+	enabled, authorized bool,
+) (EventResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EventResult{}, err
+	}
+	defer tx.Rollback()
+	if result, found, err := eventResult(ctx, tx, eventID); err != nil {
+		return EventResult{}, err
+	} else if found {
+		return result, nil
+	}
+
+	result := "authorized_executor_unavailable"
+	response := "You are authorized to request fixes, but patch generation is not available yet. No task was queued and no code was changed."
+	if !enabled {
+		result = "denied_disabled"
+		response = "The `fix` command is disabled by configuration."
+	} else if !authorized {
+		result = "denied_not_allowlisted"
+		response = "You are not authorized to request code fixes."
+	}
+	if err := insertEvent(ctx, tx, eventID, response); err != nil {
+		return EventResult{}, err
+	}
+	resource := fmt.Sprintf("%d:%d", projectID, mrIID)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
+		actorID, "request_fix", resource, result, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return EventResult{}, fmt.Errorf("record fix authorization audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return EventResult{}, err
+	}
+	return EventResult{Response: response}, nil
+}
+
 func (s *Store) ClaimNext(ctx context.Context) (Job, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -386,6 +427,10 @@ func validTransition(from, to string) bool {
 	case StatusPreparing:
 		return to == StatusAnalyzing || to == StatusStale || to == StatusFailed
 	case StatusAnalyzing:
+		return to == StatusFixing || to == StatusPublishing || to == StatusStale || to == StatusFailed
+	case StatusFixing:
+		return to == StatusVerifying || to == StatusStale || to == StatusFailed
+	case StatusVerifying:
 		return to == StatusPublishing || to == StatusStale || to == StatusFailed
 	case StatusPublishing:
 		return to == StatusCompleted || to == StatusStale || to == StatusFailed

@@ -19,6 +19,7 @@ type Config struct {
 	Agent   AgentConfig   `yaml:"agent"`
 	Review  ReviewConfig  `yaml:"review"`
 	Worker  WorkerConfig  `yaml:"worker"`
+	Fix     FixConfig     `yaml:"fix"`
 }
 
 type ServerConfig struct {
@@ -73,6 +74,11 @@ type ReviewConfig struct {
 type WorkerConfig struct {
 	PollInterval Duration `yaml:"poll_interval"`
 	JobTimeout   Duration `yaml:"job_timeout"`
+}
+
+type FixConfig struct {
+	Enabled        bool    `yaml:"enabled"`
+	AllowedUserIDs []int64 `yaml:"allowed_user_ids"`
 }
 
 func Load(path string) (Config, error) {
@@ -185,6 +191,9 @@ func (c Config) Validate() error {
 	}
 	if c.Worker.PollInterval <= 0 || c.Worker.JobTimeout <= 0 {
 		problems = append(problems, "worker poll interval and job timeout must be positive")
+	}
+	if c.Fix.Enabled && len(c.Fix.AllowedUserIDs) == 0 {
+		problems = append(problems, "fix.allowed_user_ids must not be empty when fix.enabled is true")
 	}
 	if c.Agent.Enabled {
 		modelURL, err := url.ParseRequestURI(c.Agent.BaseURL)

@@ -4,9 +4,12 @@ import "time"
 
 const (
 	TypeReview       = "review"
+	TypeFix          = "fix"
 	StatusQueued     = "queued"
 	StatusPreparing  = "preparing"
 	StatusAnalyzing  = "analyzing"
+	StatusFixing     = "fixing"
+	StatusVerifying  = "verifying"
 	StatusPublishing = "publishing"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"

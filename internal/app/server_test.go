@@ -84,6 +84,70 @@ func TestWebhookRejectsInvalidTokenBeforeParsing(t *testing.T) {
 	}
 }
 
+func TestFixCommandRequiresDedicatedAuthorizationAndNeverQueues(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		enabled     bool
+		fixUsers    []int64
+		wantMessage string
+	}{
+		{name: "disabled", wantMessage: "disabled by configuration"},
+		{name: "not allowlisted", enabled: true, fixUsers: []int64{99}, wantMessage: "not authorized"},
+		{name: "authorized but unavailable", enabled: true, fixUsers: []int64{42}, wantMessage: "No task was queued"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var postedBodies []string
+			gitlabAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Errorf("parse GitLab note form: %v", err)
+					http.Error(w, "bad form", http.StatusBadRequest)
+					return
+				}
+				postedBodies = append(postedBodies, r.Form.Get("body"))
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer gitlabAPI.Close()
+
+			store, err := jobs.Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			client, err := gitlab.NewClient(gitlabAPI.URL, "api-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := NewServer(config.Config{
+				GitLab: config.GitLabConfig{
+					BaseURL: gitlabAPI.URL, WebhookSecret: "secret",
+					AllowedProjectIDs: []int64{10}, AllowedUserIDs: []int64{42},
+				},
+				Fix: config.FixConfig{Enabled: test.enabled, AllowedUserIDs: test.fixUsers},
+			}, store, client, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
+
+			payload := `{"object_kind":"note","user":{"id":42,"username":"developer"},"project":{"id":10},"object_attributes":{"id":100,"note":"@corvex fix","noteable_type":"MergeRequest"},"merge_request":{"iid":5}}`
+			req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab", strings.NewReader(payload))
+			req.Header.Set("X-Gitlab-Token", "secret")
+			req.Header.Set("X-Gitlab-Event", "Note Hook")
+			res := httptest.NewRecorder()
+			server.Handler().ServeHTTP(res, req)
+			if res.Code != http.StatusAccepted {
+				t.Fatalf("webhook status = %d, want %d (body: %s)", res.Code, http.StatusAccepted, res.Body)
+			}
+			if len(postedBodies) != 1 || !strings.Contains(postedBodies[0], test.wantMessage) {
+				t.Fatalf("response notes = %q, want one containing %q", postedBodies, test.wantMessage)
+			}
+			status, err := store.Status(context.Background(), "status-check", 10, 5, 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(status.Response, "No Corvex task has been created") {
+				t.Fatalf("fix authorization unexpectedly queued a job: %q", status.Response)
+			}
+		})
+	}
+}
+
 func TestReadinessChecksDatabase(t *testing.T) {
 	store, err := jobs.Open(":memory:")
 	if err != nil {

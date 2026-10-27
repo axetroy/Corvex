@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +129,88 @@ func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	}
 	if stored.Status != StatusCompleted || stored.AttemptCount != 1 {
 		t.Fatalf("unexpected stored job: %#v", stored)
+	}
+}
+
+func TestRecordFixAuthorizationIsIdempotentAndAudited(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	cases := []struct {
+		eventID    string
+		enabled    bool
+		authorized bool
+		wantText   string
+		wantResult string
+	}{
+		{"disabled", false, true, "disabled by configuration", "denied_disabled"},
+		{"unauthorized", true, false, "not authorized", "denied_not_allowlisted"},
+		{"authorized", true, true, "No task was queued", "authorized_executor_unavailable"},
+	}
+	for _, test := range cases {
+		result, err := store.RecordFixAuthorization(ctx, test.eventID, 10, 5, 42,
+			test.enabled, test.authorized)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(result.Response, test.wantText) {
+			t.Errorf("response = %q, want it to contain %q", result.Response, test.wantText)
+		}
+		retry, err := store.RecordFixAuthorization(ctx, test.eventID, 10, 5, 99,
+			!test.enabled, !test.authorized)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retry.Response != result.Response {
+			t.Errorf("idempotent retry response = %q, want %q", retry.Response, result.Response)
+		}
+		var auditResult string
+		err = store.db.QueryRowContext(ctx,
+			`SELECT result FROM audit_events WHERE resource = ? AND actor_id = ? ORDER BY id DESC LIMIT 1`,
+			"10:5", 42).Scan(&auditResult)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if auditResult != test.wantResult {
+			t.Errorf("audit result = %q, want %q", auditResult, test.wantResult)
+		}
+	}
+
+	var auditCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action = 'request_fix'`).
+		Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != len(cases) {
+		t.Fatalf("fix audit entries = %d, want %d", auditCount, len(cases))
+	}
+}
+
+func TestFixLifecycleTransitionsAreExplicit(t *testing.T) {
+	transitions := [][2]string{
+		{StatusQueued, StatusPreparing},
+		{StatusPreparing, StatusAnalyzing},
+		{StatusAnalyzing, StatusFixing},
+		{StatusFixing, StatusVerifying},
+		{StatusVerifying, StatusPublishing},
+		{StatusPublishing, StatusCompleted},
+	}
+	for _, transition := range transitions {
+		if !validTransition(transition[0], transition[1]) {
+			t.Errorf("validTransition(%q, %q) = false", transition[0], transition[1])
+		}
+	}
+	for _, transition := range [][2]string{
+		{StatusFixing, StatusPublishing},
+		{StatusVerifying, StatusFixing},
+		{StatusCompleted, StatusFixing},
+	} {
+		if validTransition(transition[0], transition[1]) {
+			t.Errorf("validTransition(%q, %q) = true", transition[0], transition[1])
+		}
 	}
 }

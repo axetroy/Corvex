@@ -134,7 +134,8 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	case "cancel":
 		result, err = s.store.Cancel(ctx, eventID, event.Project.ID, event.MergeRequest.IID, event.User.ID)
 	case "fix":
-		result, err = s.recordResponse(ctx, eventID, "The `fix` command is not enabled in this MVP.")
+		result, err = s.store.RecordFixAuthorization(ctx, eventID, event.Project.ID, event.MergeRequest.IID,
+			event.User.ID, s.cfg.Fix.Enabled, contains(s.cfg.Fix.AllowedUserIDs, event.User.ID))
 	case "explain":
 		result, err = s.recordResponse(ctx, eventID, "The `explain` command is not implemented yet.")
 	default:
