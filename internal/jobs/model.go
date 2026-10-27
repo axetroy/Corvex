@@ -25,6 +25,7 @@ type Job struct {
 	MRIID        int64     `json:"mr_iid"`
 	HeadSHA      string    `json:"head_sha,omitempty"`
 	ActorID      int64     `json:"actor_id"`
+	Request      string    `json:"request,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	AttemptCount int       `json:"attempt_count,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`

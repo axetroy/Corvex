@@ -134,8 +134,12 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	case "cancel":
 		result, err = s.store.Cancel(ctx, eventID, event.Project.ID, event.MergeRequest.IID, event.User.ID)
 	case "fix":
-		result, err = s.store.RecordFixAuthorization(ctx, eventID, event.Project.ID, event.MergeRequest.IID,
-			event.User.ID, s.cfg.Fix.Enabled, contains(s.cfg.Fix.AllowedUserIDs, event.User.ID))
+		key := fmt.Sprintf("%d:%d:fix:%s", event.Project.ID, event.MergeRequest.IID, eventID)
+		result, err = s.store.CreateFix(ctx, eventID, key, jobs.Job{
+			ProjectID: event.Project.ID, MRIID: event.MergeRequest.IID,
+			HeadSHA: event.MergeRequest.LastCommit.ID, ActorID: event.User.ID,
+			Request: strings.Join(command.Args, " "),
+		}, s.cfg.Fix.Enabled, contains(s.cfg.Fix.AllowedUserIDs, event.User.ID))
 	case "explain":
 		result, err = s.recordResponse(ctx, eventID, "The `explain` command is not implemented yet.")
 	default:

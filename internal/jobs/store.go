@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   mr_iid INTEGER NOT NULL,
   head_sha TEXT NOT NULL DEFAULT '',
   actor_id INTEGER NOT NULL,
+  request TEXT NOT NULL DEFAULT '',
   attempt_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS job_attempts (
 	}{
 		{name: "attempt_count", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "last_error", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "request", definition: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureJobColumn(ctx, column.name, column.definition); err != nil {
 			return err
@@ -140,9 +142,9 @@ func (s *Store) CreateReview(ctx context.Context, eventID, key string, job Job) 
 	job.Status = StatusQueued
 	job.CreatedAt = time.Now().UTC()
 	_, err = tx.ExecContext(ctx, `INSERT INTO jobs
-		(id, idempotency_key, event_id, type, status, project_id, mr_iid, head_sha, actor_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		job.ID, key, eventID, job.Type, job.Status, job.ProjectID, job.MRIID, job.HeadSHA, job.ActorID,
+		(id, idempotency_key, event_id, type, status, project_id, mr_iid, head_sha, actor_id, request, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		job.ID, key, eventID, job.Type, job.Status, job.ProjectID, job.MRIID, job.HeadSHA, job.ActorID, job.Request,
 		job.CreatedAt.Format(time.RFC3339Nano), job.CreatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return EventResult{}, fmt.Errorf("insert review task: %w", err)
@@ -261,10 +263,11 @@ func (s *Store) RecordResponse(ctx context.Context, eventID, response string) (E
 	return EventResult{Response: response}, nil
 }
 
-func (s *Store) RecordFixAuthorization(
+func (s *Store) CreateFix(
 	ctx context.Context,
 	eventID string,
-	projectID, mrIID, actorID int64,
+	key string,
+	job Job,
 	enabled, authorized bool,
 ) (EventResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -278,22 +281,45 @@ func (s *Store) RecordFixAuthorization(
 		return result, nil
 	}
 
-	result := "authorized_executor_unavailable"
-	response := "You are authorized to request fixes, but patch generation is not available yet. No task was queued and no code was changed."
+	auditResult := "authorized_queued"
+	response := ""
 	if !enabled {
-		result = "denied_disabled"
+		auditResult = "denied_disabled"
 		response = "The `fix` command is disabled by configuration."
 	} else if !authorized {
-		result = "denied_not_allowlisted"
+		auditResult = "denied_not_allowlisted"
 		response = "You are not authorized to request code fixes."
+	} else if existing, err := getJobByKey(ctx, tx, key); err == nil {
+		auditResult = "authorized_duplicate"
+		response = fmt.Sprintf("Fix task `%s` is already queued for this comment.", existing.ID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return EventResult{}, fmt.Errorf("check existing fix task: %w", err)
+	} else {
+		job.ID, err = newID()
+		if err != nil {
+			return EventResult{}, err
+		}
+		job.Type = TypeFix
+		job.Status = StatusQueued
+		job.CreatedAt = time.Now().UTC()
+		_, err = tx.ExecContext(ctx, `INSERT INTO jobs
+			(id, idempotency_key, event_id, type, status, project_id, mr_iid, head_sha, actor_id, request, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			job.ID, key, eventID, job.Type, job.Status, job.ProjectID, job.MRIID, job.HeadSHA, job.ActorID, job.Request,
+			job.CreatedAt.Format(time.RFC3339Nano), job.CreatedAt.Format(time.RFC3339Nano))
+		if err != nil {
+			return EventResult{}, fmt.Errorf("insert fix task: %w", err)
+		}
+		response = fmt.Sprintf("Queued fix proposal `%s` for MR !%d at `%s`.",
+			job.ID, job.MRIID, shortSHA(job.HeadSHA))
 	}
 	if err := insertEvent(ctx, tx, eventID, response); err != nil {
 		return EventResult{}, err
 	}
-	resource := fmt.Sprintf("%d:%d", projectID, mrIID)
+	resource := fmt.Sprintf("%d:%d", job.ProjectID, job.MRIID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO audit_events(actor_id, action, resource, result, created_at) VALUES (?, ?, ?, ?, ?)`,
-		actorID, "request_fix", resource, result, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		job.ActorID, "request_fix", resource, auditResult, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return EventResult{}, fmt.Errorf("record fix authorization audit: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -314,12 +340,12 @@ func (s *Store) ClaimNext(ctx context.Context) (Job, bool, error) {
 	var created string
 	err = tx.QueryRowContext(ctx, `UPDATE jobs
 		SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
-		WHERE id = (SELECT id FROM jobs WHERE status = ? AND type = ? ORDER BY created_at LIMIT 1)
+		WHERE id = (SELECT id FROM jobs WHERE status = ? AND type IN (?, ?) ORDER BY created_at LIMIT 1)
 		  AND status = ?
-		RETURNING id, type, status, project_id, mr_iid, head_sha, actor_id, created_at, attempt_count, last_error`,
-		StatusPreparing, now, StatusQueued, TypeReview, StatusQueued).Scan(
+		RETURNING id, type, status, project_id, mr_iid, head_sha, actor_id, request, created_at, attempt_count, last_error`,
+		StatusPreparing, now, StatusQueued, TypeReview, TypeFix, StatusQueued).Scan(
 		&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID,
-		&created, &job.AttemptCount, &job.LastError)
+		&job.Request, &created, &job.AttemptCount, &job.LastError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, false, nil
 	}
@@ -378,9 +404,9 @@ func (s *Store) GetJob(ctx context.Context, jobID string) (Job, error) {
 	var job Job
 	var created string
 	err := s.db.QueryRowContext(ctx, `SELECT id, type, status, project_id, mr_iid, head_sha, actor_id,
-		created_at, attempt_count, last_error FROM jobs WHERE id = ?`, jobID).Scan(
+		request, created_at, attempt_count, last_error FROM jobs WHERE id = ?`, jobID).Scan(
 		&job.ID, &job.Type, &job.Status, &job.ProjectID, &job.MRIID, &job.HeadSHA, &job.ActorID,
-		&created, &job.AttemptCount, &job.LastError)
+		&job.Request, &created, &job.AttemptCount, &job.LastError)
 	if err != nil {
 		return Job{}, err
 	}

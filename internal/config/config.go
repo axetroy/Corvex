@@ -79,6 +79,7 @@ type WorkerConfig struct {
 type FixConfig struct {
 	Enabled        bool    `yaml:"enabled"`
 	AllowedUserIDs []int64 `yaml:"allowed_user_ids"`
+	MaxPatchBytes  int     `yaml:"max_patch_bytes"`
 }
 
 func Load(path string) (Config, error) {
@@ -102,6 +103,7 @@ func Load(path string) (Config, error) {
 			PollInterval: Duration(2 * time.Second),
 			JobTimeout:   Duration(30 * time.Minute),
 		},
+		Fix: FixConfig{MaxPatchBytes: 128 << 10},
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %q: %w", path, err)
@@ -194,6 +196,12 @@ func (c Config) Validate() error {
 	}
 	if c.Fix.Enabled && len(c.Fix.AllowedUserIDs) == 0 {
 		problems = append(problems, "fix.allowed_user_ids must not be empty when fix.enabled is true")
+	}
+	if c.Fix.Enabled && !c.Agent.Enabled {
+		problems = append(problems, "agent.enabled must be true when fix.enabled is true")
+	}
+	if c.Fix.MaxPatchBytes <= 0 || c.Fix.MaxPatchBytes > 256<<10 {
+		problems = append(problems, "fix.max_patch_bytes must be between 1 byte and 256 KiB")
 	}
 	if c.Agent.Enabled {
 		modelURL, err := url.ParseRequestURI(c.Agent.BaseURL)

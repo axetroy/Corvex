@@ -33,3 +33,4 @@ worker:
 fix:
   enabled: false
   allowed_user_ids: []
+  max_patch_bytes: 131072

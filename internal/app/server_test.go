@@ -90,10 +90,11 @@ func TestFixCommandRequiresDedicatedAuthorizationAndNeverQueues(t *testing.T) {
 		enabled     bool
 		fixUsers    []int64
 		wantMessage string
+		wantQueued  bool
 	}{
 		{name: "disabled", wantMessage: "disabled by configuration"},
 		{name: "not allowlisted", enabled: true, fixUsers: []int64{99}, wantMessage: "not authorized"},
-		{name: "authorized but unavailable", enabled: true, fixUsers: []int64{42}, wantMessage: "No task was queued"},
+		{name: "authorized", enabled: true, fixUsers: []int64{42}, wantMessage: "Queued fix proposal", wantQueued: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var postedBodies []string
@@ -141,8 +142,11 @@ func TestFixCommandRequiresDedicatedAuthorizationAndNeverQueues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(status.Response, "No Corvex task has been created") {
-				t.Fatalf("fix authorization unexpectedly queued a job: %q", status.Response)
+			if test.wantQueued && !strings.Contains(status.Response, "**queued**") {
+				t.Fatalf("authorized fix task was not queued: %q", status.Response)
+			}
+			if !test.wantQueued && !strings.Contains(status.Response, "No Corvex task has been created") {
+				t.Fatalf("unauthorized fix request unexpectedly queued a job: %q", status.Response)
 			}
 		})
 	}

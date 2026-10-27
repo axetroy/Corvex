@@ -11,6 +11,7 @@ import (
 
 	"github.com/axetroy/corvex/internal/agent"
 	"github.com/axetroy/corvex/internal/config"
+	"github.com/axetroy/corvex/internal/fix"
 	"github.com/axetroy/corvex/internal/git"
 	"github.com/axetroy/corvex/internal/gitlab"
 	"github.com/axetroy/corvex/internal/jobs"
@@ -33,6 +34,7 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 		},
 		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
 	}
+
 	repository := &fakeRepository{headSHA: headSHA, baseSHA: baseSHA}
 	reviewer := &fakeReviewer{outcome: review.Outcome{
 		Result: review.Result{
@@ -50,6 +52,7 @@ func TestWorkerProcessesQueuedReviewAtPinnedHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processNext() error = %v", err)
 	}
+
 	if !worked || !repository.cleaned || reviewer.calls != 1 || len(api.notes) != 1 || len(api.discussions) != 1 {
 		t.Fatalf("review did not complete: worked=%t cleaned=%t reviewCalls=%d notes=%d discussions=%d",
 			worked, repository.cleaned, reviewer.calls, len(api.notes), len(api.discussions))
@@ -194,6 +197,119 @@ func TestWorkerFailsTaskWhenPublishingFails(t *testing.T) {
 	}
 }
 
+func TestWorkerAppliesAndPublishesFixProposalWithoutPushing(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedFixJob(t, headSHA, "fix null handling")
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened", Title: "Feature",
+			DiffRefs: struct {
+				BaseSHA  string `json:"base_sha"`
+				StartSHA string `json:"start_sha"`
+				HeadSHA  string `json:"head_sha"`
+			}{BaseSHA: baseSHA, StartSHA: strings.Repeat("c", 40), HeadSHA: headSHA},
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	repository := &fakeRepository{}
+	reviewer := &fakeReviewer{}
+	patch := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+new\n"
+	fixer := &fakeFixer{outcome: fix.Outcome{Summary: "Handle the nil value.", Patch: patch}}
+	worker := newFixTestWorker(t, store, api, repository, reviewer, fixer)
+
+	worked, err := worker.processNext(context.Background())
+	if err != nil {
+		t.Fatalf("processNext() error = %v", err)
+	}
+	if !worked || !repository.cleaned || !repository.patchApplied || fixer.calls != 1 ||
+		len(api.notes) != 1 || reviewer.calls != 0 {
+		t.Fatalf("fix task did not complete as a proposal: worked=%t cleaned=%t applied=%t fixer=%d notes=%d reviews=%d",
+			worked, repository.cleaned, repository.patchApplied, fixer.calls, len(api.notes), reviewer.calls)
+	}
+	for _, expected := range []string{"Handle the nil value.", "git apply --check", "not committed or pushed", patch} {
+		if !strings.Contains(api.notes[0], expected) {
+			t.Errorf("fix proposal note does not contain %q: %s", expected, api.notes[0])
+		}
+	}
+	if fixer.request != "fix null handling" || repository.allowedPaths != "main.go" {
+		t.Fatalf("fix request/path restrictions were lost: request=%q paths=%q",
+			fixer.request, repository.allowedPaths)
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Type != jobs.TypeFix || job.Status != jobs.StatusCompleted {
+		t.Fatalf("unexpected completed fix job: %#v", job)
+	}
+}
+
+func TestWorkerDoesNotPublishFixWhenMRChangesDuringProposal(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedFixJob(t, headSHA, "")
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequests: []gitlab.MergeRequest{
+			{IID: 8, State: "opened", DiffRefs: mrRefs(baseSHA, strings.Repeat("c", 40), headSHA)},
+			{IID: 8, State: "opened", DiffRefs: mrRefs(strings.Repeat("d", 40), strings.Repeat("c", 40), headSHA)},
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	repository := &fakeRepository{}
+	fixer := &fakeFixer{outcome: fix.Outcome{Summary: "Change suggested.", Patch: "some patch"}}
+	worker := newFixTestWorker(t, store, api, repository, &fakeReviewer{}, fixer)
+
+	worked, err := worker.processNext(context.Background())
+	if err != nil {
+		t.Fatalf("processNext() error = %v", err)
+	}
+	if !worked || !repository.patchApplied || !repository.cleaned || len(api.notes) != 1 ||
+		!strings.Contains(api.notes[0], "changed while the fix proposal was being prepared") ||
+		strings.Contains(api.notes[0], "some patch") {
+		t.Fatalf("stale fix proposal was published: worked=%t applied=%t cleaned=%t notes=%v",
+			worked, repository.patchApplied, repository.cleaned, api.notes)
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusStale {
+		t.Fatalf("job status = %s, want stale", job.Status)
+	}
+}
+
+func TestWorkerFailsAndCleansWorkspaceWhenPatchValidationFails(t *testing.T) {
+	headSHA := strings.Repeat("b", 40)
+	baseSHA := strings.Repeat("a", 40)
+	store, jobID := queuedFixJob(t, headSHA, "")
+	defer store.Close()
+	api := &fakeGitLab{
+		mergeRequest: gitlab.MergeRequest{
+			IID: 8, State: "opened", DiffRefs: mrRefs(baseSHA, strings.Repeat("c", 40), headSHA),
+		},
+		project: gitlab.Project{ID: 10, HTTPURLToRepo: "https://gitlab.example.test/p.git"},
+	}
+	repository := &fakeRepository{patchErr: errors.New("patch targets an unsupported path")}
+	fixer := &fakeFixer{outcome: fix.Outcome{Summary: "Possible fix.", Patch: "invalid patch"}}
+	worker := newFixTestWorker(t, store, api, repository, &fakeReviewer{}, fixer)
+
+	worked, err := worker.processNext(context.Background())
+	if !worked || err == nil || !repository.cleaned || !repository.patchApplied || len(api.notes) != 0 {
+		t.Fatalf("invalid fix patch was not rejected and cleaned: worked=%t err=%v cleaned=%t applied=%t notes=%v",
+			worked, err, repository.cleaned, repository.patchApplied, api.notes)
+	}
+	job, err := store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusFailed || job.LastError == "" {
+		t.Fatalf("patch validation failure was not stored: %#v", job)
+	}
+}
+
 func TestWorkerDoesNotPublishWhenMRChangesDuringReview(t *testing.T) {
 	headSHA := strings.Repeat("b", 40)
 	baseSHA := strings.Repeat("a", 40)
@@ -275,7 +391,7 @@ func newTestWorker(
 		Agent:  config.AgentConfig{Enabled: true},
 		Review: config.ReviewConfig{MaxFiles: 50, MaxFindings: 10, MaxContextBytes: 1 << 20},
 		Worker: config.WorkerConfig{PollInterval: config.Duration(time.Second), JobTimeout: config.Duration(time.Minute)},
-	}, store, api, repository, reviewer, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, store, api, repository, reviewer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,10 +440,14 @@ func (f *fakeGitLab) PostDiscussion(
 }
 
 type fakeRepository struct {
-	headSHA  string
-	baseSHA  string
-	prepared bool
-	cleaned  bool
+	headSHA      string
+	baseSHA      string
+	prepared     bool
+	cleaned      bool
+	patchApplied bool
+	allowedPaths string
+	patchResult  string
+	patchErr     error
 }
 
 func (f *fakeRepository) PrepareWorkspace(
@@ -358,6 +478,17 @@ func (f *fakeRepository) CleanupWorkspace(context.Context, git.Workspace) error 
 	return nil
 }
 
+func (f *fakeRepository) ApplyPatch(
+	_ context.Context, _ git.Workspace, patch string, allowed []string, _ int,
+) (string, error) {
+	f.patchApplied = true
+	f.allowedPaths = strings.Join(allowed, ",")
+	if f.patchResult != "" {
+		return f.patchResult, f.patchErr
+	}
+	return patch, f.patchErr
+}
+
 type fakeReviewer struct {
 	outcome review.Outcome
 	calls   int
@@ -366,4 +497,75 @@ type fakeReviewer struct {
 func (f *fakeReviewer) Review(context.Context, review.Context, git.DiffResult) (review.Outcome, error) {
 	f.calls++
 	return f.outcome, nil
+}
+
+type fakeFixer struct {
+	outcome fix.Outcome
+	request string
+	calls   int
+}
+
+func (f *fakeFixer) Fix(
+	_ context.Context,
+	_ review.Context,
+	request string,
+	_ git.DiffResult,
+) (fix.Outcome, error) {
+	f.calls++
+	f.request = request
+	return f.outcome, nil
+}
+
+func newFixTestWorker(
+	t *testing.T,
+	store *jobs.Store,
+	api *fakeGitLab,
+	repository *fakeRepository,
+	reviewer *fakeReviewer,
+	fixer *fakeFixer,
+) *Worker {
+	t.Helper()
+	worker, err := NewWorker(config.Config{
+		Agent:  config.AgentConfig{Enabled: true},
+		Review: config.ReviewConfig{MaxFiles: 50, MaxFindings: 10, MaxContextBytes: 1 << 20},
+		Worker: config.WorkerConfig{PollInterval: config.Duration(time.Second), JobTimeout: config.Duration(time.Minute)},
+		Fix:    config.FixConfig{Enabled: true, AllowedUserIDs: []int64{99}, MaxPatchBytes: 1024},
+	}, store, api, repository, reviewer, fixer, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worker
+}
+
+func queuedFixJob(t *testing.T, headSHA, request string) (*jobs.Store, string) {
+	t.Helper()
+	store, err := jobs.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.CreateFix(context.Background(), "fix-note-1", "fix-key-1", jobs.Job{
+		ProjectID: 10, MRIID: 8, HeadSHA: headSHA, ActorID: 99, Request: request,
+	}, true, true)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	parts := strings.Split(result.Response, "`")
+	if len(parts) < 2 {
+		store.Close()
+		t.Fatalf("could not parse queued fix ID from %q", result.Response)
+	}
+	return store, parts[1]
+}
+
+func mrRefs(baseSHA, startSHA, headSHA string) struct {
+	BaseSHA  string `json:"base_sha"`
+	StartSHA string `json:"start_sha"`
+	HeadSHA  string `json:"head_sha"`
+} {
+	return struct {
+		BaseSHA  string `json:"base_sha"`
+		StartSHA string `json:"start_sha"`
+		HeadSHA  string `json:"head_sha"`
+	}{BaseSHA: baseSHA, StartSHA: startSHA, HeadSHA: headSHA}
 }

@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -311,11 +312,24 @@ func (m *Manager) projectLock(projectID int64) *sync.Mutex {
 }
 
 func (m *Manager) run(ctx context.Context, directory string, outputLimit int, args ...string) ([]byte, bool, error) {
+	return m.runInput(ctx, directory, outputLimit, nil, args...)
+}
+
+func (m *Manager) runInput(
+	ctx context.Context,
+	directory string,
+	outputLimit int,
+	input []byte,
+	args ...string,
+) ([]byte, bool, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, "git", args...)
 	cmd.Dir = directory
 	cmd.Env = m.gitEnvironment()
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
+	}
 	stdout := &limitedBuffer{limit: outputLimit}
 	stderr := &limitedBuffer{limit: maxErrorOutput}
 	cmd.Stdout = stdout

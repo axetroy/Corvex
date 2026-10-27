@@ -8,17 +8,17 @@ Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [
 
 - GitLab Note Hook 接口，并以恒定时间比较验证 Webhook Token。
 - 项目和用户白名单、机器人/系统评论过滤及严格的 `@corvex` 指令解析。
-- SQLite 持久化、Webhook 事件去重和审查任务入队。
-- `review`、`status` 和仅任务发起者可用的 `cancel` 指令。
+- SQLite 持久化、Webhook 事件去重、审查/Fix 任务队列及 Fix 授权审计。
+- `review`、白名单授权的 `fix`、`status` 和仅任务发起者可用的 `cancel` 指令。
 - GitLab MR 评论反馈、`/healthz` 与检查数据库的 `/readyz`。
 - YAML 配置；密钥只通过环境变量注入。
 - GitLab MR/项目元信息与分页 Diff API。
 - Git 引擎：按项目维护镜像、按指定 SHA 创建隔离 detached worktree、限制 Diff 大小，并拒绝工作区外文件读取。
 - OpenAI 兼容 Chat API 客户端与审查工作流：限制上下文、严格解析结构化结果、校验新增行和证据、检查严重级别并去重。
 
-`server` 会持久化审查任务，启用 `worker` 后可异步执行。Worker 会在审查前及发布前校验 MR Diff 版本，使用隔离 worktree，并将经过校验的问题发布为行级讨论；若 GitLab 拒绝讨论位置，则回退到摘要评论。Fix 请求使用独立功能开关和用户白名单，但补丁生成与执行尚未实现；目前不会创建 Fix 任务，也不会修改代码。
+`server` 会持久化审查任务，启用 `worker` 后可异步执行。Worker 会在审查前及发布前校验 MR Diff 版本，使用隔离 worktree，并将经过校验的问题发布为行级讨论；若 GitLab 拒绝讨论位置，则回退到摘要评论。Fix 提案默认关闭并使用独立用户白名单。启用后，Worker 会让模型生成受限 unified diff，仅在隔离 worktree 和 MR 已变更文件范围内应用，并运行内置的 `git apply --check` 与 `git diff --check`，最后将补丁发到 MR 供人工应用。不会运行仓库脚本、创建提交或推送代码。
 
-若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。Webhook 处理流程只负责入队；模型调用由 Worker 执行。
+若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。Webhook 处理流程只负责入队；模型调用由 Worker 执行。若要启用 Fix 提案，还需设置 `fix.enabled: true`，并在 `fix.allowed_user_ids` 中配置允许的 GitLab 用户 ID；该白名单不能为空，且必须启用 Agent。
 
 ## 本地运行
 
@@ -32,7 +32,7 @@ cp configs/config.example.yaml configs/config.yaml
 go run ./cmd/corvex --config configs/config.yaml server
 ```
 
-要异步执行审查，启用 Agent 配置，并在另一个进程中启动 Worker：
+要异步执行审查或 Fix 提案，启用 Agent 配置，并在另一个进程中启动 Worker：
 
 ```sh
 go run ./cmd/corvex --config configs/config.yaml worker

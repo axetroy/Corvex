@@ -14,6 +14,7 @@ import (
 	"github.com/axetroy/corvex/internal/agent"
 	"github.com/axetroy/corvex/internal/app"
 	"github.com/axetroy/corvex/internal/config"
+	fixengine "github.com/axetroy/corvex/internal/fix"
 	"github.com/axetroy/corvex/internal/git"
 	"github.com/axetroy/corvex/internal/gitlab"
 	"github.com/axetroy/corvex/internal/jobs"
@@ -83,7 +84,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create review workflow: %w", err)
 	}
-	worker, err := app.NewWorker(cfg, store, gitlabClient, gitManager, reviewWorkflow, logger)
+	var fixWorkflow *fixengine.Workflow
+	if cfg.Fix.Enabled {
+		fixWorkflow, err = fixengine.NewWorkflow(modelClient, cfg.Review.MaxContextBytes, cfg.Fix.MaxPatchBytes)
+		if err != nil {
+			return fmt.Errorf("create fix workflow: %w", err)
+		}
+	}
+	worker, err := app.NewWorker(cfg, store, gitlabClient, gitManager, reviewWorkflow, fixWorkflow, logger)
 	if err != nil {
 		return fmt.Errorf("create worker: %w", err)
 	}

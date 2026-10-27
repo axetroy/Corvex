@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/axetroy/corvex/internal/config"
+	"github.com/axetroy/corvex/internal/fix"
 	"github.com/axetroy/corvex/internal/git"
 	"github.com/axetroy/corvex/internal/gitlab"
 	"github.com/axetroy/corvex/internal/jobs"
@@ -25,11 +26,16 @@ type gitLabReviewClient interface {
 type repositoryManager interface {
 	PrepareWorkspace(context.Context, int64, string, string, string) (git.Workspace, error)
 	Diff(context.Context, git.Workspace, string, int, int) (git.DiffResult, error)
+	ApplyPatch(context.Context, git.Workspace, string, []string, int) (string, error)
 	CleanupWorkspace(context.Context, git.Workspace) error
 }
 
 type reviewWorkflow interface {
 	Review(context.Context, review.Context, git.DiffResult) (review.Outcome, error)
+}
+
+type fixWorkflow interface {
+	Fix(context.Context, review.Context, string, git.DiffResult) (fix.Outcome, error)
 }
 
 type Worker struct {
@@ -38,6 +44,7 @@ type Worker struct {
 	gitlab   gitLabReviewClient
 	repo     repositoryManager
 	reviewer reviewWorkflow
+	fixer    fixWorkflow
 	logger   *slog.Logger
 }
 
@@ -47,6 +54,7 @@ func NewWorker(
 	gitlabClient gitLabReviewClient,
 	repo repositoryManager,
 	reviewer reviewWorkflow,
+	fixer fixWorkflow,
 	logger *slog.Logger,
 ) (*Worker, error) {
 	if !cfg.Agent.Enabled {
@@ -55,11 +63,15 @@ func NewWorker(
 	if store == nil || gitlabClient == nil || repo == nil || reviewer == nil || logger == nil {
 		return nil, errors.New("worker dependencies must be provided")
 	}
+	if cfg.Fix.Enabled && (fixer == nil || len(cfg.Fix.AllowedUserIDs) == 0 ||
+		cfg.Fix.MaxPatchBytes <= 0 || cfg.Fix.MaxPatchBytes > 256<<10) {
+		return nil, errors.New("enabled fix mode requires an authorized user allowlist and bounded patch workflow")
+	}
 	if cfg.Worker.PollInterval <= 0 || cfg.Worker.JobTimeout <= 0 {
 		return nil, errors.New("worker intervals and timeouts must be positive")
 	}
 	return &Worker{
-		cfg: cfg, store: store, gitlab: gitlabClient, repo: repo, reviewer: reviewer, logger: logger,
+		cfg: cfg, store: store, gitlab: gitlabClient, repo: repo, reviewer: reviewer, fixer: fixer, logger: logger,
 	}, nil
 }
 
@@ -107,6 +119,12 @@ func (w *Worker) processNext(ctx context.Context) (bool, error) {
 }
 
 func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resultErr error) {
+	if job.Type != jobs.TypeReview && job.Type != jobs.TypeFix {
+		return fmt.Errorf("unsupported task type %q", job.Type)
+	}
+	if job.Type == jobs.TypeFix && (!w.cfg.Fix.Enabled || w.fixer == nil) {
+		return errors.New("fix task cannot run because fix mode is disabled")
+	}
 	if len(job.HeadSHA) != 40 && len(job.HeadSHA) != 64 {
 		return w.markStale(ctx, job, stage, "The review task did not include a full MR Head SHA.")
 	}
@@ -148,6 +166,15 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 	if err != nil {
 		return fmt.Errorf("build MR diff: %w", err)
 	}
+	reviewContext := review.Context{
+		ProjectID: job.ProjectID, MRIID: job.MRIID, Title: mergeRequest.Title,
+		Description: mergeRequest.Description, SourceBranch: mergeRequest.SourceBranch,
+		TargetBranch: mergeRequest.TargetBranch, BaseSHA: mergeRequest.DiffRefs.BaseSHA,
+		HeadSHA: job.HeadSHA,
+	}
+	if job.Type == jobs.TypeFix {
+		return w.executeFix(ctx, job, stage, mergeRequest, workspace, diff, reviewContext, &cleaned)
+	}
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	cleanupErr := w.repo.CleanupWorkspace(cleanupCtx, workspace)
 	cleanupCancel()
@@ -159,12 +186,7 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 		return err
 	}
 	reviewStarted := time.Now()
-	outcome, err := w.reviewer.Review(ctx, review.Context{
-		ProjectID: job.ProjectID, MRIID: job.MRIID, Title: mergeRequest.Title,
-		Description: mergeRequest.Description, SourceBranch: mergeRequest.SourceBranch,
-		TargetBranch: mergeRequest.TargetBranch, BaseSHA: mergeRequest.DiffRefs.BaseSHA,
-		HeadSHA: job.HeadSHA,
-	}, diff)
+	outcome, err := w.reviewer.Review(ctx, reviewContext, diff)
 	if err != nil {
 		w.logger.Warn("review model call failed",
 			"job_id", job.ID, "duration", time.Since(reviewStarted), "error", err)
@@ -205,6 +227,105 @@ func (w *Worker) execute(ctx context.Context, job jobs.Job, stage *string) (resu
 		return fmt.Errorf("publish review summary: %w", err)
 	}
 	return w.transition(ctx, job.ID, stage, jobs.StatusCompleted)
+}
+
+func (w *Worker) executeFix(
+	ctx context.Context,
+	job jobs.Job,
+	stage *string,
+	mergeRequest gitlab.MergeRequest,
+	workspace git.Workspace,
+	diff git.DiffResult,
+	reviewContext review.Context,
+	workspaceCleaned *bool,
+) error {
+	if err := w.transition(ctx, job.ID, stage, jobs.StatusAnalyzing); err != nil {
+		return err
+	}
+	if err := w.transition(ctx, job.ID, stage, jobs.StatusFixing); err != nil {
+		return err
+	}
+	started := time.Now()
+	outcome, err := w.fixer.Fix(ctx, reviewContext, job.Request, diff)
+	if err != nil {
+		w.logger.Warn("fix model call failed",
+			"job_id", job.ID, "duration", time.Since(started), "error", err)
+		return err
+	}
+	w.logger.Info("fix model call completed",
+		"job_id", job.ID, "model", outcome.Model, "duration", time.Since(started),
+		"input_tokens", outcome.Usage.InputTokens, "output_tokens", outcome.Usage.OutputTokens,
+		"total_tokens", outcome.Usage.TotalTokens, "patch_bytes", len(outcome.Patch))
+	if err := w.transition(ctx, job.ID, stage, jobs.StatusVerifying); err != nil {
+		return err
+	}
+	finalPatch := ""
+	if outcome.Patch != "" {
+		allowedPaths := make([]string, 0, len(diff.Changes))
+		for _, change := range diff.Changes {
+			if change.Skipped == "" && change.Patch != "" {
+				allowedPaths = append(allowedPaths, change.Path)
+			}
+		}
+		finalPatch, err = w.repo.ApplyPatch(ctx, workspace, outcome.Patch, allowedPaths, w.cfg.Fix.MaxPatchBytes)
+		if err != nil {
+			return fmt.Errorf("apply and verify fix patch: %w", err)
+		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanupErr := w.repo.CleanupWorkspace(cleanupCtx, workspace)
+	cancel()
+	*workspaceCleaned = cleanupErr == nil
+	if cleanupErr != nil {
+		return fmt.Errorf("clean fix workspace before publishing: %w", cleanupErr)
+	}
+	latest, err := w.gitlab.GetMergeRequest(ctx, job.ProjectID, job.MRIID)
+	if err != nil {
+		return fmt.Errorf("recheck MR diff snapshot before publishing fix proposal: %w", err)
+	}
+	if !sameReviewSnapshot(mergeRequest, latest, job.HeadSHA) {
+		return w.markStale(ctx, job, stage, "The MR changed while the fix proposal was being prepared; no patch was published.")
+	}
+	if err := w.transition(ctx, job.ID, stage, jobs.StatusPublishing); err != nil {
+		return err
+	}
+	if err := w.gitlab.PostNote(ctx, job.ProjectID, job.MRIID, formatFixProposal(job, outcome, finalPatch)); err != nil {
+		return fmt.Errorf("publish fix proposal: %w", err)
+	}
+	return w.transition(ctx, job.ID, stage, jobs.StatusCompleted)
+}
+
+func formatFixProposal(job jobs.Job, outcome fix.Outcome, patch string) string {
+	var note strings.Builder
+	fmt.Fprintf(&note, "## Corvex fix proposal for `%s`\n\n", job.HeadSHA[:min(12, len(job.HeadSHA))])
+	note.WriteString(escapeReviewText(outcome.Summary))
+	if patch == "" {
+		note.WriteString("\n\nNo patch was proposed. No files were changed.")
+		return note.String()
+	}
+	note.WriteString("\n\nThe patch passed `git apply --check` and `git diff --check` in an isolated worktree. It was not committed or pushed; apply it manually after review.")
+	fence := patchFence(patch)
+	fmt.Fprintf(&note, "\n\n%sdiff\n%s", fence, patch)
+	if !strings.HasSuffix(patch, "\n") {
+		note.WriteByte('\n')
+	}
+	note.WriteString(fence)
+	return note.String()
+}
+
+func patchFence(patch string) string {
+	longest, current := 2, 0
+	for _, character := range patch {
+		if character == '`' {
+			current++
+			if current > longest {
+				longest = current
+			}
+			continue
+		}
+		current = 0
+	}
+	return strings.Repeat("`", longest+1)
 }
 
 func sameReviewSnapshot(before, after gitlab.MergeRequest, expectedHeadSHA string) bool {

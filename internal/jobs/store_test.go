@@ -132,7 +132,7 @@ func TestClaimNextRecordsAttemptAndEnforcesTransitions(t *testing.T) {
 	}
 }
 
-func TestRecordFixAuthorizationIsIdempotentAndAudited(t *testing.T) {
+func TestCreateFixAuthorizationIsIdempotentAndAudited(t *testing.T) {
 	store, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -149,18 +149,19 @@ func TestRecordFixAuthorizationIsIdempotentAndAudited(t *testing.T) {
 	}{
 		{"disabled", false, true, "disabled by configuration", "denied_disabled"},
 		{"unauthorized", true, false, "not authorized", "denied_not_allowlisted"},
-		{"authorized", true, true, "No task was queued", "authorized_executor_unavailable"},
+		{"authorized", true, true, "Queued fix proposal", "authorized_queued"},
 	}
 	for _, test := range cases {
-		result, err := store.RecordFixAuthorization(ctx, test.eventID, 10, 5, 42,
-			test.enabled, test.authorized)
+		job := Job{ProjectID: 10, MRIID: 5, HeadSHA: strings.Repeat("a", 40), ActorID: 42, Request: "fix null handling"}
+		result, err := store.CreateFix(ctx, test.eventID, "key-"+test.eventID, job, test.enabled, test.authorized)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(result.Response, test.wantText) {
 			t.Errorf("response = %q, want it to contain %q", result.Response, test.wantText)
 		}
-		retry, err := store.RecordFixAuthorization(ctx, test.eventID, 10, 5, 99,
+		job.ActorID = 99
+		retry, err := store.CreateFix(ctx, test.eventID, "key-"+test.eventID, job,
 			!test.enabled, !test.authorized)
 		if err != nil {
 			t.Fatal(err)
@@ -187,6 +188,20 @@ func TestRecordFixAuthorizationIsIdempotentAndAudited(t *testing.T) {
 	}
 	if auditCount != len(cases) {
 		t.Fatalf("fix audit entries = %d, want %d", auditCount, len(cases))
+	}
+	var jobCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE type = ?`, TypeFix).Scan(&jobCount); err != nil {
+		t.Fatal(err)
+	}
+	if jobCount != 1 {
+		t.Fatalf("fix jobs = %d, want only the authorized task", jobCount)
+	}
+	job, found, err := store.ClaimNext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || job.Type != TypeFix || job.Request != "fix null handling" {
+		t.Fatalf("claimed fix task = %#v, found = %t", job, found)
 	}
 }
 

@@ -8,17 +8,17 @@ The implementation currently provides:
 
 - A GitLab Note Hook endpoint with constant-time webhook-token validation.
 - Project and user allowlists, bot/system-note filtering, and strict `@corvex` command parsing.
-- SQLite persistence with durable event deduplication and queued review tasks.
-- `review`, `status`, and owner-only `cancel` commands.
+- SQLite persistence with durable event deduplication, queued review/fix tasks, and fix authorization auditing.
+- `review`, allowlisted `fix`, `status`, and owner-only `cancel` commands.
 - GitLab MR note replies, `/healthz` and database-backed `/readyz` endpoints.
 - YAML configuration with secrets supplied only through environment variables.
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
 - An OpenAI-compatible chat client and review workflow with bounded context, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
 
-The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix requests have a separate feature flag and user allowlist, but patch generation and execution are not implemented; no fix task is queued and no code is changed.
+The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push.
 
-To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. Webhook handling only queues work; the worker performs model calls.
+To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. Webhook handling only queues work; the worker performs model calls. To enable fix proposals, additionally set `fix.enabled: true` and populate `fix.allowed_user_ids` with the permitted GitLab user IDs. The fix allowlist must be non-empty, and the agent must be enabled.
 
 ## Run locally
 
@@ -32,7 +32,7 @@ Set `CORVEX_GITLAB_READ_TOKEN` to a read-only GitLab token, `CORVEX_GITLAB_TOKEN
 go run ./cmd/corvex --config configs/config.yaml server
 ```
 
-For asynchronous reviews, enable the agent configuration and run the worker in a second process:
+For asynchronous reviews or fix proposals, enable the agent configuration and run the worker in a second process:
 
 ```sh
 go run ./cmd/corvex --config configs/config.yaml worker

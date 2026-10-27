@@ -96,6 +96,31 @@ func TestPrepareWorkspaceDiffReadAndCleanup(t *testing.T) {
 	if _, err := manager.ReadFile(context.Background(), workspace, "external-link", 1024); err == nil {
 		t.Fatal("ReadFile followed a symlink outside the workspace")
 	}
+	patch := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -3 +3 @@\n-func Value() int { return 2 }\n+func Value() int { return 3 }\n"
+	if _, err := manager.ApplyPatch(context.Background(), workspace, patch, []string{"main.go"}, 16<<10); err == nil {
+		t.Fatal("ApplyPatch accepted a dirty worktree")
+	}
+	if err := os.Remove(filepath.Join(workspace.Path, "external-link")); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := manager.ApplyPatch(context.Background(), workspace, patch, []string{"main.go"}, 16<<10)
+	if err != nil {
+		t.Fatalf("ApplyPatch() error = %v", err)
+	}
+	if !strings.Contains(applied, "+func Value() int { return 3 }") {
+		t.Fatalf("returned patch does not describe the applied change: %s", applied)
+	}
+	patchedFile, err := os.ReadFile(filepath.Join(workspace.Path, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(patchedFile), "return 3") {
+		t.Fatalf("patch was not applied to isolated workspace: %s", patchedFile)
+	}
+	unauthorizedPatch := "diff --git a/other.go b/other.go\n--- a/other.go\n+++ b/other.go\n@@ -1 +1 @@\n-before\n+after\n"
+	if _, err := manager.ApplyPatch(context.Background(), workspace, unauthorizedPatch, []string{"main.go"}, 16<<10); err == nil {
+		t.Fatal("ApplyPatch accepted a path outside the authorized MR diff")
+	}
 
 	other, err := manager.PrepareWorkspace(context.Background(), 44, "task-two", repositoryURL, baseSHA)
 	if err != nil {
@@ -112,6 +137,38 @@ func TestPrepareWorkspaceDiffReadAndCleanup(t *testing.T) {
 	}
 	if err := manager.CleanupWorkspace(context.Background(), other); err != nil {
 		t.Fatalf("cleanup second workspace: %v", err)
+	}
+}
+
+func TestValidateFixPatchRejectsUnsupportedChanges(t *testing.T) {
+	allowed := []string{"main.go"}
+	for _, patch := range []string{
+		"diff --git a/main.go b/other.go\n--- a/main.go\n+++ b/other.go\n@@ -1 +1 @@\n-old\n+new\n",
+		"diff --git a/other.go b/other.go\n--- a/other.go\n+++ b/other.go\n@@ -1 +1 @@\n-old\n+new\n",
+		"diff --git a/main.go b/main.go\nnew file mode 100644\n--- /dev/null\n+++ b/main.go\n@@ -0,0 +1 @@\n+new\n",
+		"diff --git a/.git/config b/.git/config\n--- a/.git/config\n+++ b/.git/config\n@@ -1 +1 @@\n-old\n+new\n",
+	} {
+		if _, err := validateFixPatch(patch, allowed); err == nil {
+			t.Errorf("validateFixPatch accepted unsupported patch %q", patch)
+		}
+	}
+}
+
+func TestIsRegularBlobRejectsSymlinksAndSubmodules(t *testing.T) {
+	for _, testCase := range []struct {
+		entry string
+		path  string
+	}{
+		{entry: "120000 blob deadbeef\tlink\x00", path: "link"},
+		{entry: "160000 commit deadbeef\tsubmodule\x00", path: "submodule"},
+		{entry: "100644 tree deadbeef\tfolder\x00", path: "folder"},
+	} {
+		if isRegularBlob([]byte(testCase.entry), testCase.path) {
+			t.Errorf("isRegularBlob accepted non-regular entry %q", testCase.entry)
+		}
+	}
+	if !isRegularBlob([]byte("100644 blob deadbeef\tmain.go\x00"), "main.go") {
+		t.Fatal("isRegularBlob rejected a regular tracked file")
 	}
 }
 

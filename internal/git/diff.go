@@ -12,6 +12,7 @@ import (
 )
 
 const maxTotalDiffBytes = 16 << 20
+const maxFixPatchBytes = 256 << 10
 
 type Change struct {
 	Path         string `json:"path"`
@@ -141,6 +142,195 @@ func (m *Manager) ReadFile(ctx context.Context, workspace Workspace, name string
 		return nil, fmt.Errorf("file exceeds %d-byte read limit", maxBytes)
 	}
 	return content, nil
+}
+
+func (m *Manager) ApplyPatch(
+	ctx context.Context,
+	workspace Workspace,
+	patch string,
+	allowedPaths []string,
+	maxPatchBytes int,
+) (string, error) {
+	if err := m.validateWorkspace(workspace); err != nil {
+		return "", err
+	}
+	if maxPatchBytes <= 0 || maxPatchBytes > maxFixPatchBytes || len(patch) == 0 || len(patch) > maxPatchBytes {
+		return "", errors.New("fix patch is empty or exceeds its configured size limit")
+	}
+	paths, err := validateFixPatch(patch, allowedPaths)
+	if err != nil {
+		return "", err
+	}
+	status, _, err := m.run(ctx, workspace.Path, maxErrorOutput, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return "", fmt.Errorf("check worktree before patch: %w", err)
+	}
+	if len(status) != 0 {
+		return "", errors.New("patch worktree is not clean")
+	}
+	for _, name := range paths {
+		treeEntry, _, err := m.run(ctx, workspace.Path, maxErrorOutput, "ls-tree", "-z", "HEAD", "--", name)
+		if err != nil {
+			return "", fmt.Errorf("inspect patch target %q: %w", name, err)
+		}
+		if !isRegularBlob(treeEntry, name) {
+			return "", fmt.Errorf("patch target %q is not a regular tracked file", name)
+		}
+	}
+	if _, _, err := m.runInput(ctx, workspace.Path, maxErrorOutput, []byte(patch),
+		"apply", "--check", "--whitespace=error", "-"); err != nil {
+		return "", fmt.Errorf("check generated patch: %w", err)
+	}
+	if _, _, err := m.runInput(ctx, workspace.Path, maxErrorOutput, []byte(patch),
+		"apply", "--whitespace=error", "-"); err != nil {
+		return "", fmt.Errorf("apply generated patch: %w", err)
+	}
+	if _, _, err := m.run(ctx, workspace.Path, maxErrorOutput, "diff", "--check", "HEAD", "--"); err != nil {
+		return "", fmt.Errorf("check patched worktree: %w", err)
+	}
+	changed, truncated, err := m.run(ctx, workspace.Path, maxFixPatchBytes, "diff", "--name-only", "-z", "HEAD", "--")
+	if err != nil {
+		return "", fmt.Errorf("list patched files: %w", err)
+	}
+	if truncated {
+		return "", errors.New("patched file list exceeds output limit")
+	}
+	if err := validateAppliedPaths(changed, paths); err != nil {
+		return "", err
+	}
+	finalPatch, truncated, err := m.run(ctx, workspace.Path, maxPatchBytes, "diff", "--no-ext-diff", "--unified=3", "HEAD", "--")
+	if err != nil {
+		return "", fmt.Errorf("read validated patch: %w", err)
+	}
+	if truncated {
+		return "", errors.New("validated patch exceeds configured size limit")
+	}
+	if len(finalPatch) == 0 {
+		return "", errors.New("generated patch produced no worktree changes")
+	}
+	return string(finalPatch), nil
+}
+
+func validateFixPatch(patch string, allowedPaths []string) ([]string, error) {
+	allowed := make(map[string]struct{}, len(allowedPaths))
+	for _, name := range allowedPaths {
+		if !validPatchPath(name) {
+			return nil, fmt.Errorf("invalid authorized patch path %q", name)
+		}
+		allowed[name] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return nil, errors.New("fix patch has no authorized changed files")
+	}
+	lines := strings.Split(patch, "\n")
+	var paths []string
+	seen := make(map[string]struct{})
+	for index := 0; index < len(lines); {
+		header := strings.TrimSuffix(lines[index], "\r")
+		if !strings.HasPrefix(header, "diff --git ") {
+			if strings.TrimSpace(header) == "" && len(paths) == 0 {
+				index++
+				continue
+			}
+			return nil, errors.New("fix patch contains data outside a git diff section")
+		}
+		sectionStart := index
+		index++
+		for index < len(lines) && !strings.HasPrefix(lines[index], "diff --git ") {
+			index++
+		}
+		section := lines[sectionStart:index]
+		oldPath, newPath, hasHunk := "", "", false
+		for _, rawLine := range section {
+			line := strings.TrimSuffix(rawLine, "\r")
+			switch {
+			case strings.HasPrefix(line, "--- a/"):
+				oldPath = patchFilePath(strings.TrimPrefix(line, "--- a/"))
+			case strings.HasPrefix(line, "+++ b/"):
+				newPath = patchFilePath(strings.TrimPrefix(line, "+++ b/"))
+			case strings.HasPrefix(line, "@@ "):
+				hasHunk = true
+			case strings.HasPrefix(line, "new file mode "), strings.HasPrefix(line, "deleted file mode "),
+				strings.HasPrefix(line, "old mode "), strings.HasPrefix(line, "new mode "),
+				strings.HasPrefix(line, "rename from "), strings.HasPrefix(line, "rename to "),
+				strings.HasPrefix(line, "copy from "), strings.HasPrefix(line, "copy to "),
+				line == "GIT binary patch", strings.HasPrefix(line, "Binary files "):
+				return nil, errors.New("fix patch may only modify existing text files")
+			}
+		}
+		if oldPath == "" || newPath == "" || oldPath != newPath || !hasHunk || !validPatchPath(oldPath) {
+			return nil, errors.New("fix patch contains an unsupported or malformed file change")
+		}
+		if !strings.HasPrefix(header, "diff --git a/") ||
+			strings.TrimPrefix(header, "diff --git a/") != oldPath+" b/"+newPath {
+			return nil, errors.New("fix patch header does not match its file paths")
+		}
+		if _, ok := allowed[oldPath]; !ok {
+			return nil, fmt.Errorf("fix patch targets unauthorized file %q", oldPath)
+		}
+		if _, duplicate := seen[oldPath]; duplicate {
+			return nil, fmt.Errorf("fix patch contains duplicate file section %q", oldPath)
+		}
+		seen[oldPath] = struct{}{}
+		paths = append(paths, oldPath)
+	}
+	if len(paths) == 0 {
+		return nil, errors.New("fix patch contains no file changes")
+	}
+	return paths, nil
+}
+
+func patchFilePath(value string) string {
+	if timestamp := strings.IndexByte(value, '\t'); timestamp >= 0 {
+		return value[:timestamp]
+	}
+	return value
+}
+
+func validPatchPath(name string) bool {
+	if name == "" || filepath.IsAbs(name) || strings.Contains(name, "\\") ||
+		filepath.Clean(name) != name || name == "." || name == ".." ||
+		strings.HasPrefix(name, ".."+string(filepath.Separator)) ||
+		name == ".git" || strings.HasPrefix(name, ".git"+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
+func isRegularBlob(output []byte, expectedPath string) bool {
+	entry := bytes.TrimSuffix(output, []byte{0})
+	tab := bytes.IndexByte(entry, '\t')
+	if tab < 0 || string(entry[tab+1:]) != expectedPath {
+		return false
+	}
+	fields := strings.Fields(string(entry[:tab]))
+	return len(fields) == 3 && (fields[0] == "100644" || fields[0] == "100755") && fields[1] == "blob"
+}
+
+func validateAppliedPaths(output []byte, expected []string) error {
+	allowed := make(map[string]struct{}, len(expected))
+	for _, name := range expected {
+		allowed[name] = struct{}{}
+	}
+	fields := bytes.Split(output, []byte{0})
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if len(field) == 0 {
+			continue
+		}
+		name := string(field)
+		if !validPatchPath(name) {
+			return fmt.Errorf("git reported unsafe patched path %q", name)
+		}
+		if _, ok := allowed[name]; !ok {
+			return fmt.Errorf("generated patch changed unauthorized file %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return errors.New("generated patch did not modify any files")
+	}
+	return nil
 }
 
 func (m *Manager) validateWorkspace(workspace Workspace) error {
