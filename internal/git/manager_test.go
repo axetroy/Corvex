@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,17 +91,29 @@ func TestPrepareWorkspaceDiffReadAndCleanup(t *testing.T) {
 	if _, err := manager.ReadFile(context.Background(), workspace, "main.go", 4); err == nil {
 		t.Fatal("ReadFile ignored the byte limit")
 	}
-	if err := os.Symlink("/etc/passwd", filepath.Join(workspace.Path, "external-link")); err != nil {
-		t.Fatal(err)
+	symlinkPath := filepath.Join(workspace.Path, "external-link")
+	if err := os.Symlink("/etc/passwd", symlinkPath); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		t.Logf("skipping symlink escape check because Windows did not permit creating the test symlink: %v", err)
+	} else {
+		if _, err := manager.ReadFile(context.Background(), workspace, "external-link", 1024); err == nil {
+			t.Fatal("ReadFile followed a symlink outside the workspace")
+		}
+		if err := os.Remove(symlinkPath); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := manager.ReadFile(context.Background(), workspace, "external-link", 1024); err == nil {
-		t.Fatal("ReadFile followed a symlink outside the workspace")
+	dirtyMarker := filepath.Join(workspace.Path, "dirty-marker")
+	if err := os.WriteFile(dirtyMarker, []byte("dirty"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	patch := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -3 +3 @@\n-func Value() int { return 2 }\n+func Value() int { return 3 }\n"
 	if _, err := manager.ApplyPatch(context.Background(), workspace, patch, []string{"main.go"}, 16<<10); err == nil {
 		t.Fatal("ApplyPatch accepted a dirty worktree")
 	}
-	if err := os.Remove(filepath.Join(workspace.Path, "external-link")); err != nil {
+	if err := os.Remove(dirtyMarker); err != nil {
 		t.Fatal(err)
 	}
 	applied, err := manager.ApplyPatch(context.Background(), workspace, patch, []string{"main.go"}, 16<<10)

@@ -19,8 +19,8 @@ gitlab:
   allowed_project_ids: [4]
   allowed_user_ids: [8]
 storage:
-  root: "` + filepath.Join(t.TempDir(), "corvex") + `"
-  database: "` + filepath.Join(t.TempDir(), "state", "corvex.db") + `"
+  root: "` + filepath.ToSlash(filepath.Join(t.TempDir(), "corvex")) + `"
+  database: "` + filepath.ToSlash(filepath.Join(t.TempDir(), "state", "corvex.db")) + `"
 agent:
   enabled: true
   base_url: "https://api.example.test/v1"
