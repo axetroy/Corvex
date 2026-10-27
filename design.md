@@ -1,5 +1,3 @@
-下面给出一份可以直接作为 GitHub/GitLab 仓库 `README.md`、`WHITEPAPER.md` 或项目设计文档基础的完整白皮书。它以已经确定的 Corvex + Golang + 自托管 GitLab + Docker Compose + OpenAI 兼容模型 API 为基础，覆盖产品定位、系统架构、核心流程、技术选型、权限与安全、部署方案、开发路线和验收标准。
-
 # Corvex 项目白皮书
 
 # Corvex
