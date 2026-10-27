@@ -1,6 +1,6 @@
 # Corvex
 
-Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [design.md](design.md) 中的路线图分阶段实现 MVP。
+Corvex 是面向自托管 GitLab 的代码审查与修复代理。本仓库按 [design.md](design.md) 中的路线图分阶段实现 MVP。请参阅[文档站点](https://axetroy.github.io/Corvex/)。
 
 ## 当前实现
 

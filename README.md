@@ -1,6 +1,6 @@
 # Corvex
 
-Corvex is a self-hosted GitLab code review and repair agent. This repository is implementing the MVP in phases described in [design.md](design.md).
+Corvex is a self-hosted GitLab code review and repair agent. This repository is implementing the MVP in phases described in [design.md](design.md). Read the [documentation](https://axetroy.github.io/Corvex/).
 
 ## Current implementation
 
