@@ -66,7 +66,7 @@ describe("CorvexServer", () => {
     const application = new CorvexServer(
       config,
       store,
-      new GitLabClient(config.gitlab.baseUrl, "read", "write"),
+      new GitLabClient(config.gitlab.baseUrl, "", "write"),
     );
     const running = application.run(controller.signal);
     try {
@@ -109,6 +109,29 @@ describe("CorvexServer", () => {
       expect((await send()).status).toBe(202);
       expect(store.jobCounts().queued).toBe(1);
       expect(postedNotes).toBe(1);
+
+      config.fix.enabled = true;
+      config.fix.allowedUserIds = [2];
+      const fixPayload = {
+        ...payload,
+        object_attributes: {
+          ...payload.object_attributes,
+          id: 100,
+          note: "@corvex fix handle this error more gracefully",
+        },
+      };
+      const fixResponse = await fetch(`${base}/webhooks/gitlab`, {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(fixPayload),
+      });
+      expect(fixResponse.status).toBe(202);
+      expect(store.jobCounts().queued).toBe(2);
+      expect(postedNotes).toBe(2);
     } finally {
       controller.abort();
       await running;

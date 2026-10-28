@@ -1,5 +1,7 @@
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 export interface CorvexConfig {
@@ -49,6 +51,8 @@ export interface CorvexConfig {
     maxPatchBytes: number;
   };
 }
+
+export type ConfigRole = "server" | "worker" | "storage";
 
 type JsonObject = Record<string, unknown>;
 
@@ -228,7 +232,7 @@ function validHttpUrl(value: string, allowCredentials = false): boolean {
   }
 }
 
-export function validateConfig(config: CorvexConfig): void {
+export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   const problems: string[] = [];
   if (!config.server.listen.trim()) problems.push("server.listen is required");
   if (config.server.readTimeout <= 0 || config.server.shutdownTimeout <= 0) {
@@ -237,9 +241,15 @@ export function validateConfig(config: CorvexConfig): void {
   if (!validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
-  if (!config.gitlab.readToken.trim()) problems.push("CORVEX_GITLAB_READ_TOKEN is required");
-  if (!config.gitlab.writeToken.trim()) problems.push("CORVEX_GITLAB_TOKEN is required");
-  if (!config.gitlab.webhookSecret.trim()) problems.push("CORVEX_WEBHOOK_SECRET is required");
+  if (role !== "server" && role !== "storage" && !config.gitlab.readToken.trim()) {
+    problems.push("CORVEX_GITLAB_READ_TOKEN is required");
+  }
+  if (role !== "storage" && !config.gitlab.writeToken.trim()) {
+    problems.push("CORVEX_GITLAB_TOKEN is required");
+  }
+  if (role !== "worker" && role !== "storage" && !config.gitlab.webhookSecret.trim()) {
+    problems.push("CORVEX_WEBHOOK_SECRET is required");
+  }
   if (config.gitlab.allowedProjectIds.length === 0) {
     problems.push("gitlab.allowed_project_ids must not be empty");
   }
@@ -275,7 +285,10 @@ export function validateConfig(config: CorvexConfig): void {
   if (config.fix.maxPatchBytes <= 0 || config.fix.maxPatchBytes > 256 << 10) {
     problems.push("fix.max_patch_bytes must be between 1 byte and 256 KiB");
   }
-  if (config.agent.enabled) {
+  if (role === "worker" && !config.agent.enabled) {
+    problems.push("agent.enabled must be true for worker mode");
+  }
+  if (config.agent.enabled && role !== "server" && role !== "storage") {
     if (!validHttpUrl(config.agent.baseUrl)) {
       problems.push("agent.base_url must be a valid HTTP(S) URL without credentials");
     }
@@ -294,7 +307,7 @@ export function validateConfig(config: CorvexConfig): void {
   if (problems.length > 0) throw new Error(problems.join("; "));
 }
 
-export async function loadConfig(path: string): Promise<CorvexConfig> {
+export async function loadConfig(path: string, role?: ConfigRole): Promise<CorvexConfig> {
   let contents: string;
   try {
     contents = await readFile(path, "utf8");
@@ -307,9 +320,17 @@ export async function loadConfig(path: string): Promise<CorvexConfig> {
   } catch (error) {
     throw new Error(`parse config "${path}": ${String(error)}`, { cause: error });
   }
-  validateConfig(config);
+  validateConfig(config, role);
   await mkdir(dirname(config.storage.database), { recursive: true });
   await mkdir(join(config.storage.root, "mirrors"), { recursive: true });
   await mkdir(join(config.storage.root, "workspaces"), { recursive: true });
   return config;
+}
+
+export async function initializeConfig(path: string): Promise<void> {
+  if (!path.trim()) throw new Error("config path is required");
+  const template = fileURLToPath(new URL("../../configs/config.example.yaml", import.meta.url));
+  const output = resolve(path);
+  await mkdir(dirname(output), { recursive: true });
+  await copyFile(template, output, constants.COPYFILE_EXCL);
 }

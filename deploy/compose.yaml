@@ -1,5 +1,6 @@
 services:
   corvex:
+    image: ghcr.io/axetroy/corvex:${CORVEX_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -23,11 +24,9 @@ services:
       - "8080:8080"
     environment:
       CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
-      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN:?set CORVEX_GITLAB_READ_TOKEN}
       CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET:?set CORVEX_WEBHOOK_SECRET}
       CORVEX_STORAGE_ROOT: /data/corvex
       CORVEX_DATABASE: /data/corvex/state/corvex.db
-      CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}
     volumes:
       - ../configs/config.yaml:/etc/corvex/config.yaml:ro
       - corvex-data:/data/corvex
@@ -38,6 +37,7 @@ services:
       retries: 3
 
   corvex-worker:
+    image: ghcr.io/axetroy/corvex:${CORVEX_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: Dockerfile
@@ -61,8 +61,7 @@ services:
       - no-new-privileges:true
     environment:
       CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
-      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN:?set CORVEX_GITLAB_READ_TOKEN}
-      CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET:?set CORVEX_WEBHOOK_SECRET}
+      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN-}
       CORVEX_STORAGE_ROOT: /data/corvex
       CORVEX_DATABASE: /data/corvex/state/corvex.db
       CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}

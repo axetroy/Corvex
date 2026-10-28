@@ -7,6 +7,7 @@ import {
   jobTypes,
   type EventResult,
   type Job,
+  type JobSummary,
   type JobStatus,
   type JobType,
   type ModelCallMetric,
@@ -30,6 +31,8 @@ interface JobRow {
   last_error: string;
   cancel_requested: number;
   lease_token: string;
+  failure_stage: string;
+  updated_at: string;
 }
 
 function stringColumn(row: Record<string, unknown>, name: string): string {
@@ -60,6 +63,10 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
   if (!isJobType(type)) throw new Error(`SQLite job type "${type}" is invalid`);
   const status = stringColumn(row, "status");
   if (!isJobStatus(status)) throw new Error(`SQLite job status "${status}" is invalid`);
+  const failureStage = stringColumn(row, "failure_stage");
+  if (failureStage && !isJobStatus(failureStage)) {
+    throw new Error(`SQLite job failure stage "${failureStage}" is invalid`);
+  }
   return {
     id: stringColumn(row, "id"),
     type,
@@ -74,6 +81,8 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
     last_error: stringColumn(row, "last_error"),
     cancel_requested: numberColumn(row, "cancel_requested"),
     lease_token: stringColumn(row, "lease_token"),
+    failure_stage: failureStage,
+    updated_at: stringColumn(row, "updated_at"),
   };
 }
 
@@ -109,6 +118,7 @@ function mapJob(row: JobRow): Job {
     lastError: row.last_error,
     cancellationRequested: row.cancel_requested !== 0,
     leaseToken: row.lease_token,
+    failureStage: row.failure_stage as Job["failureStage"],
   };
 }
 
@@ -196,7 +206,7 @@ export class JobStore {
       const history = historyBefore.toISOString();
       const audit = auditBefore.toISOString();
       const terminalStatuses = ["completed", "failed", "stale", "cancelled"];
-      const statusParams = terminalStatuses.join(",");
+      const statusParams = terminalStatuses.map(() => "?").join(",");
       this.db
         .prepare(
           `DELETE FROM job_attempts WHERE job_id IN
@@ -450,12 +460,12 @@ export class JobStore {
       const now = new Date().toISOString();
       const result = this.db
         .prepare(
-          `UPDATE jobs SET status=?, last_error=?, updated_at=?,
+          `UPDATE jobs SET status=?, last_error=?, failure_stage=CASE WHEN ?='failed' THEN ? ELSE '' END, updated_at=?,
            lease_token=CASE WHEN ? THEN '' ELSE lease_token END,
            lease_until=CASE WHEN ? THEN 0 ELSE lease_until END
            WHERE id=? AND status=? AND lease_token=? AND (? OR cancel_requested=0)`,
         )
-        .run(to, failure, now, terminal.has(to) ? 1 : 0, terminal.has(to) ? 1 : 0, jobId, from, leaseToken, to === "cancelled" ? 1 : 0);
+        .run(to, failure, to, from, now, terminal.has(to) ? 1 : 0, terminal.has(to) ? 1 : 0, jobId, from, leaseToken, to === "cancelled" ? 1 : 0);
       if (result.changes !== 1) throw new Error(`job "${jobId}" is no longer in status "${from}"`);
       if (terminal.has(to)) {
         this.db
@@ -491,6 +501,105 @@ export class JobStore {
     const row = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=?").get(jobId));
     if (!row) throw new Error(`job "${jobId}" not found`);
     return mapJob(row);
+  }
+
+  listJobs(status?: JobStatus, limit = 50): JobSummary[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("job list limit must be between 1 and 200");
+    }
+    const rows = status
+      ? this.db
+          .prepare("SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?")
+          .all(status, limit)
+      : this.db.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?").all(limit);
+    return rows.map((value) => {
+      const row = readJobRow(value as Record<string, unknown>);
+      if (!row) throw new Error("SQLite returned an empty job row");
+      const job = mapJob(row);
+      return {
+        id: job.id,
+        type: job.type,
+        status: job.status,
+        projectId: job.projectId,
+        mrIid: job.mrIid,
+        headSha: job.headSha,
+        actorId: job.actorId,
+        request: job.request,
+        createdAt: job.createdAt,
+        updatedAt: row.updated_at,
+        attemptCount: job.attemptCount,
+        lastError: job.lastError,
+        cancellationRequested: job.cancellationRequested,
+        failureStage: job.failureStage,
+      };
+    });
+  }
+
+  activeJobIds(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT id FROM jobs WHERE status IN (${active.map(() => "?").join(",")})`)
+      .all(...active) as { id: string }[];
+    return new Set(rows.map((row) => row.id));
+  }
+
+  pendingProjectIds(): Set<number> {
+    const terminalStatuses = ["completed", "failed", "stale", "cancelled"];
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT project_id FROM jobs
+         WHERE status NOT IN (${terminalStatuses.map(() => "?").join(",")})`,
+      )
+      .all(...terminalStatuses) as { project_id: number }[];
+    return new Set(rows.map((row) => row.project_id));
+  }
+
+  retryFailedJob(jobId: string): JobSummary {
+    if (!jobId.trim()) throw new Error("job ID is required");
+    return this.transaction(() => {
+      const row = this.db
+        .prepare("SELECT * FROM jobs WHERE id = ?")
+        .get(jobId) as Record<string, unknown> | undefined;
+      const job = readJobRow(row);
+      if (!job) throw new Error(`job "${jobId}" not found`);
+      if (job.status !== "failed") throw new Error(`job "${jobId}" is not failed`);
+      if (job.failure_stage === "publishing") {
+        throw new Error("publishing failures cannot be retried because the GitLab outcome may be uncertain");
+      }
+      if (!job.failure_stage) {
+        throw new Error("job failure stage is unknown; refusing a potentially unsafe retry");
+      }
+      if (job.attempt_count >= maxAttempts) {
+        throw new Error(`job "${jobId}" has used all ${maxAttempts} attempts`);
+      }
+      const now = new Date().toISOString();
+      const result = this.db
+        .prepare(
+          `UPDATE jobs SET status='queued', failure_stage='', cancel_requested=0,
+           lease_token='', lease_until=0, updated_at=? WHERE id=? AND status='failed'`,
+        )
+        .run(now, jobId);
+      if (result.changes !== 1) throw new Error(`job "${jobId}" changed before it could be retried`);
+      this.insertAudit(0, "operator_retry", jobId, "failed->queued");
+      const updated = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId));
+      if (!updated) throw new Error(`retried job "${jobId}" disappeared`);
+      const summary = mapJob(updated);
+      return {
+        id: summary.id,
+        type: summary.type,
+        status: summary.status,
+        projectId: summary.projectId,
+        mrIid: summary.mrIid,
+        headSha: summary.headSha,
+        actorId: summary.actorId,
+        request: summary.request,
+        createdAt: summary.createdAt,
+        updatedAt: updated.updated_at,
+        attemptCount: summary.attemptCount,
+        lastError: summary.lastError,
+        cancellationRequested: summary.cancellationRequested,
+        failureStage: summary.failureStage,
+      };
+    });
   }
 
   private createQueuedTask(
@@ -559,9 +668,9 @@ export class JobStore {
       }
       this.db
         .prepare(
-          "UPDATE jobs SET status=?,last_error=?,updated_at=?,lease_token='',lease_until=0 WHERE id=? AND status=?",
+          "UPDATE jobs SET status=?,last_error=?,failure_stage=?,updated_at=?,lease_token='',lease_until=0 WHERE id=? AND status=?",
         )
-        .run(status, error, now.toISOString(), row.id, row.status);
+        .run(status, error, status === "failed" ? row.status : "", now.toISOString(), row.id, row.status);
       this.db
         .prepare("UPDATE job_attempts SET finished_at=?,error=? WHERE job_id=? AND finished_at IS NULL")
         .run(now.toISOString(), error, row.id);
@@ -626,7 +735,7 @@ export class JobStore {
         type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
         head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS jobs_mr_created_idx ON jobs(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS webhook_events (
@@ -659,6 +768,7 @@ export class JobStore {
       lease_token: "TEXT NOT NULL DEFAULT ''",
       lease_until: "INTEGER NOT NULL DEFAULT 0",
       cancel_requested: "INTEGER NOT NULL DEFAULT 0",
+      failure_stage: "TEXT NOT NULL DEFAULT ''",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);

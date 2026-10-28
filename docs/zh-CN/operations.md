@@ -21,21 +21,26 @@ npm start -- --config configs/config.yaml worker
 
 ## Docker Compose
 
-1. 复制 `.env.example` 为 `.env`，设置 GitLab 令牌和 Webhook Secret。妥善保护此文件，不要提交到版本控制。
+1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。只有运行 Worker 时才需要读取令牌和模型 API 密钥。妥善保护此文件，不要提交到版本控制。
 2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`，填写 GitLab URL 和明确的项目/用户白名单。
 3. 启动 Server：
 
    ```sh
-   docker compose --env-file .env -f deploy/compose.yaml up --build -d
+   docker compose --env-file .env -f deploy/compose.yaml pull corvex
+   docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
 4. 如需处理模型任务，将 `agent.enabled` 设为 `true`，配置模型 URL/名称，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`，然后启用 Worker profile：
 
    ```sh
-   docker compose --env-file .env -f deploy/compose.yaml --profile worker up --build -d
+   docker compose --env-file .env -f deploy/compose.yaml --profile worker pull
+   docker compose --env-file .env -f deploy/compose.yaml --profile worker up -d
    ```
 
 两个服务将同一命名卷 `corvex-data` 挂载到 `/data/corvex`；数据库和 Git 根目录都位于此卷中。只有 Server 映射 8080 端口。示例 Compose 使用只读容器根文件系统、临时 `/tmp`、移除 Linux capabilities 并启用 `no-new-privileges`。
+
+Compose 默认使用 `ghcr.io/axetroy/corvex` 镜像。从本地代码构建时，可在 `docker compose up` 命令中添加 `--build`。
+GHCR 的包可见性决定是否允许匿名拉取；如部署不应要求 `docker login`，首次发布后请将镜像包设为公开。
 
 Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2 CPU/2 GiB、256 个 PID。可通过 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS`、`CORVEX_PIDS_LIMIT` 以及对应的 `CORVEX_WORKER_MEM_LIMIT`、`CORVEX_WORKER_CPUS`、`CORVEX_WORKER_PIDS_LIMIT` 覆盖。JSON 日志单个最大 10 MiB，保留 3 个文件。
 
@@ -70,6 +75,39 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 | Worker 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Worker 上是否安装 Git。 |
 | 任务变为 stale | 命令入队后 MR 已关闭或 Diff 已改变；应针对当前版本重新提交命令。 |
 | `readyz` 返回 `503` | 检查数据库路径、持久卷挂载和文件系统权限。 |
+
+## 任务管理
+
+使用 Server 和 Worker 共享的 SQLite 数据库列出最近任务或筛选失败任务：
+
+```sh
+npm start -- jobs list --database ./data/state/corvex.db --status failed
+npm start -- jobs list --database ./data/state/corvex.db --limit 100
+```
+
+仅允许重新排入发布前失败且仍有自动尝试次数的任务：
+
+```sh
+npm start -- jobs retry <job-id> --database ./data/state/corvex.db
+```
+
+发布阶段失败不能重试，因为 GitLab 可能已经接受了评论。CLI 会写入操作员重试审计事件；请在能访问持久数据库的主机上运行。
+
+## Git 存储清理
+
+先预览旧 worktree 和项目镜像，再决定是否删除：
+
+```sh
+npm start -- storage cleanup --config configs/config.yaml --older-than-days 1
+npm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
+```
+
+默认只做 dry-run；清理会跳过活动 worktree 以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止所有 Worker，避免与新领取的任务竞争。Compose 部署可在停止 Worker profile 后，从 Server 容器运行：
+
+```sh
+docker compose --env-file .env -f deploy/compose.yaml exec corvex \
+  node /app/dist/cli.js storage cleanup --config /etc/corvex/config.yaml --apply
+```
 
 ## 备份、恢复和保留期限
 

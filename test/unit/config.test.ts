@@ -2,7 +2,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig, validateConfig, type CorvexConfig } from "../../src/config/config.js";
+import {
+  initializeConfig,
+  loadConfig,
+  validateConfig,
+  type CorvexConfig,
+} from "../../src/config/config.js";
 
 function validConfig(): CorvexConfig {
   return {
@@ -35,6 +40,19 @@ function validConfig(): CorvexConfig {
 }
 
 describe("validateConfig", () => {
+  it("initializes a config file from the packaged example template", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-init-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await initializeConfig(configPath);
+      const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
+      expect(contents).toContain("allowed_project_ids");
+      expect(contents).toContain("allowed_user_ids");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts a valid configuration with the agent disabled", () => {
     expect(() => validateConfig(validConfig())).not.toThrow();
   });
@@ -81,6 +99,54 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath);
       expect(config.server.listen).toBe("127.0.0.1:9090");
       expect(config.gitlab.baseUrl).toBe("https://gitlab.override.example");
+    } finally {
+      for (const name of names) {
+        const value = original[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires only the credentials used by the selected process role", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-role-"));
+    const configPath = join(root, "config.yaml");
+    const names = [
+      "CORVEX_GITLAB_READ_TOKEN",
+      "CORVEX_GITLAB_TOKEN",
+      "CORVEX_WEBHOOK_SECRET",
+      "CORVEX_MODEL_API_KEY",
+    ] as const;
+    const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    try {
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          gitlab: {
+            base_url: "https://gitlab.example.com",
+            allowed_project_ids: [1],
+            allowed_user_ids: [2],
+          },
+          storage: { root, database: join(root, "state.db") },
+          agent: { enabled: true, model: "test-model" },
+        }),
+      );
+      process.env.CORVEX_GITLAB_READ_TOKEN = "";
+      process.env.CORVEX_GITLAB_TOKEN = "write";
+      process.env.CORVEX_WEBHOOK_SECRET = "webhook";
+      process.env.CORVEX_MODEL_API_KEY = "";
+      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
+        gitlab: { readToken: "", writeToken: "write", webhookSecret: "webhook" },
+      });
+
+      process.env.CORVEX_GITLAB_READ_TOKEN = "read";
+      process.env.CORVEX_WEBHOOK_SECRET = "";
+      process.env.CORVEX_MODEL_API_KEY = "model-key";
+      await expect(loadConfig(configPath, "worker")).resolves.toMatchObject({
+        gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
+        agent: { apiKey: "model-key" },
+      });
     } finally {
       for (const name of names) {
         const value = original[name];

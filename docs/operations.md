@@ -21,21 +21,26 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 
 ## Docker Compose
 
-1. Copy `.env.example` to `.env` and set the GitLab tokens and webhook secret. Keep this file private and do not commit it.
+1. Copy `.env.example` to `.env` and set the GitLab write token and webhook secret. The read token and model API key are needed only when running a Worker. Keep this file private and do not commit it.
 2. Copy `configs/config.example.yaml` to `configs/config.yaml`; set the GitLab URL and explicit project/user allowlists.
 3. Start the Server:
 
    ```sh
-   docker compose --env-file .env -f deploy/compose.yaml up --build -d
+   docker compose --env-file .env -f deploy/compose.yaml pull corvex
+   docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
 4. To process model tasks, set `agent.enabled: true`, configure the model URL/name, set `CORVEX_MODEL_API_KEY` in `.env`, then enable the worker profile:
 
    ```sh
-   docker compose --env-file .env -f deploy/compose.yaml --profile worker up --build -d
+   docker compose --env-file .env -f deploy/compose.yaml --profile worker pull
+   docker compose --env-file .env -f deploy/compose.yaml --profile worker up -d
    ```
 
 Both services mount the same named `corvex-data` volume at `/data/corvex`; Compose points both the database and Git root into that volume. Only the Server publishes port 8080. The sample Compose setup uses a read-only container root filesystem, a temporary `/tmp`, drops Linux capabilities, and enables `no-new-privileges`.
+
+The Compose file uses the `ghcr.io/axetroy/corvex` image by default. To build from a local checkout instead, add `--build` to `docker compose up`.
+GHCR package visibility controls anonymous pulls; make the package public after its first publish if deployments should not require `docker login`.
 
 Compose resource defaults are 1 CPU/1 GiB and 256 PIDs for the Server, and 2 CPUs/2 GiB and 256 PIDs for the Worker. Override them with `CORVEX_MEM_LIMIT`, `CORVEX_CPUS`, `CORVEX_PIDS_LIMIT`, and the corresponding `CORVEX_WORKER_MEM_LIMIT`, `CORVEX_WORKER_CPUS`, and `CORVEX_WORKER_PIDS_LIMIT`. JSON logs rotate at 10 MiB with three files retained.
 
@@ -70,6 +75,39 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 | Worker cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the worker has Git installed. |
 | Task becomes stale | The MR was closed or its diff changed after the command was queued; submit a new command on the current revision. |
 | `readyz` returns `503` | Check the database path, persistent volume mount, and filesystem permissions. |
+
+## Job administration
+
+List recent jobs or filter failures using the same SQLite database as the Server and Worker:
+
+```sh
+npm start -- jobs list --database ./data/state/corvex.db --status failed
+npm start -- jobs list --database ./data/state/corvex.db --limit 100
+```
+
+An operator can requeue a failed job only when it failed before publishing and has automatic attempts remaining:
+
+```sh
+npm start -- jobs retry <job-id> --database ./data/state/corvex.db
+```
+
+Publishing failures cannot be retried because GitLab may already have accepted the comment. The CLI writes an operator retry audit event; run it on a host with access to the persistent database.
+
+## Git storage cleanup
+
+Preview old workspaces and project mirrors before removing them:
+
+```sh
+npm start -- storage cleanup --config configs/config.yaml --older-than-days 1
+npm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
+```
+
+Cleanup is dry-run by default, excludes active workspaces and projects with queued or active tasks, and removes only directories older than the selected age. Stop all Workers before applying a cleanup to avoid races with a newly claimed task. For Compose, run the command in the Server container after stopping the Worker profile:
+
+```sh
+docker compose --env-file .env -f deploy/compose.yaml exec corvex \
+  node /app/dist/cli.js storage cleanup --config /etc/corvex/config.yaml --apply
+```
 
 ## Backup, restore, and retention
 

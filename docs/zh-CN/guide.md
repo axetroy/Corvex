@@ -18,29 +18,29 @@ Server 可以独立运行，但没有 Worker 时，审查、解释和修复任�
 
 ## 1. 准备配置和密钥
 
-复制示例配置：
-
-```sh
-cp configs/config.example.yaml configs/config.yaml
-```
-
-为两个进程设置以下环境变量：
-
-```sh
-export CORVEX_GITLAB_READ_TOKEN='只读令牌'
-export CORVEX_GITLAB_TOKEN='写入令牌'
-export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
-```
-
-在 `configs/config.yaml` 中配置 `gitlab.base_url`、`gitlab.allowed_project_ids` 和 `gitlab.allowed_user_ids`。ID 使用 GitLab 数字 ID；两个白名单都必须非空，空白名单不表示“允许所有人”。不要把凭据写入 YAML 或提交到源代码仓库。所有配置及边界值请参阅[配置参考](./configuration)。
-
-只读令牌用于读取项目/MR API 和抓取仓库；写令牌用于发布评论与行级讨论。请使用不同令牌，并根据 GitLab 部署方式只授予所需权限。
-
-## 2. 启动 Server
+构建 CLI 并初始化配置模板：
 
 ```sh
 npm ci
 npm run build
+npm start -- init
+```
+
+编辑 `configs/config.yaml`，填写 GitLab URL 和明确的项目/用户白名单。为 Server 设置以下变量：
+
+```sh
+export CORVEX_GITLAB_TOKEN='写入令牌'
+export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
+```
+
+ID 使用 GitLab 数字 ID；两个白名单都必须非空，空白名单不表示“允许所有人”。不要把凭据写入 YAML 或提交到源代码仓库。所有配置及边界值请参阅[配置参考](./configuration)。
+
+Server 只需要写令牌和 Webhook Secret。Worker 还需要 `CORVEX_GITLAB_READ_TOKEN`；启用 Agent 时，还需要 `CORVEX_MODEL_API_KEY`。只读令牌用于读取项目/MR API 和抓取仓库；请使用独立读写令牌并只授予所需权限。
+
+## 2. 启动 Server
+
+```sh
+npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
 
@@ -90,6 +90,7 @@ CORVEX_WEBHOOK_SECRET=... \
 在另一个进程中启动：
 
 ```sh
+npm start -- --config configs/config.yaml --for worker check-config
 npm start -- --config configs/config.yaml worker
 ```
 

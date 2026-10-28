@@ -29,6 +29,11 @@ export interface Job {
   lastError: string;
   cancellationRequested: boolean;
   leaseToken: string;
+  failureStage: JobStatus | "";
+}
+
+export interface JobSummary extends Omit<Job, "leaseToken"> {
+  updatedAt: string;
 }
 
 export interface EventResult {
