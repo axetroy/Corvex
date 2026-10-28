@@ -41,7 +41,7 @@ npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
 
-如需启用可选运维控制台，请同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD`，然后通过 `/ops` 访问。密码至少 16 个字符，并应使用 HTTPS。
+如需启用可选运维控制台，请同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD`，然后通过 `/ops` 访问。请使用强且唯一的密码，并通过 HTTPS 访问。
 
 Server 只需写令牌和 Webhook Secret。要异步执行审查或 Fix 提案，启用 Agent 配置，并额外设置 `CORVEX_GITLAB_READ_TOKEN`（只读）和 `CORVEX_MODEL_API_KEY`，然后在另一个进程中启动 Worker：
 

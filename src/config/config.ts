@@ -252,9 +252,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (Boolean(operationsUsername) !== Boolean(operationsPassword)) {
     problems.push("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD must be set to enable the operations dashboard");
   }
-  if (operationsUsername && operationsPassword.length < 16) {
-    problems.push("CORVEX_OPS_PASSWORD must contain at least 16 characters");
-  }
   const operationsCredentials = operationsUsername + operationsPassword;
   const hasControlCharacters = [...operationsCredentials].some((character) => {
     const code = character.charCodeAt(0);
