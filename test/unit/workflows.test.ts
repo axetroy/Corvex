@@ -48,6 +48,12 @@ describe("review and fix response validation", () => {
     expect(result.rejected).toBe(1);
   });
 
+  it("reports which top-level review field has an invalid shape", () => {
+    expect(() =>
+      parseAndValidateReview(JSON.stringify({ summary: "Review complete", findings: "none" }), diff, 10),
+    ).toThrow("findings must be an array");
+  });
+
   it("validates fix JSON and enforces the patch byte limit", () => {
     expect(parseFixResponse('{"summary":"Safe change","patch":""}', 10)).toEqual({
       summary: "Safe change",

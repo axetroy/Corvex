@@ -115,13 +115,15 @@ export function parseAndValidateReview(
   } catch (error) {
     throw new Error(`decode review JSON: ${String(error)}`, { cause: error });
   }
-  if (
-    !isRecord(parsed) ||
-    Object.keys(parsed).some((key) => !["summary", "findings"].includes(key)) ||
-    !validText(parsed.summary, 1, 4000) ||
-    !Array.isArray(parsed.findings)
-  ) {
-    throw new Error("model returned invalid review JSON");
+  if (!isRecord(parsed)) throw new Error("model returned invalid review JSON: top-level value must be an object");
+  if (Object.keys(parsed).some((key) => !["summary", "findings"].includes(key))) {
+    throw new Error("model returned invalid review JSON: unexpected top-level fields");
+  }
+  if (!validText(parsed.summary, 1, 4000)) {
+    throw new Error("model returned invalid review JSON: summary must be non-empty text of at most 4000 characters");
+  }
+  if (!Array.isArray(parsed.findings)) {
+    throw new Error("model returned invalid review JSON: findings must be an array");
   }
   const linesByFile = new Map<string, Map<number, string>>();
   for (const change of diff.changes) {
@@ -222,7 +224,21 @@ export class ReviewWorkflow {
       cwd,
       signal,
     );
-    const { result, rejected } = parseAndValidateReview(response.content, diff, this.maxFindings);
+    let result: ReviewResult;
+    let rejected: number;
+    try {
+      ({ result, rejected } = parseAndValidateReview(response.content, diff, this.maxFindings));
+    } catch (error) {
+      console.warn("model review response rejected", {
+        projectId: context.projectId,
+        mrIid: context.mrIid,
+        headSha: context.headSha,
+        model: response.model,
+        responseBytes: Buffer.byteLength(response.content),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     return { result, model: response.model, usage: response.usage, omittedFiles, rejected };
   }
 
