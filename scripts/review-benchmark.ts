@@ -40,7 +40,7 @@ async function run(): Promise<void> {
   try {
     const benchmarkConfig = {
       ...config,
-      agent: { ...config.agent, mcpEnabled: false, skillPaths: [] },
+      agent: { ...config.agent, mcpEnabled: false, webEnabled: false, webBlockedHosts: [], skillPaths: [] },
     };
     const workflow = new ReviewWorkflow(
       new PiAgent(benchmarkConfig, store),

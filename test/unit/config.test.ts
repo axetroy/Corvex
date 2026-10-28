@@ -32,6 +32,8 @@ function validConfig(): CorvexConfig {
       maxOutputTokens: 4096,
       dailyTokenBudget: 0,
       mcpEnabled: false,
+      webEnabled: true,
+      webBlockedHosts: [],
       skillPaths: [],
     },
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
@@ -80,6 +82,18 @@ describe("validateConfig", () => {
     config.agent.model = "model";
     config.agent.apiKey = "key";
     expect(() => validateConfig(config)).toThrow("agent.base_url");
+  });
+
+  it("validates optional blocked hostnames", () => {
+    const config = validConfig();
+    config.agent.webBlockedHosts = ["*.corp.dev"];
+    expect(() => validateConfig(config)).toThrow("web_blocked_hosts must contain DNS hostnames");
+
+    config.agent.webBlockedHosts = ["127.0.0.1"];
+    expect(() => validateConfig(config)).toThrow("web_blocked_hosts must contain DNS hostnames");
+
+    config.agent.webBlockedHosts = ["untrusted.corp.dev"];
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
   it("applies the documented listener and GitLab URL environment overrides", async () => {
@@ -160,7 +174,7 @@ describe("validateConfig", () => {
       process.env.CORVEX_MODEL_API_KEY = "model-key";
       await expect(loadConfig(configPath, "worker")).resolves.toMatchObject({
         gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
-        agent: { apiKey: "model-key" },
+        agent: { apiKey: "model-key", webEnabled: true, webBlockedHosts: [] },
       });
     } finally {
       for (const name of names) {

@@ -11,6 +11,7 @@ import type { CorvexConfig } from "../config/config.js";
 import type { JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
+import { createWebReadExtension } from "./web-read.js";
 
 export interface ModelRequest {
   systemPrompt: string;
@@ -155,6 +156,9 @@ export class PiAgent {
       additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
         createReadOnlyFileExtension(allowedRoots),
+        ...(this.config.agent.webEnabled
+          ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
+          : []),
         ...(this.config.agent.mcpEnabled ? [createMcpExtension()] : []),
       ],
       systemPrompt: request.systemPrompt,

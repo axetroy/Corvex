@@ -137,6 +137,8 @@ describe("PiAgent", () => {
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
         mcpEnabled: false,
+        webEnabled: true,
+        webBlockedHosts: ["blocked.corp.dev"],
         skillPaths: [],
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
@@ -166,6 +168,8 @@ describe("PiAgent", () => {
     expect(requestBody).toContain('"model":"test-model"');
     expect(requestBody).toContain('"stream":true');
     expect(requestBody).toContain('"name":"read_file"');
+    expect(requestBody).toContain('"name":"web_fetch"');
+    expect(requestBody).toContain("Additional blocked hosts: blocked.corp.dev");
     const trajectory = store.getJobDetails(job.id)?.trajectory;
     expect(trajectory).toHaveLength(2);
     expect(trajectory).toEqual([

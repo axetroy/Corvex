@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { isIP } from "node:net";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,8 @@ export interface CorvexConfig {
     maxOutputTokens: number;
     dailyTokenBudget: number;
     mcpEnabled: boolean;
+    webEnabled: boolean;
+    webBlockedHosts: string[];
     skillPaths: string[];
   };
   review: {
@@ -82,6 +85,8 @@ const defaults: CorvexConfig = {
     maxOutputTokens: 4096,
     dailyTokenBudget: 0,
     mcpEnabled: false,
+    webEnabled: true,
+    webBlockedHosts: [],
     skillPaths: [],
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
@@ -209,6 +214,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       maxOutputTokens: number(agent.max_output_tokens, defaults.agent.maxOutputTokens),
       dailyTokenBudget: number(agent.daily_token_budget, defaults.agent.dailyTokenBudget),
       mcpEnabled: boolean(agent.mcp_enabled, defaults.agent.mcpEnabled),
+      webEnabled: boolean(agent.web_enabled, defaults.agent.webEnabled),
+      webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
     },
     review: {
@@ -235,6 +242,29 @@ function validHttpUrl(value: string, allowCredentials = false): boolean {
       ["http:", "https:"].includes(url.protocol) &&
       url.hostname !== "" &&
       (allowCredentials || (!url.username && !url.password && !url.search && !url.hash))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function validBlockedWebHost(value: string): boolean {
+  if (!value || value !== value.trim() || value.includes("*") || value.includes(":") || isIP(value) !== 0) {
+    return false;
+  }
+  try {
+    const url = new URL(`https://${value}`);
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+    return (
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash &&
+      hostname.split(".").length >= 2 &&
+      hostname.length <= 253 &&
+      hostname.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
     );
   } catch {
     return false;
@@ -307,6 +337,12 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.fix.maxPatchBytes <= 0 || config.fix.maxPatchBytes > 256 << 10) {
     problems.push("fix.max_patch_bytes must be between 1 byte and 256 KiB");
+  }
+  if (config.agent.webBlockedHosts.length > 100) {
+    problems.push("agent.web_blocked_hosts must contain no more than 100 hostnames");
+  }
+  if (config.agent.webBlockedHosts.some((host) => !validBlockedWebHost(host))) {
+    problems.push("agent.web_blocked_hosts must contain DNS hostnames without wildcards, ports, or paths");
   }
   if (role === "worker" && !config.agent.enabled) {
     problems.push("agent.enabled must be true for worker mode");

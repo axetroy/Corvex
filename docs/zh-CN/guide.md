@@ -100,7 +100,7 @@ Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会�
 
 Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true`、启用 Agent，并填写 `fix.allowed_user_ids`。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
 
-Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读工具仅允许读取固定 SHA worktree 和配置的可信 Skill 目录，单文件上限为 64 KiB。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
+Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读工具仅允许读取固定 SHA worktree 和配置的可信 Skill 目录，单文件上限为 64 KiB。Agent 启用后 `web_fetch` 默认可用，可通过 HTTPS 抓取任意公网主机；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 
 ## 后续阅读
 

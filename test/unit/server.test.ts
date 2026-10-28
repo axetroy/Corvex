@@ -58,6 +58,8 @@ describe("CorvexServer", () => {
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
         mcpEnabled: false,
+        webEnabled: true,
+        webBlockedHosts: [],
         skillPaths: [],
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },

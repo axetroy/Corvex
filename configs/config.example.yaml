@@ -25,6 +25,8 @@ agent:
   max_output_tokens: 4096
   daily_token_budget: 0
   mcp_enabled: false
+  web_enabled: true
+  web_blocked_hosts: []
   skill_paths: []
 
 review:
