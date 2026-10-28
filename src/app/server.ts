@@ -418,7 +418,14 @@ export class CorvexServer {
       noteId: event.object_attributes.id,
       actorId: event.user.id,
     };
-    console.info("GitLab Note Hook validated", { ...details, system: event.object_attributes.system });
+    console.info("GitLab Note Hook validated", {
+      ...details,
+      actorUsername: event.user.username,
+      note: event.object_attributes.note,
+      noteableType: event.object_attributes.noteable_type,
+      system: event.object_attributes.system,
+      headSha: event.merge_request.last_commit?.id ?? "",
+    });
     if (
       event.object_attributes.system ||
       (this.config.gitlab.botUsername &&

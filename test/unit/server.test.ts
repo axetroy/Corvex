@@ -143,6 +143,14 @@ describe("CorvexServer", () => {
         expect.objectContaining({ eventType: "Note Hook" }),
       );
       expect(info).toHaveBeenCalledWith(
+        "GitLab Note Hook validated",
+        expect.objectContaining({
+          actorUsername: "developer",
+          note: "@corvex review",
+          system: false,
+        }),
+      );
+      expect(info).toHaveBeenCalledWith(
         "GitLab task enqueued",
         expect.objectContaining({ eventId: "1:99", projectId: 1, mrIid: 10, type: "review" }),
       );
