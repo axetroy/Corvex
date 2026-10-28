@@ -43,6 +43,7 @@ export class PiAgent {
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }
+    // 以提示词字节数加最大输出量预留预算，避免并发请求突破每日上限。
     const reservedTokens =
       Buffer.byteLength(request.systemPrompt) +
       Buffer.byteLength(request.userPrompt) +
@@ -64,6 +65,7 @@ export class PiAgent {
     } catch (error) {
       if (budgetDay) {
         try {
+          // 请求失败时用预留量结算，避免因无法确认服务端是否已计费而释放预算。
           this.store!.settleModelTokens(budgetDay, reservedTokens, reservedTokens);
         } catch (settlementError) {
           throw new AggregateError(

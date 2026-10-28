@@ -349,7 +349,7 @@ export class JobStore {
       throw new Error(`backup destination "${output}" already exists`);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        // The destination is absent, as required.
+        // 仅当目标不存在时创建备份，避免覆盖已有文件。
       } else {
         throw error;
       }
@@ -359,6 +359,7 @@ export class JobStore {
   }
 
   createReview(eventId: string, key: string, job: Partial<Job> & Pick<Job, "projectId" | "mrIid" | "actorId" | "headSha">): EventResult {
+  // 在事务中检查并增加预留量，避免并发请求同时通过预算检查。
     return this.createQueuedTask(eventId, key, job, "review");
   }
 
@@ -783,6 +784,7 @@ export class JobStore {
     job: Partial<Job> & Pick<Job, "projectId" | "mrIid" | "actorId" | "headSha">,
     type: "review" | "explain",
   ): EventResult {
+    // 将事件去重、任务创建和事件记录放进同一事务，避免 webhook 重投创建重复任务。
     return this.transaction(() => {
       const previous = this.eventResult(eventId);
       if (previous) return previous;
@@ -832,6 +834,7 @@ export class JobStore {
       actor_id: number;
     }[];
     for (const row of rows) {
+      // 发布阶段无法确认 GitLab 是否已收到评论，不能像其他阶段那样自动重试。
       let status: JobStatus = "queued";
       let error = "Worker lease expired; task will be retried.";
       if (row.cancel_requested) {

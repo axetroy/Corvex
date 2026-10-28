@@ -263,6 +263,7 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (!validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
+  // 按运行角色校验凭据，存储维护命令不应依赖 GitLab API 或模型密钥。
   if (role !== "server" && role !== "storage" && !config.gitlab.readToken.trim()) {
     problems.push("CORVEX_GITLAB_READ_TOKEN is required");
   }

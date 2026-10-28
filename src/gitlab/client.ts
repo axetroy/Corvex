@@ -39,6 +39,7 @@ const MAX_DIFF_BYTES = 16 << 20;
 
 async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (!response.body) return new Uint8Array();
+  // 按实际读取字节数限流，不依赖可能缺失或不准确的 Content-Length。
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -145,6 +146,7 @@ export class GitLabClient {
     if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
     const all: MergeRequestDiff[] = [];
     let totalBytes = 0;
+    // 同时限制页数、文件数和累计字节数，避免超大 MR diff 无界占用内存。
     for (let page = 1; page <= 20; page++) {
       const query = new URLSearchParams({ per_page: "100", page: String(page) });
       const response = await this.request(

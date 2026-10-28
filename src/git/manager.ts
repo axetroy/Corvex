@@ -278,6 +278,7 @@ export class GitManager {
   }
 
   private validateFixPatch(patch: string, allowedPaths: string[]): string[] {
+    // 修复提案只能修改本次 MR 已变更的现有文件。
     const allowed = new Set(allowedPaths);
     if (allowed.size === 0 || [...allowed].some((name) => !this.validPatchPath(name))) {
       throw new Error("fix patch has no authorized changed files");
@@ -510,6 +511,7 @@ export class GitManager {
   }
 
   private async withProjectLock<T>(projectId: number, fn: () => Promise<T>): Promise<T> {
+    // 同一项目共用 Git 镜像和 worktree 元数据，修改操作必须串行执行。
     const previous = this.projectLocks.get(projectId) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolvePromise) => {

@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const maxReadBytes = 64 << 10;
 
+// 使用相对路径判断目录边界，避免相邻目录因字符串前缀相同而被误判为子目录。
 function isWithin(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
@@ -40,6 +41,7 @@ export async function readAllowedFile(
     if (fileInfo.size > maxBytes) {
       throw new Error(`file exceeds the ${maxBytes}-byte read limit`);
     }
+    // 多读一个字节，捕捉 stat 之后文件变大导致的限额绕过。
     const buffer = Buffer.alloc(maxBytes + 1);
     let bytesRead = 0;
     while (bytesRead < buffer.byteLength) {

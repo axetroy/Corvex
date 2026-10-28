@@ -546,6 +546,7 @@ export class CorvexServer {
           reason,
         });
       }
+      // 只有 GitLab 接受回复后才标记已送达，失败时才能通过 webhook 重投重试。
       if (!result.delivered) {
         await this.gitlab.postNote(projectId, mrIid, result.response);
         this.store.markDelivered(id);

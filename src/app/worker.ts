@@ -119,6 +119,7 @@ export class Worker {
       });
       return;
     }
+    // 进程关闭时保留租约，由过期租约恢复任务，避免把中断误记为任务失败。
     if (shutdownSignal.aborted) {
       console.warn("worker stopped during job; lease will recover it", {
         jobId: job.id,
@@ -145,6 +146,7 @@ export class Worker {
         });
       }
     }
+    // 发布请求可能已在 GitLab 生效，自动重试可能产生重复评论。
     if (stage !== "publishing") {
       try {
         this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", message(processingError));
@@ -188,6 +190,7 @@ export class Worker {
         }
         elapsed += 1000;
         if (elapsed >= leaseMs / 3) {
+          // 提前续租，为调度延迟留出余量，避免其他 worker 抢占任务。
           this.store.renewLease(job.id, job.leaseToken, leaseMs);
           this.store.heartbeatWorker(this.workerId);
           elapsed = 0;
@@ -311,6 +314,7 @@ export class Worker {
         this.store.recordModelCall("review", "failure", Date.now() - started, 0, 0);
         throw error;
       }
+      // 模型调用可能超过 MR 快照的有效期；发布前必须再次确认 diff refs 未变化。
       if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
       transition("publishing");
       const fallback: Finding[] = [];

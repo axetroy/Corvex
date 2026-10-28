@@ -30,6 +30,7 @@ const statuses = [
   "cancelled",
 ];
 const queue = { status: "", type: "", search: "", offset: 0 };
+// 丢弃较早请求的响应，避免慢响应覆盖用户刚切换到的新页面。
 let renderVersion = 0;
 
 function element(tag, text, className) {

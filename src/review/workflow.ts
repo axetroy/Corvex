@@ -66,6 +66,7 @@ function validText(value: unknown, min: number, max: number): value is string {
   );
 }
 
+// 仅映射 diff 中的新增行及其 Head 行号，用于验证模型报告的行号和证据。
 function addedLines(patch: string): Map<number, string> {
   const lines = new Map<number, string>();
   let current = 0;

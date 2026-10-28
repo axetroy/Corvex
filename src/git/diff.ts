@@ -35,6 +35,7 @@ export class DiffEngine {
       throw new Error(`maxFileDiffBytes must be between 1 and ${maxTotalDiffBytes}`);
     }
 
+    // 使用 NUL 分隔文件名，避免空格或换行破坏后续状态和统计信息的解析。
     const names = await this.run(
       workspace,
       ["diff", "--no-ext-diff", "--no-renames", "--name-status", "-z", baseSha, workspace.headSha, "--"],
