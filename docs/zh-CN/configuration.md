@@ -14,12 +14,12 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `server.read_timeout` | `5s` | 正时长 | HTTP 请求头读取超时。 |
 | `server.shutdown_timeout` | `30s` | 正时长 | HTTP 优雅关闭等待时限。 |
 
-可选运维控制台仅通过环境变量配置 HTTP Basic Auth。设置两个变量后启用；两个都不设置则禁用控制台。密码至少 16 个字符，并且仅应通过 HTTPS 访问。
+可选运维控制台仅通过环境变量配置 HTTP Basic Auth。设置两个变量后启用；两个都不设置则禁用控制台。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
 
 | 变量 | 用途 |
 |---|---|
 | `CORVEX_OPS_USERNAME` | `/ops` 和 `/api/ops/*` 的可选运维用户名。 |
-| `CORVEX_OPS_PASSWORD` | 可选运维密码；启用时至少 16 个字符。 |
+| `CORVEX_OPS_PASSWORD` | 可选运维密码；须与 `CORVEX_OPS_USERNAME` 同时设置。 |
 
 ## GitLab
 
@@ -38,7 +38,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `CORVEX_GITLAB_TOKEN` | 必填。发布 MR 评论和行级讨论；应使用独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
-| `CORVEX_OPS_PASSWORD` | 可选运维控制台密码；至少 16 个字符 |
+| `CORVEX_OPS_PASSWORD` | 可选运维控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
 
 ## 存储
 

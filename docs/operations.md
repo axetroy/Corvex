@@ -45,7 +45,7 @@ GHCR package visibility controls anonymous pulls; make the package public after 
 Compose resource defaults are 1 CPU/1 GiB and 256 PIDs for the Server, and 2 CPUs/2 GiB and 256 PIDs for the Worker. Override them with `CORVEX_MEM_LIMIT`, `CORVEX_CPUS`, `CORVEX_PIDS_LIMIT`, and the corresponding `CORVEX_WORKER_MEM_LIMIT`, `CORVEX_WORKER_CPUS`, and `CORVEX_WORKER_PIDS_LIMIT`. JSON logs rotate at 10 MiB with three files retained.
 
 Expose the webhook through HTTPS and keep the GitLab API, database volume, and metrics endpoint restricted to trusted networks. The compose port mapping is plain HTTP; terminate TLS at a trusted reverse proxy or load balancer.
-The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD` are set. When enabled, open `https://<corvex-host>/ops`; the same credentials protect its API. Use a password with at least 16 characters, and do not expose the console over plain HTTP or directly to an untrusted network.
+The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD` are set. When enabled, open `https://<corvex-host>/ops`; the same credentials protect its API. Use a strong, unique password, and do not expose the console over plain HTTP or directly to an untrusted network.
 
 ## HTTP endpoints
 

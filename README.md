@@ -41,7 +41,7 @@ npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
 
-The optional operations console is available at `/ops` only after setting both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD`. Use a password with at least 16 characters and access it over HTTPS.
+The optional operations console is available at `/ops` only after setting both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD`. Use a strong, unique password and access it over HTTPS.
 
 For asynchronous reviews or fix proposals, enable the agent configuration, set `CORVEX_GITLAB_READ_TOKEN` to a separate read-only token and provide `CORVEX_MODEL_API_KEY`. Validate and start the worker in a second process:
 

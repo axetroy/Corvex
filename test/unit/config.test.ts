@@ -58,13 +58,13 @@ describe("validateConfig", () => {
     expect(() => validateConfig(validConfig())).not.toThrow();
   });
 
-  it("rejects incomplete or weak operations dashboard credentials", () => {
+  it("requires complete operations dashboard credentials and accepts passwords of any length", () => {
     const config = validConfig();
     config.operations.username = "operator";
     expect(() => validateConfig(config)).toThrow("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD");
 
     config.operations.password = "short";
-    expect(() => validateConfig(config)).toThrow("at least 16 characters");
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
   it("rejects empty authorization allowlists", () => {
