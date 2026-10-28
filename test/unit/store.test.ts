@@ -46,6 +46,84 @@ describe("JobStore", () => {
     expect(store.jobCounts().analyzing).toBe(1);
   });
 
+  it("summarizes lifecycle counts and the oldest queued task for the operations dashboard", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+
+    const overview = store.operationsOverview();
+
+    expect(overview.counts.queued).toBe(1);
+    expect(overview.counts.completed).toBe(0);
+    expect(overview.oldestQueuedAt).toBe(store.listJobs("queued", 10)[0]?.createdAt);
+  });
+
+  it("reports recent worker heartbeats in the operations overview", async () => {
+    store = await JobStore.open(":memory:");
+    store.heartbeatWorker("worker-1");
+
+    const overview = store.operationsOverview();
+
+    expect(overview.workers.onlineCount).toBe(1);
+    expect(overview.workers.lastSeenAt).toEqual(expect.any(String));
+  });
+
+  it("filters and paginates operations jobs with a matching total", async () => {
+    store = await JobStore.open(":memory:");
+    for (const [event, projectId, mrIid] of [
+      ["event-1", 7, 3],
+      ["event-2", 7, 4],
+      ["event-3", 8, 5],
+    ] as const) {
+      store.createReview(event, `key-${event}`, {
+        projectId,
+        mrIid,
+        headSha: "a".repeat(40),
+        actorId: 11,
+      });
+    }
+
+    const firstPage = store.listOperationsJobs({ projectId: 7, limit: 1, offset: 0 });
+    const secondPage = store.listOperationsJobs({ projectId: 7, limit: 1, offset: 1 });
+
+    expect(firstPage.total).toBe(2);
+    expect(firstPage.items).toHaveLength(1);
+    expect(secondPage.total).toBe(2);
+    expect(secondPage.items).toHaveLength(1);
+    expect(secondPage.items[0]?.id).not.toBe(firstPage.items[0]?.id);
+  });
+
+  it("returns job details with the persisted attempt timeline", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "failed", "provider unavailable");
+
+    const details = store.getJobDetails(job.id);
+
+    expect(details?.attempts).toHaveLength(1);
+    expect(details?.attempts[0]).toMatchObject({
+      attempt: 1,
+      finishedAt: expect.any(String),
+      error: "provider unavailable",
+    });
+    expect(details?.timeline.map(({ from, to }) => [from, to])).toEqual([
+      ["queued", "preparing"],
+      ["preparing", "failed"],
+    ]);
+    expect(store.getJobDetails("missing-job")).toBeUndefined();
+  });
+
   it("lists jobs and requeues a failed job that stopped before publishing", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

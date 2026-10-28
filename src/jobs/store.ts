@@ -7,10 +7,16 @@ import {
   jobTypes,
   type EventResult,
   type Job,
+  type JobAttemptSummary,
+  type JobDetails,
+  type JobListQuery,
+  type JobPage,
   type JobSummary,
   type JobStatus,
+  type JobStatusTransition,
   type JobType,
   type ModelCallMetric,
+  type OperationsOverview,
 } from "./model.js";
 
 const maxAttempts = 3;
@@ -122,6 +128,26 @@ function mapJob(row: JobRow): Job {
   };
 }
 
+function mapJobSummary(row: JobRow): JobSummary {
+  const job = mapJob(row);
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    projectId: job.projectId,
+    mrIid: job.mrIid,
+    headSha: job.headSha,
+    actorId: job.actorId,
+    request: job.request,
+    createdAt: job.createdAt,
+    updatedAt: row.updated_at,
+    attemptCount: job.attemptCount,
+    lastError: job.lastError,
+    cancellationRequested: job.cancellationRequested,
+    failureStage: job.failureStage,
+  };
+}
+
 export class JobStore {
   private readonly db: DatabaseSync;
 
@@ -155,6 +181,62 @@ export class JobStore {
       .prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status")
       .all() as { status: string; count: number }[];
     return Object.fromEntries(rows.map((row) => [row.status, row.count]));
+  }
+
+  operationsOverview(workerTimeoutMs = 30_000): OperationsOverview {
+    if (!Number.isFinite(workerTimeoutMs) || workerTimeoutMs <= 0) {
+      throw new Error("worker heartbeat timeout must be positive");
+    }
+    const counts: Record<JobStatus, number> = {
+      queued: 0,
+      preparing: 0,
+      analyzing: 0,
+      fixing: 0,
+      verifying: 0,
+      publishing: 0,
+      completed: 0,
+      failed: 0,
+      stale: 0,
+      cancelled: 0,
+    };
+    const rows = this.db
+      .prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status")
+      .all() as { status: string; count: number }[];
+    for (const row of rows) {
+      if (!isJobStatus(row.status)) throw new Error(`SQLite job status "${row.status}" is invalid`);
+      counts[row.status] = row.count;
+    }
+    const oldest = this.db
+      .prepare("SELECT created_at FROM jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1")
+      .get() as { created_at: string } | undefined;
+    const workers = this.db
+      .prepare("SELECT last_seen_at FROM worker_heartbeats WHERE last_seen_at >= ? ORDER BY last_seen_at DESC")
+      .all(new Date(Date.now() - workerTimeoutMs).toISOString()) as { last_seen_at: string }[];
+    const lastWorker = this.db
+      .prepare("SELECT last_seen_at FROM worker_heartbeats ORDER BY last_seen_at DESC LIMIT 1")
+      .get() as { last_seen_at: string } | undefined;
+    return {
+      counts,
+      oldestQueuedAt: oldest?.created_at ?? null,
+      workers: {
+        onlineCount: workers.length,
+        lastSeenAt: lastWorker?.last_seen_at ?? null,
+      },
+    };
+  }
+
+  heartbeatWorker(workerId: string): void {
+    const id = workerId.trim();
+    if (!id || id.length > 128) throw new Error("worker ID must be between 1 and 128 characters");
+    const now = new Date();
+    this.db
+      .prepare(
+        `INSERT INTO worker_heartbeats(worker_id, last_seen_at) VALUES (?, ?)
+         ON CONFLICT(worker_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
+      )
+      .run(id, now.toISOString());
+    const staleBefore = new Date(now.valueOf() - 7 * 24 * 60 * 60_000).toISOString();
+    this.db.prepare("DELETE FROM worker_heartbeats WHERE last_seen_at < ?").run(staleBefore);
   }
 
   modelCallMetrics(): ModelCallMetric[] {
@@ -515,24 +597,113 @@ export class JobStore {
     return rows.map((value) => {
       const row = readJobRow(value as Record<string, unknown>);
       if (!row) throw new Error("SQLite returned an empty job row");
-      const job = mapJob(row);
-      return {
-        id: job.id,
-        type: job.type,
-        status: job.status,
-        projectId: job.projectId,
-        mrIid: job.mrIid,
-        headSha: job.headSha,
-        actorId: job.actorId,
-        request: job.request,
-        createdAt: job.createdAt,
-        updatedAt: row.updated_at,
-        attemptCount: job.attemptCount,
-        lastError: job.lastError,
-        cancellationRequested: job.cancellationRequested,
-        failureStage: job.failureStage,
-      };
+      return mapJobSummary(row);
     });
+  }
+
+  listOperationsJobs(query: JobListQuery): JobPage {
+    if (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100) {
+      throw new Error("operations job list limit must be between 1 and 100");
+    }
+    if (!Number.isSafeInteger(query.offset) || query.offset < 0 || query.offset > 1_000_000) {
+      throw new Error("operations job list offset must be between 0 and 1000000");
+    }
+    if (query.status && !isJobStatus(query.status)) {
+      throw new Error(`unknown job status "${query.status}"`);
+    }
+    if (query.type && !isJobType(query.type)) {
+      throw new Error(`unknown job type "${query.type}"`);
+    }
+    for (const [label, value] of [
+      ["project ID", query.projectId],
+      ["MR IID", query.mrIid],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+        throw new Error(`${label} must be a positive safe integer`);
+      }
+    }
+    const search = query.search?.trim() ?? "";
+    if (search.length > 100) throw new Error("operations job search must be at most 100 characters");
+
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (query.status) {
+      clauses.push("status = ?");
+      parameters.push(query.status);
+    }
+    if (query.type) {
+      clauses.push("type = ?");
+      parameters.push(query.type);
+    }
+    if (query.projectId !== undefined) {
+      clauses.push("project_id = ?");
+      parameters.push(query.projectId);
+    }
+    if (query.mrIid !== undefined) {
+      clauses.push("mr_iid = ?");
+      parameters.push(query.mrIid);
+    }
+    if (search) {
+      clauses.push("(instr(lower(id), lower(?)) > 0 OR instr(CAST(project_id AS TEXT) || ':' || CAST(mr_iid AS TEXT), ?) > 0)");
+      parameters.push(search, search);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const count = this.db
+      .prepare(`SELECT COUNT(*) AS count FROM jobs ${where}`)
+      .get(...parameters) as Record<string, unknown>;
+    const rows = this.db
+      .prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...parameters, query.limit, query.offset);
+    const items = rows.map((value) => {
+      const row = readJobRow(value as Record<string, unknown>);
+      if (!row) throw new Error("SQLite returned an empty job row");
+      return mapJobSummary(row);
+    });
+    return { items, total: numberColumn(count, "count") };
+  }
+
+  getJobDetails(jobId: string): JobDetails | undefined {
+    const job = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=?").get(jobId));
+    if (!job) return undefined;
+    const attempts = this.db
+      .prepare("SELECT attempt, started_at, finished_at, error FROM job_attempts WHERE job_id=? ORDER BY attempt")
+      .all(jobId)
+      .map((value) => {
+        const row = value as Record<string, unknown>;
+        const finishedAt = row.finished_at;
+        if (finishedAt !== null && typeof finishedAt !== "string") {
+          throw new Error('SQLite column "finished_at" is not text or null');
+        }
+        return {
+          attempt: numberColumn(row, "attempt"),
+          startedAt: stringColumn(row, "started_at"),
+          finishedAt,
+          error: stringColumn(row, "error"),
+        } satisfies JobAttemptSummary;
+      });
+    const timeline = this.db
+      .prepare(
+        `SELECT result, created_at FROM audit_events
+         WHERE resource=? AND action IN ('job_status','operator_retry') ORDER BY id`,
+      )
+      .all(jobId)
+      .map((value) => {
+        const row = value as Record<string, unknown>;
+        const result = stringColumn(row, "result");
+        const separator = result.indexOf("->");
+        if (separator <= 0) throw new Error("SQLite job status transition is malformed");
+        const from = result.slice(0, separator);
+        const to = result.slice(separator + 2);
+        if (!isJobStatus(from) || !isJobStatus(to)) {
+          throw new Error("SQLite job status transition contains an invalid status");
+        }
+        return {
+          from,
+          to,
+          at: stringColumn(row, "created_at"),
+        } satisfies JobStatusTransition;
+      });
+    return { ...mapJobSummary(job), attempts, timeline };
   }
 
   activeJobIds(): Set<string> {
@@ -749,6 +920,9 @@ export class JobStore {
       CREATE TABLE IF NOT EXISTS job_attempts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, error TEXT NOT NULL DEFAULT '', UNIQUE(job_id,attempt)
+      );
+      CREATE TABLE IF NOT EXISTS worker_heartbeats (
+        worker_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS model_token_usage (
         day TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL DEFAULT 0, reserved_tokens INTEGER NOT NULL DEFAULT 0

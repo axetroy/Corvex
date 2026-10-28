@@ -17,6 +17,18 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/app/ui/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        fetch: "readonly",
+        location: "readonly",
+        URLSearchParams: "readonly",
+        window: "readonly",
+      },
+    },
+  },
+  {
     ignores: ["dist/", "node_modules/", "docs/.vitepress/cache/", "docs/.vitepress/dist/"],
   },
 );

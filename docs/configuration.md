@@ -14,6 +14,13 @@ Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `
 | `server.read_timeout` | `5s` | Positive duration | HTTP header-read timeout. |
 | `server.shutdown_timeout` | `30s` | Positive duration | Graceful HTTP shutdown limit. |
 
+The optional operations console uses HTTP Basic Auth credentials supplied only through environment variables. Set both variables to enable it; leave both unset to keep the console disabled. Use a password with at least 16 characters and access the console only over HTTPS.
+
+| Variable | Use |
+|---|---|
+| `CORVEX_OPS_USERNAME` | Optional operator username for `/ops` and `/api/ops/*`. |
+| `CORVEX_OPS_PASSWORD` | Optional operator password; at least 16 characters when enabled. |
+
 ## GitLab
 
 | YAML key | Example | Required / limits | Description |
@@ -95,6 +102,8 @@ Fix requesters must be present in both `gitlab.allowed_user_ids` and `fix.allowe
 | `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode |
 | `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server and worker modes |
 | `CORVEX_WEBHOOK_SECRET` | Webhook secret; required in server mode |
+| `CORVEX_OPS_USERNAME` | Optional operator username; set together with `CORVEX_OPS_PASSWORD` |
+| `CORVEX_OPS_PASSWORD` | Optional operations console password; minimum 16 characters |
 | `CORVEX_MODEL_API_KEY` | Model API key; required in worker mode when the agent is enabled |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |

@@ -45,6 +45,7 @@ GHCR 的包可见性决定是否允许匿名拉取；如部署不应要求 `dock
 Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2 CPU/2 GiB、256 个 PID。可通过 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS`、`CORVEX_PIDS_LIMIT` 以及对应的 `CORVEX_WORKER_MEM_LIMIT`、`CORVEX_WORKER_CPUS`、`CORVEX_WORKER_PIDS_LIMIT` 覆盖。JSON 日志单个最大 10 MiB，保留 3 个文件。
 
 通过 HTTPS 向 GitLab 暴露 Webhook，并在网络或代理层限制 GitLab API、数据库卷和指标端点的访问。Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡器处终止 TLS。
+只读运维控制台默认关闭；同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD` 后，可访问 `https://<corvex-host>/ops`。相同凭据也保护其 API。密码至少 16 个字符；不要通过普通 HTTP 或不可信网络暴露控制台。
 
 ## HTTP 接口
 
@@ -54,8 +55,15 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /healthz` | 进程存活检查，返回 `200 ok`。 |
 | `GET /readyz` | SQLite 就绪检查；数据库不可用时返回 `503`。 |
 | `GET /metrics` | Prometheus 文本格式指标，包含任务状态、模型调用次数、耗时和 Token 汇总。 |
+| `GET /ops` | 可选的 Basic Auth 保护只读运维控制台；未配置运维凭据时禁用。 |
+| `GET /api/ops/overview` | 运维概览：任务状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
+| `GET /api/ops/jobs` | 筛选/分页任务列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
+| `GET /api/ops/jobs/<id>` | 任务详情及持久化的尝试历史。 |
 
-除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
+运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含提交的请求文本和错误信息，应保护运维凭据并使用 HTTPS。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
+
+控制台包含三个只读视图：队列和 Worker 状态概览、可筛选任务列表、单个任务及尝试历史详情。页面每 15 秒自动刷新，不提供重试、取消或创建任务操作。
+界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
 
 ## 日志与故障排查
 

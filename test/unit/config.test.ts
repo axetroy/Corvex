@@ -12,6 +12,7 @@ import {
 function validConfig(): CorvexConfig {
   return {
     server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+    operations: { username: "", password: "" },
     gitlab: {
       baseUrl: "https://gitlab.example.com",
       readToken: "read",
@@ -57,6 +58,15 @@ describe("validateConfig", () => {
     expect(() => validateConfig(validConfig())).not.toThrow();
   });
 
+  it("rejects incomplete or weak operations dashboard credentials", () => {
+    const config = validConfig();
+    config.operations.username = "operator";
+    expect(() => validateConfig(config)).toThrow("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD");
+
+    config.operations.password = "short";
+    expect(() => validateConfig(config)).toThrow("at least 16 characters");
+  });
+
   it("rejects empty authorization allowlists", () => {
     const config = validConfig();
     config.gitlab.allowedProjectIds = [];
@@ -81,6 +91,8 @@ describe("validateConfig", () => {
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
       "CORVEX_WEBHOOK_SECRET",
+      "CORVEX_OPS_USERNAME",
+      "CORVEX_OPS_PASSWORD",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -89,6 +101,8 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "secret";
+      process.env.CORVEX_OPS_USERNAME = "operator";
+      process.env.CORVEX_OPS_PASSWORD = "a secure password with 16 chars";
       await writeFile(
         configPath,
         JSON.stringify({
@@ -99,6 +113,7 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath);
       expect(config.server.listen).toBe("127.0.0.1:9090");
       expect(config.gitlab.baseUrl).toBe("https://gitlab.override.example");
+      expect(config.operations.username).toBe("operator");
     } finally {
       for (const name of names) {
         const value = original[name];

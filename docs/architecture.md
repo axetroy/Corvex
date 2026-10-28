@@ -6,7 +6,7 @@ Corvex separates the request path from model and repository work:
 
 1. **Server** exposes an HTTP webhook and operational endpoints. It validates Note Hook requests, applies allowlists, records events and jobs in SQLite, and replies to GitLab.
 2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, model call metrics, and optional daily token reservations.
-3. **Worker** polls the database, claims a job under a renewable lease, fetches the merge request snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
+3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called only by the worker for review, explanation, or fix proposal tasks.
 
@@ -19,7 +19,7 @@ The server can run without a worker: commands are accepted and persisted, but mo
 3. Project and user IDs are checked against explicit allowlists. Notes that do not start with `@corvex` are acknowledged without creating work.
 4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) job are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
 5. The server posts an immediate acknowledgement or validation response to the MR using the GitLab write token. Model inference does not run in the webhook request.
-6. A worker claims queued review, explain, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease.
+6. A worker claims queued review, explain, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
 
 The currently supported commands are `review`, `explain <path>`, `fix [request]`, `status`, and `cancel`. See [Getting started](./guide) for examples.
 

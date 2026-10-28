@@ -11,6 +11,7 @@ The implementation currently provides:
 - SQLite persistence with durable event deduplication, queued review/fix tasks, and fix authorization auditing.
 - `review`, `explain <path>` for a file at the MR's pinned Head SHA, allowlisted `fix`, `status`, and owner-only `cancel` commands; cancellation is available until a task enters publishing.
 - GitLab MR note replies, `/healthz`, database-backed `/readyz`, and a Prometheus `/metrics` endpoint exposing job statuses plus model call successes/failures, duration, and token totals.
+- An optional, Basic Auth-protected read-only operations console with queue overview, worker heartbeats, filterable jobs, and attempt details. It is disabled unless operator credentials are configured.
 - YAML configuration with secrets supplied only through environment variables.
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
@@ -39,6 +40,8 @@ Edit `configs/config.yaml` with the GitLab URL and explicit project/user allowli
 npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
+
+The optional operations console is available at `/ops` only after setting both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD`. Use a password with at least 16 characters and access it over HTTPS.
 
 For asynchronous reviews or fix proposals, enable the agent configuration, set `CORVEX_GITLAB_READ_TOKEN` to a separate read-only token and provide `CORVEX_MODEL_API_KEY`. Validate and start the worker in a second process:
 

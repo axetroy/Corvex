@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { FixWorkflow } from "../fix/workflow.js";
@@ -16,6 +17,7 @@ function message(error: unknown): string {
 }
 
 export class Worker {
+  private readonly workerId = randomUUID();
   private readonly repo: GitManager;
   private readonly reviewer: ReviewWorkflow;
   private readonly fixer: FixWorkflow;
@@ -45,6 +47,11 @@ export class Worker {
     await this.repo.initialize();
     console.info("Corvex worker started", { pollIntervalMs: this.config.worker.pollInterval });
     while (!signal.aborted) {
+      try {
+        this.store.heartbeatWorker(this.workerId);
+      } catch (error) {
+        console.error("update worker heartbeat failed", { error: message(error) });
+      }
       let job: Job | undefined;
       try {
         job = this.store.claimNextWithLease(leaseMs);
@@ -158,6 +165,7 @@ export class Worker {
         elapsed += 1000;
         if (elapsed >= leaseMs / 3) {
           this.store.renewLease(job.id, job.leaseToken, leaseMs);
+          this.store.heartbeatWorker(this.workerId);
           elapsed = 0;
         }
       } catch (error) {

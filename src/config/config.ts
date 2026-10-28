@@ -10,6 +10,10 @@ export interface CorvexConfig {
     readTimeout: number;
     shutdownTimeout: number;
   };
+  operations: {
+    username: string;
+    password: string;
+  };
   gitlab: {
     baseUrl: string;
     readToken: string;
@@ -58,6 +62,7 @@ type JsonObject = Record<string, unknown>;
 
 const defaults: CorvexConfig = {
   server: { listen: "0.0.0.0:8080", readTimeout: 5_000, shutdownTimeout: 30_000 },
+  operations: { username: "", password: "" },
   gitlab: {
     baseUrl: "",
     readToken: "",
@@ -166,6 +171,10 @@ function parseConfig(raw: unknown): CorvexConfig {
         "server.shutdown_timeout",
       ),
     },
+    operations: {
+      username: process.env.CORVEX_OPS_USERNAME ?? defaults.operations.username,
+      password: process.env.CORVEX_OPS_PASSWORD ?? defaults.operations.password,
+    },
     gitlab: {
       baseUrl:
         process.env.CORVEX_GITLAB_BASE_URL ?? string(gitlab.base_url, defaults.gitlab.baseUrl),
@@ -237,6 +246,22 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (!config.server.listen.trim()) problems.push("server.listen is required");
   if (config.server.readTimeout <= 0 || config.server.shutdownTimeout <= 0) {
     problems.push("server timeouts must be positive");
+  }
+  const operationsUsername = config.operations.username.trim();
+  const operationsPassword = config.operations.password;
+  if (Boolean(operationsUsername) !== Boolean(operationsPassword)) {
+    problems.push("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD must be set to enable the operations dashboard");
+  }
+  if (operationsUsername && operationsPassword.length < 16) {
+    problems.push("CORVEX_OPS_PASSWORD must contain at least 16 characters");
+  }
+  const operationsCredentials = operationsUsername + operationsPassword;
+  const hasControlCharacters = [...operationsCredentials].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (operationsUsername.includes(":") || hasControlCharacters) {
+    problems.push("operations dashboard credentials contain invalid characters");
   }
   if (!validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");

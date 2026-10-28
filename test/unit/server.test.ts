@@ -32,6 +32,7 @@ describe("CorvexServer", () => {
     const store = await JobStore.open(":memory:");
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
+      operations: { username: "operator", password: "a secure password with 16 chars" },
       gitlab: {
         baseUrl: `http://127.0.0.1:${gitlabPort}`,
         readToken: "read",
@@ -80,7 +81,34 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
+      const authorization = `Basic ${Buffer.from(
+        `${config.operations.username}:${config.operations.password}`,
+      ).toString("base64")}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
+      config.operations.username = "";
+      config.operations.password = "";
+      expect((await fetch(`${base}/ops`)).status).toBe(404);
+      config.operations.username = "operator";
+      config.operations.password = "a secure password with 16 chars";
+      expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);
+      const rejected = await fetch(`${base}/api/ops/overview`, {
+        headers: { authorization: `Basic ${Buffer.from("operator:wrong").toString("base64")}` },
+      });
+      expect(rejected.status).toBe(401);
+      expect(rejected.headers.get("www-authenticate")).toContain("Basic");
+      expect((await fetch(`${base}/api/ops/overview`, { headers: { authorization } })).status).toBe(200);
+      expect(
+        (await fetch(`${base}/api/ops/overview`, { method: "POST", headers: { authorization } })).status,
+      ).toBe(405);
+      const dashboard = await fetch(`${base}/ops`, { headers: { authorization } });
+      expect(dashboard.status).toBe(200);
+      expect(await dashboard.text()).toContain('id="language"');
+      expect(
+        (await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status,
+      ).toBe(200);
+      expect(
+        (await fetch(`${base}/ops/i18n.js`, { headers: { authorization } })).status,
+      ).toBe(200);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
 
       const payload = {
@@ -132,6 +160,29 @@ describe("CorvexServer", () => {
       expect(fixResponse.status).toBe(202);
       expect(store.jobCounts().queued).toBe(2);
       expect(postedNotes).toBe(2);
+
+      const jobsResponse = await fetch(`${base}/api/ops/jobs?status=queued&limit=1`, {
+        headers: { authorization },
+      });
+      expect(jobsResponse.status).toBe(200);
+      const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
+      expect(jobs.total).toBe(2);
+      expect(jobs.items).toHaveLength(1);
+      const detailResponse = await fetch(`${base}/api/ops/jobs/${jobs.items[0]!.id}`, {
+        headers: { authorization },
+      });
+      expect(detailResponse.status).toBe(200);
+      expect(await detailResponse.json()).toMatchObject({ status: "queued", attempts: [] });
+      expect(
+        (await fetch(`${base}/api/ops/jobs?status=invalid`, { headers: { authorization } })).status,
+      ).toBe(400);
+      expect(
+        (
+          await fetch(`${base}/api/ops/jobs?search=${"x".repeat(101)}`, {
+            headers: { authorization },
+          })
+        ).status,
+      ).toBe(400);
     } finally {
       controller.abort();
       await running;

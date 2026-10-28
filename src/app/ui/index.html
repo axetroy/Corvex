@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Corvex Operations</title>
+    <link rel="stylesheet" href="/ops/styles.css">
+    <script type="module" src="/ops/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#overview" aria-label="Corvex Operations home">
+        <span class="brand-mark">C</span>
+        <span>Corvex <small>OPERATIONS</small></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#overview" data-nav="overview">Overview</a>
+        <a href="#jobs" data-nav="jobs">Jobs</a>
+      </nav>
+      <select id="language" class="language-select" aria-label="Language">
+        <option value="en">English</option>
+        <option value="zh-CN">简体中文</option>
+      </select>
+      <span id="updated" class="updated"></span>
+    </header>
+    <main id="app" class="content" aria-live="polite">
+      <p id="loading" class="muted">Loading operations data...</p>
+    </main>
+    <footer>Read-only operations console</footer>
+  </body>
+</html>

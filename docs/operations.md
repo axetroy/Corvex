@@ -45,6 +45,7 @@ GHCR package visibility controls anonymous pulls; make the package public after 
 Compose resource defaults are 1 CPU/1 GiB and 256 PIDs for the Server, and 2 CPUs/2 GiB and 256 PIDs for the Worker. Override them with `CORVEX_MEM_LIMIT`, `CORVEX_CPUS`, `CORVEX_PIDS_LIMIT`, and the corresponding `CORVEX_WORKER_MEM_LIMIT`, `CORVEX_WORKER_CPUS`, and `CORVEX_WORKER_PIDS_LIMIT`. JSON logs rotate at 10 MiB with three files retained.
 
 Expose the webhook through HTTPS and keep the GitLab API, database volume, and metrics endpoint restricted to trusted networks. The compose port mapping is plain HTTP; terminate TLS at a trusted reverse proxy or load balancer.
+The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD` are set. When enabled, open `https://<corvex-host>/ops`; the same credentials protect its API. Use a password with at least 16 characters, and do not expose the console over plain HTTP or directly to an untrusted network.
 
 ## HTTP endpoints
 
@@ -54,8 +55,15 @@ Expose the webhook through HTTPS and keep the GitLab API, database volume, and m
 | `GET /healthz` | Process liveness check; returns `200 ok`. |
 | `GET /readyz` | Readiness check that pings SQLite; returns `503` if the database is unavailable. |
 | `GET /metrics` | Prometheus text metrics for job counts and model call counts, duration, and token totals. |
+| `GET /ops` | Optional Basic Auth-protected read-only operations console. Disabled when operations credentials are unset. |
+| `GET /api/ops/overview` | Operations summary with job counts, oldest queued age, worker heartbeats, and model call metrics. |
+| `GET /api/ops/jobs` | Filtered and paginated job list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
+| `GET /api/ops/jobs/<id>` | Job details and persisted attempt history. |
 
-Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
+The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include submitted requests and error text; protect operator credentials and use HTTPS. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
+
+The console has three read-only views: an overview of queue and worker status, a filterable job list, and a per-job detail/attempt history view. It refreshes automatically every 15 seconds. It does not retry, cancel, or create tasks.
+The interface supports English and Simplified Chinese. On first visit it selects the best supported browser language; a manual selection is saved in browser storage for later visits.
 
 ## Logs and troubleshooting
 

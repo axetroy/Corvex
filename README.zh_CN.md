@@ -11,6 +11,7 @@ Corvex 是基于单一 TypeScript 应用和 Pi SDK 构建的自托管 GitLab 代
 - SQLite 持久化、Webhook 事件去重、审查/Fix 任务队列及 Fix 授权审计。
 - `review`、读取指定 MR 文件的 `explain <path>`、白名单授权的 `fix`、`status` 和仅任务发起者可用的 `cancel` 指令；任务进入发布阶段前可请求取消。
 - GitLab MR 评论反馈、`/healthz`、检查数据库的 `/readyz`，以及包含任务状态、模型调用成功/失败数、耗时和 Token 汇总的 Prometheus `/metrics`。
+- 可选的 Basic Auth 保护只读运维控制台，提供队列概览、Worker 心跳、可筛选任务列表和尝试详情；未配置运维凭据时默认关闭。
 - YAML 配置；密钥只通过环境变量注入。
 - GitLab MR/项目元信息与分页 Diff API。
 - Git 引擎：按项目维护镜像、按指定 SHA 创建隔离 detached worktree、限制 Diff 大小，并拒绝工作区外文件读取。
@@ -39,6 +40,8 @@ npm start -- init
 npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
+
+如需启用可选运维控制台，请同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD`，然后通过 `/ops` 访问。密码至少 16 个字符，并应使用 HTTPS。
 
 Server 只需写令牌和 Webhook Secret。要异步执行审查或 Fix 提案，启用 Agent 配置，并额外设置 `CORVEX_GITLAB_READ_TOKEN`（只读）和 `CORVEX_MODEL_API_KEY`，然后在另一个进程中启动 Worker：
 

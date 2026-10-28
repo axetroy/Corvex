@@ -1,8 +1,10 @@
+import { timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { JobStore } from "../jobs/store.js";
-import type { EventResult } from "../jobs/model.js";
+import { jobStatuses, jobTypes, type EventResult, type JobStatus, type JobType } from "../jobs/model.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { decodeNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
@@ -29,6 +31,38 @@ function respond(response: ServerResponse, status: number, body: string): void {
   response.statusCode = status;
   response.setHeader("content-type", "text/plain; charset=utf-8");
   response.end(body);
+}
+
+function respondJson(response: ServerResponse, status: number, value: unknown): void {
+  response.statusCode = status;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify(value));
+}
+
+function isJobStatus(value: string): value is JobStatus {
+  return jobStatuses.some((status) => status === value);
+}
+
+function isJobType(value: string): value is JobType {
+  return jobTypes.some((type) => type === value);
+}
+
+function basicCredentialsMatch(request: IncomingMessage, username: string, password: string): boolean {
+  const authorization = request.headers.authorization;
+  const match = authorization?.match(/^Basic ([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match) return false;
+  const provided = Buffer.from(match[1]!, "base64");
+  if (provided.toString("base64") !== match[1]) return false;
+  const expected = Buffer.from(`${username}:${password}`);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+function optionalInteger(value: string | null, minimum: number, maximum: number): number | undefined | false {
+  if (value === null) return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) return false;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= minimum && number <= maximum ? number : false;
 }
 
 function contains(values: number[], target: number): boolean {
@@ -136,7 +170,25 @@ export class CorvexServer {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const path = url.pathname;
+    if (path === "/ops" || path === "/ops/" || path.startsWith("/ops/") || path.startsWith("/api/ops/")) {
+      if (!this.config.operations.username || !this.config.operations.password) {
+        respond(response, 404, "not found\n");
+        return;
+      }
+      if (!basicCredentialsMatch(request, this.config.operations.username, this.config.operations.password)) {
+        response.setHeader("www-authenticate", 'Basic realm="Corvex Operations", charset="UTF-8"');
+        respond(response, 401, "authentication required\n");
+        return;
+      }
+      if (path.startsWith("/api/ops/")) {
+        this.operationsApi(request, response, url);
+        return;
+      }
+      await this.operationsUi(response, path);
+      return;
+    }
     if (request.method === "GET" && path === "/healthz") {
       respond(response, 200, "ok\n");
       return;
@@ -159,6 +211,114 @@ export class CorvexServer {
       return;
     }
     respond(response, 404, "not found\n");
+  }
+
+  private operationsApi(request: IncomingMessage, response: ServerResponse, url: URL): void {
+    if (request.method !== "GET") {
+      respondJson(response, 405, { error: "method not allowed" });
+      return;
+    }
+    if (url.pathname === "/api/ops/overview") {
+      const generatedAt = new Date();
+      const overview = this.store.operationsOverview(Math.max(this.config.worker.pollInterval * 3, 30_000));
+      const oldestQueuedAt = overview.oldestQueuedAt;
+      const oldestQueueAgeSeconds = oldestQueuedAt
+        ? Math.max(0, Math.floor((generatedAt.valueOf() - Date.parse(oldestQueuedAt)) / 1000))
+        : null;
+      if (oldestQueueAgeSeconds !== null && !Number.isFinite(oldestQueueAgeSeconds)) {
+        throw new Error("SQLite returned an invalid oldest queued timestamp");
+      }
+      respondJson(response, 200, {
+        generatedAt: generatedAt.toISOString(),
+        ...overview,
+        oldestQueueAgeSeconds,
+        modelCalls: this.store.modelCallMetrics(),
+      });
+      return;
+    }
+    if (url.pathname === "/api/ops/jobs") {
+      const params = url.searchParams;
+      const statusValue = params.get("status");
+      const typeValue = params.get("type");
+      const status = statusValue === null ? undefined : isJobStatus(statusValue) ? statusValue : false;
+      const type = typeValue === null ? undefined : isJobType(typeValue) ? typeValue : false;
+      const projectId = optionalInteger(params.get("projectId"), 1, Number.MAX_SAFE_INTEGER);
+      const mrIid = optionalInteger(params.get("mrIid"), 1, Number.MAX_SAFE_INTEGER);
+      const limit = optionalInteger(params.get("limit"), 1, 100) ?? 25;
+      const offset = optionalInteger(params.get("offset"), 0, 1_000_000) ?? 0;
+      const search = params.get("search") ?? undefined;
+      if (
+        status === false ||
+        type === false ||
+        projectId === false ||
+        mrIid === false ||
+        limit === false ||
+        offset === false ||
+        (search?.trim().length ?? 0) > 100
+      ) {
+        respondJson(response, 400, { error: "invalid job list filter" });
+        return;
+      }
+      respondJson(
+        response,
+        200,
+        this.store.listOperationsJobs({
+          status,
+          type,
+          projectId,
+          mrIid,
+          search,
+          limit,
+          offset,
+        }),
+      );
+      return;
+    }
+    const jobMatch = /^\/api\/ops\/jobs\/([^/]+)$/.exec(url.pathname);
+    if (jobMatch) {
+      let jobId: string;
+      try {
+        jobId = decodeURIComponent(jobMatch[1]!);
+      } catch {
+        respondJson(response, 400, { error: "invalid job ID" });
+        return;
+      }
+      const job = this.store.getJobDetails(jobId);
+      if (!job) {
+        respondJson(response, 404, { error: "job not found" });
+        return;
+      }
+      respondJson(response, 200, job);
+      return;
+    }
+    respondJson(response, 404, { error: "not found" });
+  }
+
+  private async operationsUi(response: ServerResponse, path: string): Promise<void> {
+    const assets: Record<string, { file: string; contentType: string }> = {
+      "/ops/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
+      "/ops/i18n.js": { file: "i18n.js", contentType: "text/javascript; charset=utf-8" },
+      "/ops/styles.css": { file: "styles.css", contentType: "text/css; charset=utf-8" },
+    };
+    const file = path === "/ops" || path === "/ops/" ? "index.html" : assets[path]?.file;
+    if (!file) {
+      respond(response, 404, "not found\n");
+      return;
+    }
+    const contentType = path === "/ops" || path === "/ops/"
+      ? "text/html; charset=utf-8"
+      : assets[path]!.contentType;
+    const contents = await readFile(new URL(`./ui/${file}`, import.meta.url));
+    response.statusCode = 200;
+    response.setHeader("content-type", contentType);
+    response.setHeader("cache-control", "no-store");
+    response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader("referrer-policy", "no-referrer");
+    response.setHeader(
+      "content-security-policy",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    );
+    response.end(contents);
   }
 
   private metrics(response: ServerResponse): void {
