@@ -212,7 +212,11 @@ describe("CorvexServer", () => {
         headers: { authorization },
       });
       expect(detailResponse.status).toBe(200);
-      expect(await detailResponse.json()).toMatchObject({ status: "queued", attempts: [] });
+      expect(await detailResponse.json()).toMatchObject({
+        status: "queued",
+        attempts: [],
+        trajectory: [],
+      });
       expect(
         (await fetch(`${base}/api/ops/jobs?status=invalid`, { headers: { authorization } })).status,
       ).toBe(400);

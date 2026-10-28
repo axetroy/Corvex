@@ -1,14 +1,16 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { PiAgent } from "../../src/agent/pi.js";
+import { JobStore } from "../../src/jobs/store.js";
 
 describe("PiAgent", () => {
   let temporaryDirectory = "";
   let server: ReturnType<typeof createServer> | undefined;
+  let store: JobStore | undefined;
 
   afterEach(async () => {
     if (server?.listening) {
@@ -17,6 +19,8 @@ describe("PiAgent", () => {
       );
     }
     server = undefined;
+    store?.close();
+    store = undefined;
     if (temporaryDirectory) {
       await rm(temporaryDirectory, { recursive: true, force: true });
       temporaryDirectory = "";
@@ -27,14 +31,50 @@ describe("PiAgent", () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-"));
     let requestBody = "";
     let responseDelayMs = 0;
+    let requestCount = 0;
     server = createServer((request, response) => {
       request.on("data", (chunk: Buffer) => {
         requestBody += chunk.toString();
       });
       request.on("end", () => {
+        const currentRequest = requestCount++;
         const sendResponse = () => {
           if (response.destroyed) return;
           response.writeHead(200, { "content-type": "text/event-stream" });
+          if (currentRequest === 0) {
+            response.write(
+              `data: ${JSON.stringify({
+                id: "chatcmpl-tool",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test-model",
+                choices: [{
+                  index: 0,
+                  delta: {
+                    role: "assistant",
+                    tool_calls: [{
+                      index: 0,
+                      id: "call-read-file",
+                      type: "function",
+                      function: { name: "read_file", arguments: '{"path":"README.md"}' },
+                    }],
+                  },
+                  finish_reason: null,
+                }],
+              })}\n\n`,
+            );
+            response.write(
+              `data: ${JSON.stringify({
+                id: "chatcmpl-tool",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test-model",
+                choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+              })}\n\n`,
+            );
+            response.end("data: [DONE]\n\n");
+            return;
+          }
           response.write(
             `data: ${JSON.stringify({
               id: "chatcmpl-test",
@@ -104,21 +144,56 @@ describe("PiAgent", () => {
       fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
     } satisfies CorvexConfig;
 
-    const agent = new PiAgent(config);
+    await writeFile(join(temporaryDirectory, "README.md"), "private repository content");
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    const agent = new PiAgent(config, store);
     const result = await agent.generate(
       { systemPrompt: "Return JSON.", userPrompt: "Say ok." },
       temporaryDirectory,
+      undefined,
+      { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
     );
     expect(result.content).toContain('"summary":"ok"');
     expect(result.model).toContain("test-model");
     expect(requestBody).toContain('"model":"test-model"');
     expect(requestBody).toContain('"stream":true');
     expect(requestBody).toContain('"name":"read_file"');
+    const trajectory = store.getJobDetails(job.id)?.trajectory;
+    expect(trajectory).toHaveLength(2);
+    expect(trajectory).toEqual([
+      expect.objectContaining({
+        kind: "llm",
+        status: "succeeded",
+        model: expect.stringContaining("test-model"),
+        inputTokens: 14,
+        outputTokens: 6,
+      }),
+      expect.objectContaining({ kind: "tool", name: "read_file", status: "succeeded" }),
+    ]);
+    expect(JSON.stringify(trajectory)).not.toContain("README.md");
+    expect(JSON.stringify(trajectory)).not.toContain("private repository content");
 
     responseDelayMs = 2000;
     config.agent.requestTimeout = 500;
     await expect(
-      agent.generate({ systemPrompt: "Wait.", userPrompt: "Wait." }, temporaryDirectory),
+      agent.generate(
+        { systemPrompt: "Wait.", userPrompt: "Wait." },
+        temporaryDirectory,
+        undefined,
+        { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
+      ),
     ).rejects.toThrow("Pi agent run failed");
+    expect(store.getJobDetails(job.id)?.trajectory.at(-1)).toMatchObject({
+      kind: "llm",
+      status: "failed",
+    });
   }, 20_000);
 });

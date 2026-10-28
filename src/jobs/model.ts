@@ -64,9 +64,27 @@ export interface JobStatusTransition {
   at: string;
 }
 
+export type JobTraceKind = "tool" | "llm";
+export type JobTraceStatus = "running" | "succeeded" | "failed";
+
+export interface JobTraceEntry {
+  id: number;
+  attempt: number;
+  kind: JobTraceKind;
+  name: string;
+  status: JobTraceStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
 export interface JobDetails extends JobSummary {
   attempts: JobAttemptSummary[];
   timeline: JobStatusTransition[];
+  trajectory: JobTraceEntry[];
 }
 
 export interface OperationsOverview {

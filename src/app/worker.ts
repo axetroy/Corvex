@@ -7,7 +7,7 @@ import type { DiffResult, Workspace } from "../git/types.js";
 import type { Job, JobStatus } from "../jobs/model.js";
 import { JobStore } from "../jobs/store.js";
 import { GitLabClient, type MergeRequest } from "../gitlab/client.js";
-import { PiAgent } from "../agent/pi.js";
+import { PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 
 const leaseMs = 30_000;
@@ -207,6 +207,11 @@ export class Worker {
     signal: AbortSignal,
     transition: (status: JobStatus) => void,
   ): Promise<void> {
+    const trace: JobTraceContext = {
+      jobId: job.id,
+      attempt: job.attemptCount,
+      taskType: job.type,
+    };
     if (!["review", "fix", "explain"].includes(job.type)) {
       throw new Error(`unsupported task type "${job.type}"`);
     }
@@ -263,6 +268,7 @@ export class Worker {
             content,
             workspace.path,
             signal,
+            trace,
           );
           this.store.recordModelCall(
             "explain",
@@ -302,7 +308,7 @@ export class Worker {
       const started = Date.now();
       let outcome;
       try {
-        outcome = await this.reviewer.review(context, diff, workspace.path, signal);
+        outcome = await this.reviewer.review(context, diff, workspace.path, signal, trace);
         this.store.recordModelCall(
           "review",
           "success",
@@ -373,7 +379,11 @@ export class Worker {
     const started = Date.now();
     let outcome;
     try {
-      outcome = await this.fixer.fix(context, job.request, diff, workspace.path, signal);
+      outcome = await this.fixer.fix(context, job.request, diff, workspace.path, signal, {
+        jobId: job.id,
+        attempt: job.attemptCount,
+        taskType: job.type,
+      });
       this.store.recordModelCall(
         "fix",
         "success",

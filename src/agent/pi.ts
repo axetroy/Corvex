@@ -8,6 +8,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { CorvexConfig } from "../config/config.js";
+import type { JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
 
@@ -28,6 +29,12 @@ export interface ModelResponse {
   usage: ModelUsage;
 }
 
+export interface JobTraceContext {
+  jobId: string;
+  attempt: number;
+  taskType: JobType;
+}
+
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
@@ -38,6 +45,7 @@ export class PiAgent {
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
+    trace?: JobTraceContext,
   ): Promise<ModelResponse> {
     if (!this.config.agent.enabled) throw new Error("Pi agent is disabled");
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
@@ -57,12 +65,17 @@ export class PiAgent {
     }
 
     let response: ModelResponse;
+    const traceId = trace
+      ? this.startTrace(trace, "llm", trace.taskType, `${this.config.agent.baseUrl}/${this.config.agent.model}`)
+      : undefined;
+    const startedAt = performance.now();
     try {
       const requestSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.requestTimeout)])
         : AbortSignal.timeout(this.config.agent.requestTimeout);
-      response = await this.runSession(request, workingDirectory, requestSignal);
+      response = await this.runSession(request, workingDirectory, requestSignal, trace);
     } catch (error) {
+      this.finishTrace(traceId, "failed", performance.now() - startedAt);
       if (budgetDay) {
         try {
           // 请求失败时用预留量结算，避免因无法确认服务端是否已计费而释放预算。
@@ -79,6 +92,13 @@ export class PiAgent {
         cause: error,
       });
     }
+    this.finishTrace(
+      traceId,
+      "succeeded",
+      performance.now() - startedAt,
+      response.usage.inputTokens,
+      response.usage.outputTokens,
+    );
     if (budgetDay) {
       try {
         this.store!.settleModelTokens(
@@ -97,6 +117,7 @@ export class PiAgent {
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
+    trace?: JobTraceContext,
   ): Promise<ModelResponse> {
     const agentDir = resolve(join(this.config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
@@ -149,6 +170,25 @@ export class PiAgent {
       sessionManager: SessionManager.inMemory(),
       noTools: "builtin",
     });
+    const activeTools = new Map<string, { traceId: number; startedAt: number }>();
+    const unsubscribe = session.subscribe((event) => {
+      if (!trace) return;
+      if (event.type === "tool_execution_start") {
+        const traceId = this.startTrace(trace, "tool", event.toolName);
+        if (traceId !== undefined) {
+          activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
+        }
+      } else if (event.type === "tool_execution_end") {
+        const active = activeTools.get(event.toolCallId);
+        if (!active) return;
+        this.finishTrace(
+          active.traceId,
+          event.isError ? "failed" : "succeeded",
+          event.durationMs ?? performance.now() - active.startedAt,
+        );
+        activeTools.delete(event.toolCallId);
+      }
+    });
     const abort = () => {
       void session.abort();
     };
@@ -172,7 +212,50 @@ export class PiAgent {
       };
     } finally {
       signal?.removeEventListener("abort", abort);
+      unsubscribe();
+      for (const active of activeTools.values()) {
+        this.finishTrace(active.traceId, "failed", performance.now() - active.startedAt);
+      }
       session.dispose();
+    }
+  }
+
+  private startTrace(
+    trace: JobTraceContext,
+    kind: "tool" | "llm",
+    name: string,
+    model = "",
+  ): number | undefined {
+    if (!this.store) return undefined;
+    try {
+      return this.store.startJobTrace(trace.jobId, trace.attempt, kind, name.slice(0, 128), model.slice(0, 256));
+    } catch (error) {
+      console.warn("record job trajectory start failed", {
+        jobId: trace.jobId,
+        kind,
+        name: name.slice(0, 128),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private finishTrace(
+    traceId: number | undefined,
+    status: "succeeded" | "failed",
+    durationMs: number,
+    inputTokens?: number,
+    outputTokens?: number,
+  ): void {
+    if (!this.store || traceId === undefined) return;
+    try {
+      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens);
+    } catch (error) {
+      console.warn("record job trajectory completion failed", {
+        traceId,
+        status,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

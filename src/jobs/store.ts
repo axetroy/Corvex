@@ -14,6 +14,9 @@ import {
   type JobSummary,
   type JobStatus,
   type JobStatusTransition,
+  type JobTraceEntry,
+  type JobTraceKind,
+  type JobTraceStatus,
   type JobType,
   type ModelCallMetric,
   type OperationsOverview,
@@ -106,6 +109,39 @@ function readModelCallMetric(row: Record<string, unknown>): ModelCallMetric {
     durationMs: numberColumn(row, "durationMs"),
     inputTokens: numberColumn(row, "inputTokens"),
     outputTokens: numberColumn(row, "outputTokens"),
+  };
+}
+
+function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
+  const kind = stringColumn(row, "kind");
+  if (kind !== "tool" && kind !== "llm") throw new Error(`SQLite job trace kind "${kind}" is invalid`);
+  const status = stringColumn(row, "status");
+  if (status !== "running" && status !== "succeeded" && status !== "failed") {
+    throw new Error(`SQLite job trace status "${status}" is invalid`);
+  }
+  const nullableNumber = (name: string): number | null => {
+    const value = row[name];
+    return value === null ? null : numberColumn(row, name);
+  };
+  const nullableString = (name: string): string | null => {
+    const value = row[name];
+    if (value !== null && typeof value !== "string") {
+      throw new Error(`SQLite column "${name}" is not text or null`);
+    }
+    return value;
+  };
+  return {
+    id: numberColumn(row, "id"),
+    attempt: numberColumn(row, "attempt"),
+    kind,
+    name: stringColumn(row, "name"),
+    status,
+    startedAt: stringColumn(row, "started_at"),
+    finishedAt: nullableString("finished_at"),
+    durationMs: nullableNumber("duration_ms"),
+    model: nullableString("model"),
+    inputTokens: nullableNumber("input_tokens"),
+    outputTokens: nullableNumber("output_tokens"),
   };
 }
 
@@ -278,6 +314,65 @@ export class JobStore {
            output_tokens = output_tokens + excluded.output_tokens`,
       )
       .run(taskType, outcome, Math.floor(durationMs), inputTokens, outputTokens);
+  }
+
+  startJobTrace(
+    jobId: string,
+    attempt: number,
+    kind: JobTraceKind,
+    name: string,
+    model = "",
+  ): number {
+    if (!jobId.trim() || !Number.isSafeInteger(attempt) || attempt <= 0) {
+      throw new Error("job trace requires a job ID and positive attempt number");
+    }
+    if (kind !== "tool" && kind !== "llm") throw new Error(`unsupported job trace kind "${kind}"`);
+    if (!name.trim() || name.length > 128 || model.length > 256) {
+      throw new Error("job trace name or model is invalid");
+    }
+    const result = this.db
+      .prepare(
+        `INSERT INTO job_trace(job_id,attempt,kind,name,status,started_at,model)
+         VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(jobId, attempt, kind, name, "running", new Date().toISOString(), model || null);
+    const id = Number(result.lastInsertRowid);
+    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid job trace ID");
+    return id;
+  }
+
+  finishJobTrace(
+    traceId: number,
+    status: Exclude<JobTraceStatus, "running">,
+    durationMs: number,
+    inputTokens?: number,
+    outputTokens?: number,
+  ): void {
+    if (
+      !Number.isSafeInteger(traceId) ||
+      traceId <= 0 ||
+      (status !== "succeeded" && status !== "failed") ||
+      !Number.isFinite(durationMs) ||
+      durationMs < 0 ||
+      (inputTokens !== undefined && (!Number.isSafeInteger(inputTokens) || inputTokens < 0)) ||
+      (outputTokens !== undefined && (!Number.isSafeInteger(outputTokens) || outputTokens < 0))
+    ) {
+      throw new Error("job trace completion is invalid");
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE job_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?
+         WHERE id=? AND status='running'`,
+      )
+      .run(
+        status,
+        new Date().toISOString(),
+        Math.floor(durationMs),
+        inputTokens ?? null,
+        outputTokens ?? null,
+        traceId,
+      );
+    if (result.changes !== 1) throw new Error(`job trace "${traceId}" is not running`);
   }
 
   pruneHistory(historyBefore: Date, auditBefore: Date): void {
@@ -708,7 +803,11 @@ export class JobStore {
           at: stringColumn(row, "created_at"),
         } satisfies JobStatusTransition;
       });
-    return { ...mapJobSummary(job), attempts, timeline };
+    const trajectory = this.db
+      .prepare("SELECT * FROM job_trace WHERE job_id=? ORDER BY started_at,id")
+      .all(jobId)
+      .map((value) => readJobTrace(value as Record<string, unknown>));
+    return { ...mapJobSummary(job), attempts, timeline, trajectory };
   }
 
   activeJobIds(): Set<string> {
@@ -931,6 +1030,13 @@ export class JobStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, error TEXT NOT NULL DEFAULT '', UNIQUE(job_id,attempt)
       );
+      CREATE TABLE IF NOT EXISTS job_trace (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
+        input_tokens INTEGER, output_tokens INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS job_trace_job_started_idx ON job_trace(job_id,started_at,id);
       CREATE TABLE IF NOT EXISTS worker_heartbeats (
         worker_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL
       );

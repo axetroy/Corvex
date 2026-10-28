@@ -124,6 +124,41 @@ describe("JobStore", () => {
     expect(store.getJobDetails("missing-job")).toBeUndefined();
   });
 
+  it("persists model and tool activity in the job trajectory", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+
+    const modelCall = store.startJobTrace(job.id, job.attemptCount, "llm", "review", "test/model");
+    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25);
+    const toolCall = store.startJobTrace(job.id, job.attemptCount, "tool", "read_file");
+    store.finishJobTrace(toolCall, "failed", 18);
+
+    expect(store.getJobDetails(job.id)?.trajectory).toEqual([
+      expect.objectContaining({
+        kind: "llm",
+        name: "review",
+        status: "succeeded",
+        model: "test/model",
+        durationMs: 125,
+        inputTokens: 70,
+        outputTokens: 25,
+      }),
+      expect.objectContaining({
+        kind: "tool",
+        name: "read_file",
+        status: "failed",
+        durationMs: 18,
+      }),
+    ]);
+  });
+
   it("lists jobs and requeues a failed job that stopped before publishing", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

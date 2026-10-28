@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { PiAgent, type ModelUsage } from "../agent/pi.js";
+import { PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { Change, DiffResult } from "../git/types.js";
 
 export interface ReviewContext {
@@ -204,6 +204,7 @@ export class ReviewWorkflow {
     diff: DiffResult,
     cwd: string,
     signal?: AbortSignal,
+    trace?: JobTraceContext,
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
     const { input, omittedFiles } = this.buildInput(context, diff);
@@ -224,6 +225,7 @@ export class ReviewWorkflow {
       { systemPrompt: reviewSystemPrompt, userPrompt },
       cwd,
       signal,
+      trace,
     );
     let result: ReviewResult;
     let rejected: number;
@@ -249,6 +251,7 @@ export class ReviewWorkflow {
     content: Uint8Array,
     cwd: string,
     signal?: AbortSignal,
+    trace?: JobTraceContext,
   ): Promise<Explanation> {
     if (context.projectId <= 0 || context.mrIid <= 0 || !context.headSha) {
       throw new Error("merge request identity and exact head SHA are required");
@@ -276,6 +279,7 @@ Do not claim to have run tests or executed repository code. Return a concise, us
       },
       cwd,
       signal,
+      trace,
     );
     const explanation = response.content.trim();
     if (!validText(explanation, 1, 8000)) {

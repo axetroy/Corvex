@@ -1,4 +1,4 @@
-import { PiAgent, type ModelUsage } from "../agent/pi.js";
+import { PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { DiffResult } from "../git/types.js";
 import type { ReviewContext } from "../review/workflow.js";
 
@@ -72,6 +72,7 @@ export class FixWorkflow {
     diff: DiffResult,
     cwd: string,
     signal?: AbortSignal,
+    trace?: JobTraceContext,
   ): Promise<FixOutcome> {
     if (
       context.projectId <= 0 ||
@@ -101,7 +102,7 @@ export class FixWorkflow {
     if (Buffer.byteLength(userPrompt) > this.maxContextBytes) {
       throw new Error("fix context exceeds configured size limit");
     }
-    const response = await this.agent.generate({ systemPrompt, userPrompt }, cwd, signal);
+    const response = await this.agent.generate({ systemPrompt, userPrompt }, cwd, signal, trace);
     const result = parseFixResponse(response.content, this.maxPatchBytes);
     return {
       ...result,

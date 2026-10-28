@@ -70,6 +70,14 @@ function formatDuration(seconds) {
     .replace("{minutes}", String(Math.floor((seconds % 3600) / 60)));
 }
 
+function formatTraceDuration(durationMs) {
+  if (durationMs === null || durationMs === undefined) return copy.none;
+  if (durationMs < 1000) {
+    return copy.traceDurationMsTemplate.replace("{value}", String(Math.round(durationMs)));
+  }
+  return formatDuration(Math.floor(durationMs / 1000));
+}
+
 function elapsedSince(value) {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp)
@@ -389,6 +397,38 @@ async function renderJobDetails(version, jobId) {
   const attemptsContent = attempts.length
     ? table([copy.attempts, copy.started, copy.finished, copy.error], attempts)
     : element("div", copy.noAttempts, "empty");
+  const traceRows = job.trajectory.map((entry) => {
+    const row = element("tr");
+    append(
+      row,
+      element("td", entry.attempt),
+      element("td", copy.traceKinds[entry.kind] ?? entry.kind),
+      element("td", entry.name),
+      element("td", copy.traceStatuses[entry.status] ?? entry.status),
+      element("td", formatDate(entry.startedAt)),
+      element("td", formatTraceDuration(entry.durationMs)),
+      element("td", entry.model || copy.none),
+      element("td", entry.inputTokens ?? copy.none),
+      element("td", entry.outputTokens ?? copy.none),
+    );
+    return row;
+  });
+  const trajectoryContent = traceRows.length
+    ? table(
+        [
+          copy.traceAttempt,
+          copy.task,
+          copy.traceName,
+          copy.traceStatus,
+          copy.started,
+          copy.duration,
+          copy.traceModel,
+          copy.inputTokens,
+          copy.outputTokens,
+        ],
+        traceRows,
+      )
+    : element("div", copy.noTrajectory, "empty");
   app.replaceChildren(
     back,
     heading(
@@ -398,6 +438,7 @@ async function renderJobDetails(version, jobId) {
     ),
     panel(copy.taskDetails, details),
     panel(copy.lifecycleTimeline, timelineContent),
+    panel(copy.trajectory, trajectoryContent),
     panel(copy.attemptHistory, attemptsContent),
   );
 }
