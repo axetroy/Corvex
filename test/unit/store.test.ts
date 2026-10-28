@@ -213,6 +213,25 @@ describe("JobStore", () => {
     expect(store.getJob(job.id).status).toBe("cancelled");
   });
 
+  it("records cancellation of a queued task in its lifecycle timeline", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.listJobs("queued", 1)[0];
+    if (!job) throw new Error("expected a queued job");
+
+    store.cancel("event-2", 7, 3, 11);
+
+    expect(store.getJobDetails(job.id)).toMatchObject({
+      status: "cancelled",
+      timeline: [{ from: "queued", to: "cancelled", at: expect.any(String) }],
+    });
+  });
+
   it("does not retry after an expired publishing lease", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

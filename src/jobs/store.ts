@@ -468,6 +468,7 @@ export class JobStore {
             updated === 1
               ? `Cancelled task \`${row.id}\`.`
               : `Task \`${row.id}\` changed state before it could be cancelled.`;
+          if (updated === 1) this.insertAudit(row.actor_id, "job_status", row.id, "queued->cancelled");
           auditResult = updated === 1 ? "cancelled" : "denied_state_changed";
         } else if (["preparing", "analyzing", "fixing", "verifying"].includes(row.status)) {
           const updated = this.db
