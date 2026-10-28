@@ -26,19 +26,19 @@ To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `ag
 
 ## Run locally
 
-Requires Node.js 26.12.1 and npm. SQLite is provided by Node's built-in `node:sqlite` module.
+Requires Node.js 26.12.1 and pnpm 12.4.1. SQLite is provided by Node's built-in `node:sqlite` module.
 
 ```sh
-npm ci
-npm run build
-npm start -- init
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- init
 ```
 
 Edit `configs/config.yaml` with the GitLab URL and explicit project/user allowlists. Set `CORVEX_GITLAB_TOKEN` to a token permitted to post MR notes and `CORVEX_WEBHOOK_SECRET` to the same secret configured on the project webhook. Check the server configuration before starting:
 
 ```sh
-npm start -- --config configs/config.yaml check-config
-npm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml check-config
+pnpm start -- --config configs/config.yaml server
 ```
 
 The optional operations console is available at `/ops` only after setting both `CORVEX_OPS_USERNAME` and `CORVEX_OPS_PASSWORD`. Use a strong, unique password and access it over HTTPS.
@@ -46,8 +46,8 @@ The optional operations console is available at `/ops` only after setting both `
 For asynchronous reviews or fix proposals, enable the agent configuration, set `CORVEX_GITLAB_READ_TOKEN` to a separate read-only token and provide `CORVEX_MODEL_API_KEY`. Validate and start the worker in a second process:
 
 ```sh
-npm start -- --config configs/config.yaml --for worker check-config
-npm start -- --config configs/config.yaml worker
+pnpm start -- --config configs/config.yaml --for worker check-config
+pnpm start -- --config configs/config.yaml worker
 ```
 
 The configured project IDs and user IDs are explicit allowlists. Both must be non-empty; an empty list never means unrestricted access.
@@ -55,14 +55,14 @@ The configured project IDs and user IDs are explicit allowlists. Both must be no
 An online SQLite backup can be created while the service is running. The destination must not already exist:
 
 ```sh
-npm start -- backup \
+pnpm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
 
 To restore, stop both the server and worker, replace the configured database file with a verified backup, then restart the services. Apply your organization's encryption, access-control, and off-site retention policies to backup files.
 
-The server prunes terminal jobs, job attempts, webhook events, and daily token usage older than `storage.retention_days` (90 days by default), and audit events older than `storage.audit_retention_days` (365 days by default). Queued and in-progress jobs are retained. Adjust these periods to match your organization's retention requirements. Use `npm start -- storage cleanup --config configs/config.yaml` to preview unused Git storage cleanup; applying it requires a maintenance window with Workers stopped.
+The server prunes terminal jobs, job attempts, webhook events, and daily token usage older than `storage.retention_days` (90 days by default), and audit events older than `storage.audit_retention_days` (365 days by default). Queued and in-progress jobs are retained. Adjust these periods to match your organization's retention requirements. Use `pnpm start -- storage cleanup --config configs/config.yaml` to preview unused Git storage cleanup; applying it requires a maintenance window with Workers stopped.
 
 ## Docker Compose
 
@@ -98,16 +98,16 @@ Compose defaults to 1 CPU/1 GiB for the server and 2 CPU/2 GiB for the worker, w
 ## Development
 
 ```sh
-npm test
-npm run lint
-npm run typecheck
-npm run build
+pnpm test
+pnpm run lint
+pnpm run typecheck
+pnpm run build
 ```
 
 Run the labeled review benchmark explicitly (it calls the configured model three times):
 
 ```sh
-npm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
+pnpm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
 ```
 
 The worker uses a GitLab read token for API/repository reads and the write token for note publication; the server only needs the write token. No untrusted-code executor is included.

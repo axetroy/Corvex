@@ -9,7 +9,7 @@ Server 可以独立运行，但没有 Worker 时，审查、解释和修复任�
 
 ## 环境要求
 
-- 从源码运行需要 Node.js 26.12.1 和 npm；使用 `npm ci` 按锁文件安装依赖。
+- 从源码运行需要 Node.js 26.12.1 和 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
 - Server 和 Worker 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
 - GitLab 只读令牌用于 API 读取和仓库抓取；独立的写令牌用于发布 MR 评论和讨论。
 - Worker 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
@@ -21,9 +21,9 @@ Server 可以独立运行，但没有 Worker 时，审查、解释和修复任�
 构建 CLI 并初始化配置模板：
 
 ```sh
-npm ci
-npm run build
-npm start -- init
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- init
 ```
 
 编辑 `configs/config.yaml`，填写 GitLab URL 和明确的项目/用户白名单。为 Server 设置以下变量：
@@ -40,8 +40,8 @@ Server 只需要写令牌和 Webhook Secret。Worker 还需要 `CORVEX_GITLAB_RE
 ## 2. 启动 Server
 
 ```sh
-npm start -- --config configs/config.yaml check-config
-npm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml check-config
+pnpm start -- --config configs/config.yaml server
 ```
 
 默认监听 `0.0.0.0:8080`。对 GitLab 提供公网服务时，应通过 HTTPS 暴露，并使用适当的网络访问控制；不要将服务直接暴露给不可信网络。
@@ -90,8 +90,8 @@ CORVEX_WEBHOOK_SECRET=... \
 在另一个进程中启动：
 
 ```sh
-npm start -- --config configs/config.yaml --for worker check-config
-npm start -- --config configs/config.yaml worker
+pnpm start -- --config configs/config.yaml --for worker check-config
+pnpm start -- --config configs/config.yaml worker
 ```
 
 Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会拒绝启动。可通过[运行环境与运维](./operations)中的健康检查接口测试本地 Server。

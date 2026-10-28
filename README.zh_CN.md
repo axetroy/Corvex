@@ -26,19 +26,19 @@ Worker 使用 30 秒任务租约并定期续租；进程中断后，未进入发
 
 ## 本地运行
 
-需要 Node.js 26.12.1 及 npm。SQLite 使用 Node.js 内置的 `node:sqlite` 模块。
+需要 Node.js 26.12.1 及 pnpm 12.4.1。SQLite 使用 Node.js 内置的 `node:sqlite` 模块。
 
 ```sh
-npm ci
-npm run build
-npm start -- init
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- init
 ```
 
 编辑 `configs/config.yaml`，填写 GitLab URL 和项目/用户白名单。设置 `CORVEX_GITLAB_TOKEN`（允许发布 MR 评论）和 `CORVEX_WEBHOOK_SECRET`（须与 GitLab 项目 Webhook 配置一致），验证配置后启动 Server：
 
 ```sh
-npm start -- --config configs/config.yaml check-config
-npm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml check-config
+pnpm start -- --config configs/config.yaml server
 ```
 
 如需启用可选运维控制台，请同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD`，然后通过 `/ops` 访问。请使用强且唯一的密码，并通过 HTTPS 访问。
@@ -46,8 +46,8 @@ npm start -- --config configs/config.yaml server
 Server 只需写令牌和 Webhook Secret。要异步执行审查或 Fix 提案，启用 Agent 配置，并额外设置 `CORVEX_GITLAB_READ_TOKEN`（只读）和 `CORVEX_MODEL_API_KEY`，然后在另一个进程中启动 Worker：
 
 ```sh
-npm start -- --config configs/config.yaml --for worker check-config
-npm start -- --config configs/config.yaml worker
+pnpm start -- --config configs/config.yaml --for worker check-config
+pnpm start -- --config configs/config.yaml worker
 ```
 
 项目 ID 和用户 ID 必须显式加入配置白名单。两者都不能为空；空白名单不会被解释为允许所有访问。
@@ -55,14 +55,14 @@ npm start -- --config configs/config.yaml worker
 SQLite 在线备份可以在服务运行期间创建，目标文件必须不存在：
 
 ```sh
-npm start -- backup \
+pnpm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
 
 恢复时先停止 Server 和 Worker，再将已验证的备份文件替换为配置中的数据库文件并重新启动服务。备份与恢复操作应遵循组织自身的加密、访问控制和异地保存策略。
 
-Server 每天会清理超过 `storage.retention_days`（默认 90 天）的终态任务、任务尝试、Webhook 事件和每日 Token 用量，并清理超过 `storage.audit_retention_days`（默认 365 天）的审计记录。仅终态任务会被删除；排队或运行中的任务会保留。请按组织的审计/保留要求调整期限。使用 `npm start -- storage cleanup --config configs/config.yaml` 可预览未使用 Git 存储清理；实际清理前需安排维护窗口并停止 Worker。
+Server 每天会清理超过 `storage.retention_days`（默认 90 天）的终态任务、任务尝试、Webhook 事件和每日 Token 用量，并清理超过 `storage.audit_retention_days`（默认 365 天）的审计记录。仅终态任务会被删除；排队或运行中的任务会保留。请按组织的审计/保留要求调整期限。使用 `pnpm start -- storage cleanup --config configs/config.yaml` 可预览未使用 Git 存储清理；实际清理前需安排维护窗口并停止 Worker。
 
 ## Docker Compose
 
@@ -98,16 +98,16 @@ Compose 默认限制 Server 为 1 CPU/1 GiB、Worker 为 2 CPU/2 GiB，PID 上�
 ## 开发
 
 ```sh
-npm test
-npm run lint
-npm run typecheck
-npm run build
+pnpm test
+pnpm run lint
+pnpm run typecheck
+pnpm run build
 ```
 
 显式运行带标注的审查基准（会调用配置的模型三次）：
 
 ```sh
-npm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
+pnpm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
 ```
 
 Worker 使用 GitLab 只读令牌读取 API/仓库，并使用写令牌发布评论；Server 只需写令牌。尚未实现不可信代码执行器。

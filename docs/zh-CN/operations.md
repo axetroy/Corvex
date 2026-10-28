@@ -2,7 +2,7 @@
 
 ## 运行环境要求
 
-- 从源码构建或运行需要 Node.js 26.12.1 及 npm；使用 `npm ci` 按锁文件安装依赖。
+- 从源码构建或运行需要 Node.js 26.12.1 及 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
 - Server 需要访问 GitLab API；GitLab 必须能访问 Server 的 Webhook 地址。
 - Worker 需要 `git` 可执行程序、GitLab API/仓库抓取的网络访问，以及（启用 Agent 时）访问模型 API 的 HTTPS 网络。项目提供的 Docker 镜像包含 Git。
 - SQLite 与 Git 数据必须存储在持久且可写的卷中，不能依赖容器临时文件系统。Corvex 使用 SQLite WAL 模式；应选择可靠支持 SQLite 锁定的本地文件系统/卷，不要假定任意网络文件系统都适用。
@@ -11,10 +11,10 @@
 SQLite 通过 Node.js 内置的 `node:sqlite` 模块运行，不需要原生扩展或额外部署 SQLite 服务。构建 TypeScript 应用后，Server 与 Worker 作为两个独立进程运行：
 
 ```sh
-npm ci
-npm run build
-npm start -- --config configs/config.yaml server
-npm start -- --config configs/config.yaml worker
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml worker
 ```
 
 默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。`agent.enabled` 未设为 `true` 时 Worker 会拒绝启动。
@@ -89,14 +89,14 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 使用 Server 和 Worker 共享的 SQLite 数据库列出最近任务或筛选失败任务：
 
 ```sh
-npm start -- jobs list --database ./data/state/corvex.db --status failed
-npm start -- jobs list --database ./data/state/corvex.db --limit 100
+pnpm start -- jobs list --database ./data/state/corvex.db --status failed
+pnpm start -- jobs list --database ./data/state/corvex.db --limit 100
 ```
 
 仅允许重新排入发布前失败且仍有自动尝试次数的任务：
 
 ```sh
-npm start -- jobs retry <job-id> --database ./data/state/corvex.db
+pnpm start -- jobs retry <job-id> --database ./data/state/corvex.db
 ```
 
 发布阶段失败不能重试，因为 GitLab 可能已经接受了评论。CLI 会写入操作员重试审计事件；请在能访问持久数据库的主机上运行。
@@ -106,8 +106,8 @@ npm start -- jobs retry <job-id> --database ./data/state/corvex.db
 先预览旧 worktree 和项目镜像，再决定是否删除：
 
 ```sh
-npm start -- storage cleanup --config configs/config.yaml --older-than-days 1
-npm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
+pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1
+pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
 ```
 
 默认只做 dry-run；清理会跳过活动 worktree 以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止所有 Worker，避免与新领取的任务竞争。Compose 部署可在停止 Worker profile 后，从 Server 容器运行：
@@ -122,7 +122,7 @@ docker compose --env-file .env -f deploy/compose.yaml exec corvex \
 服务运行期间可以创建 SQLite 在线备份；输出文件必须不存在：
 
 ```sh
-npm start -- backup \
+pnpm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
@@ -140,11 +140,11 @@ Server 启动时执行清理，之后约每 24 小时清理一次。终态任务
 在源码仓库中运行常用检查：
 
 ```sh
-npm ci
-npm run lint
-npm run typecheck
-npm test
-npm run build
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 仓库 CI 使用 Node.js 26.12.1 运行这些检查。Worker 主机必须安装 Git。

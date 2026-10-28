@@ -1,25 +1,25 @@
 .PHONY: build test lint typecheck run init config-check deploy deploy-worker
 
 build:
-	npm run build
+	pnpm run build
 
 test:
-	npm test
+	pnpm test
 
 lint:
-	npm run lint
+	pnpm run lint
 
 typecheck:
-	npm run typecheck
+	pnpm run typecheck
 
 run:
-	npm start -- --config configs/config.yaml server
+	pnpm start -- --config configs/config.yaml server
 
 init: build
-	npm start -- init --config configs/config.yaml
+	pnpm start -- init --config configs/config.yaml
 
 config-check: build
-	npm start -- --config configs/config.yaml check-config
+	pnpm start -- --config configs/config.yaml check-config
 
 deploy:
 	docker compose --env-file .env -f deploy/compose.yaml pull corvex

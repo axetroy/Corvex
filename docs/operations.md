@@ -2,7 +2,7 @@
 
 ## Runtime requirements
 
-- Use Node.js 26.12.1 and npm to build or run from source. `npm ci` installs the locked dependencies.
+- Use Node.js 26.12.1 and pnpm 12.4.1 to build or run from source. `pnpm install --frozen-lockfile` installs the locked dependencies.
 - The Server needs outbound access to the configured GitLab API and inbound access from GitLab to its webhook URL.
 - The Worker needs the `git` executable, outbound GitLab access for API and repository fetches, and outbound HTTPS access to the configured model API when the agent is enabled. The supplied Docker image installs Git.
 - SQLite and Git data need persistent, writable storage. Avoid ephemeral container filesystems. Since Corvex uses SQLite WAL mode, use a local filesystem/volume with reliable SQLite locking rather than assuming arbitrary network filesystems are suitable.
@@ -11,10 +11,10 @@
 SQLite is embedded through Node's built-in `node:sqlite` module; the application does not require a native addon or separate SQLite service. Build the TypeScript application and start the Server or Worker as separate processes:
 
 ```sh
-npm ci
-npm run build
-npm start -- --config configs/config.yaml server
-npm start -- --config configs/config.yaml worker
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml worker
 ```
 
 The default config path is `configs/config.yaml`; pass `--config /path/to/config.yaml` to use another file. The Worker refuses to start unless `agent.enabled: true`.
@@ -91,14 +91,14 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 List recent jobs or filter failures using the same SQLite database as the Server and Worker:
 
 ```sh
-npm start -- jobs list --database ./data/state/corvex.db --status failed
-npm start -- jobs list --database ./data/state/corvex.db --limit 100
+pnpm start -- jobs list --database ./data/state/corvex.db --status failed
+pnpm start -- jobs list --database ./data/state/corvex.db --limit 100
 ```
 
 An operator can requeue a failed job only when it failed before publishing and has automatic attempts remaining:
 
 ```sh
-npm start -- jobs retry <job-id> --database ./data/state/corvex.db
+pnpm start -- jobs retry <job-id> --database ./data/state/corvex.db
 ```
 
 Publishing failures cannot be retried because GitLab may already have accepted the comment. The CLI writes an operator retry audit event; run it on a host with access to the persistent database.
@@ -108,8 +108,8 @@ Publishing failures cannot be retried because GitLab may already have accepted t
 Preview old workspaces and project mirrors before removing them:
 
 ```sh
-npm start -- storage cleanup --config configs/config.yaml --older-than-days 1
-npm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
+pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1
+pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
 ```
 
 Cleanup is dry-run by default, excludes active workspaces and projects with queued or active tasks, and removes only directories older than the selected age. Stop all Workers before applying a cleanup to avoid races with a newly claimed task. For Compose, run the command in the Server container after stopping the Worker profile:
@@ -124,7 +124,7 @@ docker compose --env-file .env -f deploy/compose.yaml exec corvex \
 Create an online SQLite backup while the service is running. The destination must not already exist:
 
 ```sh
-npm start -- backup \
+pnpm start -- backup \
   --database ./data/state/corvex.db \
   --output ./data/backups/corvex-$(date +%Y%m%d%H%M%S).db
 ```
@@ -142,11 +142,11 @@ Back up the database before upgrading. The application applies SQLite schema mig
 From a source checkout, the usual checks are:
 
 ```sh
-npm ci
-npm run lint
-npm run typecheck
-npm test
-npm run build
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 The repository CI runs these checks on Node.js 26.12.1. Git must be installed on any host that runs a Worker.

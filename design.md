@@ -147,7 +147,7 @@ test/
 ```
 
 HTTP、信号、进程管理和文件系统操作优先使用 Node.js 内置能力。外部依赖保持精简，
-主要用于 Pi、YAML 解析和测试。运行时包管理与锁文件遵循仓库现有的 npm 约定；Node.js
+主要用于 Pi、YAML 解析和测试。运行时包管理与锁文件遵循仓库现有的 pnpm 约定；Node.js
 版本由 `engines.node` 和 CI 固定。
 
 ## 配置与运维
@@ -177,7 +177,7 @@ TypeScript 迁移已完成。迁移按小步实施，并以原运行时行为作
 RPC/sidecar 桥接。
 
 1. **架构契约：** 以本文档记录目标架构，迁移期间保持当前行为和安全不变量。
-2. **TypeScript 基础设施：** 固定 Node 版本、npm 脚本、严格 TypeScript、测试运行器、
+2. **TypeScript 基础设施：** 固定 Node 和 pnpm 版本、包管理脚本、严格 TypeScript、测试运行器、
    lint、构建和 Pi SDK 依赖。
 3. **纯领域模块：** 迁移配置校验、命令解析、模型、验证和状态转换测试。
 4. **存储与集成：** 迁移 SQLite schema/存储、GitLab API/Webhook 和 Git 引擎；迁移
@@ -200,7 +200,7 @@ RPC/sidecar 桥接。
   发布、Git 隔离、审查校验、修复补丁检查、Token 统计、指标、数据保留和备份。
 - 测试覆盖既有行为及异常输入、租约过期、取消、MR 版本过期、重复事件、无效模型输出
   和补丁范围违规。
-- CI 中 `npm ci`、lint、typecheck、单元/集成测试和生产构建均通过；Docker server 与
+- CI 中 `pnpm install --frozen-lockfile`、lint、typecheck、单元/集成测试和生产构建均通过；Docker server 与
   worker 模式均可成功启动。
 - 部署与配置文档仅描述 TypeScript/Pi 运行时。
 - 生产构建和部署使用单一运行时，不再保留被替代的源码或发布路径。

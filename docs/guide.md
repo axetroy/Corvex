@@ -9,7 +9,7 @@ The server can run without a worker, but review, explain, and fix tasks remain q
 
 ## Requirements
 
-- Node.js 26.12.1 and npm to run from source. Install the locked dependencies with `npm ci`.
+- Node.js 26.12.1 and pnpm 12.4.1 to run from source. Install the locked dependencies with `pnpm install --frozen-lockfile`.
 - GitLab access from the server and worker, including a reachable webhook URL.
 - A GitLab read token for API reads and repository fetches; a separate write token for MR notes and discussions.
 - The `git` executable on the worker host. The supplied Docker image includes it.
@@ -21,9 +21,9 @@ The server can run without a worker, but review, explain, and fix tasks remain q
 Build the CLI and initialize a configuration template:
 
 ```sh
-npm ci
-npm run build
-npm start -- init
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm start -- init
 ```
 
 Edit `configs/config.yaml` to set the GitLab URL and explicit project/user allowlists. Set these variables for the Server:
@@ -40,8 +40,8 @@ The Server only needs the write token and webhook secret. The Worker additionall
 ## 2. Start the server
 
 ```sh
-npm start -- --config configs/config.yaml check-config
-npm start -- --config configs/config.yaml server
+pnpm start -- --config configs/config.yaml check-config
+pnpm start -- --config configs/config.yaml server
 ```
 
 The default listener is `0.0.0.0:8080`. Put it behind HTTPS when exposing it to GitLab; do not expose the service directly to an untrusted network without appropriate network controls.
@@ -90,8 +90,8 @@ Reviews, explanations, and fix proposals require a worker and a model configurat
 In another process, start:
 
 ```sh
-npm start -- --config configs/config.yaml --for worker check-config
-npm start -- --config configs/config.yaml worker
+pnpm start -- --config configs/config.yaml --for worker check-config
+pnpm start -- --config configs/config.yaml worker
 ```
 
 When the agent is disabled, the server can still accept events and persist tasks, but a worker will refuse to start. For local-only server testing, use the health endpoints described in [Runtime and operations](./operations).
