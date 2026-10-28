@@ -81,6 +81,10 @@ export interface OperationsOverview {
 export interface EventResult {
   response: string;
   delivered: boolean;
+  job?: {
+    id: string;
+    created: boolean;
+  };
 }
 
 export interface ModelCallMetric {

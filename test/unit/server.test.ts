@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { JobStore } from "../../src/jobs/store.js";
@@ -18,6 +18,7 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 describe("CorvexServer", () => {
   it("authenticates and queues a GitLab command idempotently", async () => {
     let postedNotes = 0;
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const fakeGitLab = createServer((request, response) => {
       if (request.method === "POST" && request.url?.endsWith("/notes")) {
         postedNotes++;
@@ -137,6 +138,37 @@ describe("CorvexServer", () => {
       expect((await send()).status).toBe(202);
       expect(store.jobCounts().queued).toBe(1);
       expect(postedNotes).toBe(1);
+      expect(info).toHaveBeenCalledWith(
+        "GitLab webhook received",
+        expect.objectContaining({ eventType: "Note Hook" }),
+      );
+      expect(info).toHaveBeenCalledWith(
+        "GitLab task enqueued",
+        expect.objectContaining({ eventId: "1:99", projectId: 1, mrIid: 10, type: "review" }),
+      );
+
+      const ignoredResponse = await fetch(`${base}/webhooks/gitlab`, {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...payload,
+          object_attributes: {
+            ...payload.object_attributes,
+            id: 101,
+            note: "ordinary comment",
+          },
+        }),
+      });
+      expect(ignoredResponse.status).toBe(202);
+      expect(store.jobCounts().queued).toBe(1);
+      expect(info).toHaveBeenCalledWith(
+        "GitLab webhook ignored",
+        expect.objectContaining({ eventId: "1:101", reason: "not_corvex_command" }),
+      );
 
       config.fix.enabled = true;
       config.fix.allowedUserIds = [2];
@@ -190,6 +222,7 @@ describe("CorvexServer", () => {
       await new Promise<void>((resolve, reject) =>
         fakeGitLab.close((error) => (error ? reject(error) : resolve())),
       );
+      info.mockRestore();
     }
   });
 });

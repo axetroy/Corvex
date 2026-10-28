@@ -59,6 +59,13 @@ export class Worker {
         console.error("claim worker job failed", { error: message(error) });
       }
       if (job) {
+        console.info("Corvex worker claimed job", {
+          jobId: job.id,
+          type: job.type,
+          projectId: job.projectId,
+          mrIid: job.mrIid,
+          status: job.status,
+        });
         await this.process(job, signal);
         continue;
       }
@@ -84,8 +91,17 @@ export class Worker {
     let processingError: unknown;
     try {
       await this.execute(job, jobSignal, (next) => {
+        const previous = stage;
         this.store.updateLeasedStatus(job.id, job.leaseToken, stage, next);
         stage = next;
+        console.info("Corvex worker job status changed", {
+          jobId: job.id,
+          type: job.type,
+          projectId: job.projectId,
+          mrIid: job.mrIid,
+          from: previous,
+          to: next,
+        });
       });
     } catch (error) {
       processingError = error;
@@ -94,7 +110,15 @@ export class Worker {
       shutdownSignal.removeEventListener("abort", onShutdown);
       await heartbeat;
     }
-    if (!processingError) return;
+    if (!processingError) {
+      console.info("Corvex worker job completed", {
+        jobId: job.id,
+        type: job.type,
+        projectId: job.projectId,
+        mrIid: job.mrIid,
+      });
+      return;
+    }
     if (shutdownSignal.aborted) {
       console.warn("worker stopped during job; lease will recover it", {
         jobId: job.id,

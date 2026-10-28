@@ -33,6 +33,16 @@ function respond(response: ServerResponse, status: number, body: string): void {
   response.end(body);
 }
 
+function respondWebhook(
+  response: ServerResponse,
+  status: number,
+  body: string,
+  details: Record<string, string | number | boolean> = {},
+): void {
+  console.info("GitLab webhook response", { status, ...details });
+  respond(response, status, body);
+}
+
 function respondJson(response: ServerResponse, status: number, value: unknown): void {
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
@@ -370,35 +380,69 @@ export class CorvexServer {
   }
 
   private async webhook(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const eventType = header(request, "x-gitlab-event");
+    console.info("GitLab webhook received", {
+      eventType: eventType === "Note Hook" ? eventType : eventType ? "unsupported" : "missing",
+    });
     if (!validateWebhookToken(this.config.gitlab.webhookSecret, header(request, "x-gitlab-token"))) {
-      respond(response, 401, "unauthorized\n");
+      console.warn("GitLab webhook rejected", { reason: "invalid_token" });
+      respondWebhook(response, 401, "unauthorized\n", { reason: "invalid_token" });
       return;
     }
-    if (header(request, "x-gitlab-event") !== "Note Hook") {
-      respond(response, 400, "unsupported event\n");
+    if (eventType !== "Note Hook") {
+      console.warn("GitLab webhook rejected", { reason: "unsupported_event" });
+      respondWebhook(response, 400, "unsupported event\n", { reason: "unsupported_event" });
       return;
     }
     let event: ReturnType<typeof decodeNoteEvent>;
     try {
       event = decodeNoteEvent(await requestBody(request));
     } catch (error) {
-      respond(response, errorMessage(error).includes("exceeds 1 MiB") ? 413 : 400, "invalid webhook payload\n");
+      const tooLarge = errorMessage(error).includes("exceeds 1 MiB");
+      console.warn("GitLab webhook rejected", {
+        reason: tooLarge ? "payload_too_large" : "invalid_payload",
+      });
+      respondWebhook(
+        response,
+        tooLarge ? 413 : 400,
+        "invalid webhook payload\n",
+        { reason: tooLarge ? "payload_too_large" : "invalid_payload" },
+      );
       return;
     }
+    const id = eventId(event);
+    const details = {
+      eventId: id,
+      projectId: event.project.id,
+      mrIid: event.merge_request.iid,
+      noteId: event.object_attributes.id,
+      actorId: event.user.id,
+    };
+    console.info("GitLab Note Hook validated", { ...details, system: event.object_attributes.system });
     if (
       event.object_attributes.system ||
       (this.config.gitlab.botUsername &&
         event.user.username.toLowerCase() === this.config.gitlab.botUsername.toLowerCase())
     ) {
-      respond(response, 202, "");
+      const reason = event.object_attributes.system ? "system_note" : "bot_note";
+      console.info("GitLab webhook ignored", { ...details, reason });
+      respondWebhook(response, 202, "", { ...details, reason });
       return;
     }
     if (!contains(this.config.gitlab.allowedProjectIds, event.project.id)) {
-      respond(response, 403, "project is not allowed\n");
+      console.warn("GitLab webhook rejected", { ...details, reason: "project_not_allowed" });
+      respondWebhook(response, 403, "project is not allowed\n", {
+        ...details,
+        reason: "project_not_allowed",
+      });
       return;
     }
     if (!contains(this.config.gitlab.allowedUserIds, event.user.id)) {
-      respond(response, 403, "user is not allowed\n");
+      console.warn("GitLab webhook rejected", { ...details, reason: "user_not_allowed" });
+      respondWebhook(response, 403, "user is not allowed\n", {
+        ...details,
+        reason: "user_not_allowed",
+      });
       return;
     }
 
@@ -407,13 +451,17 @@ export class CorvexServer {
       command = parseCommand(event.object_attributes.note);
     } catch (error) {
       if (error instanceof NotCorvexCommandError) {
-        respond(response, 202, "");
+        console.info("GitLab webhook ignored", { ...details, reason: "not_corvex_command" });
+        respondWebhook(response, 202, "", { ...details, reason: "not_corvex_command" });
         return;
       }
+      console.warn("GitLab command rejected", { ...details, reason: "invalid_command" });
       await this.reply(response, event, errorMessage(error));
       return;
     }
+    console.info("GitLab command recognized", { ...details, command: command.name });
     if (command.name === "explain" && command.args.length === 0) {
+      console.warn("GitLab command rejected", { ...details, command: command.name, reason: "missing_path" });
       await this.reply(response, event, "Usage: `@corvex explain <path>`.");
       return;
     }
@@ -421,11 +469,15 @@ export class CorvexServer {
       (command.name === "explain" && command.args.length > 1) ||
       (command.args.length > 0 && command.name !== "fix" && command.name !== "explain")
     ) {
+      console.warn("GitLab command rejected", {
+        ...details,
+        command: command.name,
+        reason: "unexpected_arguments",
+      });
       await this.reply(response, event, "This command does not accept arguments.");
       return;
     }
 
-    const id = eventId(event);
     const projectId = event.project.id;
     const mrIid = event.merge_request.iid;
     const actorId = event.user.id;
@@ -466,14 +518,36 @@ export class CorvexServer {
           });
           break;
       }
+      if (result.job) {
+        console.info(result.job.created ? "GitLab task enqueued" : "GitLab task already queued", {
+          ...details,
+          type: command.name,
+          jobId: result.job.id,
+        });
+      } else if (result.delivered) {
+        console.info("GitLab webhook duplicate delivery", { ...details, command: command.name });
+      } else {
+        const reason =
+          command.name === "fix" && !this.config.fix.enabled
+            ? "fix_disabled"
+            : command.name === "fix" && !contains(this.config.fix.allowedUserIds, actorId)
+              ? "fix_user_not_allowed"
+              : "command_does_not_enqueue";
+        console.info("GitLab command processed without enqueue", {
+          ...details,
+          command: command.name,
+          reason,
+        });
+      }
       if (!result.delivered) {
         await this.gitlab.postNote(projectId, mrIid, result.response);
         this.store.markDelivered(id);
+        console.info("GitLab command response published", { ...details, command: command.name });
       }
-      respond(response, 202, "");
+      respondWebhook(response, 202, "", { ...details, command: command.name });
     } catch (error) {
       console.error("process GitLab command failed", { eventId: id, error: errorMessage(error) });
-      respond(response, 500, "failed to process command\n");
+      respondWebhook(response, 500, "failed to process command\n", { ...details });
     }
   }
 
@@ -488,11 +562,26 @@ export class CorvexServer {
       if (!result.delivered) {
         await this.gitlab.postNote(event.project.id, event.merge_request.iid, result.response);
         this.store.markDelivered(id);
+        console.info("GitLab command feedback published", {
+          eventId: id,
+          projectId: event.project.id,
+          mrIid: event.merge_request.iid,
+        });
+      } else {
+        console.info("GitLab webhook duplicate delivery", {
+          eventId: id,
+          projectId: event.project.id,
+          mrIid: event.merge_request.iid,
+        });
       }
-      respond(response, 202, "");
+      respondWebhook(response, 202, "", {
+        eventId: id,
+        projectId: event.project.id,
+        mrIid: event.merge_request.iid,
+      });
     } catch (error) {
       console.error("publish GitLab command response failed", { eventId: id, error: errorMessage(error) });
-      respond(response, 502, "failed to publish command response\n");
+      respondWebhook(response, 502, "failed to publish command response\n", { eventId: id });
     }
   }
 }

@@ -74,6 +74,8 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
 docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f corvex-worker
 ```
 
+The Server logs webhook receipt, validation/rejection, ignored comments, recognized commands, task enqueue or deduplication, GitLab response publication, and the HTTP response status. The Worker logs claimed jobs and each status transition. These logs include event/job IDs and project/MR IDs, but not comment bodies or webhook credentials.
+
 | Symptom | Checks |
 |---|---|
 | Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |

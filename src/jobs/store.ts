@@ -382,6 +382,7 @@ export class JobStore {
       if (existingEvent) return existingEvent;
       let auditResult = "authorized_queued";
       let response: string;
+      let resultJob: EventResult["job"];
       if (!enabled) {
         response = "Fix proposals are disabled.";
         auditResult = "denied_disabled";
@@ -393,6 +394,7 @@ export class JobStore {
           | { id: string }
           | undefined;
         if (existing) {
+          resultJob = { id: existing.id, created: false };
           response = `Fix task \`${existing.id}\` is already queued for this comment.`;
           auditResult = "authorized_duplicate";
         } else {
@@ -405,12 +407,13 @@ export class JobStore {
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(id, key, eventId, "fix", "queued", job.projectId, job.mrIid, job.headSha, job.actorId, job.request, created, created);
+          resultJob = { id, created: true };
           response = `Queued fix task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
         }
       }
       this.insertEvent(eventId, response);
       this.insertAudit(job.actorId, "request_fix", `${job.projectId}:${job.mrIid}`, auditResult);
-      return { response, delivered: false };
+      return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
     });
   }
 
@@ -787,8 +790,10 @@ export class JobStore {
         .get(key) as { id: string } | undefined;
       const label = type === "review" ? "Review" : "Explain";
       let response: string;
+      let resultJob: EventResult["job"];
       let auditResult = "queued";
       if (existing) {
+        resultJob = { id: existing.id, created: false };
         response = `${label} task \`${existing.id}\` is already queued for this comment.`;
         auditResult = "authorized_duplicate";
       } else {
@@ -801,11 +806,12 @@ export class JobStore {
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .run(id, key, eventId, type, "queued", job.projectId, job.mrIid, job.headSha, job.actorId, job.request ?? "", created, created);
+        resultJob = { id, created: true };
         response = `Queued ${type} task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
       }
       this.insertEvent(eventId, response);
       this.insertAudit(job.actorId, `request_${type}`, `${job.projectId}:${job.mrIid}`, auditResult);
-      return { response, delivered: false };
+      return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
     });
   }
 
