@@ -106,7 +106,7 @@ export class GitLabClient {
     ) {
       throw new Error(`invalid GitLab base URL "${baseUrl}"`);
     }
-    if (!readToken || !writeToken) throw new Error("GitLab read and write API tokens are required");
+    if (!writeToken) throw new Error("GitLab write API token is required");
     if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
@@ -246,6 +246,7 @@ export class GitLabClient {
     signal?: AbortSignal,
     form?: URLSearchParams,
   ): Promise<Response> {
+    if (!token) throw new Error("GitLab API token is required for this request");
     const requestSignal = signal
       ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)])
       : AbortSignal.timeout(this.requestTimeoutMs);

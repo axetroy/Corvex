@@ -1,6 +1,6 @@
 import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -81,5 +81,44 @@ describe("Git workflows", () => {
     );
     const applied = await manager.applyPatch(workspace, patch, ["a.txt"], 1024);
     expect(applied).toContain("+new");
+  });
+
+  it("dry-runs and removes only old unprotected Git storage", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com", "");
+    await manager.initialize();
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    const oldWorkspace = join(root, "workspaces", "7", "orphan-job");
+    const activeWorkspace = join(root, "workspaces", "7", "active-job");
+    const oldMirror = join(root, "mirrors", "8.git");
+    const protectedMirror = join(root, "mirrors", "9.git");
+    await Promise.all([
+      mkdir(oldWorkspace, { recursive: true }),
+      mkdir(activeWorkspace, { recursive: true }),
+      mkdir(oldMirror, { recursive: true }),
+      mkdir(protectedMirror, { recursive: true }),
+    ]);
+    await Promise.all([oldWorkspace, oldMirror].map((path) => utimes(path, old, old)));
+
+    const candidates = await manager.cleanupStorage(
+      new Set(["active-job"]),
+      new Set([9]),
+      new Date(Date.now() - 24 * 60 * 60_000),
+    );
+    expect(candidates.workspaces).toEqual([oldWorkspace]);
+    expect(candidates.mirrors).toEqual([oldMirror]);
+    await expect(lstat(oldWorkspace)).resolves.toBeDefined();
+
+    await manager.cleanupStorage(
+      new Set(["active-job"]),
+      new Set([9]),
+      new Date(Date.now() - 24 * 60 * 60_000),
+      true,
+    );
+    await expect(lstat(oldWorkspace)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(oldMirror)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(activeWorkspace)).resolves.toBeDefined();
+    await expect(lstat(protectedMirror)).resolves.toBeDefined();
   });
 });

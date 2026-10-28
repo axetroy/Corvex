@@ -88,10 +88,10 @@ Fix 发起者必须同时属于 `gitlab.allowed_user_ids` 和 `fix.allowed_user_
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，必填 |
-| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，必填 |
-| `CORVEX_WEBHOOK_SECRET` | Webhook Secret，必填 |
-| `CORVEX_MODEL_API_KEY` | Agent API 密钥，仅启用 Agent 时必填 |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式必填 |
+| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 和 Worker 模式必填 |
+| `CORVEX_WEBHOOK_SECRET` | Webhook Secret，Server 模式必填 |
+| `CORVEX_MODEL_API_KEY` | Agent API 密钥，Worker 模式启用 Agent 时必填 |
 | `CORVEX_MODEL_BASE_URL` | 覆盖 `agent.base_url` |
 | `CORVEX_MODEL_NAME` | 覆盖 `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | 覆盖 `gitlab.base_url` |
@@ -99,4 +99,4 @@ Fix 发起者必须同时属于 `gitlab.allowed_user_ids` 和 `fix.allowed_user_
 | `CORVEX_STORAGE_ROOT` | 覆盖 `storage.root` |
 | `CORVEX_LISTEN` | 覆盖 `server.listen` |
 
-Compose 还读取 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS` 等仅用于部署的变量，详见[运行环境与运维](./operations)。
+Compose 还读取 `CORVEX_IMAGE_TAG`、`CORVEX_MEM_LIMIT`、`CORVEX_CPUS` 等仅用于部署的变量，详见[运行环境与运维](./operations)。

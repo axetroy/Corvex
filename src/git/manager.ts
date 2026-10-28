@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, rename, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DiffEngine } from "./diff.js";
 import type { DiffResult, Workspace } from "./types.js";
@@ -16,6 +16,12 @@ const jobIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 interface GitResult {
   stdout: Buffer;
   truncated: boolean;
+}
+
+export interface GitStorageCleanupPlan {
+  workspaces: string[];
+  mirrors: string[];
+  applied: boolean;
 }
 
 export class GitManager {
@@ -49,6 +55,86 @@ export class GitManager {
   async initialize(): Promise<void> {
     await mkdir(this.mirrorRoot, { recursive: true, mode: 0o750 });
     await mkdir(this.workspaceRoot, { recursive: true, mode: 0o750 });
+  }
+
+  async cleanupStorage(
+    activeJobIds: ReadonlySet<string>,
+    protectedProjectIds: ReadonlySet<number>,
+    olderThan: Date,
+    apply = false,
+  ): Promise<GitStorageCleanupPlan> {
+    if (Number.isNaN(olderThan.valueOf())) throw new Error("storage cleanup cutoff is invalid");
+    await this.initialize();
+    for (const root of [this.workspaceRoot, this.mirrorRoot]) {
+      const info = await lstat(root);
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        throw new Error(`managed Git storage path "${root}" is not a regular directory`);
+      }
+    }
+
+    const workspaces: string[] = [];
+    for (const projectName of await readdir(this.workspaceRoot)) {
+      if (!/^[1-9]\d*$/.test(projectName)) continue;
+      const projectId = Number(projectName);
+      if (!Number.isSafeInteger(projectId)) continue;
+      const projectRoot = join(this.workspaceRoot, projectName);
+      const projectInfo = await lstat(projectRoot);
+      if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) {
+        throw new Error(`project workspace path "${projectRoot}" is not a regular directory`);
+      }
+      for (const jobId of await readdir(projectRoot)) {
+        if (!jobIdPattern.test(jobId) || activeJobIds.has(jobId)) continue;
+        const workspacePath = join(projectRoot, jobId);
+        const info = await lstat(workspacePath);
+        if (info.isSymbolicLink()) {
+          throw new Error(`managed workspace "${workspacePath}" must not be a symbolic link`);
+        }
+        if (info.isDirectory() && info.mtimeMs < olderThan.valueOf()) {
+          workspaces.push(workspacePath);
+        }
+      }
+    }
+
+    const mirrors: string[] = [];
+    for (const name of await readdir(this.mirrorRoot)) {
+      const match = /^([1-9]\d*)\.git$/.exec(name);
+      if (!match) continue;
+      const projectId = Number(match[1]);
+      if (!Number.isSafeInteger(projectId) || protectedProjectIds.has(projectId)) continue;
+      const mirrorPath = join(this.mirrorRoot, name);
+      const info = await lstat(mirrorPath);
+      if (info.isSymbolicLink()) {
+        throw new Error(`managed mirror "${mirrorPath}" must not be a symbolic link`);
+      }
+      if (info.isDirectory() && info.mtimeMs < olderThan.valueOf()) mirrors.push(mirrorPath);
+    }
+
+    if (apply) {
+      for (const workspacePath of workspaces) {
+        const projectId = Number(basename(dirname(workspacePath)));
+        const mirror = join(this.mirrorRoot, `${projectId}.git`);
+        let mirrorExists = false;
+        try {
+          const mirrorInfo = await lstat(mirror);
+          if (!mirrorInfo.isDirectory() || mirrorInfo.isSymbolicLink()) {
+            throw new Error(`managed mirror "${mirror}" is not a regular directory`);
+          }
+          mirrorExists = true;
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        }
+        if (mirrorExists) await this.removeWorktree(mirror, workspacePath);
+        else await rm(workspacePath, { recursive: true });
+      }
+      for (const mirror of mirrors) {
+        const info = await lstat(mirror);
+        if (!info.isDirectory() || info.isSymbolicLink()) {
+          throw new Error(`managed mirror "${mirror}" changed before cleanup`);
+        }
+        await rm(mirror, { recursive: true });
+      }
+    }
+    return { workspaces, mirrors, applied: apply };
   }
 
   async prepareWorkspace(

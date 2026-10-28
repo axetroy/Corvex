@@ -15,8 +15,9 @@ The implementation currently provides:
 - GitLab MR/project metadata and paginated diff API methods.
 - A Git engine for project mirrors, isolated detached worktrees at an exact SHA, bounded local diffs, and workspace-contained file reads.
 - Pi SDK agent sessions using an OpenAI-compatible provider, with bounded context, a 64 KiB read-only file tool restricted to the pinned worktree and trusted skill paths, strict structured output, added-line/evidence validation, severity checks, and duplicate filtering.
+- CLI configuration initialization/validation, job listing and safe pre-publish retry, dry-run-first Git storage cleanup, and a live review benchmark reporting precision, recall, and F1.
 
-The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push. SQLite records review/explain/fix requests, authorization and cancellation outcomes, and job status transitions; a curated review-quality benchmark dataset is not yet included.
+The `server` persists review tasks and the optional `worker` processes them asynchronously. The worker verifies the MR diff snapshot before review and again before publishing, uses an isolated worktree, posts validated findings as line-level discussions, and falls back to a summary note when GitLab rejects a discussion position. Fix proposals are off by default and have a dedicated user allowlist. When enabled, the worker asks the model for a bounded unified diff, applies it only to an isolated worktree and only to files changed in the MR, runs the built-in `git apply --check` and `git diff --check` validations, then posts the patch for manual application. It does not run repository scripts, commit, or push. SQLite records review/explain/fix requests, authorization and cancellation outcomes, and job status transitions. The curated benchmark uses synthetic labeled examples; run it explicitly because it makes model API calls.
 
 Workers use a 30-second renewable job lease. After a worker interruption, tasks that have not entered publishing are retried up to three attempts. An expired publishing lease fails without automatic retry because the comment outcome may be uncertain, avoiding duplicate GitLab comments.
 
@@ -27,20 +28,22 @@ To enable reviews, set `agent.enabled: true`, configure `agent.base_url` and `ag
 Requires Node.js 26.12.1 and npm. SQLite is provided by Node's built-in `node:sqlite` module.
 
 ```sh
-cp configs/config.example.yaml configs/config.yaml
 npm ci
 npm run build
+npm start -- init
 ```
 
-Set `CORVEX_GITLAB_READ_TOKEN` to a read-only GitLab token, `CORVEX_GITLAB_TOKEN` to a token permitted to post MR notes, and `CORVEX_WEBHOOK_SECRET` to the same secret configured on the project webhook. Keep read and write tokens separate and grant each only the required scopes. Then start the server:
+Edit `configs/config.yaml` with the GitLab URL and explicit project/user allowlists. Set `CORVEX_GITLAB_TOKEN` to a token permitted to post MR notes and `CORVEX_WEBHOOK_SECRET` to the same secret configured on the project webhook. Check the server configuration before starting:
 
 ```sh
+npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
 
-For asynchronous reviews or fix proposals, enable the agent configuration and run the worker in a second process:
+For asynchronous reviews or fix proposals, enable the agent configuration, set `CORVEX_GITLAB_READ_TOKEN` to a separate read-only token and provide `CORVEX_MODEL_API_KEY`. Validate and start the worker in a second process:
 
 ```sh
+npm start -- --config configs/config.yaml --for worker check-config
 npm start -- --config configs/config.yaml worker
 ```
 
@@ -56,23 +59,25 @@ npm start -- backup \
 
 To restore, stop both the server and worker, replace the configured database file with a verified backup, then restart the services. Apply your organization's encryption, access-control, and off-site retention policies to backup files.
 
-The server prunes terminal jobs, job attempts, webhook events, and daily token usage older than `storage.retention_days` (90 days by default), and audit events older than `storage.audit_retention_days` (365 days by default). Queued and in-progress jobs are retained. Adjust these periods to match your organization's retention requirements. Project Git mirrors still require separate monitoring and maintenance.
+The server prunes terminal jobs, job attempts, webhook events, and daily token usage older than `storage.retention_days` (90 days by default), and audit events older than `storage.audit_retention_days` (365 days by default). Queued and in-progress jobs are retained. Adjust these periods to match your organization's retention requirements. Use `npm start -- storage cleanup --config configs/config.yaml` to preview unused Git storage cleanup; applying it requires a maintenance window with Workers stopped.
 
 ## Docker Compose
 
-Copy `.env.example` to `.env`, set the GitLab read/write tokens and webhook secret, and provide `configs/config.yaml`. Then run:
+Copy `.env.example` to `.env`, set the GitLab write token and webhook secret, and provide `configs/config.yaml`. Add the GitLab read token and model API key when enabling a worker. Then run:
 
 ```sh
-docker compose --env-file .env -f deploy/compose.yaml up --build -d
+docker compose --env-file .env -f deploy/compose.yaml pull corvex
+docker compose --env-file .env -f deploy/compose.yaml up -d
 ```
 
-This starts the webhook server. To also run the worker, enable `agent.enabled: true` in `configs/config.yaml` and use the `worker` profile:
+This uses the prebuilt `ghcr.io/axetroy/corvex` image. To also run the worker, enable `agent.enabled: true` in `configs/config.yaml`, provide the model API key in `.env`, and use the `worker` profile:
 
 ```sh
-docker compose --env-file .env -f deploy/compose.yaml --profile worker up --build -d
+docker compose --env-file .env -f deploy/compose.yaml --profile worker pull
+docker compose --env-file .env -f deploy/compose.yaml --profile worker up -d
 ```
 
-The server and worker share the SQLite/Git data volume; only the server exposes port 8080. Register a project hook with the optional idempotent helper (requires `curl` and `jq`):
+For a local source build, use `docker compose --env-file .env -f deploy/compose.yaml up --build -d`. The server and worker share the SQLite/Git data volume; only the server exposes port 8080. The server receives only its write token and webhook secret; the worker receives GitLab read/write and model credentials. Register a project hook with the optional idempotent helper (requires `curl` and `jq`):
 
 ```sh
 GITLAB_URL=https://gitlab.example.com \
@@ -96,10 +101,16 @@ npm run typecheck
 npm run build
 ```
 
-The server and worker use separate read/write GitLab token variables; read requests use the read token, while note publication uses the write token. No untrusted-code executor is included.
+Run the labeled review benchmark explicitly (it calls the configured model three times):
+
+```sh
+npm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
+```
+
+The worker uses a GitLab read token for API/repository reads and the write token for note publication; the server only needs the write token. No untrusted-code executor is included.
 
 ## CI and releases
 
 GitHub Actions runs lint, type checking, tests, and a production build on Node.js 26.12.1. Pushes to `main`, pull requests, and version tags run CI.
 
-To publish a GitHub Release, push a version tag such as `v1.0.0`. The release workflow publishes the source archive; deploy the application with the provided Docker image or Node.js 26.12.1.
+To publish a GitHub Release and a multi-architecture GHCR image, push a version tag such as `v1.0.0`. The release workflow verifies the code, publishes `ghcr.io/axetroy/corvex:<version>` and `:latest`, then creates the source release.

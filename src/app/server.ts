@@ -258,8 +258,8 @@ export class CorvexServer {
       return;
     }
     if (
-      command.args.length > 1 ||
-      (command.args.length === 1 && command.name !== "fix" && command.name !== "explain")
+      (command.name === "explain" && command.args.length > 1) ||
+      (command.args.length > 0 && command.name !== "fix" && command.name !== "explain")
     ) {
       await this.reply(response, event, "This command does not accept arguments.");
       return;

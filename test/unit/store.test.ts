@@ -46,6 +46,57 @@ describe("JobStore", () => {
     expect(store.jobCounts().analyzing).toBe(1);
   });
 
+  it("lists jobs and requeues a failed job that stopped before publishing", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "failed", "temporary API error");
+
+    expect(store.retryFailedJob(job.id).status).toBe("queued");
+    expect(store.listJobs("queued", 10)).toHaveLength(1);
+    expect(store.listJobs("failed", 10)).toHaveLength(0);
+  });
+
+  it("does not allow an operator retry after entering publishing", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "publishing");
+    store.updateLeasedStatus(job.id, job.leaseToken, "publishing", "failed", "GitLab request failed");
+
+    expect(() => store.retryFailedJob(job.id)).toThrow("publishing failures cannot be retried");
+  });
+
+  it("prunes terminal job history using a valid parameterized status filter", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "failed", "test failure");
+
+    expect(() => store.pruneHistory(new Date(Date.now() + 86_400_000), new Date(Date.now() + 86_400_000))).not.toThrow();
+    expect(store.jobCounts().failed ?? 0).toBe(0);
+  });
+
   it("checks token reservations and records model call metrics", async () => {
     store = await JobStore.open(":memory:");
     const day = store.reserveModelTokens(1000, 100);
@@ -117,7 +168,8 @@ describe("JobStore", () => {
       INSERT INTO jobs
         (id,idempotency_key,event_id,type,status,project_id,mr_iid,head_sha,actor_id,request,created_at,updated_at)
       VALUES
-        ('legacy-job','legacy-key','legacy-event','review','queued',9,5,'${"c".repeat(40)}',12,'','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+        ('legacy-job','legacy-key','legacy-event','review','queued',9,5,'${"c".repeat(40)}',12,'','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z'),
+        ('legacy-failed','legacy-failed-key','legacy-failed-event','review','failed',9,5,'${"d".repeat(40)}',12,'','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
     `);
     legacy.close();
 
@@ -130,6 +182,7 @@ describe("JobStore", () => {
       leaseToken: "",
       cancellationRequested: false,
     });
+    expect(() => store.retryFailedJob("legacy-failed")).toThrow("failure stage is unknown");
     expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
   });
 });

@@ -18,29 +18,29 @@ The server can run without a worker, but review, explain, and fix tasks remain q
 
 ## 1. Prepare configuration and secrets
 
-Copy the example configuration:
-
-```sh
-cp configs/config.example.yaml configs/config.yaml
-```
-
-Set these environment variables for both processes:
-
-```sh
-export CORVEX_GITLAB_READ_TOKEN='your-read-token'
-export CORVEX_GITLAB_TOKEN='your-write-token'
-export CORVEX_WEBHOOK_SECRET='a-long-random-secret'
-```
-
-Configure `gitlab.base_url`, `gitlab.allowed_project_ids`, and `gitlab.allowed_user_ids` in `configs/config.yaml`. The IDs are numeric GitLab IDs. Both allowlists must be non-empty; empty lists do not mean “allow everyone.” Keep credentials out of the YAML file and source control. Refer to the [configuration reference](./configuration) for every setting and its limits.
-
-The read token is used for project/MR API reads and repository fetches. The write token is used to post notes and line discussions. Use separate tokens and grant only the permissions required by your GitLab installation.
-
-## 2. Start the server
+Build the CLI and initialize a configuration template:
 
 ```sh
 npm ci
 npm run build
+npm start -- init
+```
+
+Edit `configs/config.yaml` to set the GitLab URL and explicit project/user allowlists. Set these variables for the Server:
+
+```sh
+export CORVEX_GITLAB_TOKEN='your-write-token'
+export CORVEX_WEBHOOK_SECRET='a-long-random-secret'
+```
+
+The IDs are numeric GitLab IDs. Both allowlists must be non-empty; empty lists do not mean “allow everyone.” Keep credentials out of the YAML file and source control. Refer to the [configuration reference](./configuration) for every setting and its limits.
+
+The Server only needs the write token and webhook secret. The Worker additionally needs `CORVEX_GITLAB_READ_TOKEN` and, when the agent is enabled, `CORVEX_MODEL_API_KEY`. The read token is used for project/MR API reads and repository fetches; use separate read/write tokens with only the required permissions.
+
+## 2. Start the server
+
+```sh
+npm start -- --config configs/config.yaml check-config
 npm start -- --config configs/config.yaml server
 ```
 
@@ -90,6 +90,7 @@ Reviews, explanations, and fix proposals require a worker and a model configurat
 In another process, start:
 
 ```sh
+npm start -- --config configs/config.yaml --for worker check-config
 npm start -- --config configs/config.yaml worker
 ```
 

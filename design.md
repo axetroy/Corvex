@@ -153,19 +153,23 @@ HTTP、信号、进程管理和文件系统操作优先使用 Node.js 内置能�
 ## 配置与运维
 
 保留 YAML 配置和现有环境变量名称，涵盖 GitLab Token、Webhook 密钥、模型密钥/基础
-URL/名称、监听地址、数据库路径和存储根目录。在启动监听器或 Worker 前完成配置校验。
-示例配置和日志中不得包含密钥。
+URL/名称、监听地址、数据库路径和存储根目录。通过 `init` 生成配置模板，并在启动
+Server/Worker 前按进程角色校验配置。Server 不需要读取令牌或模型密钥；Worker 不需要
+Webhook 密钥。示例配置和日志中不得包含密钥。
 
 必须保留以下能力：
 
-- `server`、`worker` 和 `backup` CLI 模式。
+- `init`、按角色校验配置、`server`、`worker`、`backup`、任务列表/安全重试和 Git
+  存储清理 CLI 能力。
 - `/healthz`、基于数据库状态的 `/readyz` 和 Prometheus `/metrics`。
 - Docker Compose 的 server/worker profiles、非 root 用户、只读容器根文件系统、移除
   不必要的 capabilities、资源限制，以及持久化 SQLite/Git 卷。
-- 数据保留策略，以及 SQLite 在线备份和恢复流程。
+- 数据保留策略、SQLite 在线备份/恢复流程，以及 dry-run 优先的 Git 存储清理。
+- 通过人工标注样例和显式在线运行的评审基准评估质量；基准运行不属于常规 CI。
 
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。
+版本标签发布会在 CI 检查通过后构建多架构 GHCR 镜像并创建源码 Release。
 
 ## 迁移记录
 

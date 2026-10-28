@@ -92,10 +92,10 @@ Fix requesters must be present in both `gitlab.allowed_user_ids` and `fix.allowe
 
 | Variable | YAML setting or purpose |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required |
-| `CORVEX_GITLAB_TOKEN` | GitLab write token; required |
-| `CORVEX_WEBHOOK_SECRET` | Webhook secret; required |
-| `CORVEX_MODEL_API_KEY` | Model API key; required only when agent is enabled |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode |
+| `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server and worker modes |
+| `CORVEX_WEBHOOK_SECRET` | Webhook secret; required in server mode |
+| `CORVEX_MODEL_API_KEY` | Model API key; required in worker mode when the agent is enabled |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | Overrides `gitlab.base_url` |
@@ -103,4 +103,4 @@ Fix requesters must be present in both `gitlab.allowed_user_ids` and `fix.allowe
 | `CORVEX_STORAGE_ROOT` | Overrides `storage.root` |
 | `CORVEX_LISTEN` | Overrides `server.listen` |
 
-Compose also reads deployment-only variables such as `CORVEX_MEM_LIMIT` and `CORVEX_CPUS`; see [Runtime and operations](./operations).
+Compose also reads deployment-only variables such as `CORVEX_IMAGE_TAG`, `CORVEX_MEM_LIMIT`, and `CORVEX_CPUS`; see [Runtime and operations](./operations).
