@@ -67,7 +67,13 @@ export class PiAgent {
 
     let response: ModelResponse;
     const traceId = trace
-      ? this.startTrace(trace, "llm", trace.taskType, `${this.config.agent.baseUrl}/${this.config.agent.model}`)
+      ? this.startTrace(
+          trace,
+          "llm",
+          trace.taskType,
+          `${this.config.agent.baseUrl}/${this.config.agent.model}`,
+          JSON.stringify(request),
+        )
       : undefined;
     const startedAt = performance.now();
     try {
@@ -178,7 +184,7 @@ export class PiAgent {
     const unsubscribe = session.subscribe((event) => {
       if (!trace) return;
       if (event.type === "tool_execution_start") {
-        const traceId = this.startTrace(trace, "tool", event.toolName);
+        const traceId = this.startTrace(trace, "tool", event.toolName, "", JSON.stringify(event.args));
         if (traceId !== undefined) {
           activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
         }
@@ -189,6 +195,9 @@ export class PiAgent {
           active.traceId,
           event.isError ? "failed" : "succeeded",
           event.durationMs ?? performance.now() - active.startedAt,
+          undefined,
+          undefined,
+          event.isError ? JSON.stringify(event.result, null, 2) : undefined,
         );
         activeTools.delete(event.toolCallId);
       }
@@ -229,10 +238,18 @@ export class PiAgent {
     kind: "tool" | "llm",
     name: string,
     model = "",
+    rawContent: string | null = null,
   ): number | undefined {
     if (!this.store) return undefined;
     try {
-      return this.store.startJobTrace(trace.jobId, trace.attempt, kind, name.slice(0, 128), model.slice(0, 256));
+      return this.store.startJobTrace(
+        trace.jobId,
+        trace.attempt,
+        kind,
+        name.slice(0, 128),
+        model.slice(0, 256),
+        rawContent,
+      );
     } catch (error) {
       console.warn("record job trajectory start failed", {
         jobId: trace.jobId,
@@ -250,10 +267,11 @@ export class PiAgent {
     durationMs: number,
     inputTokens?: number,
     outputTokens?: number,
+    errorDetail?: string,
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens);
+      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens, errorDetail);
     } catch (error) {
       console.warn("record job trajectory completion failed", {
         traceId,

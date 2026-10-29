@@ -340,6 +340,22 @@ function detailItem(list, label, value, className = "") {
   list.append(item);
 }
 
+function detailNodeItem(list, label, value) {
+  const item = element("div", undefined, "detail-item");
+  const definition = element("dd");
+  definition.append(value);
+  append(item, element("dt", label), definition);
+  list.append(item);
+}
+
+function expandableText(value, label, className = "") {
+  const details = element("details", undefined, className);
+  const summary = element("summary");
+  append(summary, element("span", label), element("span", value.split("\n", 1)[0], "details-preview"));
+  append(details, summary, element("pre", value, "details-content"));
+  return details;
+}
+
 async function renderJobDetails(version, jobId) {
   const job = await api(`/api/ops/jobs/${encodeURIComponent(jobId)}`);
   if (version !== renderVersion) return;
@@ -362,15 +378,18 @@ async function renderJobDetails(version, jobId) {
   );
   detailItem(details, copy.cancellationRequested, job.cancellationRequested ? copy.yes : copy.no);
   detailItem(details, copy.request, job.request || copy.none, "pre-wrap");
-  detailItem(details, copy.lastError, job.lastError || copy.none, "pre-wrap");
+  if (job.lastError) detailNodeItem(details, copy.lastError, expandableText(job.lastError, copy.viewErrorDetails));
+  else detailItem(details, copy.lastError, copy.none);
   const attempts = job.attempts.map((attempt) => {
     const row = element("tr");
+    const error = element("td");
+    error.append(attempt.error ? expandableText(attempt.error, copy.viewErrorDetails) : element("span", copy.none));
     append(
       row,
       element("td", attempt.attempt),
       element("td", formatDate(attempt.startedAt)),
       element("td", formatDate(attempt.finishedAt)),
-      element("td", attempt.error || copy.none, "pre-wrap"),
+      error,
     );
     return row;
   });
@@ -399,6 +418,15 @@ async function renderJobDetails(version, jobId) {
     : element("div", copy.noAttempts, "empty");
   const traceRows = job.trajectory.map((entry) => {
     const row = element("tr");
+    const rawContent = element("td");
+    rawContent.append(
+      entry.rawContent
+        ? expandableText(entry.rawContent, copy.viewRawContent, "trace-raw")
+        : element("span", copy.noRawContent),
+    );
+    if (entry.errorDetail) {
+      rawContent.append(expandableText(entry.errorDetail, copy.viewTraceError, "trace-error"));
+    }
     append(
       row,
       element("td", entry.attempt),
@@ -410,6 +438,7 @@ async function renderJobDetails(version, jobId) {
       element("td", entry.model || copy.none),
       element("td", entry.inputTokens ?? copy.none),
       element("td", entry.outputTokens ?? copy.none),
+      rawContent,
     );
     return row;
   });
@@ -425,6 +454,7 @@ async function renderJobDetails(version, jobId) {
           copy.traceModel,
           copy.inputTokens,
           copy.outputTokens,
+          copy.rawContent,
         ],
         traceRows,
       )

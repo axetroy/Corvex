@@ -211,6 +211,16 @@ describe("CorvexServer", () => {
       const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
       expect(jobs.total).toBe(2);
       expect(jobs.items).toHaveLength(1);
+      store.startJobTrace(jobs.items[0]!.id, 1, "llm", "review", "test/model", "review prompt");
+      const failedTrace = store.startJobTrace(
+        jobs.items[0]!.id,
+        1,
+        "tool",
+        "read_file",
+        "",
+        '{"path":"missing.vue"}',
+      );
+      store.finishJobTrace(failedTrace, "failed", 5, undefined, undefined, "ENOENT: file not found");
       const detailResponse = await fetch(`${base}/api/ops/jobs/${jobs.items[0]!.id}`, {
         headers: { authorization },
       });
@@ -218,7 +228,10 @@ describe("CorvexServer", () => {
       expect(await detailResponse.json()).toMatchObject({
         status: "queued",
         attempts: [],
-        trajectory: [],
+        trajectory: [
+          expect.objectContaining({ kind: "tool", errorDetail: "ENOENT: file not found" }),
+          expect.objectContaining({ kind: "llm", rawContent: "review prompt" }),
+        ],
       });
       expect(
         (await fetch(`${base}/api/ops/jobs?status=invalid`, { headers: { authorization } })).status,

@@ -401,6 +401,52 @@ tbody tr:last-child td {
   font-size: 13px;
 }
 
+.detail-item details,
+td details {
+  min-width: 150px;
+}
+
+details summary {
+  color: #1769aa;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.details-preview {
+  display: inline-block;
+  max-width: min(420px, 60vw);
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  color: #536271;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.details-content {
+  max-width: min(680px, 72vw);
+  max-height: 360px;
+  margin: 9px 0 2px;
+  padding: 10px 12px;
+  overflow: auto;
+  color: #25313c;
+  background: #f5f7f8;
+  border: 1px solid #e3e8eb;
+  border-radius: 4px;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.trace-raw {
+  min-width: 180px;
+}
+
+.trace-error summary {
+  color: #b63838;
+}
+
 .pre-wrap {
   white-space: pre-wrap;
 }

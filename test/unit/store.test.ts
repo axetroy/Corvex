@@ -135,12 +135,27 @@ describe("JobStore", () => {
     const job = store.claimNextWithLease(30_000);
     if (!job) throw new Error("expected a queued job to be claimed");
 
-    const modelCall = store.startJobTrace(job.id, job.attemptCount, "llm", "review", "test/model");
+    const modelCall = store.startJobTrace(
+      job.id,
+      job.attemptCount,
+      "llm",
+      "review",
+      "test/model",
+      JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
+    );
     store.finishJobTrace(modelCall, "succeeded", 125, 70, 25);
-    const toolCall = store.startJobTrace(job.id, job.attemptCount, "tool", "read_file");
-    store.finishJobTrace(toolCall, "failed", 18);
+    const toolCall = store.startJobTrace(job.id, job.attemptCount, "tool", "read_file", "", '{"path":"README.md"}');
+    store.finishJobTrace(toolCall, "failed", 18, undefined, undefined, "Error: ENOENT: file not found");
 
     expect(store.getJobDetails(job.id)?.trajectory).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        name: "read_file",
+        status: "failed",
+        durationMs: 18,
+        rawContent: '{"path":"README.md"}',
+        errorDetail: "Error: ENOENT: file not found",
+      }),
       expect.objectContaining({
         kind: "llm",
         name: "review",
@@ -149,12 +164,7 @@ describe("JobStore", () => {
         durationMs: 125,
         inputTokens: 70,
         outputTokens: 25,
-      }),
-      expect.objectContaining({
-        kind: "tool",
-        name: "read_file",
-        status: "failed",
-        durationMs: 18,
+        rawContent: JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
       }),
     ]);
   });
@@ -297,6 +307,12 @@ describe("JobStore", () => {
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE TABLE job_trace (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
+        input_tokens INTEGER, output_tokens INTEGER
+      );
       INSERT INTO jobs
         (id,idempotency_key,event_id,type,status,project_id,mr_iid,head_sha,actor_id,request,created_at,updated_at)
       VALUES
@@ -315,6 +331,10 @@ describe("JobStore", () => {
       cancellationRequested: false,
     });
     expect(() => store.retryFailedJob("legacy-failed")).toThrow("failure stage is unknown");
+    const traceId = store.startJobTrace("legacy-job", 1, "llm", "review", "test/model", "legacy prompt");
+    store.finishJobTrace(traceId, "failed", 10, undefined, undefined, "legacy trace error");
+    expect(store.getJobDetails("legacy-job")?.trajectory[0]?.rawContent).toBe("legacy prompt");
+    expect(store.getJobDetails("legacy-job")?.trajectory[0]?.errorDetail).toBe("legacy trace error");
     expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
   });
 });

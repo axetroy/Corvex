@@ -79,6 +79,8 @@ export interface JobTraceEntry {
   model: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  rawContent: string | null;
+  errorDetail: string | null;
 }
 
 export interface JobDetails extends JobSummary {

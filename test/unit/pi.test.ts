@@ -57,6 +57,14 @@ describe("PiAgent", () => {
                       id: "call-read-file",
                       type: "function",
                       function: { name: "read_file", arguments: '{"path":"README.md"}' },
+                    }, {
+                      index: 1,
+                      id: "call-missing-file",
+                      type: "function",
+                      function: {
+                        name: "read_file",
+                        arguments: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+                      },
                     }],
                   },
                   finish_reason: null,
@@ -171,18 +179,22 @@ describe("PiAgent", () => {
     expect(requestBody).toContain('"name":"web_fetch"');
     expect(requestBody).toContain("Additional blocked hosts: blocked.corp.dev");
     const trajectory = store.getJobDetails(job.id)?.trajectory;
-    expect(trajectory).toHaveLength(2);
-    expect(trajectory).toEqual([
-      expect.objectContaining({
-        kind: "llm",
-        status: "succeeded",
-        model: expect.stringContaining("test-model"),
-        inputTokens: 14,
-        outputTokens: 6,
-      }),
-      expect.objectContaining({ kind: "tool", name: "read_file", status: "succeeded" }),
-    ]);
-    expect(JSON.stringify(trajectory)).not.toContain("README.md");
+    expect(trajectory).toHaveLength(3);
+    expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
+      name: "read_file",
+      rawContent: JSON.stringify({ path: "README.md" }),
+    });
+    expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "failed")).toMatchObject({
+      name: "read_file",
+      rawContent: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+      errorDetail: expect.stringContaining("ENOENT"),
+    });
+    expect(trajectory?.find((entry) => entry.kind === "llm" && entry.status === "succeeded")).toMatchObject({
+      model: expect.stringContaining("test-model"),
+      inputTokens: 14,
+      outputTokens: 6,
+      rawContent: JSON.stringify({ systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
+    });
     expect(JSON.stringify(trajectory)).not.toContain("private repository content");
 
     responseDelayMs = 2000;
@@ -195,7 +207,7 @@ describe("PiAgent", () => {
         { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
       ),
     ).rejects.toThrow("Pi agent run failed");
-    expect(store.getJobDetails(job.id)?.trajectory.at(-1)).toMatchObject({
+    expect(store.getJobDetails(job.id)?.trajectory[0]).toMatchObject({
       kind: "llm",
       status: "failed",
     });

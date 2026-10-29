@@ -16,6 +16,20 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function errorDetails(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const details: string[] = [];
+  const seen = new Set<Error>();
+  let current: unknown = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    details.push(current.stack ?? `${current.name}: ${current.message}`);
+    current = current.cause;
+  }
+  if (current !== undefined) details.push(String(current));
+  return details.join("\nCaused by: ");
+}
+
 export class Worker {
   private readonly workerId = randomUUID();
   private readonly repo: GitManager;
@@ -134,7 +148,7 @@ export class Worker {
           job.leaseToken,
           stage,
           "cancelled",
-          `Cancellation requested by task owner: ${message(processingError)}`,
+          `Cancellation requested by task owner: ${errorDetails(processingError)}`,
         );
         return;
       }
@@ -149,7 +163,7 @@ export class Worker {
     // 发布请求可能已在 GitLab 生效，自动重试可能产生重复评论。
     if (stage !== "publishing") {
       try {
-        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", message(processingError));
+        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
       } catch (statusError) {
         console.error("could not mark job failed", {
           jobId: job.id,
@@ -159,7 +173,7 @@ export class Worker {
       }
     } else {
       try {
-        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", message(processingError));
+        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
       } catch (statusError) {
         console.error("publishing outcome is uncertain; no automatic retry will be attempted", {
           jobId: job.id,
