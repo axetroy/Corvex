@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { PiAgent } from "../../src/agent/pi.js";
 import { parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
-import { parseAndValidateReview } from "../../src/review/workflow.js";
+import { parseAndValidateReview, ReviewWorkflow } from "../../src/review/workflow.js";
 
 const diff: DiffResult = {
   baseSha: "a".repeat(40),
@@ -59,6 +60,41 @@ describe("review and fix response validation", () => {
     expect(() =>
       parseAndValidateReview(JSON.stringify({ summary: "Review complete", findings: "none" }), diff, 10),
     ).toThrow("findings must be an array");
+  });
+
+  it("logs the raw model response when review JSON is rejected", async () => {
+    const raw = '["not", "an object"]';
+    const agent = {
+      generate: async () => ({
+        content: raw,
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }),
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await expect(workflow.review(context, diff, process.cwd())).rejects.toThrow(
+        "top-level value must be an object",
+      );
+      expect(warning).toHaveBeenCalledWith(
+        "model review response rejected",
+        expect.objectContaining({ responseContent: raw }),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("validates fix JSON and enforces the patch byte limit", () => {

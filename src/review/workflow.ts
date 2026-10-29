@@ -259,6 +259,7 @@ export class ReviewWorkflow {
         headSha: context.headSha,
         model: response.model,
         responseBytes: Buffer.byteLength(response.content),
+        responseContent: response.content,
         reason: error instanceof Error ? error.message : String(error),
       });
       throw error;

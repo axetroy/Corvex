@@ -49,4 +49,32 @@ describe("readAllowedFile", () => {
     );
     await expect(readAllowedFile("invalid.txt", [root])).rejects.toThrow("not valid UTF-8");
   });
+
+  it("reads a bounded line range from an oversized file", async () => {
+    await writeFile(join(root, "large.txt"), Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n"));
+
+    const result = await readAllowedFile("large.txt", [root], 64, { startLine: 5, maxLines: 3 });
+
+    expect(result).toContain("Lines 5-7");
+    expect(result).toContain("more lines available from 8");
+    expect(result).toContain("line 5\nline 6\nline 7");
+    expect(result).not.toContain("line 4");
+    expect(result).not.toContain("line 8");
+  });
+
+  it("reports the exact line count when a file ends with a newline", async () => {
+    await writeFile(join(root, "tail.txt"), "alpha\nbeta\n");
+
+    await expect(readAllowedFile("tail.txt", [root], 64, { startLine: 3, maxLines: 1 })).rejects.toThrow(
+      "startLine 3 exceeds the file length of 2 lines",
+    );
+  });
+
+  it("counts the final line when a file has no trailing newline", async () => {
+    await writeFile(join(root, "no-tail.txt"), "alpha\nbeta");
+
+    await expect(readAllowedFile("no-tail.txt", [root], 64, { startLine: 3, maxLines: 1 })).rejects.toThrow(
+      "startLine 3 exceeds the file length of 2 lines",
+    );
+  });
 });
