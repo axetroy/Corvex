@@ -70,6 +70,7 @@ export type JobTraceStatus = "running" | "succeeded" | "failed";
 export interface JobTraceEntry {
   id: number;
   attempt: number;
+  round: number | null;
   kind: JobTraceKind;
   name: string;
   status: JobTraceStatus;
@@ -79,6 +80,9 @@ export interface JobTraceEntry {
   model: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  input: string | null;
+  output: string | null;
+  schema: string | null;
   rawContent: string | null;
   errorDetail: string | null;
 }

@@ -56,6 +56,70 @@ describe("review and fix response validation", () => {
     expect(result.result.findings).toEqual([]);
   });
 
+  it("recovers a single trailing quote after a complete review JSON object", () => {
+    const raw = `${JSON.stringify({ summary: "Review complete", findings: [] })}"`;
+    const result = parseAndValidateReview(raw, diff, 10);
+    expect(result.result.summary).toBe("Review complete");
+    expect(result.result.findings).toEqual([]);
+  });
+
+  it("retries once with format-only guidance after malformed review JSON", async () => {
+    const validResponse = JSON.stringify({ summary: "Review complete", findings: [] });
+    const generate = vi.fn()
+      .mockResolvedValueOnce({
+        content: `${validResponse}\nThe response is complete.`,
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      })
+      .mockResolvedValueOnce({
+        content: validResponse,
+        model: "test/model",
+        usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+      });
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, diff, process.cwd());
+
+    expect(outcome.result.summary).toBe("Review complete");
+    expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("previous response was not valid JSON");
+  });
+
+  it("does not retry recovered JSON that fails review schema validation", async () => {
+    const generate = vi.fn(async () => ({
+      content: `${JSON.stringify({ summary: "Review complete", findings: [], extra: true })}"`,
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    await expect(workflow.review(context, diff, process.cwd())).rejects.toThrow(
+      "unexpected top-level fields",
+    );
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it("reports which top-level review field has an invalid shape", () => {
     expect(() =>
       parseAndValidateReview(JSON.stringify({ summary: "Review complete", findings: "none" }), diff, 10),

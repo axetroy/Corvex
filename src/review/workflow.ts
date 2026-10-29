@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
+import { PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { Change, DiffResult } from "../git/types.js";
 
 export interface ReviewContext {
@@ -73,6 +73,12 @@ Example format only; these values are placeholders, not a finding to report. Do 
 
 const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
+class ReviewJsonDecodeError extends Error {
+  constructor(cause: unknown) {
+    super(`decode review JSON: ${String(cause)}`, { cause });
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -122,6 +128,21 @@ function fingerprint(finding: Omit<Finding, "fingerprint">): string {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+function parseReviewJson(content: string): unknown {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    if (content.endsWith('"')) {
+      try {
+        return JSON.parse(content.slice(0, -1));
+      } catch {
+        // Keep the original parse error when the complete response is still invalid.
+      }
+    }
+    throw error;
+  }
+}
+
 export function parseAndValidateReview(
   raw: string,
   diff: DiffResult,
@@ -134,9 +155,9 @@ export function parseAndValidateReview(
   try {
     const content = raw.trim();
     const fencedJson = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(content);
-    parsed = JSON.parse(fencedJson?.[1] ?? content);
+    parsed = parseReviewJson(fencedJson?.[1] ?? content);
   } catch (error) {
-    throw new Error(`decode review JSON: ${String(error)}`, { cause: error });
+    throw new ReviewJsonDecodeError(error);
   }
   if (!isRecord(parsed)) throw new Error("model returned invalid review JSON: top-level value must be an object");
   if (Object.keys(parsed).some((key) => !["summary", "findings"].includes(key))) {
@@ -243,17 +264,8 @@ export class ReviewWorkflow {
     if (Buffer.byteLength(userPrompt) > this.maxContextBytes) {
       throw new Error("review context exceeds configured size limit");
     }
-    const response = await this.agent.generate(
-      { systemPrompt: reviewSystemPrompt, userPrompt },
-      cwd,
-      signal,
-      trace,
-    );
-    let result: ReviewResult;
-    let rejected: number;
-    try {
-      ({ result, rejected } = parseAndValidateReview(response.content, diff, this.maxFindings));
-    } catch (error) {
+    const request: ModelRequest = { systemPrompt: reviewSystemPrompt, userPrompt };
+    const logRejectedResponse = (response: Awaited<ReturnType<PiAgent["generate"]>>, error: unknown) => {
       console.warn("model review response rejected", {
         projectId: context.projectId,
         mrIid: context.mrIid,
@@ -263,9 +275,40 @@ export class ReviewWorkflow {
         responseContent: response.content,
         reason: error instanceof Error ? error.message : String(error),
       });
-      throw error;
+    };
+    const parseResponse = (response: Awaited<ReturnType<PiAgent["generate"]>>) => {
+      try {
+        return parseAndValidateReview(response.content, diff, this.maxFindings);
+      } catch (error) {
+        logRejectedResponse(response, error);
+        throw error;
+      }
+    };
+    let response = await this.agent.generate(request, cwd, signal, trace);
+    let usage = response.usage;
+    let parsed: ReturnType<typeof parseAndValidateReview>;
+    try {
+      parsed = parseResponse(response);
+    } catch (error) {
+      if (!(error instanceof ReviewJsonDecodeError)) throw error;
+      const retryPrompt = `${userPrompt}\n\nYour previous response was not valid JSON. Return exactly one complete JSON object matching the required review format. Do not include Markdown, explanations, or any other text.`;
+      if (Buffer.byteLength(retryPrompt) > this.maxContextBytes) throw error;
+      const retryResponse = await this.agent.generate(
+        { ...request, userPrompt: retryPrompt },
+        cwd,
+        signal,
+        trace,
+      );
+      usage = {
+        inputTokens: usage.inputTokens + retryResponse.usage.inputTokens,
+        outputTokens: usage.outputTokens + retryResponse.usage.outputTokens,
+        totalTokens: usage.totalTokens + retryResponse.usage.totalTokens,
+      };
+      response = retryResponse;
+      parsed = parseResponse(response);
     }
-    return { result, model: response.model, usage: response.usage, omittedFiles, rejected };
+    const { result, rejected } = parsed;
+    return { result, model: response.model, usage, omittedFiles, rejected };
   }
 
   async explain(

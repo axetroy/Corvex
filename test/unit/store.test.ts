@@ -142,10 +142,27 @@ describe("JobStore", () => {
       "review",
       "test/model",
       JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
+      { round: 2, input: "review context" },
     );
-    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25);
-    const toolCall = store.startJobTrace(job.id, job.attemptCount, "tool", "read_file", "", '{"path":"README.md"}');
-    store.finishJobTrace(toolCall, "failed", 18, undefined, undefined, "Error: ENOENT: file not found");
+    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25, undefined, "assistant response");
+    const toolCall = store.startJobTrace(
+      job.id,
+      job.attemptCount,
+      "tool",
+      "read_file",
+      "",
+      '{"path":"README.md"}',
+      { round: 2, input: '{"path":"README.md"}', schema: '{"type":"object"}' },
+    );
+    store.finishJobTrace(
+      toolCall,
+      "failed",
+      18,
+      undefined,
+      undefined,
+      "Error: ENOENT: file not found",
+      "tool result",
+    );
 
     expect(store.getJobDetails(job.id)?.trajectory).toEqual([
       expect.objectContaining({
@@ -155,6 +172,10 @@ describe("JobStore", () => {
         durationMs: 18,
         rawContent: '{"path":"README.md"}',
         errorDetail: "Error: ENOENT: file not found",
+        round: 2,
+        input: '{"path":"README.md"}',
+        output: "tool result",
+        schema: '{"type":"object"}',
       }),
       expect.objectContaining({
         kind: "llm",
@@ -165,6 +186,10 @@ describe("JobStore", () => {
         inputTokens: 70,
         outputTokens: 25,
         rawContent: JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
+        round: 2,
+        input: "review context",
+        output: "assistant response",
+        schema: null,
       }),
     ]);
   });

@@ -356,6 +356,254 @@ function expandableText(value, label, className = "") {
   return details;
 }
 
+function traceField(label, value, emptyLabel) {
+  return value
+    ? expandableText(value, label, "trace-payload")
+    : append(element("div", undefined, "trace-payload trace-payload-empty"), element("span", label), element("span", emptyLabel));
+}
+
+function createTraceExperience(entries) {
+  if (entries.length === 0) return element("div", copy.noTrajectory, "empty");
+
+  const traces = [...entries].sort((left, right) => {
+    const timeDifference = Date.parse(left.startedAt) - Date.parse(right.startedAt);
+    return timeDifference || left.id - right.id;
+  });
+  const toolNames = [...new Set(traces.filter((entry) => entry.kind === "tool").map((entry) => entry.name))];
+  const laneNames = [copy.traceAgent, ...toolNames];
+  const laneWidth = 210;
+  const laneStart = 36;
+  const laneCenter = (index) => laneStart + index * laneWidth + 82;
+  const groups = [];
+  for (const entry of traces) {
+    const key = `${entry.attempt}:${entry.round ?? 0}`;
+    let group = groups.at(-1);
+    if (!group || group.key !== key) {
+      group = { key, attempt: entry.attempt, round: entry.round, entries: [] };
+      groups.push(group);
+    }
+    group.entries.push(entry);
+  }
+
+  const positions = new Map();
+  let nextTop = 42;
+  for (const group of groups) {
+    group.labelTop = nextTop;
+    nextTop += 32;
+    for (const entry of group.entries) {
+      const laneIndex = entry.kind === "llm" ? 0 : toolNames.indexOf(entry.name) + 1;
+      positions.set(entry.id, { x: laneCenter(laneIndex), y: nextTop + 20, top: nextTop, laneIndex });
+      nextTop += 52;
+    }
+    nextTop += 12;
+  }
+
+  const width = Math.max(360, laneCenter(laneNames.length - 1) + 108);
+  const height = nextTop + 16;
+  const scroll = element("div", undefined, "trace-diagram-scroll");
+  const scene = element("div", undefined, "trace-scene");
+  scene.style.width = `${width}px`;
+  scene.style.height = `${height}px`;
+  scene.setAttribute("aria-label", copy.traceDiagram);
+
+  laneNames.forEach((name, index) => {
+    const lane = element("div", undefined, `trace-lane trace-lane-${index === 0 ? "llm" : "tool"}`);
+    lane.style.left = `${laneStart + index * laneWidth}px`;
+    lane.style.height = `${height - 24}px`;
+    scene.append(lane);
+    const header = element("div", name, `trace-lane-header trace-lane-header-${index === 0 ? "llm" : "tool"}`);
+    header.style.left = `${laneStart + index * laneWidth}px`;
+    scene.append(header);
+  });
+
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const connectors = document.createElementNS(svgNamespace, "svg");
+  connectors.setAttribute("class", "trace-connectors");
+  connectors.setAttribute("width", String(width));
+  connectors.setAttribute("height", String(height));
+  connectors.setAttribute("aria-hidden", "true");
+  const marker = document.createElementNS(svgNamespace, "marker");
+  marker.setAttribute("id", "trace-arrowhead");
+  marker.setAttribute("markerWidth", "7");
+  marker.setAttribute("markerHeight", "7");
+  marker.setAttribute("refX", "6");
+  marker.setAttribute("refY", "3.5");
+  marker.setAttribute("orient", "auto");
+  const arrow = document.createElementNS(svgNamespace, "path");
+  arrow.setAttribute("d", "M0,0 L7,3.5 L0,7 Z");
+  arrow.setAttribute("fill", "#99a9b5");
+  marker.append(arrow);
+  const defs = document.createElementNS(svgNamespace, "defs");
+  defs.append(marker);
+  connectors.append(defs);
+  traces.slice(1).forEach((entry, index) => {
+    const previous = traces[index];
+    const from = positions.get(previous.id);
+    const to = positions.get(entry.id);
+    if (!from || !to) return;
+    const path = document.createElementNS(svgNamespace, "path");
+    const controlY = from.y + (to.y - from.y) / 2;
+    path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x} ${controlY}, ${to.x} ${controlY}, ${to.x} ${to.y - 20}`);
+    path.setAttribute("class", `trace-connector trace-connector-${entry.kind}`);
+    path.setAttribute("marker-end", "url(#trace-arrowhead)");
+    connectors.append(path);
+  });
+  scene.append(connectors);
+
+  const selectionBox = element("div", undefined, "trace-selection-box");
+  selectionBox.hidden = true;
+  scene.append(selectionBox);
+  for (const group of groups) {
+    const label = copy.traceAttemptRoundTemplate
+      .replace("{attempt}", String(group.attempt))
+      .replace("{round}", group.round === null ? copy.traceRoundUnknown : String(group.round));
+    const groupLabel = element("div", label, "trace-round-label");
+    groupLabel.style.top = `${group.labelTop}px`;
+    scene.append(groupLabel);
+  }
+
+  const detailList = element("div", undefined, "trace-record-list");
+  const records = new Map();
+  for (const entry of traces) {
+    const position = positions.get(entry.id);
+    if (!position) continue;
+    const eventLabel = copy.traceAttemptRoundTemplate
+      .replace("{attempt}", String(entry.attempt))
+      .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
+    const laneName = entry.kind === "llm" ? copy.traceAgent : entry.name;
+    const node = element(
+      "button",
+      undefined,
+      `trace-sequence-node trace-sequence-${entry.kind} trace-sequence-${entry.status}`,
+    );
+    node.type = "button";
+    node.dataset.traceId = String(entry.id);
+    node.style.left = `${position.x - 72}px`;
+    node.style.top = `${position.top}px`;
+    const name = entry.kind === "llm" ? entry.model || entry.name : entry.name;
+    append(
+      node,
+      element("span", laneName, "trace-node-lane"),
+      element("strong", name, "trace-node-name"),
+      element("span", formatTraceDuration(entry.durationMs), "trace-node-duration"),
+    );
+    node.addEventListener("click", () => setSelection(new Set([entry.id])));
+    scene.append(node);
+
+    const record = element("article", undefined, `trace-record trace-record-${entry.kind}`);
+    record.dataset.traceId = String(entry.id);
+    const recordTitle = entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name;
+    const heading = element("div", undefined, "trace-record-heading");
+    append(
+      heading,
+      element("span", eventLabel, "trace-record-round"),
+      element("strong", recordTitle, "trace-record-title"),
+      element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-record-status trace-record-status-${entry.status}`),
+      element("time", formatTraceDuration(entry.durationMs), "trace-record-duration"),
+    );
+    const meta = element("div", undefined, "trace-record-meta");
+    append(
+      meta,
+      element("span", formatDate(entry.startedAt)),
+      ...(entry.kind === "llm" ? [
+        element("span", `${copy.inputTokens}: ${entry.inputTokens ?? copy.none}`),
+        element("span", `${copy.outputTokens}: ${entry.outputTokens ?? copy.none}`),
+      ] : []),
+    );
+    const payloads = element("div", undefined, "trace-record-payloads");
+    if (entry.kind === "llm") {
+      payloads.append(
+        traceField(copy.traceInput, entry.input ?? entry.rawContent, copy.traceNoInput),
+        traceField(copy.traceOutput, entry.output, copy.traceNoOutput),
+      );
+    } else {
+      payloads.append(
+        traceField(copy.traceArguments, entry.input ?? entry.rawContent, copy.traceNoInput),
+        traceField(copy.traceSchema, entry.schema, copy.noRawContent),
+        traceField(copy.traceResult, entry.output ?? entry.errorDetail, copy.traceNoOutput),
+      );
+    }
+    append(record, heading, meta, payloads);
+    detailList.append(record);
+    records.set(entry.id, record);
+  }
+
+  const selectionStatus = element("span", copy.traceSelectionHint, "trace-selection-status");
+  const clearSelection = element("button", copy.traceClearSelection, "trace-clear-selection");
+  clearSelection.type = "button";
+  clearSelection.hidden = true;
+  clearSelection.addEventListener("click", () => setSelection(new Set()));
+  const toolbar = append(element("div", undefined, "trace-toolbar"), selectionStatus, clearSelection);
+  const setSelection = (selected) => {
+    for (const [id, record] of records) {
+      const isSelected = selected.size > 0 && selected.has(id);
+      record.hidden = selected.size > 0 && !isSelected;
+      scene.querySelector(`[data-trace-id="${id}"]`)?.classList.toggle("is-selected", isSelected);
+    }
+    selectionStatus.textContent = selected.size > 0
+      ? copy.traceSelectedCountTemplate.replace("{count}", String(selected.size))
+      : copy.traceSelectionHint;
+    clearSelection.hidden = selected.size === 0;
+  };
+
+  let dragStart;
+  const localPoint = (event) => {
+    const bounds = scene.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  };
+  scene.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest("button")) return;
+    dragStart = localPoint(event);
+    selectionBox.hidden = false;
+    selectionBox.style.left = `${dragStart.x}px`;
+    selectionBox.style.top = `${dragStart.y}px`;
+    selectionBox.style.width = "0px";
+    selectionBox.style.height = "0px";
+    scene.setPointerCapture(event.pointerId);
+  });
+  scene.addEventListener("pointermove", (event) => {
+    if (!dragStart) return;
+    const point = localPoint(event);
+    const left = Math.min(dragStart.x, point.x);
+    const top = Math.min(dragStart.y, point.y);
+    selectionBox.style.left = `${left}px`;
+    selectionBox.style.top = `${top}px`;
+    selectionBox.style.width = `${Math.abs(point.x - dragStart.x)}px`;
+    selectionBox.style.height = `${Math.abs(point.y - dragStart.y)}px`;
+  });
+  scene.addEventListener("pointerup", (event) => {
+    if (!dragStart) return;
+    const point = localPoint(event);
+    const bounds = {
+      left: Math.min(dragStart.x, point.x),
+      right: Math.max(dragStart.x, point.x),
+      top: Math.min(dragStart.y, point.y),
+      bottom: Math.max(dragStart.y, point.y),
+    };
+    const dragged = Math.abs(point.x - dragStart.x) > 5 || Math.abs(point.y - dragStart.y) > 5;
+    const selected = new Set();
+    if (dragged) {
+      for (const node of scene.querySelectorAll(".trace-sequence-node")) {
+        const x = Number.parseFloat(node.style.left);
+        const y = Number.parseFloat(node.style.top);
+        if (x + node.offsetWidth >= bounds.left && x <= bounds.right && y + node.offsetHeight >= bounds.top && y <= bounds.bottom) {
+          selected.add(Number(node.dataset.traceId));
+        }
+      }
+    }
+    selectionBox.hidden = true;
+    dragStart = undefined;
+    setSelection(selected);
+  });
+  scene.addEventListener("pointercancel", () => {
+    dragStart = undefined;
+    selectionBox.hidden = true;
+  });
+
+  scroll.append(scene);
+  return append(element("div", undefined, "trace-experience"), toolbar, scroll, detailList);
+}
+
 async function renderJobDetails(version, jobId) {
   const job = await api(`/api/ops/jobs/${encodeURIComponent(jobId)}`);
   if (version !== renderVersion) return;
@@ -416,49 +664,7 @@ async function renderJobDetails(version, jobId) {
   const attemptsContent = attempts.length
     ? table([copy.attempts, copy.started, copy.finished, copy.error], attempts)
     : element("div", copy.noAttempts, "empty");
-  const traceRows = job.trajectory.map((entry) => {
-    const row = element("tr");
-    const rawContent = element("td");
-    rawContent.append(
-      entry.rawContent
-        ? expandableText(entry.rawContent, copy.viewRawContent, "trace-raw")
-        : element("span", copy.noRawContent),
-    );
-    if (entry.errorDetail) {
-      rawContent.append(expandableText(entry.errorDetail, copy.viewTraceError, "trace-error"));
-    }
-    append(
-      row,
-      element("td", entry.attempt),
-      element("td", copy.traceKinds[entry.kind] ?? entry.kind),
-      element("td", entry.name),
-      element("td", copy.traceStatuses[entry.status] ?? entry.status),
-      element("td", formatDate(entry.startedAt)),
-      element("td", formatTraceDuration(entry.durationMs)),
-      element("td", entry.model || copy.none),
-      element("td", entry.inputTokens ?? copy.none),
-      element("td", entry.outputTokens ?? copy.none),
-      rawContent,
-    );
-    return row;
-  });
-  const trajectoryContent = traceRows.length
-    ? table(
-        [
-          copy.traceAttempt,
-          copy.task,
-          copy.traceName,
-          copy.traceStatus,
-          copy.started,
-          copy.duration,
-          copy.traceModel,
-          copy.inputTokens,
-          copy.outputTokens,
-          copy.rawContent,
-        ],
-        traceRows,
-      )
-    : element("div", copy.noTrajectory, "empty");
+  const trajectoryContent = createTraceExperience(job.trajectory);
   app.replaceChildren(
     back,
     heading(
@@ -468,7 +674,7 @@ async function renderJobDetails(version, jobId) {
     ),
     panel(copy.taskDetails, details),
     panel(copy.lifecycleTimeline, timelineContent),
-    panel(copy.trajectory, trajectoryContent),
+    panel(copy.traceDiagram, trajectoryContent),
     panel(copy.attemptHistory, attemptsContent),
   );
 }

@@ -184,21 +184,32 @@ describe("PiAgent", () => {
     expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
       name: "read_file",
+      round: 1,
+      input: JSON.stringify({ path: "README.md" }),
+      schema: expect.stringContaining("path"),
+      output: expect.stringContaining("private repository content"),
       rawContent: JSON.stringify({ path: "README.md" }),
     });
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "failed")).toMatchObject({
       name: "read_file",
+      round: 1,
+      input: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+      schema: expect.stringContaining("path"),
+      output: expect.stringContaining("ENOENT"),
       rawContent: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
       errorDetail: expect.stringContaining("ENOENT"),
     });
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
     expect(llmTraces).toHaveLength(2);
+    expect(llmTraces?.map((entry) => entry.round)).toEqual([1, 2]);
     expect(llmTraces).toMatchObject([
       {
         model: expect.stringContaining("test-model"),
         status: "succeeded",
         inputTokens: 8,
         outputTokens: 3,
+        input: expect.stringContaining("Say ok."),
+        output: expect.stringContaining("call-read-file"),
         rawContent: JSON.stringify({ systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
       },
       {
@@ -206,9 +217,10 @@ describe("PiAgent", () => {
         status: "succeeded",
         inputTokens: 14,
         outputTokens: 6,
+        input: expect.stringContaining("private repository content"),
+        output: expect.stringContaining("summary"),
       },
     ]);
-    expect(JSON.stringify(trajectory)).not.toContain("private repository content");
 
     responseDelayMs = 2000;
     config.agent.requestTimeout = 500;

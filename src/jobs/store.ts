@@ -133,6 +133,7 @@ function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
   return {
     id: numberColumn(row, "id"),
     attempt: numberColumn(row, "attempt"),
+    round: nullableNumber("round"),
     kind,
     name: stringColumn(row, "name"),
     status,
@@ -142,6 +143,9 @@ function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
     model: nullableString("model"),
     inputTokens: nullableNumber("input_tokens"),
     outputTokens: nullableNumber("output_tokens"),
+    input: nullableString("trace_input"),
+    output: nullableString("trace_output"),
+    schema: nullableString("trace_schema"),
     rawContent: nullableString("raw_content"),
     errorDetail: nullableString("error_detail"),
   };
@@ -325,20 +329,39 @@ export class JobStore {
     name: string,
     model = "",
     rawContent: string | null = null,
+    details: { round?: number; input?: string | null; schema?: string | null } = {},
   ): number {
     if (!jobId.trim() || !Number.isSafeInteger(attempt) || attempt <= 0) {
       throw new Error("job trace requires a job ID and positive attempt number");
     }
     if (kind !== "tool" && kind !== "llm") throw new Error(`unsupported job trace kind "${kind}"`);
-    if (!name.trim() || name.length > 128 || model.length > 256) {
+    if (
+      !name.trim() ||
+      name.length > 128 ||
+      model.length > 256 ||
+      (details.round !== undefined && (!Number.isSafeInteger(details.round) || details.round <= 0))
+    ) {
       throw new Error("job trace name or model is invalid");
     }
     const result = this.db
       .prepare(
-        `INSERT INTO job_trace(job_id,attempt,kind,name,status,started_at,model,raw_content)
-        VALUES (?,?,?,?,?,?,?,?)`,
+        `INSERT INTO job_trace
+         (job_id,attempt,round,kind,name,status,started_at,model,trace_input,trace_schema,raw_content)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(jobId, attempt, kind, name, "running", new Date().toISOString(), model || null, rawContent);
+      .run(
+        jobId,
+        attempt,
+        details.round ?? null,
+        kind,
+        name,
+        "running",
+        new Date().toISOString(),
+        model || null,
+        details.input ?? null,
+        details.schema ?? null,
+        rawContent,
+      );
     const id = Number(result.lastInsertRowid);
     if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid job trace ID");
     return id;
@@ -351,6 +374,7 @@ export class JobStore {
     inputTokens?: number,
     outputTokens?: number,
     errorDetail?: string,
+    output?: string,
   ): void {
     if (
       !Number.isSafeInteger(traceId) ||
@@ -365,7 +389,8 @@ export class JobStore {
     }
     const result = this.db
       .prepare(
-        `UPDATE job_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?
+        `UPDATE job_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?,
+         trace_output=?
          WHERE id=? AND status='running'`,
       )
       .run(
@@ -375,6 +400,7 @@ export class JobStore {
         inputTokens ?? null,
         outputTokens ?? null,
         errorDetail ?? null,
+        output ?? null,
         traceId,
       );
     if (result.changes !== 1) throw new Error(`job trace "${traceId}" is not running`);
@@ -1037,9 +1063,10 @@ export class JobStore {
       );
       CREATE TABLE IF NOT EXISTS job_trace (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-        attempt INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
+        attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
-        input_tokens INTEGER, output_tokens INTEGER, raw_content TEXT, error_detail TEXT
+        input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
+        raw_content TEXT, error_detail TEXT
       );
       CREATE INDEX IF NOT EXISTS job_trace_job_started_idx ON job_trace(job_id,started_at,id);
       CREATE TABLE IF NOT EXISTS worker_heartbeats (
@@ -1069,11 +1096,17 @@ export class JobStore {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);
     }
     const traceColumns = this.db.prepare("PRAGMA table_info(job_trace)").all() as { name: string }[];
-    if (!traceColumns.some((column) => column.name === "raw_content")) {
-      this.db.exec("ALTER TABLE job_trace ADD COLUMN raw_content TEXT");
-    }
-    if (!traceColumns.some((column) => column.name === "error_detail")) {
-      this.db.exec("ALTER TABLE job_trace ADD COLUMN error_detail TEXT");
+    const existingTraceColumns = new Set(traceColumns.map((column) => column.name));
+    const traceAdditions: Record<string, string> = {
+      round: "INTEGER",
+      trace_input: "TEXT",
+      trace_output: "TEXT",
+      trace_schema: "TEXT",
+      raw_content: "TEXT",
+      error_detail: "TEXT",
+    };
+    for (const [name, definition] of Object.entries(traceAdditions)) {
+      if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE job_trace ADD COLUMN ${name} ${definition}`);
     }
   }
 }

@@ -163,20 +163,29 @@ export class PiAgent {
       noTools: "builtin",
     });
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
-    let activeModelCall: { traceId: number; startedAt: number } | undefined;
+    let activeModelCall: { traceId: number; startedAt: number; round: number } | undefined;
     let modelCallCount = 0;
+    let currentRound = 0;
     const unsubscribe = session.subscribe((event) => {
       if (!trace) return;
       if (event.type === "message_start" && event.message.role === "assistant") {
+        const round = ++currentRound;
         const traceId = this.startTrace(
           trace,
           "llm",
           trace.taskType,
           `${event.message.provider}/${event.message.responseModel ?? event.message.model}`,
           modelCallCount === 0 ? JSON.stringify(request) : null,
+          {
+            round,
+            input: JSON.stringify({
+              systemPrompt: session.systemPrompt,
+              messages: session.sessionManager.buildContextEntries(),
+            }),
+          },
         );
         modelCallCount++;
-        if (traceId !== undefined) activeModelCall = { traceId, startedAt: performance.now() };
+        if (traceId !== undefined) activeModelCall = { traceId, startedAt: performance.now(), round };
       } else if (event.type === "message_end" && event.message.role === "assistant") {
         if (!activeModelCall) return;
         const message = event.message;
@@ -188,10 +197,18 @@ export class PiAgent {
           message.usage.input,
           message.usage.output,
           failed ? message.errorMessage ?? `model request ${message.stopReason}` : undefined,
+          JSON.stringify({
+            content: message.content.filter((part) => part.type === "text" || part.type === "toolCall"),
+            stopReason: message.stopReason,
+          }),
         );
         activeModelCall = undefined;
       } else if (event.type === "tool_execution_start") {
-        const traceId = this.startTrace(trace, "tool", event.toolName, "", JSON.stringify(event.args));
+        const traceId = this.startTrace(trace, "tool", event.toolName, "", JSON.stringify(event.args), {
+          round: currentRound || undefined,
+          input: JSON.stringify(event.args),
+          schema: JSON.stringify(session.getToolDefinition(event.toolName)?.parameters ?? null),
+        });
         if (traceId !== undefined) {
           activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
         }
@@ -205,6 +222,7 @@ export class PiAgent {
           undefined,
           undefined,
           event.isError ? JSON.stringify(event.result, null, 2) : undefined,
+          JSON.stringify(event.result),
         );
         activeTools.delete(event.toolCallId);
       }
@@ -269,6 +287,7 @@ export class PiAgent {
     name: string,
     model = "",
     rawContent: string | null = null,
+    details: { round?: number; input?: string | null; schema?: string | null } = {},
   ): number | undefined {
     if (!this.store) return undefined;
     try {
@@ -279,6 +298,7 @@ export class PiAgent {
         name.slice(0, 128),
         model.slice(0, 256),
         rawContent,
+        details,
       );
     } catch (error) {
       console.warn("record job trajectory start failed", {
@@ -298,10 +318,11 @@ export class PiAgent {
     inputTokens?: number,
     outputTokens?: number,
     errorDetail?: string,
+    output?: string,
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens, errorDetail);
+      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens, errorDetail, output);
     } catch (error) {
       console.warn("record job trajectory completion failed", {
         traceId,
