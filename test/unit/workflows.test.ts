@@ -48,6 +48,13 @@ describe("review and fix response validation", () => {
     expect(result.rejected).toBe(1);
   });
 
+  it("accepts review JSON wrapped in a Markdown code fence", () => {
+    const raw = JSON.stringify({ summary: "Review complete", findings: [] });
+    const result = parseAndValidateReview(`\`\`\`json\n${raw}\n\`\`\``, diff, 10);
+    expect(result.result.summary).toBe("Review complete");
+    expect(result.result.findings).toEqual([]);
+  });
+
   it("reports which top-level review field has an invalid shape", () => {
     expect(() =>
       parseAndValidateReview(JSON.stringify({ summary: "Review complete", findings: "none" }), diff, 10),

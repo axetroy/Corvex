@@ -144,6 +144,7 @@ describe("CorvexServer", () => {
         "GitLab webhook received",
         expect.objectContaining({ eventType: "Note Hook" }),
       );
+      expect(info).toHaveBeenCalledWith("GitLab webhook body", { body: JSON.stringify(payload) });
       expect(info).toHaveBeenCalledWith(
         "GitLab Note Hook validated",
         expect.objectContaining({

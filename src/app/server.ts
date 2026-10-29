@@ -396,7 +396,9 @@ export class CorvexServer {
     }
     let event: ReturnType<typeof decodeNoteEvent>;
     try {
-      event = decodeNoteEvent(await requestBody(request));
+      const body = await requestBody(request);
+      console.info("GitLab webhook body", { body: body.toString("utf8") });
+      event = decodeNoteEvent(body);
     } catch (error) {
       const tooLarge = errorMessage(error).includes("exceeds 1 MiB");
       console.warn("GitLab webhook rejected", {
