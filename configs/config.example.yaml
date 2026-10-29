@@ -21,8 +21,8 @@ agent:
   enabled: false
   base_url: "https://api.openai.com/v1"
   model: "your-model-name"
-  request_timeout: 120s
-  max_output_tokens: 4096
+  request_timeout: 10m
+  max_output_tokens: 8192
   daily_token_budget: 0
   mcp_enabled: false
   web_enabled: true

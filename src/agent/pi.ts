@@ -66,23 +66,12 @@ export class PiAgent {
     }
 
     let response: ModelResponse;
-    const traceId = trace
-      ? this.startTrace(
-          trace,
-          "llm",
-          trace.taskType,
-          `${this.config.agent.baseUrl}/${this.config.agent.model}`,
-          JSON.stringify(request),
-        )
-      : undefined;
-    const startedAt = performance.now();
     try {
       const requestSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.requestTimeout)])
         : AbortSignal.timeout(this.config.agent.requestTimeout);
       response = await this.runSession(request, workingDirectory, requestSignal, trace);
     } catch (error) {
-      this.finishTrace(traceId, "failed", performance.now() - startedAt);
       if (budgetDay) {
         try {
           // 请求失败时用预留量结算，避免因无法确认服务端是否已计费而释放预算。
@@ -99,13 +88,6 @@ export class PiAgent {
         cause: error,
       });
     }
-    this.finishTrace(
-      traceId,
-      "succeeded",
-      performance.now() - startedAt,
-      response.usage.inputTokens,
-      response.usage.outputTokens,
-    );
     if (budgetDay) {
       try {
         this.store!.settleModelTokens(
@@ -181,9 +163,34 @@ export class PiAgent {
       noTools: "builtin",
     });
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
+    let activeModelCall: { traceId: number; startedAt: number } | undefined;
+    let modelCallCount = 0;
     const unsubscribe = session.subscribe((event) => {
       if (!trace) return;
-      if (event.type === "tool_execution_start") {
+      if (event.type === "message_start" && event.message.role === "assistant") {
+        const traceId = this.startTrace(
+          trace,
+          "llm",
+          trace.taskType,
+          `${event.message.provider}/${event.message.responseModel ?? event.message.model}`,
+          modelCallCount === 0 ? JSON.stringify(request) : null,
+        );
+        modelCallCount++;
+        if (traceId !== undefined) activeModelCall = { traceId, startedAt: performance.now() };
+      } else if (event.type === "message_end" && event.message.role === "assistant") {
+        if (!activeModelCall) return;
+        const message = event.message;
+        const failed = message.stopReason === "error" || message.stopReason === "aborted";
+        this.finishTrace(
+          activeModelCall.traceId,
+          failed ? "failed" : "succeeded",
+          message.durationMs ?? performance.now() - activeModelCall.startedAt,
+          message.usage.input,
+          message.usage.output,
+          failed ? message.errorMessage ?? `model request ${message.stopReason}` : undefined,
+        );
+        activeModelCall = undefined;
+      } else if (event.type === "tool_execution_start") {
         const traceId = this.startTrace(trace, "tool", event.toolName, "", JSON.stringify(event.args));
         if (traceId !== undefined) {
           activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
@@ -223,9 +230,32 @@ export class PiAgent {
           totalTokens: usage.total,
         },
       };
+    } catch (error) {
+      if (activeModelCall) {
+        this.finishTrace(
+          activeModelCall.traceId,
+          "failed",
+          performance.now() - activeModelCall.startedAt,
+          undefined,
+          undefined,
+          error instanceof Error ? error.message : String(error),
+        );
+        activeModelCall = undefined;
+      }
+      throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
+      if (activeModelCall) {
+        this.finishTrace(
+          activeModelCall.traceId,
+          "failed",
+          performance.now() - activeModelCall.startedAt,
+          undefined,
+          undefined,
+          "model request did not complete",
+        );
+      }
       for (const active of activeTools.values()) {
         this.finishTrace(active.traceId, "failed", performance.now() - active.startedAt);
       }

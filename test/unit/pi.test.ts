@@ -78,6 +78,7 @@ describe("PiAgent", () => {
                 created: 1,
                 model: "test-model",
                 choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+                usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
               })}\n\n`,
             );
             response.end("data: [DONE]\n\n");
@@ -121,6 +122,7 @@ describe("PiAgent", () => {
 
     const config = {
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
@@ -179,7 +181,7 @@ describe("PiAgent", () => {
     expect(requestBody).toContain('"name":"web_fetch"');
     expect(requestBody).toContain("Additional blocked hosts: blocked.corp.dev");
     const trajectory = store.getJobDetails(job.id)?.trajectory;
-    expect(trajectory).toHaveLength(3);
+    expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
       name: "read_file",
       rawContent: JSON.stringify({ path: "README.md" }),
@@ -189,12 +191,23 @@ describe("PiAgent", () => {
       rawContent: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
       errorDetail: expect.stringContaining("ENOENT"),
     });
-    expect(trajectory?.find((entry) => entry.kind === "llm" && entry.status === "succeeded")).toMatchObject({
-      model: expect.stringContaining("test-model"),
-      inputTokens: 14,
-      outputTokens: 6,
-      rawContent: JSON.stringify({ systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
-    });
+    const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
+    expect(llmTraces).toHaveLength(2);
+    expect(llmTraces).toMatchObject([
+      {
+        model: expect.stringContaining("test-model"),
+        status: "succeeded",
+        inputTokens: 8,
+        outputTokens: 3,
+        rawContent: JSON.stringify({ systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
+      },
+      {
+        model: expect.stringContaining("test-model"),
+        status: "succeeded",
+        inputTokens: 14,
+        outputTokens: 6,
+      },
+    ]);
     expect(JSON.stringify(trajectory)).not.toContain("private repository content");
 
     responseDelayMs = 2000;

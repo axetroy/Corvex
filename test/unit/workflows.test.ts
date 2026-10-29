@@ -62,6 +62,33 @@ describe("review and fix response validation", () => {
     ).toThrow("findings must be an array");
   });
 
+  it("asks the agent to read changed files while preserving diff evidence", async () => {
+    const generate = vi.fn(async () => ({
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    await workflow.review(context, diff, process.cwd());
+
+    const request = generate.mock.calls[0]?.[0];
+    expect(request?.systemPrompt).toContain("complete contents of every changed file");
+    expect(request?.systemPrompt).toContain("read_file tool");
+    expect(request?.userPrompt).toContain('"path":"src/app.ts"');
+    expect(request?.userPrompt).toContain("const value = user.input;");
+  });
+
   it("logs the raw model response when review JSON is rejected", async () => {
     const raw = '["not", "an object"]';
     const agent = {
