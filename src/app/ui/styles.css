@@ -818,3 +818,377 @@ footer {
     margin-top: 8px;
   }
 }
+
+.trace-overview {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e6eaed;
+}
+
+.trace-overview-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-height: 38px;
+}
+
+.trace-overview-title,
+.trace-pane-heading {
+  color: #26333e;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.trace-overview-summary,
+.trace-selection-status {
+  color: #71808e;
+  font-size: 12px;
+}
+
+.trace-overview-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.trace-overview-controls button {
+  min-width: 30px;
+  min-height: 28px;
+  padding: 3px 7px;
+  color: #1769aa;
+}
+
+.trace-overview-controls .trace-zoom-button {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.trace-zoom-value {
+  min-width: 42px;
+  color: #536271;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+.trace-overview-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x;
+}
+
+.trace-overview-scene {
+  position: relative;
+  min-width: 100%;
+  padding: 2px 0 0;
+  user-select: none;
+}
+
+.trace-overview-axis-row,
+.trace-overview-track {
+  display: grid;
+  grid-template-columns: 72px auto;
+  align-items: center;
+}
+
+.trace-overview-axis-row {
+  min-height: 25px;
+}
+
+.trace-overview-axis {
+  position: relative;
+  height: 24px;
+  border-bottom: 1px solid #dfe5e9;
+}
+
+.trace-overview-tick {
+  position: absolute;
+  bottom: 4px;
+  color: #75828c;
+  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.trace-overview-tick::before {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  height: 4px;
+  border-left: 1px solid #aeb9c1;
+  content: "";
+}
+
+.trace-overview-track {
+  min-height: 29px;
+  border-bottom: 1px solid #edf0f2;
+}
+
+.trace-overview-track-label {
+  padding-left: 3px;
+  color: #687783;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.trace-overview-plot {
+  position: relative;
+  height: 28px;
+  background-image: linear-gradient(to right, #edf0f2 1px, transparent 1px);
+  background-size: 25% 100%;
+}
+
+.trace-overview-plot-llm {
+  background-color: #fbf9fc;
+}
+
+.trace-overview-plot-tool {
+  background-color: #fbfcfa;
+}
+
+.trace-time-bar {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  height: 12px;
+  min-height: 0;
+  min-width: 4px;
+  padding: 0;
+  background: #9b83b7;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.trace-time-bar-tool {
+  top: 9px;
+  height: 10px;
+  background: #df8c37;
+}
+
+.trace-time-bar-failed {
+  background: #d94f42;
+}
+
+.trace-time-bar.is-selected,
+.trace-time-bar:focus-visible {
+  z-index: 2;
+  outline: 2px solid #1769aa;
+  outline-offset: 2px;
+}
+
+.trace-overview-selection {
+  position: absolute;
+  z-index: 4;
+  top: 27px;
+  bottom: 0;
+  border: 1px solid #1769aa;
+  background: rgb(23 105 170 / 12%);
+  pointer-events: none;
+}
+
+.trace-selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+}
+
+.trace-selection-toolbar button {
+  min-height: 26px;
+  padding: 3px 8px;
+  color: #1769aa;
+}
+
+.trace-workbench {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.82fr) minmax(0, 1.5fr);
+  min-height: 290px;
+  border-top: 1px solid #e6eaed;
+}
+
+.trace-events-pane {
+  min-width: 0;
+  border-right: 1px solid #e6eaed;
+}
+
+.trace-pane-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.trace-event-count {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  color: #64737f;
+  background: #f0f3f5;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.trace-event-list {
+  max-height: 430px;
+  overflow: auto;
+}
+
+.trace-event-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 4px 7px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  color: #25313c;
+  background: #fff;
+  border: 0;
+  border-bottom: 1px solid #edf0f2;
+  cursor: pointer;
+  text-align: left;
+}
+
+.trace-event-row:hover,
+.trace-event-row.is-selected {
+  background: #f1f7fa;
+}
+
+.trace-event-row.is-selected {
+  box-shadow: inset 3px 0 #1769aa;
+}
+
+.trace-event-kind {
+  grid-row: span 2;
+  align-self: center;
+  color: #775a90;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.trace-event-row-tool .trace-event-kind {
+  color: #b16b20;
+}
+
+.trace-event-title {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.trace-event-round {
+  grid-column: 2 / -1;
+  overflow: hidden;
+  color: #778591;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-event-status,
+.trace-event-duration {
+  grid-column: 3;
+  grid-row: 1;
+  color: #278150;
+  font-size: 10px;
+}
+
+.trace-event-duration {
+  grid-row: 2;
+  color: #65737e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.trace-event-status-failed {
+  color: #b63838;
+}
+
+.trace-inspector {
+  min-width: 0;
+}
+
+.trace-inspector .trace-pane-heading {
+  padding-left: 15px;
+}
+
+.trace-inspector-tabs {
+  display: flex;
+  gap: 2px;
+  min-height: 38px;
+  padding: 0 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid #e9edef;
+}
+
+.trace-inspector-tab {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  color: #687783;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.trace-inspector-tab[aria-selected="true"] {
+  color: #1769aa;
+  border-bottom-color: #1769aa;
+}
+
+.trace-inspector-content {
+  min-height: 210px;
+  padding: 12px 15px;
+}
+
+.trace-inspector-content .trace-payload {
+  margin: 0;
+  font-size: 12px;
+}
+
+.trace-inspector-content .details-content {
+  max-width: 100%;
+  max-height: 360px;
+  margin-left: 0;
+}
+
+.trace-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+}
+
+.trace-inspector-empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  color: #71808e;
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 500px) {
+  .trace-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .trace-events-pane {
+    border-right: 0;
+    border-bottom: 1px solid #e6eaed;
+  }
+
+  .trace-event-list {
+    max-height: 260px;
+  }
+
+  .trace-inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -369,239 +369,285 @@ function createTraceExperience(entries) {
     const timeDifference = Date.parse(left.startedAt) - Date.parse(right.startedAt);
     return timeDifference || left.id - right.id;
   });
-  const toolNames = [...new Set(traces.filter((entry) => entry.kind === "tool").map((entry) => entry.name))];
-  const laneNames = [copy.traceAgent, ...toolNames];
-  const laneWidth = 210;
-  const laneStart = 36;
-  const laneCenter = (index) => laneStart + index * laneWidth + 82;
-  const groups = [];
-  for (const entry of traces) {
-    const key = `${entry.attempt}:${entry.round ?? 0}`;
-    let group = groups.at(-1);
-    if (!group || group.key !== key) {
-      group = { key, attempt: entry.attempt, round: entry.round, entries: [] };
-      groups.push(group);
-    }
-    group.entries.push(entry);
-  }
-
-  const positions = new Map();
-  let nextTop = 42;
-  for (const group of groups) {
-    group.labelTop = nextTop;
-    nextTop += 32;
-    for (const entry of group.entries) {
-      const laneIndex = entry.kind === "llm" ? 0 : toolNames.indexOf(entry.name) + 1;
-      positions.set(entry.id, { x: laneCenter(laneIndex), y: nextTop + 20, top: nextTop, laneIndex });
-      nextTop += 52;
-    }
-    nextTop += 12;
-  }
-
-  const width = Math.max(360, laneCenter(laneNames.length - 1) + 108);
-  const height = nextTop + 16;
-  const scroll = element("div", undefined, "trace-diagram-scroll");
-  const scene = element("div", undefined, "trace-scene");
-  scene.style.width = `${width}px`;
-  scene.style.height = `${height}px`;
+  const startTime = Math.min(...traces.map((entry) => Date.parse(entry.startedAt)));
+  const endTime = Math.max(...traces.map((entry) => Date.parse(entry.finishedAt ?? entry.startedAt)));
+  const duration = Math.max(1, endTime - startTime);
+  const basePlotWidth = Math.max(760, Math.min(1400, traces.length * 22));
+  const experience = element("div", undefined, "trace-experience");
+  const overview = element("section", undefined, "trace-overview");
+  const overviewTitle = element("strong", copy.traceOverview, "trace-overview-title");
+  const overviewSummary = element(
+    "span",
+    copy.traceOverviewSummaryTemplate
+      .replace("{events}", String(traces.length))
+      .replace("{duration}", formatTraceDuration(duration)),
+    "trace-overview-summary",
+  );
+  const zoomOut = element("button", "−", "trace-zoom-button");
+  const zoomIn = element("button", "+", "trace-zoom-button");
+  const zoomReset = element("button", copy.traceZoomReset, "trace-zoom-reset");
+  const zoomValue = element("span", "100%", "trace-zoom-value");
+  zoomOut.type = "button";
+  zoomIn.type = "button";
+  zoomReset.type = "button";
+  zoomOut.setAttribute("aria-label", copy.traceZoomOut);
+  zoomIn.setAttribute("aria-label", copy.traceZoomIn);
+  zoomOut.title = copy.traceZoomOut;
+  zoomIn.title = copy.traceZoomIn;
+  const overviewControls = append(element("div", undefined, "trace-overview-controls"), zoomOut, zoomValue, zoomIn, zoomReset);
+  const overviewHeader = append(element("div", undefined, "trace-overview-header"), overviewTitle, overviewSummary, overviewControls);
+  const overviewScroll = element("div", undefined, "trace-overview-scroll");
+  const scene = element("div", undefined, "trace-overview-scene");
   scene.setAttribute("aria-label", copy.traceDiagram);
+  const labelWidth = 72;
+  const axis = element("div", undefined, "trace-overview-axis-row");
+  axis.append(element("span", undefined, "trace-overview-label-spacer"));
+  const axisPlot = element("div", undefined, "trace-overview-axis");
+  for (let index = 0; index <= 4; index += 1) {
+    const ratio = index / 4;
+    const tick = element("span", formatTraceDuration(Math.round(duration * ratio)), "trace-overview-tick");
+    tick.style.left = `${ratio * 100}%`;
+    axisPlot.append(tick);
+  }
+  axis.append(axisPlot);
+  scene.append(axis);
 
-  laneNames.forEach((name, index) => {
-    const lane = element("div", undefined, `trace-lane trace-lane-${index === 0 ? "llm" : "tool"}`);
-    lane.style.left = `${laneStart + index * laneWidth}px`;
-    lane.style.height = `${height - 24}px`;
-    scene.append(lane);
-    const header = element("div", name, `trace-lane-header trace-lane-header-${index === 0 ? "llm" : "tool"}`);
-    header.style.left = `${laneStart + index * laneWidth}px`;
-    scene.append(header);
-  });
+  const plots = new Map();
+  for (const kind of ["llm", "tool"]) {
+    const row = element("div", undefined, `trace-overview-track trace-overview-track-${kind}`);
+    row.append(element("span", copy.traceKinds[kind], "trace-overview-track-label"));
+    const plot = element("div", undefined, `trace-overview-plot trace-overview-plot-${kind}`);
+    row.append(plot);
+    scene.append(row);
+    plots.set(kind, plot);
+  }
 
-  const svgNamespace = "http://www.w3.org/2000/svg";
-  const connectors = document.createElementNS(svgNamespace, "svg");
-  connectors.setAttribute("class", "trace-connectors");
-  connectors.setAttribute("width", String(width));
-  connectors.setAttribute("height", String(height));
-  connectors.setAttribute("aria-hidden", "true");
-  const marker = document.createElementNS(svgNamespace, "marker");
-  marker.setAttribute("id", "trace-arrowhead");
-  marker.setAttribute("markerWidth", "7");
-  marker.setAttribute("markerHeight", "7");
-  marker.setAttribute("refX", "6");
-  marker.setAttribute("refY", "3.5");
-  marker.setAttribute("orient", "auto");
-  const arrow = document.createElementNS(svgNamespace, "path");
-  arrow.setAttribute("d", "M0,0 L7,3.5 L0,7 Z");
-  arrow.setAttribute("fill", "#99a9b5");
-  marker.append(arrow);
-  const defs = document.createElementNS(svgNamespace, "defs");
-  defs.append(marker);
-  connectors.append(defs);
-  traces.slice(1).forEach((entry, index) => {
-    const previous = traces[index];
-    const from = positions.get(previous.id);
-    const to = positions.get(entry.id);
-    if (!from || !to) return;
-    const path = document.createElementNS(svgNamespace, "path");
-    const controlY = from.y + (to.y - from.y) / 2;
-    path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x} ${controlY}, ${to.x} ${controlY}, ${to.x} ${to.y - 20}`);
-    path.setAttribute("class", `trace-connector trace-connector-${entry.kind}`);
-    path.setAttribute("marker-end", "url(#trace-arrowhead)");
-    connectors.append(path);
-  });
-  scene.append(connectors);
-
-  const selectionBox = element("div", undefined, "trace-selection-box");
+  const selectionBox = element("div", undefined, "trace-overview-selection");
   selectionBox.hidden = true;
   scene.append(selectionBox);
-  for (const group of groups) {
-    const label = copy.traceAttemptRoundTemplate
-      .replace("{attempt}", String(group.attempt))
-      .replace("{round}", group.round === null ? copy.traceRoundUnknown : String(group.round));
-    const groupLabel = element("div", label, "trace-round-label");
-    groupLabel.style.top = `${group.labelTop}px`;
-    scene.append(groupLabel);
-  }
-
-  const detailList = element("div", undefined, "trace-record-list");
-  const records = new Map();
+  const bars = new Map();
   for (const entry of traces) {
-    const position = positions.get(entry.id);
-    if (!position) continue;
-    const eventLabel = copy.traceAttemptRoundTemplate
-      .replace("{attempt}", String(entry.attempt))
-      .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
-    const laneName = entry.kind === "llm" ? copy.traceAgent : entry.name;
-    const node = element(
-      "button",
-      undefined,
-      `trace-sequence-node trace-sequence-${entry.kind} trace-sequence-${entry.status}`,
-    );
-    node.type = "button";
-    node.dataset.traceId = String(entry.id);
-    node.style.left = `${position.x - 72}px`;
-    node.style.top = `${position.top}px`;
-    const name = entry.kind === "llm" ? entry.model || entry.name : entry.name;
-    append(
-      node,
-      element("span", laneName, "trace-node-lane"),
-      element("strong", name, "trace-node-name"),
-      element("span", formatTraceDuration(entry.durationMs), "trace-node-duration"),
-    );
-    node.addEventListener("click", () => setSelection(new Set([entry.id])));
-    scene.append(node);
-
-    const record = element("article", undefined, `trace-record trace-record-${entry.kind}`);
-    record.dataset.traceId = String(entry.id);
-    const recordTitle = entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name;
-    const heading = element("div", undefined, "trace-record-heading");
-    append(
-      heading,
-      element("span", eventLabel, "trace-record-round"),
-      element("strong", recordTitle, "trace-record-title"),
-      element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-record-status trace-record-status-${entry.status}`),
-      element("time", formatTraceDuration(entry.durationMs), "trace-record-duration"),
-    );
-    const meta = element("div", undefined, "trace-record-meta");
-    append(
-      meta,
-      element("span", formatDate(entry.startedAt)),
-      ...(entry.kind === "llm" ? [
-        element("span", `${copy.inputTokens}: ${entry.inputTokens ?? copy.none}`),
-        element("span", `${copy.outputTokens}: ${entry.outputTokens ?? copy.none}`),
-      ] : []),
-    );
-    const payloads = element("div", undefined, "trace-record-payloads");
-    if (entry.kind === "llm") {
-      payloads.append(
-        traceField(copy.traceInput, entry.input ?? entry.rawContent, copy.traceNoInput),
-        traceField(copy.traceOutput, entry.output, copy.traceNoOutput),
-      );
-    } else {
-      payloads.append(
-        traceField(copy.traceArguments, entry.input ?? entry.rawContent, copy.traceNoInput),
-        traceField(copy.traceSchema, entry.schema, copy.noRawContent),
-        traceField(copy.traceResult, entry.output ?? entry.errorDetail, copy.traceNoOutput),
-      );
-    }
-    append(record, heading, meta, payloads);
-    detailList.append(record);
-    records.set(entry.id, record);
+    const startRatio = Math.max(0, (Date.parse(entry.startedAt) - startTime) / duration);
+    const endRatio = Math.max(startRatio, (Date.parse(entry.finishedAt ?? entry.startedAt) - startTime) / duration);
+    const bar = element("button", undefined, `trace-time-bar trace-time-bar-${entry.kind} trace-time-bar-${entry.status}`);
+    const title = entry.kind === "llm" ? entry.model || entry.name : entry.name;
+    bar.type = "button";
+    bar.title = `${title} · ${formatTraceDuration(entry.durationMs)}`;
+    bar.setAttribute("aria-label", `${copy.traceKinds[entry.kind]}: ${title}, ${formatTraceDuration(entry.durationMs)}`);
+    bar.dataset.traceId = String(entry.id);
+    plots.get(entry.kind).append(bar);
+    bars.set(entry.id, { bar, startRatio, widthRatio: endRatio - startRatio });
+    bar.addEventListener("click", () => setSelection(new Set([entry.id])));
   }
+  overviewScroll.append(scene);
+
+  let zoom = 1;
+  const updateZoom = () => {
+    const plotWidth = Math.round(basePlotWidth * zoom);
+    scene.style.width = `${labelWidth + plotWidth}px`;
+    axisPlot.style.width = `${plotWidth}px`;
+    for (const plot of plots.values()) plot.style.width = `${plotWidth}px`;
+    for (const { bar, startRatio, widthRatio } of bars.values()) {
+      bar.style.left = `${startRatio * plotWidth}px`;
+      bar.style.width = `${Math.max(4, widthRatio * plotWidth)}px`;
+    }
+    zoomValue.textContent = `${Math.round(zoom * 100)}%`;
+  };
+  zoomOut.addEventListener("click", () => {
+    zoom = Math.max(0.5, zoom / 1.25);
+    updateZoom();
+  });
+  zoomIn.addEventListener("click", () => {
+    zoom = Math.min(4, zoom * 1.25);
+    updateZoom();
+  });
+  zoomReset.addEventListener("click", () => {
+    zoom = 1;
+    updateZoom();
+  });
+  updateZoom();
 
   const selectionStatus = element("span", copy.traceSelectionHint, "trace-selection-status");
   const clearSelection = element("button", copy.traceClearSelection, "trace-clear-selection");
   clearSelection.type = "button";
   clearSelection.hidden = true;
-  clearSelection.addEventListener("click", () => setSelection(new Set()));
-  const toolbar = append(element("div", undefined, "trace-toolbar"), selectionStatus, clearSelection);
-  const setSelection = (selected) => {
-    for (const [id, record] of records) {
-      const isSelected = selected.size > 0 && selected.has(id);
-      record.hidden = selected.size > 0 && !isSelected;
-      scene.querySelector(`[data-trace-id="${id}"]`)?.classList.toggle("is-selected", isSelected);
+  const selectionToolbar = append(element("div", undefined, "trace-selection-toolbar"), selectionStatus, clearSelection);
+
+  const workbench = element("div", undefined, "trace-workbench");
+  const eventPane = element("section", undefined, "trace-events-pane");
+  const eventHeading = append(
+    element("div", undefined, "trace-pane-heading"),
+    element("strong", copy.traceRecords),
+    element("span", String(traces.length), "trace-event-count"),
+  );
+  const eventList = element("div", undefined, "trace-event-list");
+  eventList.setAttribute("aria-label", copy.traceRecords);
+  const eventButtons = new Map();
+  for (const entry of traces) {
+    const row = element("button", undefined, `trace-event-row trace-event-row-${entry.kind}`);
+    const title = entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name;
+    const round = copy.traceAttemptRoundTemplate
+      .replace("{attempt}", String(entry.attempt))
+      .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
+    row.type = "button";
+    row.setAttribute("aria-pressed", "false");
+    row.append(
+      element("span", copy.traceKinds[entry.kind], "trace-event-kind"),
+      element("strong", title, "trace-event-title"),
+      element("span", round, "trace-event-round"),
+      element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-event-status trace-event-status-${entry.status}`),
+      element("time", formatTraceDuration(entry.durationMs), "trace-event-duration"),
+    );
+    row.addEventListener("click", () => setSelection(new Set([entry.id])));
+    eventList.append(row);
+    eventButtons.set(entry.id, row);
+  }
+  eventPane.append(eventHeading, eventList);
+
+  const inspector = element("section", undefined, "trace-inspector");
+  const inspectorHeading = element("strong", copy.traceInspector, "trace-pane-heading");
+  const tabList = element("div", undefined, "trace-inspector-tabs");
+  tabList.setAttribute("role", "tablist");
+  const inspectorContent = element("div", undefined, "trace-inspector-content");
+  inspectorContent.setAttribute("role", "tabpanel");
+  let activeTab = "overview";
+  const tabs = [
+    ["overview", copy.traceTabOverview],
+    ["parameters", copy.traceTabParameters],
+    ["result", copy.traceTabResult],
+    ["schema", copy.traceTabSchema],
+    ["timing", copy.traceTabTiming],
+  ];
+
+  const renderInspector = () => {
+    const selected = traces.filter((entry) => selectedIds.has(entry.id));
+    inspectorContent.replaceChildren();
+    if (selected.length === 0) {
+      inspectorContent.append(element("div", copy.traceNoSelection, "trace-inspector-empty"));
+      return;
     }
-    selectionStatus.textContent = selected.size > 0
-      ? copy.traceSelectedCountTemplate.replace("{count}", String(selected.size))
-      : copy.traceSelectionHint;
-    clearSelection.hidden = selected.size === 0;
+    if (selected.length > 1) {
+      const details = element("dl", undefined, "trace-inspector-grid");
+      detailItem(details, copy.traceSelectedCountTemplate.replace("{count}", String(selected.length)), selected.length);
+      detailItem(details, copy.traceDuration, formatTraceDuration(selected.reduce((sum, entry) => sum + (entry.durationMs ?? 0), 0)));
+      detailItem(details, copy.traceStatus, `${selected.filter((entry) => entry.status === "succeeded").length} / ${selected.length}`);
+      inspectorContent.append(details);
+      return;
+    }
+
+    const entry = selected[0];
+    if (activeTab === "overview") {
+      const details = element("dl", undefined, "trace-inspector-grid");
+      detailItem(details, copy.traceKinds[entry.kind], entry.kind === "llm" ? entry.model || entry.name : entry.name);
+      detailItem(details, copy.traceStatus, copy.traceStatuses[entry.status] ?? entry.status);
+      detailItem(details, copy.traceAttempt, entry.attempt);
+      detailItem(details, copy.traceRoundTemplate.replace("{round}", entry.round ?? copy.traceRoundUnknown), entry.round ?? copy.traceRoundUnknown);
+      detailItem(details, copy.traceDuration, formatTraceDuration(entry.durationMs));
+      if (entry.kind === "llm") {
+        detailItem(details, copy.inputTokens, entry.inputTokens ?? copy.none);
+        detailItem(details, copy.outputTokens, entry.outputTokens ?? copy.none);
+      }
+      inspectorContent.append(details);
+    } else if (activeTab === "parameters") {
+      inspectorContent.append(traceField(
+        entry.kind === "llm" ? copy.traceInput : copy.traceArguments,
+        entry.input ?? entry.rawContent,
+        copy.traceNoInput,
+      ));
+    } else if (activeTab === "result") {
+      inspectorContent.append(traceField(copy.traceResult, entry.output, copy.traceNoOutput));
+      if (entry.errorDetail) inspectorContent.append(traceField(copy.error, entry.errorDetail, copy.traceNoOutput));
+    } else if (activeTab === "schema") {
+      inspectorContent.append(traceField(copy.traceSchema, entry.schema, copy.noRawContent));
+    } else {
+      const details = element("dl", undefined, "trace-inspector-grid");
+      detailItem(details, copy.started, formatDate(entry.startedAt));
+      detailItem(details, copy.finished, formatDate(entry.finishedAt));
+      detailItem(details, copy.traceDuration, formatTraceDuration(entry.durationMs));
+      inspectorContent.append(details);
+    }
   };
+  const tabButtons = new Map();
+  for (const [id, label] of tabs) {
+    const button = element("button", label, "trace-inspector-tab");
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(activeTab === id));
+    button.addEventListener("click", () => {
+      activeTab = id;
+      for (const [tabId, tabButton] of tabButtons) {
+        tabButton.setAttribute("aria-selected", String(tabId === activeTab));
+      }
+      renderInspector();
+    });
+    tabButtons.set(id, button);
+    tabList.append(button);
+  }
+  inspector.append(inspectorHeading, tabList, inspectorContent);
+  workbench.append(eventPane, inspector);
+
+  const selectedIds = new Set();
+  const setSelection = (selected) => {
+    selectedIds.clear();
+    for (const id of selected) selectedIds.add(id);
+    for (const [id, button] of eventButtons) {
+      const isSelected = selectedIds.has(id);
+      button.classList.toggle("is-selected", isSelected);
+      button.setAttribute("aria-pressed", String(isSelected));
+      bars.get(id)?.bar.classList.toggle("is-selected", isSelected);
+    }
+    selectionStatus.textContent = selectedIds.size > 0
+      ? copy.traceSelectedCountTemplate.replace("{count}", String(selectedIds.size))
+      : copy.traceSelectionHint;
+    clearSelection.hidden = selectedIds.size === 0;
+    renderInspector();
+  };
+  clearSelection.addEventListener("click", () => setSelection(new Set()));
 
   let dragStart;
-  const localPoint = (event) => {
-    const bounds = scene.getBoundingClientRect();
-    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  };
-  scene.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest("button")) return;
-    dragStart = localPoint(event);
-    selectionBox.hidden = false;
-    selectionBox.style.left = `${dragStart.x}px`;
-    selectionBox.style.top = `${dragStart.y}px`;
-    selectionBox.style.width = "0px";
-    selectionBox.style.height = "0px";
-    scene.setPointerCapture(event.pointerId);
-  });
-  scene.addEventListener("pointermove", (event) => {
-    if (!dragStart) return;
-    const point = localPoint(event);
-    const left = Math.min(dragStart.x, point.x);
-    const top = Math.min(dragStart.y, point.y);
-    selectionBox.style.left = `${left}px`;
-    selectionBox.style.top = `${top}px`;
-    selectionBox.style.width = `${Math.abs(point.x - dragStart.x)}px`;
-    selectionBox.style.height = `${Math.abs(point.y - dragStart.y)}px`;
-  });
-  scene.addEventListener("pointerup", (event) => {
-    if (!dragStart) return;
-    const point = localPoint(event);
-    const bounds = {
-      left: Math.min(dragStart.x, point.x),
-      right: Math.max(dragStart.x, point.x),
-      top: Math.min(dragStart.y, point.y),
-      bottom: Math.max(dragStart.y, point.y),
-    };
-    const dragged = Math.abs(point.x - dragStart.x) > 5 || Math.abs(point.y - dragStart.y) > 5;
-    const selected = new Set();
-    if (dragged) {
-      for (const node of scene.querySelectorAll(".trace-sequence-node")) {
-        const x = Number.parseFloat(node.style.left);
-        const y = Number.parseFloat(node.style.top);
-        if (x + node.offsetWidth >= bounds.left && x <= bounds.right && y + node.offsetHeight >= bounds.top && y <= bounds.bottom) {
-          selected.add(Number(node.dataset.traceId));
+  const localX = (event, plot) => event.clientX - plot.getBoundingClientRect().left;
+  for (const plot of plots.values()) {
+    plot.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest("button")) return;
+      dragStart = localX(event, plot);
+      selectionBox.hidden = false;
+      selectionBox.style.left = `${labelWidth + dragStart}px`;
+      selectionBox.style.width = "0px";
+      plot.setPointerCapture(event.pointerId);
+    });
+    plot.addEventListener("pointermove", (event) => {
+      if (dragStart === undefined) return;
+      const point = localX(event, plot);
+      selectionBox.style.left = `${labelWidth + Math.min(dragStart, point)}px`;
+      selectionBox.style.width = `${Math.abs(point - dragStart)}px`;
+    });
+    plot.addEventListener("pointerup", (event) => {
+      if (dragStart === undefined) return;
+      const plotWidth = Number.parseFloat(plot.style.width);
+      const endX = Math.max(0, Math.min(plotWidth, localX(event, plot)));
+      const fromRatio = Math.min(dragStart, endX) / plotWidth;
+      const toRatio = Math.max(dragStart, endX) / plotWidth;
+      const selected = new Set();
+      if (Math.abs(endX - dragStart) > 5) {
+        for (const [id, position] of bars) {
+          const entry = traces.find((trace) => trace.id === id);
+          const entryEnd = position.startRatio + position.widthRatio;
+          if (entry && entryEnd >= fromRatio && position.startRatio <= toRatio) selected.add(id);
         }
       }
-    }
-    selectionBox.hidden = true;
-    dragStart = undefined;
-    setSelection(selected);
-  });
-  scene.addEventListener("pointercancel", () => {
-    dragStart = undefined;
-    selectionBox.hidden = true;
-  });
+      selectionBox.hidden = true;
+      dragStart = undefined;
+      setSelection(selected);
+    });
+    plot.addEventListener("pointercancel", () => {
+      dragStart = undefined;
+      selectionBox.hidden = true;
+    });
+  }
 
-  scroll.append(scene);
-  return append(element("div", undefined, "trace-experience"), toolbar, scroll, detailList);
+  overview.append(overviewHeader, overviewScroll);
+  setSelection(new Set([traces[0].id]));
+  return append(experience, overview, selectionToolbar, workbench);
 }
 
 async function renderJobDetails(version, jobId) {
