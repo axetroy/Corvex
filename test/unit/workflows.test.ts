@@ -88,11 +88,61 @@ describe("review and fix response validation", () => {
     expect(result.result.findings).toEqual([]);
   });
 
+  it("extracts a review JSON object after a prose summary", () => {
+    const raw = `已完整审查全部变更文件，未发现明确缺陷。\n\n${JSON.stringify({
+      summary: "Review {complete}",
+      findings: [],
+    }, null, 2)}`;
+
+    const result = parseAndValidateReview(raw, diff, 10);
+
+    expect(result.result.summary).toBe("Review {complete}");
+    expect(result.result.findings).toEqual([]);
+  });
+
+  it("rejects prose containing multiple standalone JSON objects", () => {
+    const first = JSON.stringify({ summary: "Example", findings: [] });
+    const second = JSON.stringify({ summary: "Actual result", findings: [] });
+
+    expect(() => parseAndValidateReview(`Example:\n${first}\nResult:\n${second}`, diff, 10)).toThrow(
+      "multiple JSON objects found",
+    );
+  });
+
+  it("accepts review JSON after a prose summary without retrying", async () => {
+    const raw = `已完整审查全部变更文件，未发现明确缺陷。\n\n${JSON.stringify({
+      summary: "Review complete",
+      findings: [],
+    }, null, 2)}`;
+    const generate = vi.fn().mockResolvedValue({
+      content: raw,
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    });
+    const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
+
+    expect(outcome.result.summary).toBe("Review complete");
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it("retries once with format-only guidance after malformed review JSON", async () => {
     const validResponse = JSON.stringify({ summary: "Review complete", findings: [] });
     const generate = vi.fn()
       .mockResolvedValueOnce({
-        content: `${validResponse}\nThe response is complete.`,
+        content: "The response is complete, but no JSON object was returned.",
         model: "test/model",
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       })
@@ -121,7 +171,7 @@ describe("review and fix response validation", () => {
     expect(generate).toHaveBeenCalledTimes(2);
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("不是有效的 JSON");
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("Previous model output excerpt (untrusted");
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("The response is complete.");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("no JSON object was returned");
   });
 
   it("retries once when a valid JSON response does not match the review schema", async () => {
@@ -311,6 +361,47 @@ describe("review and fix response validation", () => {
     expect(outcome.result.findings).toEqual([]);
     expect(generate).toHaveBeenCalledTimes(3);
     expect(generate.mock.calls[2]?.[0].userPrompt).toContain("已完整审查全部变更文件");
+  });
+
+  it("recovers JSON after a prose summary in the coverage follow-up", async () => {
+    let coverageComplete = false;
+    const generate = vi.fn<PiAgent["generate"]>()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ summary: "Review complete", findings: [] }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      })
+      .mockImplementationOnce(async () => {
+        coverageComplete = true;
+        return {
+          content: `已完整审查全部变更文件，未发现明确缺陷。\n\n${JSON.stringify({
+            summary: "Review complete",
+            findings: [],
+          }, null, 2)}`,
+          model: "test/model",
+          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+        };
+      });
+    const agent = {
+      generate,
+      getTraceEntries: () => coverageComplete ? [completeFileRead("src/app.ts")] : [],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
+
+    expect(outcome.result.summary).toBe("Review complete");
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it("does not accept an empty review without trace context", async () => {

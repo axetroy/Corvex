@@ -162,6 +162,57 @@ function fingerprint(finding: Omit<Finding, "fingerprint">): string {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+// 按行寻找独立 JSON 对象，允许模型先输出总结，但不从普通行内文本猜测 JSON 边界。
+function extractSingleJsonObject(content: string): string | undefined {
+  const candidates: string[] = [];
+  let candidate: string[] | undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (const line of content.split(/\r?\n/)) {
+    let value = line;
+    if (!candidate) {
+      const firstCharacter = line.search(/\S/);
+      if (firstCharacter < 0 || line[firstCharacter] !== "{") continue;
+      candidate = [];
+      depth = 0;
+      inString = false;
+      escaped = false;
+      value = line.slice(firstCharacter);
+    }
+    candidate.push(value);
+
+    for (const character of value) {
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+      } else if (character === '"') {
+        inString = true;
+      } else if (character === "{") {
+        depth++;
+      } else if (character === "}") {
+        depth--;
+      }
+    }
+
+    if (depth === 0 && !inString) {
+      const parsedCandidate = candidate.join("\n");
+      try {
+        JSON.parse(parsedCandidate);
+        candidates.push(parsedCandidate);
+      } catch {
+        // 忽略不完整或格式错误的候选对象，继续检查后续独立对象。
+      }
+      candidate = undefined;
+    }
+  }
+
+  if (candidates.length > 1) throw new SyntaxError("multiple JSON objects found in model response");
+  return candidates[0];
+}
+
 function parseReviewJson(content: string): unknown {
   try {
     return JSON.parse(content);
@@ -173,6 +224,8 @@ function parseReviewJson(content: string): unknown {
         // Keep the original parse error when the complete response is still invalid.
       }
     }
+    const extracted = extractSingleJsonObject(content);
+    if (extracted !== undefined) return JSON.parse(extracted);
     throw error;
   }
 }
