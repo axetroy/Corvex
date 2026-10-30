@@ -1,4 +1,4 @@
-import { open, realpath, type FileHandle } from "node:fs/promises";
+import { open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const maxReadBytes = 64 << 10;
 const defaultMaxLines = 200;
 const maxLinesPerRead = 1000;
+const maxDirectoryEntries = 200;
 
 interface ReadFileRange {
   startLine?: number;
@@ -16,6 +17,91 @@ interface ReadFileRange {
 function isWithin(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+interface ResolvedAllowedPath {
+  path: string;
+  root: string;
+}
+
+async function resolveAllowedPath(requestedPath: string, allowedRoots: string[]): Promise<ResolvedAllowedPath> {
+  if (!requestedPath.trim() || requestedPath.includes("\0")) {
+    throw new Error("file path is empty or invalid");
+  }
+  if (allowedRoots.length === 0) throw new Error("no file read roots are configured");
+
+  const roots = await Promise.all(allowedRoots.map((root) => realpath(root)));
+  const candidate = isAbsolute(requestedPath)
+    ? resolve(requestedPath)
+    : resolve(roots[0]!, requestedPath);
+  const hasParentSegment = requestedPath.split(/[\\/]+/).includes("..");
+  if (hasParentSegment && !roots.some((root) => isWithin(root, candidate))) {
+    throw new Error(
+      "file path is outside the configured read-only roots; use a repository-relative path without '..' segments",
+    );
+  }
+
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(candidate);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      // 不猜测文件命名规则，引导模型先核对父目录条目和候选路径状态。
+      throw new Error(
+        `${error.message}; inspect the parent directory with read_dir and verify the intended path with stat before retrying`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  const root = roots.find((allowedRoot) => isWithin(allowedRoot, canonicalPath));
+  if (!root) throw new Error("file path is outside the configured read-only roots");
+  return { path: canonicalPath, root };
+}
+
+function pathType(info: Awaited<ReturnType<typeof stat>>): "file" | "directory" | "other" {
+  if (!info) return "other";
+  if (info.isFile()) return "file";
+  if (info.isDirectory()) return "directory";
+  return "other";
+}
+
+export async function readAllowedDirectory(
+  requestedPath: string,
+  allowedRoots: string[],
+): Promise<{ path: string; entries: { name: string; type: string }[]; truncated: boolean }> {
+  const resolvedPath = await resolveAllowedPath(requestedPath, allowedRoots);
+  const info = await stat(resolvedPath.path);
+  if (!info.isDirectory()) {
+    throw new Error("requested path is not a directory; provide a directory path");
+  }
+
+  // 限制目录结果数量，避免仓库根目录或生成目录导致工具输出过大。
+  const allEntries = await readdir(resolvedPath.path, { withFileTypes: true });
+  allEntries.sort((left, right) => left.name.localeCompare(right.name));
+  const entries = allEntries.slice(0, maxDirectoryEntries).map((entry) => ({
+    name: entry.name,
+    type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other",
+  }));
+  return {
+    path: relative(resolvedPath.root, resolvedPath.path) || ".",
+    entries,
+    truncated: allEntries.length > maxDirectoryEntries,
+  };
+}
+
+export async function statAllowedPath(
+  requestedPath: string,
+  allowedRoots: string[],
+): Promise<{ path: string; type: "file" | "directory" | "other"; size: number; modifiedAt: string }> {
+  const resolvedPath = await resolveAllowedPath(requestedPath, allowedRoots);
+  const info = await stat(resolvedPath.path);
+  return {
+    path: relative(resolvedPath.root, resolvedPath.path) || ".",
+    type: pathType(info),
+    size: info.size,
+    modifiedAt: info.mtime.toISOString(),
+  };
 }
 
 async function readLineRange(
@@ -111,9 +197,6 @@ export async function readAllowedFile(
   maxBytes = maxReadBytes,
   range?: ReadFileRange,
 ): Promise<string> {
-  if (!requestedPath.trim() || requestedPath.includes("\0")) {
-    throw new Error("file path is empty or invalid");
-  }
   if (maxBytes <= 0 || maxBytes > maxReadBytes) {
     throw new Error(`file read limit must be between 1 and ${maxReadBytes} bytes`);
   }
@@ -128,25 +211,20 @@ export async function readAllowedFile(
   ) {
     throw new Error(`line range must use a positive startLine and maxLines between 1 and ${maxLinesPerRead}`);
   }
-  if (allowedRoots.length === 0) throw new Error("no file read roots are configured");
-
-  const roots = await Promise.all(allowedRoots.map((root) => realpath(root)));
-  const candidate = isAbsolute(requestedPath)
-    ? requestedPath
-    : resolve(roots[0]!, requestedPath);
-  const canonicalPath = await realpath(candidate);
-  if (!roots.some((root) => isWithin(root, canonicalPath))) {
-    throw new Error("file path is outside the configured read-only roots");
-  }
+  const { path: canonicalPath } = await resolveAllowedPath(requestedPath, allowedRoots);
 
   const file = await open(canonicalPath, "r");
   let content: Buffer;
   try {
     const fileInfo = await file.stat();
-    if (!fileInfo.isFile()) throw new Error("requested path is not a regular file");
+    if (!fileInfo.isFile()) {
+      throw new Error("requested path is not a regular file; provide a file path, not a directory");
+    }
     if (hasRange) return await readLineRange(file, startLine, maxLines, maxBytes);
     if (fileInfo.size > maxBytes) {
-      throw new Error(`file exceeds the ${maxBytes}-byte read limit; use startLine and maxLines to read it in ranges`);
+      throw new Error(
+        `file exceeds the ${maxBytes}-byte read limit; retry with startLine: 1 and maxLines up to ${maxLinesPerRead}, then continue at the next line reported in the range header`,
+      );
     }
     // 多读一个字节，捕捉 stat 之后文件变大导致的限额绕过。
     const buffer = Buffer.alloc(maxBytes + 1);
@@ -190,6 +268,32 @@ export function createReadOnlyFileExtension(allowedRoots: string[]): (pi: Extens
             maxLines: params.maxLines,
           }),
         }],
+        details: {},
+      }),
+    });
+    pi.registerTool({
+      name: "read_dir",
+      label: "List directory",
+      description: `List up to ${maxDirectoryEntries} immediate entries in a directory under the fixed repository worktree or trusted skill roots. Use this to inspect actual names after a read_file ENOENT; entries are not followed recursively.`,
+      promptSnippet: "read_dir: List immediate directory entries when a requested path is missing or its actual name is uncertain.",
+      parameters: Type.Object({
+        path: Type.String({ minLength: 1, maxLength: 4096 }),
+      }),
+      execute: async (_toolCallId, params) => ({
+        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(params.path, roots)) }],
+        details: {},
+      }),
+    });
+    pi.registerTool({
+      name: "stat",
+      label: "Inspect path",
+      description: "Inspect a file or directory under the fixed repository worktree or trusted skill roots. Returns the canonical repository-relative path and whether it is a file, directory, or other entry.",
+      promptSnippet: "stat: Verify an exact candidate path and determine whether it is a file or directory before retrying read_file.",
+      parameters: Type.Object({
+        path: Type.String({ minLength: 1, maxLength: 4096 }),
+      }),
+      execute: async (_toolCallId, params) => ({
+        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(params.path, roots)) }],
         details: {},
       }),
     });

@@ -2,7 +2,13 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readAllowedFile } from "../../src/agent/repo-read.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  createReadOnlyFileExtension,
+  readAllowedDirectory,
+  readAllowedFile,
+  statAllowedPath,
+} from "../../src/agent/repo-read.js";
 
 describe("readAllowedFile", () => {
   let root: string;
@@ -39,6 +45,66 @@ describe("readAllowedFile", () => {
     await expect(readAllowedFile("../outside.txt", [root, skills])).rejects.toThrow(
       "outside the configured read-only roots",
     );
+    await expect(readAllowedFile("../missing.txt", [root, skills])).rejects.toThrow(
+      "use a repository-relative path without '..' segments",
+    );
+  });
+
+  it("explains that read_file requires a file rather than a directory", async () => {
+    await mkdir(join(root, "nested"));
+
+    await expect(readAllowedFile("nested", [root])).rejects.toThrow(
+      "provide a file path, not a directory",
+    );
+  });
+
+  it("guides path inspection when a requested file is missing", async () => {
+    await expect(readAllowedFile("missing.ts", [root])).rejects.toThrow(
+      "inspect the parent directory with read_dir and verify the intended path with stat",
+    );
+  });
+
+  it("lists immediate directory entries and reports exact path metadata", async () => {
+    await mkdir(join(root, "nested"));
+    await writeFile(join(root, "nested", "file.ts"), "value");
+
+    await expect(readAllowedDirectory(".", [root])).resolves.toMatchObject({
+      path: ".",
+      entries: expect.arrayContaining([
+        { name: "nested", type: "directory" },
+        { name: "README.md", type: "file" },
+      ]),
+      truncated: false,
+    });
+    await expect(statAllowedPath("nested/file.ts", [root])).resolves.toMatchObject({
+      path: "nested/file.ts",
+      type: "file",
+      size: 5,
+    });
+    await expect(statAllowedPath("nested", [root])).resolves.toMatchObject({
+      path: "nested",
+      type: "directory",
+    });
+  });
+
+  it("keeps directory listing and metadata inspection inside allowed roots", async () => {
+    await expect(readAllowedDirectory(outside, [root])).rejects.toThrow(
+      "outside the configured read-only roots",
+    );
+    await expect(statAllowedPath(outside, [root])).rejects.toThrow(
+      "outside the configured read-only roots",
+    );
+  });
+
+  it("registers read_dir and stat as agent tools", () => {
+    const registered: string[] = [];
+    const extension = createReadOnlyFileExtension([root]);
+
+    extension({
+      registerTool: (tool: { name: string }) => registered.push(tool.name),
+    } as unknown as ExtensionAPI);
+
+    expect(registered).toEqual(expect.arrayContaining(["read_file", "read_dir", "stat"]));
   });
 
   it("rejects oversized and non-UTF-8 files", async () => {
@@ -47,6 +113,7 @@ describe("readAllowedFile", () => {
     await expect(readAllowedFile("large.txt", [root], 4)).rejects.toThrow(
       "exceeds the 4-byte read limit",
     );
+    await expect(readAllowedFile("large.txt", [root], 4)).rejects.toThrow("startLine: 1");
     await expect(readAllowedFile("invalid.txt", [root])).rejects.toThrow("not valid UTF-8");
   });
 

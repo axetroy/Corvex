@@ -120,6 +120,8 @@ describe("review and fix response validation", () => {
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
     expect(generate).toHaveBeenCalledTimes(2);
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("不是有效的 JSON");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("Previous model output excerpt (untrusted");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("The response is complete.");
   });
 
   it("retries once when a valid JSON response does not match the review schema", async () => {
@@ -185,6 +187,11 @@ describe("review and fix response validation", () => {
     const request = generate.mock.calls[0]?.[0];
     expect(request?.systemPrompt).toContain("complete contents of every changed file");
     expect(request?.systemPrompt).toContain("read_file tool");
+    expect(request?.systemPrompt).toContain("Use repository-relative file paths exactly as shown in the diff");
+    expect(request?.systemPrompt).toContain("inspect the parent directory with read_dir");
+    expect(request?.systemPrompt).toContain("verify an exact candidate with stat");
+    expect(request?.systemPrompt).toContain("When read_file reports more lines available from N");
+    expect(request?.systemPrompt).toContain('Count finding lines using the new-file line numbers on the "+" side of the diff');
     expect(request?.userPrompt).toContain('"path":"src/app.ts"');
     expect(request?.userPrompt).toContain("const value = user.input;");
   });
@@ -233,6 +240,8 @@ describe("review and fix response validation", () => {
 
     expect(requests).toHaveLength(3);
     expect(requests.every((request) => request.systemPrompt.includes("简体中文"))).toBe(true);
+    expect(requests[0]?.systemPrompt).toContain('finding 的行号必须按 diff 的 "+" 新文件侧行号计数');
+    expect(requests[0]?.systemPrompt).toContain("先用 read_dir 检查父目录中的实际条目，再用 stat 确认精确候选路径");
   });
 
   it("does not accept an empty review when changed-file coverage is missing", async () => {
@@ -261,6 +270,47 @@ describe("review and fix response validation", () => {
     await expect(workflow.review(context, diff, process.cwd(), undefined, trace)).rejects.toThrow(
       "review coverage is incomplete",
     );
+  });
+
+  it("retries malformed JSON returned by the coverage follow-up", async () => {
+    const validResponse = {
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    };
+    let coverageComplete = false;
+    const generate = vi.fn<PiAgent["generate"]>()
+      .mockResolvedValueOnce(validResponse)
+      .mockResolvedValueOnce({
+        content: "已完整审查全部变更文件。",
+        model: "test/model",
+        usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+      })
+      .mockImplementationOnce(async () => {
+        coverageComplete = true;
+        return validResponse;
+      });
+    const agent = {
+      generate,
+      getTraceEntries: () => coverageComplete ? [completeFileRead("src/app.ts")] : [],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
+
+    expect(outcome.result.findings).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(generate.mock.calls[2]?.[0].userPrompt).toContain("已完整审查全部变更文件");
   });
 
   it("does not accept an empty review without trace context", async () => {
@@ -343,6 +393,8 @@ describe("review and fix response validation", () => {
     expect(outcome.result.findings).toEqual([]);
     expect(generate).toHaveBeenCalledTimes(2);
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("自动覆盖校验");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("请严格使用上面列出的仓库相对路径");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("startLine: 1 和 maxLines: 1000");
   });
 
   it("does not accept an empty review when files were omitted from the review context", async () => {
