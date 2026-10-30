@@ -79,6 +79,8 @@ class ReviewJsonDecodeError extends Error {
   }
 }
 
+class ReviewJsonValidationError extends Error {}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -159,15 +161,19 @@ export function parseAndValidateReview(
   } catch (error) {
     throw new ReviewJsonDecodeError(error);
   }
-  if (!isRecord(parsed)) throw new Error("model returned invalid review JSON: top-level value must be an object");
+  if (!isRecord(parsed)) {
+    throw new ReviewJsonValidationError("model returned invalid review JSON: top-level value must be an object");
+  }
   if (Object.keys(parsed).some((key) => !["summary", "findings"].includes(key))) {
-    throw new Error("model returned invalid review JSON: unexpected top-level fields");
+    throw new ReviewJsonValidationError("model returned invalid review JSON: unexpected top-level fields");
   }
   if (!validText(parsed.summary, 1, 4000)) {
-    throw new Error("model returned invalid review JSON: summary must be non-empty text of at most 4000 characters");
+    throw new ReviewJsonValidationError(
+      "model returned invalid review JSON: summary must be non-empty text of at most 4000 characters",
+    );
   }
   if (!Array.isArray(parsed.findings)) {
-    throw new Error("model returned invalid review JSON: findings must be an array");
+    throw new ReviewJsonValidationError("model returned invalid review JSON: findings must be an array");
   }
   const linesByFile = new Map<string, Map<number, string>>();
   for (const change of diff.changes) {
@@ -290,8 +296,12 @@ export class ReviewWorkflow {
     try {
       parsed = parseResponse(response);
     } catch (error) {
-      if (!(error instanceof ReviewJsonDecodeError)) throw error;
-      const retryPrompt = `${userPrompt}\n\nYour previous response was not valid JSON. Return exactly one complete JSON object matching the required review format. Do not include Markdown, explanations, or any other text.`;
+      if (!(error instanceof ReviewJsonDecodeError) && !(error instanceof ReviewJsonValidationError)) throw error;
+      const retryReason =
+        error instanceof ReviewJsonDecodeError
+          ? "Your previous response was not valid JSON."
+          : "Your previous response did not match the required review schema.";
+      const retryPrompt = `${userPrompt}\n\n${retryReason} Return exactly one complete JSON object matching the required review format. Do not include Markdown, explanations, or any other text.`;
       if (Buffer.byteLength(retryPrompt) > this.maxContextBytes) throw error;
       const retryResponse = await this.agent.generate(
         { ...request, userPrompt: retryPrompt },

@@ -96,12 +96,18 @@ describe("review and fix response validation", () => {
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("previous response was not valid JSON");
   });
 
-  it("does not retry recovered JSON that fails review schema validation", async () => {
-    const generate = vi.fn(async () => ({
-      content: `${JSON.stringify({ summary: "Review complete", findings: [], extra: true })}"`,
-      model: "test/model",
-      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-    }));
+  it("retries once when a valid JSON response does not match the review schema", async () => {
+    const generate = vi.fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ reviews: [{ path: "src/app.ts", line: 3, severity: "warning", comment: "Review" }] }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ summary: "Review complete", findings: [] }),
+        model: "test/model",
+        usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+      });
     const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
     const context = {
       projectId: 1,
@@ -114,10 +120,12 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    await expect(workflow.review(context, diff, process.cwd())).rejects.toThrow(
-      "unexpected top-level fields",
-    );
-    expect(generate).toHaveBeenCalledTimes(1);
+    const outcome = await workflow.review(context, diff, process.cwd());
+
+    expect(outcome.result.summary).toBe("Review complete");
+    expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("did not match the required review schema");
   });
 
   it("reports which top-level review field has an invalid shape", () => {
