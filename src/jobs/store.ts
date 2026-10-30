@@ -841,6 +841,16 @@ export class JobStore {
     return { ...mapJobSummary(job), attempts, timeline, trajectory };
   }
 
+  getJobTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
+    if (!jobId.trim() || !Number.isSafeInteger(attempt) || attempt <= 0) {
+      throw new Error("job trace query requires a job ID and positive attempt number");
+    }
+    return this.db
+      .prepare("SELECT * FROM job_trace WHERE job_id=? AND attempt=? ORDER BY started_at,id")
+      .all(jobId, attempt)
+      .map((value) => readJobTrace(value as Record<string, unknown>));
+  }
+
   activeJobIds(): Set<string> {
     const rows = this.db
       .prepare(`SELECT id FROM jobs WHERE status IN (${active.map(() => "?").join(",")})`)

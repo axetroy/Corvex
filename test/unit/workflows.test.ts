@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PiAgent } from "../../src/agent/pi.js";
+import type { JobTraceContext, PiAgent } from "../../src/agent/pi.js";
 import { parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
+import type { JobTraceEntry } from "../../src/jobs/model.js";
 import { parseAndValidateReview, ReviewWorkflow } from "../../src/review/workflow.js";
 
 const diff: DiffResult = {
@@ -19,6 +20,30 @@ const diff: DiffResult = {
     },
   ],
 };
+
+const reviewTrace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+
+function completeFileRead(path: string): JobTraceEntry {
+  return {
+    id: 1,
+    attempt: 1,
+    round: 1,
+    kind: "tool",
+    name: "read_file",
+    status: "succeeded",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: "2026-01-01T00:00:00.001Z",
+    durationMs: 1,
+    model: null,
+    inputTokens: null,
+    outputTokens: null,
+    input: JSON.stringify({ path, startLine: 1, maxLines: 4 }),
+    output: JSON.stringify({ content: [{ type: "text", text: "[Lines 1-4]\nconst value = user.input;\n" }], details: {} }),
+    schema: null,
+    rawContent: null,
+    errorDetail: null,
+  };
+}
 
 describe("review and fix response validation", () => {
   it("accepts only review evidence present on the exact added line", () => {
@@ -76,7 +101,8 @@ describe("review and fix response validation", () => {
         model: "test/model",
         usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
       });
-    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
     const context = {
       projectId: 1,
       mrIid: 1,
@@ -88,7 +114,7 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    const outcome = await workflow.review(context, diff, process.cwd());
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
 
     expect(outcome.result.summary).toBe("Review complete");
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
@@ -108,7 +134,8 @@ describe("review and fix response validation", () => {
         model: "test/model",
         usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
       });
-    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
     const context = {
       projectId: 1,
       mrIid: 1,
@@ -120,7 +147,7 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    const outcome = await workflow.review(context, diff, process.cwd());
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
 
     expect(outcome.result.summary).toBe("Review complete");
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
@@ -135,6 +162,62 @@ describe("review and fix response validation", () => {
   });
 
   it("asks the agent to read changed files while preserving diff evidence", async () => {
+    const generate = vi.fn<PiAgent["generate"]>(async () => ({
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
+
+    const request = generate.mock.calls[0]?.[0];
+    expect(request?.systemPrompt).toContain("complete contents of every changed file");
+    expect(request?.systemPrompt).toContain("read_file tool");
+    expect(request?.userPrompt).toContain('"path":"src/app.ts"');
+    expect(request?.userPrompt).toContain("const value = user.input;");
+  });
+
+  it("does not accept an empty review when changed-file coverage is missing", async () => {
+    const generate = vi.fn(async () => ({
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const agent = {
+      generate,
+      getTraceEntries: () => [],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const trace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+
+    await expect(workflow.review(context, diff, process.cwd(), undefined, trace)).rejects.toThrow(
+      "review coverage is incomplete",
+    );
+  });
+
+  it("does not accept an empty review without trace context", async () => {
     const generate = vi.fn(async () => ({
       content: JSON.stringify({ summary: "Review complete", findings: [] }),
       model: "test/model",
@@ -152,13 +235,112 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    await workflow.review(context, diff, process.cwd());
+    await expect(workflow.review(context, diff, process.cwd())).rejects.toThrow(
+      "review coverage is unavailable without trace context",
+    );
+  });
 
-    const request = generate.mock.calls[0]?.[0];
-    expect(request?.systemPrompt).toContain("complete contents of every changed file");
-    expect(request?.systemPrompt).toContain("read_file tool");
-    expect(request?.userPrompt).toContain('"path":"src/app.ts"');
-    expect(request?.userPrompt).toContain("const value = user.input;");
+  it("accepts an empty review after contiguous ranges cover every changed file", async () => {
+    const traces: JobTraceEntry[] = [];
+    const response = {
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    };
+    const generate = vi.fn<PiAgent["generate"]>()
+      .mockResolvedValueOnce(response)
+      .mockImplementationOnce(async () => {
+        const createReadTrace = (id: number, startLine: number, text: string): JobTraceEntry => ({
+          id,
+          attempt: 1,
+          round: id,
+          kind: "tool",
+          name: "read_file",
+          status: "succeeded",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          finishedAt: "2026-01-01T00:00:00.001Z",
+          durationMs: 1,
+          model: null,
+          inputTokens: null,
+          outputTokens: null,
+          input: JSON.stringify({ path: "src/app.ts", startLine, maxLines: 2 }),
+          output: JSON.stringify({ content: [{ type: "text", text }], details: {} }),
+          schema: null,
+          rawContent: null,
+          errorDetail: null,
+        });
+        traces.push(
+          createReadTrace(1, 1, "[Lines 1-2; more lines available from 3]\nconst value = user.input;\n"),
+          createReadTrace(2, 3, "[Lines 3-4]\nexport {};\n"),
+        );
+        return response;
+      });
+    const agent = {
+      generate,
+      getTraceEntries: () => traces,
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const trace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+
+    const outcome = await workflow.review(context, diff, process.cwd(), undefined, trace);
+
+    expect(outcome.result.findings).toEqual([]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("Automated coverage verification");
+  });
+
+  it("does not accept an empty review when files were omitted from the review context", async () => {
+    const generate = vi.fn(async () => ({
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    await expect(
+      workflow.review(context, { ...diff, skippedFiles: 1 }, process.cwd()),
+    ).rejects.toThrow("1 changed file(s) were omitted");
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report no reviewable changes when every changed file was omitted", async () => {
+    const generate = vi.fn();
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    await expect(
+      workflow.review(context, { ...diff, changes: [], skippedFiles: 1 }, process.cwd()),
+    ).rejects.toThrow("1 changed file(s) were omitted");
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it("logs the raw model response when review JSON is rejected", async () => {

@@ -10,7 +10,7 @@ import {
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { CorvexConfig } from "../config/config.js";
-import type { JobType } from "../jobs/model.js";
+import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
 import { createWebReadExtension } from "./web-read.js";
@@ -43,6 +43,10 @@ export class PiAgent {
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
   ) {}
+
+  getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
+    return this.store?.getJobTraceEntries(jobId, attempt) ?? [];
+  }
 
   async generate(
     request: ModelRequest,

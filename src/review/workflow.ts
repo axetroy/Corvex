@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import { PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { Change, DiffResult } from "../git/types.js";
+import type { JobTraceEntry } from "../jobs/model.js";
 
 export interface ReviewContext {
   projectId: number;
@@ -92,6 +94,62 @@ function validText(value: unknown, min: number, max: number): value is string {
     value.trim().length >= min &&
     value.trim().length <= max
   );
+}
+
+function changedFileIsFullyRead(path: string, cwd: string, traces: JobTraceEntry[]): boolean {
+  const expectedPath = resolve(cwd, path);
+  const ranges: { start: number; end: number; hasMore: boolean }[] = [];
+
+  for (const trace of traces) {
+    if (trace.kind !== "tool" || trace.name !== "read_file" || trace.status !== "succeeded" || !trace.input) {
+      continue;
+    }
+    let args: unknown;
+    let output: unknown;
+    try {
+      args = JSON.parse(trace.input);
+      output = trace.output ? JSON.parse(trace.output) : undefined;
+    } catch {
+      continue;
+    }
+    if (!isRecord(args) || typeof args.path !== "string" || resolve(cwd, args.path) !== expectedPath) continue;
+    const ranged = args.startLine !== undefined || args.maxLines !== undefined;
+    if (!ranged) return true;
+    if (args.startLine !== undefined && (!Number.isSafeInteger(args.startLine) || Number(args.startLine) <= 0)) {
+      continue;
+    }
+    if (args.maxLines !== undefined && (!Number.isSafeInteger(args.maxLines) || Number(args.maxLines) <= 0)) {
+      continue;
+    }
+    const expectedStart = args.startLine ?? 1;
+    if (!isRecord(output) || !Array.isArray(output.content)) continue;
+    for (const content of output.content) {
+      if (!isRecord(content) || content.type !== "text" || typeof content.text !== "string") continue;
+      const header = /^\[Lines (\d+)-(\d+)(?:; more lines available from (\d+))?\]\r?\n/.exec(content.text);
+      if (!header || Number(header[1]) !== expectedStart) continue;
+      ranges.push({
+        start: Number(header[1]),
+        end: Number(header[2]),
+        hasMore: header[3] !== undefined,
+      });
+    }
+  }
+
+  ranges.sort((left, right) => left.start - right.start || right.end - left.end);
+  let nextLine = 1;
+  for (const range of ranges) {
+    if (range.start > nextLine) return false;
+    if (range.end < nextLine) continue;
+    nextLine = range.end + 1;
+    if (!range.hasMore) return true;
+  }
+  return false;
+}
+
+function incompleteChangedFiles(changes: Change[], cwd: string, traces: JobTraceEntry[]): string[] {
+  return changes
+    .filter((change) => !changedFileIsFullyRead(change.path, cwd, traces))
+    .map((change) => change.path);
 }
 
 // 仅映射 diff 中的新增行及其 Head 行号，用于验证模型报告的行号和证据。
@@ -258,6 +316,9 @@ export class ReviewWorkflow {
     this.validateSnapshot(context, diff);
     const { input, omittedFiles } = this.buildInput(context, diff);
     if (input.changes.length === 0) {
+      if (omittedFiles > 0) {
+        throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
+      }
       return {
         result: { summary: "No reviewable text changes were available.", findings: [] },
         model: "",
@@ -317,8 +378,51 @@ export class ReviewWorkflow {
       response = retryResponse;
       parsed = parseResponse(response);
     }
-    const { result, rejected } = parsed;
-    return { result, model: response.model, usage, omittedFiles, rejected };
+    const { result } = parsed;
+    if (result.findings.length === 0) {
+      if (omittedFiles > 0) {
+        throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
+      }
+      if (!trace) {
+        throw new Error("review coverage is unavailable without trace context");
+      }
+      const missingFiles = incompleteChangedFiles(
+        input.changes,
+        cwd,
+        this.agent.getTraceEntries(trace.jobId, trace.attempt),
+      );
+      if (missingFiles.length > 0) {
+        const coveragePrompt = `${userPrompt}\n\nAutomated coverage verification found that these changed files were not completely read: ${missingFiles.join(", ")}. Use read_file to inspect each listed file from its first line through its end, continuing in contiguous ranges when needed. Then review the complete diff again and return the required JSON object.`;
+        if (Buffer.byteLength(coveragePrompt) > this.maxContextBytes) {
+          throw new Error("review coverage is incomplete and its targeted follow-up exceeds the configured context limit");
+        }
+        const coverageResponse = await this.agent.generate(
+          { ...request, userPrompt: coveragePrompt },
+          cwd,
+          signal,
+          trace,
+        );
+        usage = {
+          inputTokens: usage.inputTokens + coverageResponse.usage.inputTokens,
+          outputTokens: usage.outputTokens + coverageResponse.usage.outputTokens,
+          totalTokens: usage.totalTokens + coverageResponse.usage.totalTokens,
+        };
+        response = coverageResponse;
+        parsed = parseResponse(response);
+        if (parsed.result.findings.length === 0) {
+          const remainingFiles = incompleteChangedFiles(
+            input.changes,
+            cwd,
+            this.agent.getTraceEntries(trace.jobId, trace.attempt),
+          );
+          if (remainingFiles.length > 0) {
+            throw new Error(`review coverage is incomplete for changed file(s): ${remainingFiles.join(", ")}`);
+          }
+        }
+      }
+    }
+    const { result: finalResult, rejected: finalRejected } = parsed;
+    return { result: finalResult, model: response.model, usage, omittedFiles, rejected: finalRejected };
   }
 
   async explain(
