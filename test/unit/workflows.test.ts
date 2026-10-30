@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { JobTraceContext, PiAgent } from "../../src/agent/pi.js";
-import { parseFixResponse } from "../../src/fix/workflow.js";
+import { FixWorkflow, parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
 import type { JobTraceEntry } from "../../src/jobs/model.js";
 import { parseAndValidateReview, ReviewWorkflow } from "../../src/review/workflow.js";
@@ -102,7 +102,7 @@ describe("review and fix response validation", () => {
         usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
       });
     const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
-    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
     const context = {
       projectId: 1,
       mrIid: 1,
@@ -119,7 +119,7 @@ describe("review and fix response validation", () => {
     expect(outcome.result.summary).toBe("Review complete");
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
     expect(generate).toHaveBeenCalledTimes(2);
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("previous response was not valid JSON");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("不是有效的 JSON");
   });
 
   it("retries once when a valid JSON response does not match the review schema", async () => {
@@ -135,7 +135,7 @@ describe("review and fix response validation", () => {
         usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
       });
     const agent = { generate, getTraceEntries: () => [completeFileRead("src/app.ts")] } as unknown as PiAgent;
-    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
     const context = {
       projectId: 1,
       mrIid: 1,
@@ -152,7 +152,7 @@ describe("review and fix response validation", () => {
     expect(outcome.result.summary).toBe("Review complete");
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
     expect(generate).toHaveBeenCalledTimes(2);
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("did not match the required review schema");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("不符合审查 JSON 结构");
   });
 
   it("reports which top-level review field has an invalid shape", () => {
@@ -187,6 +187,52 @@ describe("review and fix response validation", () => {
     expect(request?.systemPrompt).toContain("read_file tool");
     expect(request?.userPrompt).toContain('"path":"src/app.ts"');
     expect(request?.userPrompt).toContain("const value = user.input;");
+  });
+
+  it("uses the configured response language in review, fix, and explanation prompts", async () => {
+    const requests: { systemPrompt: string; userPrompt: string }[] = [];
+    const agent = {
+      generate: vi.fn(async (request: { systemPrompt: string; userPrompt: string }) => {
+        requests.push(request);
+        const content = requests.length === 1
+          ? JSON.stringify({ summary: "审查完成", findings: [] })
+          : requests.length === 2
+            ? JSON.stringify({ summary: "无需修改", patch: "" })
+            : "这是文件说明。";
+        return {
+          content,
+          model: "test/model",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }),
+      getTraceEntries: () => [completeFileRead("src/app.ts")],
+    } as unknown as PiAgent;
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const reviewer = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
+    const fixer = new FixWorkflow(agent, 1024 * 1024, 128 * 1024, "zh-CN");
+
+    await reviewer.review(context, diff, process.cwd(), undefined, reviewTrace);
+    await fixer.fix(context, "", diff, process.cwd(), undefined, { ...reviewTrace, taskType: "fix" });
+    await reviewer.explain(
+      context,
+      "src/app.ts",
+      Buffer.from("const value = 1;"),
+      process.cwd(),
+      undefined,
+      { ...reviewTrace, taskType: "explain" },
+    );
+
+    expect(requests).toHaveLength(3);
+    expect(requests.every((request) => request.systemPrompt.includes("简体中文"))).toBe(true);
   });
 
   it("does not accept an empty review when changed-file coverage is missing", async () => {
@@ -279,7 +325,7 @@ describe("review and fix response validation", () => {
       generate,
       getTraceEntries: () => traces,
     } as unknown as PiAgent;
-    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, "zh-CN");
     const context = {
       projectId: 1,
       mrIid: 1,
@@ -296,7 +342,7 @@ describe("review and fix response validation", () => {
 
     expect(outcome.result.findings).toEqual([]);
     expect(generate).toHaveBeenCalledTimes(2);
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("Automated coverage verification");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("自动覆盖校验");
   });
 
   it("does not accept an empty review when files were omitted from the review context", async () => {

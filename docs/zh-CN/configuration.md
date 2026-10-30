@@ -56,6 +56,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `agent.enabled` | `false` | 布尔值 | 启动 Worker 时必须设为 `true`。 |
+| `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明和文件解释所用语言。JSON 键名、代码、路径和引用证据保持原样。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 启用时必填；有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。 |
 | `agent.model` | `your-model-name` | 启用时必填 | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。 |
 | `agent.request_timeout` | `120s` | 启用时必须为正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |

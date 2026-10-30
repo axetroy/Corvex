@@ -31,6 +31,7 @@ export interface CorvexConfig {
     auditRetentionDays: number;
   };
   agent: {
+    responseLanguage: ResponseLanguage;
     enabled: boolean;
     baseUrl: string;
     model: string;
@@ -60,6 +61,8 @@ export interface CorvexConfig {
   };
 }
 
+export type ResponseLanguage = "en" | "zh-CN";
+
 export type ConfigRole = "server" | "worker" | "storage";
 
 type JsonObject = Record<string, unknown>;
@@ -78,6 +81,7 @@ const defaults: CorvexConfig = {
   },
   storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365 },
   agent: {
+    responseLanguage: "en",
     enabled: false,
     baseUrl: "https://api.openai.com/v1",
     model: "",
@@ -108,6 +112,14 @@ function string(value: unknown, fallback: string): string {
   if (value === undefined) return fallback;
   if (typeof value !== "string") throw new Error("configuration value must be a string");
   return value;
+}
+
+function responseLanguage(value: unknown, fallback: ResponseLanguage): ResponseLanguage {
+  const language = string(value, fallback);
+  if (language !== "en" && language !== "zh-CN") {
+    throw new Error('agent.response_language must be "en" or "zh-CN"');
+  }
+  return language;
 }
 
 function number(value: unknown, fallback: number): number {
@@ -203,6 +215,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       ),
     },
     agent: {
+      responseLanguage: responseLanguage(agent.response_language, defaults.agent.responseLanguage),
       enabled: boolean(agent.enabled, defaults.agent.enabled),
       baseUrl:
         process.env.CORVEX_MODEL_BASE_URL ?? string(agent.base_url, defaults.agent.baseUrl),

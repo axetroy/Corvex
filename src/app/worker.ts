@@ -53,8 +53,14 @@ export class Worker {
       config.review.maxFiles,
       config.review.maxFindings,
       config.review.maxContextBytes,
+      config.agent.responseLanguage,
     );
-    this.fixer = new FixWorkflow(this.agent, config.review.maxContextBytes, config.fix.maxPatchBytes);
+    this.fixer = new FixWorkflow(
+      this.agent,
+      config.review.maxContextBytes,
+      config.fix.maxPatchBytes,
+      config.agent.responseLanguage,
+    );
   }
 
   async run(signal: AbortSignal): Promise<void> {

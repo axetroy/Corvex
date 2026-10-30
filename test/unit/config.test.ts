@@ -24,6 +24,7 @@ function validConfig(): CorvexConfig {
     },
     storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
     agent: {
+      responseLanguage: "en",
       enabled: false,
       baseUrl: "https://api.openai.com/v1",
       model: "",
@@ -81,6 +82,35 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath, "storage");
       expect(config.agent.requestTimeout).toBe(45_000);
       expect(config.agent.sessionTimeout).toBe(20 * 60_000);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults model response language to English and accepts Simplified Chinese", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-language-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      const base = {
+        gitlab: {
+          base_url: "https://gitlab.example.com",
+          allowed_project_ids: [1],
+          allowed_user_ids: [2],
+        },
+        storage: { root, database: join(root, "state.db") },
+      };
+      await writeFile(configPath, JSON.stringify(base));
+      const defaultConfig = await loadConfig(configPath, "storage");
+      expect(defaultConfig.agent).toHaveProperty("responseLanguage", "en");
+
+      await writeFile(configPath, JSON.stringify({ ...base, agent: { response_language: "zh-CN" } }));
+      const chineseConfig = await loadConfig(configPath, "storage");
+      expect(chineseConfig.agent).toHaveProperty("responseLanguage", "zh-CN");
+
+      await writeFile(configPath, JSON.stringify({ ...base, agent: { response_language: "fr" } }));
+      await expect(loadConfig(configPath, "storage")).rejects.toThrow(
+        'agent.response_language must be "en" or "zh-CN"',
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

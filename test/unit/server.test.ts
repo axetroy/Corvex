@@ -50,6 +50,7 @@ describe("CorvexServer", () => {
         auditRetentionDays: 365,
       },
       agent: {
+        responseLanguage: "en",
         enabled: false,
         baseUrl: "https://api.openai.com/v1",
         model: "",

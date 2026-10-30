@@ -54,6 +54,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `agent.enabled` | `false` | Boolean | Must be `true` to start a worker. |
+| `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, and explanations. JSON keys, code, paths, and quoted evidence remain unchanged. |
 | `agent.base_url` | `https://api.openai.com/v1` | Required when enabled; HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. |
 | `agent.model` | `your-model-name` | Required when enabled | Provider model name. `CORVEX_MODEL_NAME` overrides it. |
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |

@@ -139,6 +139,7 @@ describe("PiAgent", () => {
         auditRetentionDays: 365,
       },
       agent: {
+        responseLanguage: "en",
         enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
