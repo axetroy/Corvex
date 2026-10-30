@@ -32,6 +32,7 @@ const statuses = [
 const queue = { status: "", type: "", search: "", offset: 0 };
 // 丢弃较早请求的响应，避免慢响应覆盖用户刚切换到的新页面。
 let renderVersion = 0;
+let traceViewState;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -362,7 +363,16 @@ function traceField(label, value, emptyLabel) {
     : append(element("div", undefined, "trace-payload trace-payload-empty"), element("span", label), element("span", emptyLabel));
 }
 
-function createTraceExperience(entries) {
+function createTraceExperience(entries, jobId) {
+  if (!traceViewState || traceViewState.jobId !== jobId) {
+    traceViewState = {
+      jobId,
+      selectedIds: null,
+      activeTab: "overview",
+      eventListScrollTop: 0,
+      expandedDetails: [],
+    };
+  }
   if (entries.length === 0) return element("div", copy.noTrajectory, "empty");
 
   const traces = [...entries].sort((left, right) => {
@@ -510,7 +520,6 @@ function createTraceExperience(entries) {
   tabList.setAttribute("role", "tablist");
   const inspectorContent = element("div", undefined, "trace-inspector-content");
   inspectorContent.setAttribute("role", "tabpanel");
-  let activeTab = "overview";
   const tabs = [
     ["overview", copy.traceTabOverview],
     ["parameters", copy.traceTabParameters],
@@ -518,6 +527,9 @@ function createTraceExperience(entries) {
     ["schema", copy.traceTabSchema],
     ["timing", copy.traceTabTiming],
   ];
+  let activeTab = tabs.some(([id]) => id === traceViewState.activeTab)
+    ? traceViewState.activeTab
+    : "overview";
 
   const renderInspector = () => {
     const selected = traces.filter((entry) => selectedIds.has(entry.id));
@@ -575,6 +587,7 @@ function createTraceExperience(entries) {
     button.setAttribute("aria-selected", String(activeTab === id));
     button.addEventListener("click", () => {
       activeTab = id;
+      traceViewState.activeTab = activeTab;
       for (const [tabId, tabButton] of tabButtons) {
         tabButton.setAttribute("aria-selected", String(tabId === activeTab));
       }
@@ -590,6 +603,7 @@ function createTraceExperience(entries) {
   const setSelection = (selected) => {
     selectedIds.clear();
     for (const id of selected) selectedIds.add(id);
+    traceViewState.selectedIds = [...selectedIds];
     for (const [id, button] of eventButtons) {
       const isSelected = selectedIds.has(id);
       button.classList.toggle("is-selected", isSelected);
@@ -646,11 +660,23 @@ function createTraceExperience(entries) {
   }
 
   overview.append(overviewHeader, overviewScroll);
-  setSelection(new Set([traces[0].id]));
+  const availableIds = new Set(traces.map((entry) => entry.id));
+  const savedIds = traceViewState.selectedIds;
+  const initialSelection = savedIds === null
+    ? new Set([traces[0].id])
+    : new Set(savedIds.filter((id) => availableIds.has(id)));
+  if (savedIds?.length && initialSelection.size === 0) initialSelection.add(traces[0].id);
+  setSelection(initialSelection);
   return append(experience, overview, selectionToolbar, workbench);
 }
 
 async function renderJobDetails(version, jobId) {
+  if (traceViewState?.jobId === jobId) {
+    const eventList = app.querySelector(".trace-event-list");
+    if (eventList) traceViewState.eventListScrollTop = eventList.scrollTop;
+    traceViewState.expandedDetails = [...app.querySelectorAll(".trace-inspector-content details")]
+      .flatMap((detail, index) => detail.open ? [index] : []);
+  }
   const job = await api(`/api/ops/jobs/${encodeURIComponent(jobId)}`);
   if (version !== renderVersion) return;
   setUpdated(new Date().toISOString());
@@ -710,7 +736,7 @@ async function renderJobDetails(version, jobId) {
   const attemptsContent = attempts.length
     ? table([copy.attempts, copy.started, copy.finished, copy.error], attempts)
     : element("div", copy.noAttempts, "empty");
-  const trajectoryContent = createTraceExperience(job.trajectory);
+  const trajectoryContent = createTraceExperience(job.trajectory, job.id);
   app.replaceChildren(
     back,
     heading(
@@ -723,6 +749,12 @@ async function renderJobDetails(version, jobId) {
     panel(copy.traceDiagram, trajectoryContent),
     panel(copy.attemptHistory, attemptsContent),
   );
+  const eventList = app.querySelector(".trace-event-list");
+  if (eventList) eventList.scrollTop = traceViewState.eventListScrollTop;
+  const inspectorDetails = app.querySelectorAll(".trace-inspector-content details");
+  for (const index of traceViewState.expandedDetails) {
+    if (inspectorDetails[index]) inspectorDetails[index].open = true;
+  }
 }
 
 async function render() {
