@@ -249,7 +249,7 @@ export function parseAndValidateReview(
   if (!isRecord(parsed)) {
     throw new ReviewJsonValidationError("model returned invalid review JSON: top-level value must be an object");
   }
-  if (Object.keys(parsed).some((key) => !["summary", "findings"].includes(key))) {
+  if (Object.keys(parsed).some((key) => !["summary", "findings", "findings_count"].includes(key))) {
     throw new ReviewJsonValidationError("model returned invalid review JSON: unexpected top-level fields");
   }
   if (!validText(parsed.summary, 1, 4000)) {
@@ -259,6 +259,12 @@ export function parseAndValidateReview(
   }
   if (!Array.isArray(parsed.findings)) {
     throw new ReviewJsonValidationError("model returned invalid review JSON: findings must be an array");
+  }
+  if (
+    Object.hasOwn(parsed, "findings_count") &&
+    (!Number.isSafeInteger(parsed.findings_count) || parsed.findings_count !== parsed.findings.length)
+  ) {
+    throw new ReviewJsonValidationError("model returned invalid review JSON: findings_count must match findings length");
   }
   const linesByFile = new Map<string, Map<number, string>>();
   for (const change of diff.changes) {

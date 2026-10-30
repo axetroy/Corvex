@@ -451,6 +451,163 @@ details summary {
   min-width: 0;
 }
 
+.trace-view-tabs {
+  display: flex;
+  gap: 4px;
+  min-height: 42px;
+  margin: -4px 0 16px;
+  border-bottom: 1px solid #e1e6eb;
+}
+
+.trace-view-tab {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 14px;
+  color: #64737f;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.trace-view-tab[aria-selected="true"] {
+  color: #1769aa;
+  border-bottom-color: #1769aa;
+}
+
+.trace-session-view {
+  max-height: 720px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.trace-session-list {
+  display: grid;
+  gap: 12px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.trace-session-event {
+  min-width: 0;
+  padding: 12px 14px;
+  background: #f7f9fa;
+  border: 1px solid #e3e8eb;
+  border-left: 3px solid #4381a7;
+  border-radius: 6px;
+}
+
+.trace-session-event-tool {
+  border-left-color: #4a9a75;
+}
+
+.trace-session-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  min-width: 0;
+  margin-bottom: 10px;
+}
+
+.trace-session-kind,
+.trace-session-round,
+.trace-session-status,
+.trace-session-duration {
+  color: #64737f;
+  font-size: 11px;
+}
+
+.trace-session-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.trace-session-status {
+  color: #278150;
+}
+
+.trace-session-status-failed {
+  color: #b63838;
+}
+
+.trace-session-duration {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.trace-session-message {
+  min-width: 0;
+  margin-top: 8px;
+  padding: 9px 11px;
+  background: #fff;
+  border: 1px solid #e5e9ec;
+  border-radius: 4px;
+}
+
+.trace-session-message-user {
+  margin-left: min(8%, 56px);
+  background: #eff6fa;
+}
+
+.trace-session-message-assistant {
+  margin-right: min(8%, 56px);
+}
+
+.trace-session-message-tool {
+  background: #f0f7f3;
+}
+
+.trace-session-tool-details {
+  margin-top: 8px;
+  color: #536271;
+  font-size: 12px;
+}
+
+.trace-session-tool-details summary {
+  cursor: pointer;
+}
+
+.trace-session-tool-details .trace-session-content {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #e5e9ec;
+  border-radius: 4px;
+}
+
+.trace-session-message-error {
+  background: #fff4f3;
+  border-color: #e8caca;
+}
+
+.trace-session-role {
+  display: block;
+  margin-bottom: 5px;
+  color: #536271;
+  font-size: 11px;
+}
+
+.trace-session-content {
+  display: block;
+  min-width: 0;
+  max-height: min(42vh, 360px);
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.trace-diagram-view {
+  min-width: 0;
+}
+
 .trace-toolbar {
   display: flex;
   align-items: center;

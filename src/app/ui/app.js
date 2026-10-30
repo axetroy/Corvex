@@ -363,16 +363,232 @@ function traceField(label, value, emptyLabel) {
     : append(element("div", undefined, "trace-payload trace-payload-empty"), element("span", label), element("span", emptyLabel));
 }
 
+function parseTraceValue(value) {
+  if (typeof value !== "string") return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function formatTraceJson(value) {
+  const parsed = parseTraceValue(value);
+  return parsed === undefined ? value ?? "" : JSON.stringify(parsed, null, 2);
+}
+
+function formatSessionContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (part.type === "text" && typeof part.text === "string") return part.text;
+    return JSON.stringify(part, null, 2);
+  }).filter(Boolean).join("\n\n");
+}
+
+function describeSessionTool(name, input, outputValue) {
+  const path = typeof input?.path === "string" && input.path ? input.path : copy.traceUnknownPath;
+  switch (name) {
+    case "read_file": {
+      let start = Number.isSafeInteger(input?.startLine) && input.startLine > 0 ? input.startLine : 1;
+      let end = start + (Number.isSafeInteger(input?.maxLines) && input.maxLines > 0 ? input.maxLines : 200) - 1;
+      const output = parseTraceValue(outputValue);
+      const content = Array.isArray(output?.content) ? output.content : [];
+      const outputText = content.find((part) => part.type === "text")?.text;
+      const actualRange = typeof outputText === "string" ? /^\[Lines (\d+)-(\d+)/.exec(outputText) : null;
+      if (actualRange) {
+        start = Number(actualRange[1]);
+        end = Number(actualRange[2]);
+      }
+      return copy.traceToolReadFileRangeTemplate
+        .replace("{path}", path)
+        .replace("{start}", String(start))
+        .replace("{end}", String(end));
+    }
+    case "read_dir":
+      return copy.traceToolReadDirectoryTemplate.replace("{path}", path);
+    case "stat":
+      return copy.traceToolInspectPathTemplate.replace("{path}", path);
+    case "web_fetch":
+      return copy.traceToolFetchWebTemplate.replace(
+        "{url}",
+        typeof input?.url === "string" && input.url ? input.url : copy.traceUnknownPath,
+      );
+    default:
+      return copy.traceToolGenericTemplate.replace("{name}", name || copy.traceName);
+  }
+}
+
+function formatModelOutput(value) {
+  const parsed = parseTraceValue(value);
+  if (!parsed || !Array.isArray(parsed.content)) return formatTraceJson(value);
+  return parsed.content.map((part) => {
+    if (part.type === "text" && typeof part.text === "string") return part.text;
+    if (part.type === "toolCall") {
+      return copy.traceToolCallTemplate.replace(
+        "{action}",
+        describeSessionTool(part.name, part.arguments),
+      );
+    }
+    return JSON.stringify(part, null, 2);
+  }).join("\n\n");
+}
+
+function createSessionMessage(label, value, kind) {
+  if (!value) return undefined;
+  const message = element("article", undefined, `trace-session-message trace-session-message-${kind}`);
+  message.append(element("strong", label, "trace-session-role"));
+  message.append(element("pre", value, "trace-session-content"));
+  return message;
+}
+
+function createSessionToolDetails(entry) {
+  const details = element("details", undefined, "trace-session-tool-details");
+  details.append(element("summary", copy.traceToolDetails));
+  const input = formatTraceJson(entry.input ?? entry.rawContent);
+  if (input) {
+    details.append(element("strong", copy.traceArguments, "trace-session-role"));
+    details.append(element("pre", input, "trace-session-content"));
+  }
+  const result = entry.status === "failed" && entry.errorDetail
+    ? entry.errorDetail
+    : entry.output ?? entry.errorDetail;
+  if (result) {
+    details.append(element("strong", entry.status === "failed" ? copy.error : copy.traceResult, "trace-session-role"));
+    details.append(element("pre", formatTraceJson(result), "trace-session-content"));
+  }
+  return details;
+}
+
+function createTraceSession(entries) {
+  const view = element("div", undefined, "trace-session-view");
+  const list = element("div", undefined, "trace-session-list");
+  list.setAttribute("aria-label", copy.traceTabSession);
+  const seenUserMessages = new Set();
+  const traces = [...entries].sort((left, right) => {
+    const timeDifference = Date.parse(left.startedAt) - Date.parse(right.startedAt);
+    return timeDifference || left.id - right.id;
+  });
+
+  for (const entry of traces) {
+    const event = element("article", undefined, `trace-session-event trace-session-event-${entry.kind}`);
+    const toolInput = entry.kind === "tool" ? parseTraceValue(entry.input ?? entry.rawContent) : undefined;
+    const title = entry.kind === "llm"
+      ? entry.model || copy.traceAgent
+      : describeSessionTool(entry.name, toolInput, entry.output);
+    const round = copy.traceAttemptRoundTemplate
+      .replace("{attempt}", String(entry.attempt))
+      .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
+    const heading = append(
+      element("div", undefined, "trace-session-heading"),
+      element("span", copy.traceKinds[entry.kind], "trace-session-kind"),
+      element("strong", title, "trace-session-title"),
+      element("span", round, "trace-session-round"),
+      element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-session-status trace-session-status-${entry.status}`),
+      element("time", formatTraceDuration(entry.durationMs), "trace-session-duration"),
+    );
+    event.append(heading);
+
+    if (entry.kind === "llm") {
+      const request = parseTraceValue(entry.rawContent);
+      const input = parseTraceValue(entry.input);
+      const userMessages = Array.isArray(input?.messages)
+        ? input.messages.flatMap((contextEntry) => {
+          const message = contextEntry?.message;
+          if (contextEntry?.type !== "message" || message?.role !== "user") return [];
+          const text = formatSessionContent(message.content);
+          if (!text) return [];
+          const key = String(contextEntry.id ?? message.id ?? `${message.timestamp ?? ""}:${text}`);
+          if (seenUserMessages.has(key)) return [];
+          seenUserMessages.add(key);
+          return [text];
+        })
+        : [];
+      if (userMessages.length > 0) {
+        for (const message of userMessages) {
+          event.append(createSessionMessage(copy.traceSessionUser, message, "user"));
+        }
+      } else if (typeof request?.userPrompt === "string" && seenUserMessages.size === 0) {
+        seenUserMessages.add(request.userPrompt);
+        event.append(createSessionMessage(copy.traceSessionUser, request.userPrompt, "user"));
+      }
+      event.append(createSessionMessage(copy.traceSessionAssistant, formatModelOutput(entry.output), "assistant"));
+    } else {
+      event.append(createSessionToolDetails(entry));
+    }
+    if (entry.errorDetail && entry.kind === "llm") {
+      event.append(createSessionMessage(copy.error, entry.errorDetail, "error"));
+    }
+    list.append(event);
+  }
+
+  view.append(traces.length > 0 ? list : element("div", copy.noTrajectory, "empty"));
+  return view;
+}
+
 function createTraceExperience(entries, jobId) {
   if (!traceViewState || traceViewState.jobId !== jobId) {
     traceViewState = {
       jobId,
       selectedIds: null,
       activeTab: "overview",
+      activeView: "session",
+      sessionScrollTop: 0,
+      sessionExpandedDetails: [],
       eventListScrollTop: 0,
       expandedDetails: [],
     };
   }
+
+  const experience = element("div", undefined, "trace-experience");
+  const tabList = element("div", undefined, "trace-view-tabs");
+  tabList.setAttribute("role", "tablist");
+  tabList.setAttribute("aria-label", copy.traceDiagram);
+  const sessionTab = element("button", copy.traceTabSession, "trace-view-tab");
+  const traceTab = element("button", copy.traceTabTrace, "trace-view-tab");
+  const sessionPanel = createTraceSession(entries);
+  const tracePanel = createTraceDiagram(entries);
+  sessionPanel.id = "trace-session-panel";
+  sessionPanel.setAttribute("role", "tabpanel");
+  sessionPanel.setAttribute("aria-labelledby", "trace-session-tab");
+  tracePanel.id = "trace-diagram-panel";
+  tracePanel.setAttribute("role", "tabpanel");
+  tracePanel.setAttribute("aria-labelledby", "trace-diagram-tab");
+  sessionTab.id = "trace-session-tab";
+  traceTab.id = "trace-diagram-tab";
+  sessionTab.type = "button";
+  traceTab.type = "button";
+  sessionTab.setAttribute("role", "tab");
+  traceTab.setAttribute("role", "tab");
+  sessionTab.setAttribute("aria-controls", "trace-session-panel");
+  traceTab.setAttribute("aria-controls", "trace-diagram-panel");
+
+  const setActiveView = (view) => {
+    traceViewState.activeView = view;
+    const showSession = view === "session";
+    sessionTab.setAttribute("aria-selected", String(showSession));
+    traceTab.setAttribute("aria-selected", String(!showSession));
+    sessionPanel.hidden = !showSession;
+    tracePanel.hidden = showSession;
+  };
+  sessionTab.addEventListener("click", () => setActiveView("session"));
+  traceTab.addEventListener("click", () => setActiveView("trace"));
+  tabList.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      const nextView = event.key === "ArrowLeft"
+        ? traceViewState.activeView === "session" ? "trace" : "session"
+        : traceViewState.activeView === "session" ? "trace" : "session";
+      (nextView === "session" ? sessionTab : traceTab).focus();
+      setActiveView(nextView);
+    }
+  });
+  tabList.append(sessionTab, traceTab);
+  setActiveView(traceViewState.activeView === "trace" ? "trace" : "session");
+  return append(experience, tabList, sessionPanel, tracePanel);
+}
+
+function createTraceDiagram(entries) {
   if (entries.length === 0) return element("div", copy.noTrajectory, "empty");
 
   const traces = [...entries].sort((left, right) => {
@@ -383,7 +599,7 @@ function createTraceExperience(entries, jobId) {
   const endTime = Math.max(...traces.map((entry) => Date.parse(entry.finishedAt ?? entry.startedAt)));
   const duration = Math.max(1, endTime - startTime);
   const basePlotWidth = Math.max(760, Math.min(1400, traces.length * 22));
-  const experience = element("div", undefined, "trace-experience");
+  const experience = element("div", undefined, "trace-diagram-view");
   const overview = element("section", undefined, "trace-overview");
   const overviewTitle = element("strong", copy.traceOverview, "trace-overview-title");
   const overviewSummary = element(
@@ -672,6 +888,10 @@ function createTraceExperience(entries, jobId) {
 
 async function renderJobDetails(version, jobId) {
   if (traceViewState?.jobId === jobId) {
+    const sessionView = app.querySelector(".trace-session-view");
+    if (sessionView) traceViewState.sessionScrollTop = sessionView.scrollTop;
+    traceViewState.sessionExpandedDetails = [...app.querySelectorAll(".trace-session-view details")]
+      .flatMap((detail, index) => detail.open ? [index] : []);
     const eventList = app.querySelector(".trace-event-list");
     if (eventList) traceViewState.eventListScrollTop = eventList.scrollTop;
     traceViewState.expandedDetails = [...app.querySelectorAll(".trace-inspector-content details")]
@@ -754,6 +974,12 @@ async function renderJobDetails(version, jobId) {
   const inspectorDetails = app.querySelectorAll(".trace-inspector-content details");
   for (const index of traceViewState.expandedDetails) {
     if (inspectorDetails[index]) inspectorDetails[index].open = true;
+  }
+  const sessionView = app.querySelector(".trace-session-view");
+  if (sessionView) sessionView.scrollTop = traceViewState.sessionScrollTop;
+  const sessionDetails = app.querySelectorAll(".trace-session-view details");
+  for (const index of traceViewState.sessionExpandedDetails) {
+    if (sessionDetails[index]) sessionDetails[index].open = true;
   }
 }
 

@@ -16,6 +16,12 @@ describe("operations UI locale", () => {
 
   it("provides matching English and Simplified Chinese dashboard catalogs", () => {
     expect(zhCN.overviewTitle).toBe("概览");
+    expect(zhCN.traceTabSession).toBe("会话");
+    expect(zhCN.traceTabTrace).toBe("轨迹");
+    expect(zhCN.traceSessionUser).toBe("用户");
+    expect(zhCN.traceSessionAssistant).toBe("助手");
+    expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
+    expect(zhCN.traceToolDetails).toBe("查看调用详情");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zhCN.statuses).sort()).toEqual(Object.keys(en.statuses).sort());
     expect(Object.keys(zhCN.types).sort()).toEqual(Object.keys(en.types).sort());

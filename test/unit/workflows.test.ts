@@ -81,6 +81,32 @@ describe("review and fix response validation", () => {
     expect(result.result.findings).toEqual([]);
   });
 
+  it("accepts a matching findings_count field", () => {
+    const raw = JSON.stringify({
+      summary: "One concrete defect.",
+      findings: [{
+        severity: "high",
+        title: "Unchecked input",
+        file_path: "src/app.ts",
+        line: 3,
+        evidence: "user.input",
+        explanation: "The value is used without validation.",
+      }],
+      findings_count: 1,
+    });
+
+    const result = parseAndValidateReview(raw, diff, 10);
+
+    expect(result.result.findings).toHaveLength(1);
+    expect(result.result.summary).toBe("One concrete defect.");
+  });
+
+  it("rejects a findings_count field that does not match the findings array", () => {
+    const raw = JSON.stringify({ summary: "Review complete", findings: [], findings_count: 1 });
+
+    expect(() => parseAndValidateReview(raw, diff, 10)).toThrow("findings_count must match findings length");
+  });
+
   it("recovers a single trailing quote after a complete review JSON object", () => {
     const raw = `${JSON.stringify({ summary: "Review complete", findings: [] })}"`;
     const result = parseAndValidateReview(raw, diff, 10);
@@ -113,6 +139,7 @@ describe("review and fix response validation", () => {
     const raw = `已完整审查全部变更文件，未发现明确缺陷。\n\n${JSON.stringify({
       summary: "Review complete",
       findings: [],
+      findings_count: 0,
     }, null, 2)}`;
     const generate = vi.fn().mockResolvedValue({
       content: raw,
