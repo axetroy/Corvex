@@ -55,6 +55,7 @@ describe("CorvexServer", () => {
         model: "",
         apiKey: "",
         requestTimeout: 120000,
+        sessionTimeout: 30 * 60_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
         mcpEnabled: false,

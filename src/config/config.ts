@@ -36,6 +36,7 @@ export interface CorvexConfig {
     model: string;
     apiKey: string;
     requestTimeout: number;
+    sessionTimeout: number;
     maxOutputTokens: number;
     dailyTokenBudget: number;
     mcpEnabled: boolean;
@@ -82,6 +83,7 @@ const defaults: CorvexConfig = {
     model: "",
     apiKey: "",
     requestTimeout: 120_000,
+    sessionTimeout: 30 * 60_000,
     maxOutputTokens: 4096,
     dailyTokenBudget: 0,
     mcpEnabled: false,
@@ -210,6 +212,11 @@ function parseConfig(raw: unknown): CorvexConfig {
         agent.request_timeout,
         defaults.agent.requestTimeout,
         "agent.request_timeout",
+      ),
+      sessionTimeout: duration(
+        agent.session_timeout,
+        defaults.agent.sessionTimeout,
+        "agent.session_timeout",
       ),
       maxOutputTokens: number(agent.max_output_tokens, defaults.agent.maxOutputTokens),
       dailyTokenBudget: number(agent.daily_token_budget, defaults.agent.dailyTokenBudget),
@@ -356,6 +363,7 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
       problems.push("CORVEX_MODEL_API_KEY is required when the agent is enabled");
     }
     if (config.agent.requestTimeout <= 0) problems.push("agent.request_timeout must be positive");
+    if (config.agent.sessionTimeout <= 0) problems.push("agent.session_timeout must be positive");
     if (config.agent.maxOutputTokens <= 0 || config.agent.maxOutputTokens > 8192) {
       problems.push("agent.max_output_tokens must be between 1 and 8192");
     }

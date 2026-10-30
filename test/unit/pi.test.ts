@@ -143,7 +143,8 @@ describe("PiAgent", () => {
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         apiKey: "test-key",
-        requestTimeout: 10000,
+        requestTimeout: 500,
+        sessionTimeout: 8000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
         mcpEnabled: false,
@@ -167,12 +168,15 @@ describe("PiAgent", () => {
     const job = store.claimNextWithLease(30_000);
     if (!job) throw new Error("expected a queued job to be claimed");
     const agent = new PiAgent(config, store);
+    responseDelayMs = 350;
+    const startedAt = Date.now();
     const result = await agent.generate(
       { systemPrompt: "Return JSON.", userPrompt: "Say ok." },
       temporaryDirectory,
       undefined,
       { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
     );
+    expect(Date.now() - startedAt).toBeGreaterThan(config.agent.requestTimeout);
     expect(result.content).toContain('"summary":"ok"');
     expect(result.model).toContain("test-model");
     expect(requestBody).toContain('"model":"test-model"');
@@ -222,8 +226,8 @@ describe("PiAgent", () => {
       },
     ]);
 
-    responseDelayMs = 2000;
-    config.agent.requestTimeout = 500;
+    responseDelayMs = 5000;
+    const timeoutStartedAt = Date.now();
     await expect(
       agent.generate(
         { systemPrompt: "Wait.", userPrompt: "Wait." },
@@ -232,6 +236,7 @@ describe("PiAgent", () => {
         { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
       ),
     ).rejects.toThrow("Pi agent run failed");
+    expect(Date.now() - timeoutStartedAt).toBeLessThan(4000);
     expect(store.getJobDetails(job.id)?.trajectory[0]).toMatchObject({
       kind: "llm",
       status: "failed",

@@ -22,7 +22,7 @@ Corvex 是基于单一 TypeScript 应用和 Pi SDK 构建的自托管 GitLab 代
 
 Worker 使用 30 秒任务租约并定期续租；进程中断后，未进入发布阶段的任务最多执行 3 次。发布阶段租约过期时，因评论结果可能不确定，任务会失败而不会自动重试，以避免重复评论。
 
-若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。模型请求由 Pi SDK Session 执行，并受 `agent.request_timeout` 限制。`agent.max_output_tokens` 限制每次模型响应的最大输出 token 数（默认 4096，最大 8192）；可设置 `agent.daily_token_budget` 限制每日 token 预算（UTC，`0` 表示不启用）。预算按输入字节数加最大输出 token 数保守预留，收到模型用量后按实际 token 结算；请求结果不确定时会保留预留量。它是 token 预算，不是按模型价格计算的费用上限。`agent.skill_paths` 指定可信 Pi Skill 目录。Agent 启用后 `web_fetch` 默认可用，可通过 HTTPS 抓取任意公网主机；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单。每个 Session 最多抓取 10 个限额内的 HTML/纯文本页面，不会执行页面脚本，且重定向会重新校验。MCP 默认关闭；启用 `agent.mcp_enabled` 后，会从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务以 Worker 的操作系统权限运行，并非沙箱。Webhook 处理流程只负责入队；模型调用由 Worker 执行。若要启用 Fix 提案，还需设置 `fix.enabled: true`，并在 `fix.allowed_user_ids` 中配置允许的 GitLab 用户 ID；该白名单不能为空，且必须启用 Agent。
+若要启用审查，设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并通过 `CORVEX_MODEL_API_KEY` 提供密钥。`agent.request_timeout` 限制单次模型请求，`agent.session_timeout` 限制完整 Pi Agent Session。`agent.max_output_tokens` 限制每次模型响应的最大输出 token 数（默认 4096，最大 8192）；可设置 `agent.daily_token_budget` 限制每日 token 预算（UTC，`0` 表示不启用）。预算按输入字节数加最大输出 token 数保守预留，收到模型用量后按实际 token 结算；请求结果不确定时会保留预留量。它是 token 预算，不是按模型价格计算的费用上限。`agent.skill_paths` 指定可信 Pi Skill 目录。Agent 启用后 `web_fetch` 默认可用，可通过 HTTPS 抓取任意公网主机；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单。每个 Session 最多抓取 10 个限额内的 HTML/纯文本页面，不会执行页面脚本，且重定向会重新校验。MCP 默认关闭；启用 `agent.mcp_enabled` 后，会从服务的 Pi Agent 目录加载 MCP 配置。MCP 服务以 Worker 的操作系统权限运行，并非沙箱。Webhook 处理流程只负责入队；模型调用由 Worker 执行。若要启用 Fix 提案，还需设置 `fix.enabled: true`，并在 `fix.allowed_user_ids` 中配置允许的 GitLab 用户 ID；该白名单不能为空，且必须启用 Agent。
 
 ## 本地运行
 

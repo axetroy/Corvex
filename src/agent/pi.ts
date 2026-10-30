@@ -7,6 +7,8 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { createProvider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { CorvexConfig } from "../config/config.js";
 import type { JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
@@ -67,10 +69,10 @@ export class PiAgent {
 
     let response: ModelResponse;
     try {
-      const requestSignal = signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.requestTimeout)])
-        : AbortSignal.timeout(this.config.agent.requestTimeout);
-      response = await this.runSession(request, workingDirectory, requestSignal, trace);
+      const sessionSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.sessionTimeout)])
+        : AbortSignal.timeout(this.config.agent.sessionTimeout);
+      response = await this.runSession(request, workingDirectory, sessionSignal, trace);
     } catch (error) {
       if (budgetDay) {
         try {
@@ -114,16 +116,35 @@ export class PiAgent {
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
-    runtime.registerProvider(providerId, {
+    const completionsApi = openAICompletionsApi();
+    const requestTimeout = this.config.agent.requestTimeout;
+    const requestOptions = <T extends { signal?: AbortSignal }>(options: T | undefined) => {
+      const timeoutSignal = AbortSignal.timeout(requestTimeout);
+      return {
+        ...options,
+        signal: options?.signal
+          ? AbortSignal.any([options.signal, timeoutSignal])
+          : timeoutSignal,
+        timeoutMs: requestTimeout,
+      };
+    };
+    runtime.registerNativeProvider(createProvider({
+      id: providerId,
       name: "Corvex OpenAI-compatible provider",
-      api: "openai-completions",
       baseUrl: this.config.agent.baseUrl.replace(/\/+$/, ""),
-      apiKey: this.config.agent.apiKey,
+      auth: {
+        apiKey: {
+          name: "Corvex OpenAI-compatible API key",
+          resolve: async () => ({ auth: { apiKey: this.config.agent.apiKey } }),
+        },
+      },
       models: [
         {
           id: this.config.agent.model,
           name: this.config.agent.model,
           api: "openai-completions",
+          provider: providerId,
+          baseUrl: this.config.agent.baseUrl.replace(/\/+$/, ""),
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           reasoning: false,
@@ -131,7 +152,15 @@ export class PiAgent {
           maxTokens: this.config.agent.maxOutputTokens,
         },
       ],
-    });
+      api: {
+        "openai-completions": {
+          stream: (model, context, options) =>
+            completionsApi.stream(model, context, requestOptions(options)),
+          streamSimple: (model, context, options) =>
+            completionsApi.streamSimple(model, context, requestOptions(options)),
+        },
+      },
+    }));
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
 

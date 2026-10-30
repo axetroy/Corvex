@@ -29,6 +29,7 @@ function validConfig(): CorvexConfig {
       model: "",
       apiKey: "",
       requestTimeout: 120000,
+      sessionTimeout: 30 * 60_000,
       maxOutputTokens: 4096,
       dailyTokenBudget: 0,
       mcpEnabled: false,
@@ -51,6 +52,7 @@ describe("validateConfig", () => {
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).toContain("allowed_project_ids");
       expect(contents).toContain("allowed_user_ids");
+      expect(contents).toContain("session_timeout: 30m");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -58,6 +60,30 @@ describe("validateConfig", () => {
 
   it("accepts a valid configuration with the agent disabled", () => {
     expect(() => validateConfig(validConfig())).not.toThrow();
+  });
+
+  it("parses request and session timeouts independently", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-timeouts-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          gitlab: {
+            base_url: "https://gitlab.example.com",
+            allowed_project_ids: [1],
+            allowed_user_ids: [2],
+          },
+          storage: { root, database: join(root, "state.db") },
+          agent: { request_timeout: "45s", session_timeout: "20m" },
+        }),
+      );
+      const config = await loadConfig(configPath, "storage");
+      expect(config.agent.requestTimeout).toBe(45_000);
+      expect(config.agent.sessionTimeout).toBe(20 * 60_000);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("requires complete operations dashboard credentials and accepts passwords of any length", () => {

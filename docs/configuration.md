@@ -56,7 +56,8 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.enabled` | `false` | Boolean | Must be `true` to start a worker. |
 | `agent.base_url` | `https://api.openai.com/v1` | Required when enabled; HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. |
 | `agent.model` | `your-model-name` | Required when enabled | Provider model name. `CORVEX_MODEL_NAME` overrides it. |
-| `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request. |
+| `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |
+| `agent.session_timeout` | `30m` | Positive duration when enabled | Maximum time for one complete Pi agent session. |
 | `agent.max_output_tokens` | `4096` | 1–8192 when enabled | Maximum requested model output tokens. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
 | `agent.mcp_enabled` | `false` | Boolean | Enables Pi's MCP extension. MCP servers use the worker process's OS permissions and are not sandboxed. |
