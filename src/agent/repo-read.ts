@@ -1,4 +1,4 @@
-import { open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
+import { opendir, open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,6 +7,14 @@ const maxReadBytes = 64 << 10;
 const defaultMaxLines = 200;
 const maxLinesPerRead = 1000;
 const maxDirectoryEntries = 200;
+const maxSearchQueryCharacters = 256;
+const maxSearchFiles = 1000;
+const maxSearchDirectoryEntries = 10_000;
+const maxSearchFileBytes = 256 << 10;
+const maxSearchTotalBytes = 16 << 20;
+const maxSearchResults = 50;
+const maxSearchLineCharacters = 400;
+const ignoredSearchDirectories = new Set([".git", ".next", ".turbo", "coverage", "dist", "node_modules"]);
 
 interface ReadFileRange {
   startLine?: number;
@@ -106,6 +114,154 @@ export async function statAllowedPath(
     size: info.size,
     modifiedAt: info.mtime.toISOString(),
   };
+}
+
+export interface SearchMatch {
+  path: string;
+  line: number;
+  text: string;
+}
+
+export interface SearchResult {
+  matches: SearchMatch[];
+  scannedFiles: number;
+  truncated: boolean;
+}
+
+export async function searchAllowedFiles(
+  query: string,
+  requestedPath: string,
+  allowedRoots: string[],
+  caseSensitive = false,
+): Promise<SearchResult> {
+  const searchTerm = query.trim();
+  if (!searchTerm || searchTerm.includes("\0") || searchTerm.length > maxSearchQueryCharacters) {
+    throw new Error(`search query must contain 1 to ${maxSearchQueryCharacters} characters`);
+  }
+
+  const start = await resolveAllowedPath(requestedPath, allowedRoots);
+  const startInfo = await stat(start.path);
+  if (!startInfo.isFile() && !startInfo.isDirectory()) {
+    throw new Error("search path must be a regular file or directory");
+  }
+
+  const matches: SearchMatch[] = [];
+  const directories = startInfo.isDirectory() ? [start.path] : [];
+  const candidates = startInfo.isFile() ? [start.path] : [];
+  let scannedFiles = 0;
+  let scannedBytes = 0;
+  let truncated = false;
+  let stopSearching = false;
+  let entriesVisited = 0;
+  const needle = caseSensitive ? searchTerm : searchTerm.toLowerCase();
+
+  const searchFile = async (candidate: string): Promise<boolean> => {
+    const resolved = await resolveAllowedPath(candidate, allowedRoots);
+    scannedFiles++;
+    const file = await open(resolved.path, "r");
+    let content: Buffer;
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) return true;
+      const remainingBytes = maxSearchTotalBytes - scannedBytes;
+      if (info.size > maxSearchFileBytes || info.size > remainingBytes) {
+        truncated = true;
+        return true;
+      }
+      const readLimit = Math.min(maxSearchFileBytes, remainingBytes);
+      const buffer = Buffer.alloc(readLimit + 1);
+      let bytesRead = 0;
+      while (bytesRead < buffer.byteLength) {
+        const result = await file.read(buffer, bytesRead, buffer.byteLength - bytesRead, null);
+        if (result.bytesRead === 0) break;
+        bytesRead += result.bytesRead;
+      }
+      if (bytesRead > readLimit) {
+        truncated = true;
+        return true;
+      }
+      content = buffer.subarray(0, bytesRead);
+    } finally {
+      await file.close();
+    }
+    scannedBytes += content.byteLength;
+    if (content.includes(0)) return true;
+
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+    } catch {
+      return true;
+    }
+    const relativePath = toForwardSlashPath(relative(resolved.root, resolved.path) || ".");
+    const lines = text.split("\n");
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]!.replace(/\r$/, "");
+      const haystack = caseSensitive ? line : line.toLowerCase();
+      if (!haystack.includes(needle)) continue;
+      if (matches.length >= maxSearchResults) {
+        truncated = true;
+        return false;
+      }
+      matches.push({
+        path: relativePath,
+        line: index + 1,
+        text: line.slice(0, maxSearchLineCharacters),
+      });
+    }
+    return true;
+  };
+
+  for (const candidate of candidates) {
+    if (scannedFiles >= maxSearchFiles) {
+      truncated = true;
+      break;
+    }
+    if (!(await searchFile(candidate))) {
+      stopSearching = true;
+      break;
+    }
+  }
+
+  while (directories.length > 0 && !stopSearching && matches.length < maxSearchResults) {
+    const directoryPath = directories.shift()!;
+    const directory = await opendir(directoryPath);
+    const entries: { name: string; path: string; type: "directory" | "file" }[] = [];
+    for await (const entry of directory) {
+      entriesVisited++;
+      if (entriesVisited > maxSearchDirectoryEntries) {
+        truncated = true;
+        stopSearching = true;
+        break;
+      }
+      if (entry.isDirectory()) {
+        if (!ignoredSearchDirectories.has(entry.name)) {
+          entries.push({ name: entry.name, path: resolve(directoryPath, entry.name), type: "directory" });
+        }
+      } else if (entry.isFile()) {
+        entries.push({ name: entry.name, path: resolve(directoryPath, entry.name), type: "file" });
+      }
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.type === "directory") {
+        directories.push(entry.path);
+        continue;
+      }
+      if (scannedFiles >= maxSearchFiles) {
+        truncated = true;
+        stopSearching = true;
+        break;
+      }
+      if (!(await searchFile(entry.path))) {
+        stopSearching = true;
+        break;
+      }
+    }
+  }
+
+  if (matches.length === maxSearchResults && !truncated) truncated = true;
+  return { matches, scannedFiles, truncated };
 }
 
 async function readLineRange(
@@ -298,6 +454,24 @@ export function createReadOnlyFileExtension(allowedRoots: string[]): (pi: Extens
       }),
       execute: async (_toolCallId, params) => ({
         content: [{ type: "text", text: JSON.stringify(await statAllowedPath(params.path, roots)) }],
+        details: {},
+      }),
+    });
+    pi.registerTool({
+      name: "search_text",
+      label: "Search repository text",
+      description: `Search for a literal text string in UTF-8 files under the fixed repository worktree or trusted skill roots. Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use path to narrow the search and treat truncated results as incomplete.`,
+      promptSnippet: "search_text: Find a literal string in bounded repository files; narrow with path and inspect matching files with read_file.",
+      parameters: Type.Object({
+        query: Type.String({ minLength: 1, maxLength: maxSearchQueryCharacters }),
+        path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+        caseSensitive: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_toolCallId, params) => ({
+        content: [{
+          type: "text",
+          text: JSON.stringify(await searchAllowedFiles(params.query, params.path ?? ".", roots, params.caseSensitive)),
+        }],
         details: {},
       }),
     });

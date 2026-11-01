@@ -63,12 +63,13 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `agent.session_timeout` | `30m` | 启用时必须为正时长 | 单个 Pi Agent Session 的总运行时限。 |
 | `agent.max_output_tokens` | `4096` | 启用时为 1–8192 | 请求模型生成的最大输出 Token 数。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
-| `agent.web_enabled` | `true` | 布尔值 | 启用只读 `web_fetch` 工具，默认允许访问所有公网 HTTPS 主机；设为 `false` 可关闭。 |
+| `agent.mcp_enabled` | `false` | 布尔值 | 仅为 review 任务启用 Pi MCP 扩展。MCP 服务使用 Worker 进程的操作系统权限，且不受沙箱隔离。 |
+| `agent.web_enabled` | `true` | 布尔值 | 为 review 和 explain 任务启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组 | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 
 启用 Agent 后必须提供 `CORVEX_MODEL_API_KEY`。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
-Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读取固定 SHA worktree 或配置的 Skill 根目录中的 UTF-8 文本文件，单文件上限为 64 KiB。启用后，`web_fetch` 可通过 HTTPS 访问任意公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址和配置的黑名单主机；拒绝 HTML/纯文本之外的响应。单页响应体上限为 1 MiB，最多返回 40,000 个文本字符和 20 个同主机链接，每个 Session 最多抓取 10 页。网页内容是不可信模型输入。启用 MCP 时，Pi 会从 `storage.root` 下服务的 Agent 目录（`pi-agent/mcp.json`）读取 MCP 配置；只能使用管理员控制的配置。
+Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读取固定 SHA worktree 或配置的 Skill 根目录中的 UTF-8 文本文件，单文件上限为 64 KiB。字面量搜索工具 `search_text` 跳过常见依赖/生成目录，每次最多扫描 1,000 个文件和 16 MiB，每个文件最多 256 KiB，最多返回 50 条匹配。启用后，`web_fetch` 仅对 review 和 explain 任务开放，可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址和配置的黑名单主机；拒绝 HTML/纯文本之外的响应。单页响应体上限为 1 MiB，最多返回 40,000 个文本字符和 20 个同主机链接，每个 Session 最多抓取 10 页。网页内容是不可信模型输入。启用 MCP 时，Pi 仅为 review 任务从 `storage.root` 下服务的 Agent 目录（`pi-agent/mcp.json`）加载 MCP 工具；只能使用管理员控制的配置。
 
 ## 审查限制
 

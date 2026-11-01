@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
-import { PiAgent } from "../../src/agent/pi.js";
+import { getAgentToolAccess, PiAgent } from "../../src/agent/pi.js";
 import { JobStore } from "../../src/jobs/store.js";
 
 describe("PiAgent", () => {
@@ -27,17 +27,31 @@ describe("PiAgent", () => {
     }
   });
 
+  it("limits web and MCP tools to the intended task types", () => {
+    const config = { webEnabled: true, mcpEnabled: true };
+
+    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true });
+    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false });
+    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false });
+    expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
+      webFetch: false,
+      mcp: true,
+    });
+  });
+
   it("uses the Pi SDK and the configured OpenAI-compatible provider", async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-"));
-    let requestBody = "";
+    const requestBodies: string[] = [];
     let responseDelayMs = 0;
     let requestCount = 0;
     server = createServer((request, response) => {
+      let requestBody = "";
       request.on("data", (chunk: Buffer) => {
         requestBody += chunk.toString();
       });
       request.on("end", () => {
         const currentRequest = requestCount++;
+        requestBodies[currentRequest] = requestBody;
         const sendResponse = () => {
           if (response.destroyed) return;
           response.writeHead(200, { "content-type": "text/event-stream" });
@@ -172,7 +186,7 @@ describe("PiAgent", () => {
     responseDelayMs = 1400;
     const startedAt = Date.now();
     const result = await agent.generate(
-      { systemPrompt: "Return JSON.", userPrompt: "Say ok." },
+      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." },
       temporaryDirectory,
       undefined,
       { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
@@ -180,11 +194,12 @@ describe("PiAgent", () => {
     expect(Date.now() - startedAt).toBeGreaterThan(config.agent.requestTimeout);
     expect(result.content).toContain('"summary":"ok"');
     expect(result.model).toContain("test-model");
-    expect(requestBody).toContain('"model":"test-model"');
-    expect(requestBody).toContain('"stream":true');
-    expect(requestBody).toContain('"name":"read_file"');
-    expect(requestBody).toContain('"name":"web_fetch"');
-    expect(requestBody).toContain("Additional blocked hosts: blocked.corp.dev");
+    expect(requestBodies[0]).toContain('"model":"test-model"');
+    expect(requestBodies[0]).toContain('"stream":true');
+    expect(requestBodies[0]).toContain('"name":"read_file"');
+    expect(requestBodies[0]).toContain('"name":"search_text"');
+    expect(requestBodies[0]).toContain('"name":"web_fetch"');
+    expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
     const trajectory = store.getJobDetails(job.id)?.trajectory;
     expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
@@ -215,7 +230,7 @@ describe("PiAgent", () => {
         outputTokens: 3,
         input: expect.stringContaining("Say ok."),
         output: expect.stringContaining("call-read-file"),
-        rawContent: JSON.stringify({ systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
+        rawContent: JSON.stringify({ taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
       },
       {
         model: expect.stringContaining("test-model"),
@@ -227,11 +242,26 @@ describe("PiAgent", () => {
       },
     ]);
 
+    responseDelayMs = 0;
+    await agent.generate(
+      { taskType: "fix", systemPrompt: "Propose a patch.", userPrompt: "Fix the defect." },
+      temporaryDirectory,
+    );
+    expect(requestBodies[2]).toContain('"name":"search_text"');
+    expect(requestBodies[2]).not.toContain('"name":"web_fetch"');
+
+    await agent.generate(
+      { taskType: "explain", systemPrompt: "Explain the file.", userPrompt: "Explain README." },
+      temporaryDirectory,
+    );
+    expect(requestBodies[3]).toContain('"name":"web_fetch"');
+    expect(requestBodies[3]).toContain('"name":"search_text"');
+
     responseDelayMs = 5000;
     const timeoutStartedAt = Date.now();
     await expect(
       agent.generate(
-        { systemPrompt: "Wait.", userPrompt: "Wait." },
+        { taskType: "review", systemPrompt: "Wait.", userPrompt: "Wait." },
         temporaryDirectory,
         undefined,
         { jobId: job.id, attempt: job.attemptCount, taskType: job.type },

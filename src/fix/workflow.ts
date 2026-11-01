@@ -97,7 +97,7 @@ export class FixWorkflow {
       throw new Error("fix context exceeds configured size limit");
     }
     const response = await this.agent.generate(
-      { systemPrompt: getPromptTemplates(this.responseLanguage).fixSystem, userPrompt },
+      { taskType: "fix", systemPrompt: getPromptTemplates(this.responseLanguage).fixSystem, userPrompt },
       cwd,
       signal,
       trace,

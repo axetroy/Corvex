@@ -16,8 +16,19 @@ import { createReadOnlyFileExtension } from "./repo-read.js";
 import { createWebReadExtension } from "./web-read.js";
 
 export interface ModelRequest {
+  taskType: JobType;
   systemPrompt: string;
   userPrompt: string;
+}
+
+export function getAgentToolAccess(
+  taskType: JobType,
+  config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
+): { webFetch: boolean; mcp: boolean } {
+  return {
+    webFetch: taskType !== "fix" && config.webEnabled,
+    mcp: taskType === "review" && config.mcpEnabled,
+  };
 }
 
 export interface ModelUsage {
@@ -167,6 +178,7 @@ export class PiAgent {
     }));
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
+    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -177,10 +189,10 @@ export class PiAgent {
       additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
         createReadOnlyFileExtension(allowedRoots),
-        ...(this.config.agent.webEnabled
+        ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
           : []),
-        ...(this.config.agent.mcpEnabled ? [createMcpExtension()] : []),
+        ...(toolAccess.mcp ? [createMcpExtension()] : []),
       ],
       systemPrompt: request.systemPrompt,
     });

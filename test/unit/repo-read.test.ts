@@ -7,6 +7,7 @@ import {
   createReadOnlyFileExtension,
   readAllowedDirectory,
   readAllowedFile,
+  searchAllowedFiles,
   statAllowedPath,
 } from "../../src/agent/repo-read.js";
 
@@ -104,7 +105,56 @@ describe("readAllowedFile", () => {
       registerTool: (tool: { name: string }) => registered.push(tool.name),
     } as unknown as ExtensionAPI);
 
-    expect(registered).toEqual(expect.arrayContaining(["read_file", "read_dir", "stat"]));
+    expect(registered).toEqual(expect.arrayContaining(["read_file", "read_dir", "stat", "search_text"]));
+  });
+
+  it("searches literal text with bounded, case-insensitive results", async () => {
+    await mkdir(join(root, "nested"));
+    await mkdir(join(root, "node_modules"));
+    await writeFile(join(root, "nested", "file.ts"), "first Match\nno hit\nMATCH again\n");
+    await writeFile(join(root, "node_modules", "ignored.ts"), "match should be ignored");
+
+    await expect(searchAllowedFiles("match", ".", [root])).resolves.toEqual({
+      matches: [
+        { path: "nested/file.ts", line: 1, text: "first Match" },
+        { path: "nested/file.ts", line: 3, text: "MATCH again" },
+      ],
+      scannedFiles: 2,
+      truncated: false,
+    });
+    await expect(searchAllowedFiles("match", ".", [root], true)).resolves.toMatchObject({ matches: [] });
+  });
+
+  it("restricts search to allowed paths and validates the query", async () => {
+    await expect(searchAllowedFiles("secret", outside, [root])).rejects.toThrow(
+      "outside the configured read-only roots",
+    );
+    await expect(searchAllowedFiles("  ", ".", [root])).rejects.toThrow("search query must contain");
+    await expect(searchAllowedFiles("x".repeat(257), ".", [root])).rejects.toThrow(
+      "search query must contain",
+    );
+  });
+
+  it("caps search results and reports truncation", async () => {
+    await writeFile(join(root, "many.txt"), Array.from({ length: 60 }, (_, index) => `match ${index}`).join("\n"));
+
+    await expect(searchAllowedFiles("match", "many.txt", [root])).resolves.toMatchObject({
+      matches: expect.arrayContaining([{ path: "many.txt", line: 50, text: "match 49" }]),
+      scannedFiles: 1,
+      truncated: true,
+    });
+    const result = await searchAllowedFiles("match", "many.txt", [root]);
+    expect(result.matches).toHaveLength(50);
+  });
+
+  it("skips oversized files and reports incomplete search results", async () => {
+    await writeFile(join(root, "large.txt"), `${"x".repeat(300 << 10)}target`);
+
+    await expect(searchAllowedFiles("target", "large.txt", [root])).resolves.toEqual({
+      matches: [],
+      scannedFiles: 1,
+      truncated: true,
+    });
   });
 
   it("rejects oversized and non-UTF-8 files", async () => {

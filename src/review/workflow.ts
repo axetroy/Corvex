@@ -366,7 +366,7 @@ export class ReviewWorkflow {
       throw new Error("review context exceeds configured size limit");
     }
     const prompts = getPromptTemplates(this.responseLanguage);
-    const request: ModelRequest = { systemPrompt: prompts.reviewSystem, userPrompt };
+    const request: ModelRequest = { taskType: "review", systemPrompt: prompts.reviewSystem, userPrompt };
     const logRejectedResponse = (response: Awaited<ReturnType<PiAgent["generate"]>>, error: unknown) => {
       console.warn("model review response rejected", {
         projectId: context.projectId,
@@ -493,6 +493,7 @@ export class ReviewWorkflow {
     }
     const response = await this.agent.generate(
       {
+        taskType: "explain",
         systemPrompt: getPromptTemplates(this.responseLanguage).explainSystem,
         userPrompt,
       },
