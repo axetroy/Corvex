@@ -1,4 +1,5 @@
 import { en, resolveLocale, zhCN } from "./i18n.js";
+import { reconstructLlmInput } from "./trace.js";
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -934,7 +935,7 @@ function createTraceDiagram(entries) {
     } else if (activeTab === "parameters") {
       inspectorContent.append(traceField(
         entry.kind === "llm" ? copy.traceInput : copy.traceArguments,
-        entry.input ?? entry.rawContent,
+        entry.kind === "llm" ? reconstructLlmInput(traces, entry) : entry.input ?? entry.rawContent,
         copy.traceNoInput,
       ));
     } else if (activeTab === "result") {

@@ -221,10 +221,19 @@ export class PiAgent {
     let activeModelCall: { traceId: number; startedAt: number; round: number } | undefined;
     let modelCallCount = 0;
     let currentRound = 0;
+    const recordedContextEntryIds = new Set<string>();
+    let hasRecordedContext = false;
     const unsubscribe = session.subscribe((event) => {
       if (!trace) return;
       if (event.type === "message_start" && event.message.role === "assistant") {
         const round = ++currentRound;
+        const contextEntries = session.sessionManager.buildContextEntries();
+        const currentContextEntryIds = new Set(contextEntries.map((entry) => entry.id));
+        const contextReset = !hasRecordedContext ||
+          [...recordedContextEntryIds].some((id) => !currentContextEntryIds.has(id));
+        const newContextEntries = contextReset
+          ? contextEntries
+          : contextEntries.filter((entry) => !recordedContextEntryIds.has(entry.id));
         const traceId = this.startTrace(
           trace,
           "llm",
@@ -234,13 +243,20 @@ export class PiAgent {
           {
             round,
             input: JSON.stringify({
-              systemPrompt: session.systemPrompt,
-              messages: session.sessionManager.buildContextEntries(),
+              contextMode: "delta",
+              contextReset,
+              ...(contextReset ? { systemPrompt: session.systemPrompt } : {}),
+              messages: newContextEntries,
             }),
           },
         );
         modelCallCount++;
-        if (traceId !== undefined) activeModelCall = { traceId, startedAt: performance.now(), round };
+        if (traceId !== undefined) {
+          activeModelCall = { traceId, startedAt: performance.now(), round };
+          recordedContextEntryIds.clear();
+          for (const entry of contextEntries) recordedContextEntryIds.add(entry.id);
+          hasRecordedContext = true;
+        }
       } else if (event.type === "message_end" && event.message.role === "assistant") {
         if (!activeModelCall) return;
         const message = event.message;

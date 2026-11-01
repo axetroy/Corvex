@@ -222,6 +222,17 @@ describe("PiAgent", () => {
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
     expect(llmTraces).toHaveLength(2);
     expect(llmTraces?.map((entry) => entry.round)).toEqual([1, 2]);
+    expect(JSON.parse(llmTraces?.[0]?.input ?? "{}")).toMatchObject({
+      contextMode: "delta",
+      contextReset: true,
+    });
+    expect(JSON.parse(llmTraces?.[0]?.input ?? "{}").systemPrompt).toContain("Return JSON.");
+    expect(JSON.parse(llmTraces?.[1]?.input ?? "{}")).toMatchObject({
+      contextMode: "delta",
+      contextReset: false,
+    });
+    expect(llmTraces?.[0]?.input).toContain("Say ok.");
+    expect(llmTraces?.[1]?.input).not.toContain("Say ok.");
     expect(llmTraces).toMatchObject([
       {
         model: expect.stringContaining("test-model"),
