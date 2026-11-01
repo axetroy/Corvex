@@ -1,5 +1,6 @@
 import type { DiffResult, Workspace, Change } from "./types.js";
 
+/** 单次 MR diff 可读取和拼装的累计字节上限，防止超大变更耗尽资源。 */
 const maxTotalDiffBytes = 16 << 20;
 
 type GitRun = (

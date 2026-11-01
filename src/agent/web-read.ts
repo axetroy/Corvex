@@ -5,14 +5,22 @@ import { load } from "cheerio";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+/** 单个网页响应允许读取的最大字节数。 */
 const maxResponseBytes = 1 << 20;
+/** 清理 HTML 后单页最多返回给 Agent 的文本字符数。 */
 const maxTextCharacters = 40_000;
+/** 单页最多返回的同源链接数量。 */
 const maxLinks = 20;
+/** 单次网页请求允许跟随的最大重定向次数。 */
 const maxRedirects = 3;
+/** 单个 Agent session 最多抓取的网页数。 */
 const maxPagesPerSession = 10;
+/** 单次 HTTPS 请求的超时时间，单位为毫秒。 */
 const requestTimeoutMs = 10_000;
+/** 始终禁止访问的本机、内部及保留用途主机名后缀。 */
 const blockedHostSuffixes = [".localhost", ".local", ".internal", ".test", ".invalid", ".example", ".home.arpa"];
 
+/** 用于拒绝非公网、保留或特殊用途 IPv4 地址的网段表。 */
 const blockedIpv4 = new BlockList();
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
@@ -34,8 +42,10 @@ for (const [network, prefix] of [
   blockedIpv4.addSubnet(network, prefix, "ipv4");
 }
 
+/** IPv6 公网地址范围白名单；只接受其中未被特殊网段表排除的地址。 */
 const globalIpv6 = new BlockList();
 globalIpv6.addSubnet("2000::", 3, "ipv6");
+/** 从 IPv6 公网范围中进一步排除的特殊用途网段。 */
 const blockedIpv6 = new BlockList();
 blockedIpv6.addSubnet("2001::", 23, "ipv6");
 blockedIpv6.addSubnet("2001:db8::", 32, "ipv6");

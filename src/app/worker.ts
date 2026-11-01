@@ -11,6 +11,7 @@ import { PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
+/** Worker 任务租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
 
 function message(error: unknown): string {

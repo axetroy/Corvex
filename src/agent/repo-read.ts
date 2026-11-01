@@ -3,17 +3,29 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+/** 单次 read_file 返回内容的 UTF-8 字节上限。 */
 const maxReadBytes = 64 << 10;
+/** read_file 未指定行范围时默认返回的行数。 */
 const defaultMaxLines = 200;
+/** read_file 单次请求允许的最大行数。 */
 const maxLinesPerRead = 1000;
+/** read_dir 单次最多返回的直接子项数量。 */
 const maxDirectoryEntries = 200;
+/** search_text 查询字符串允许的最大字符数。 */
 const maxSearchQueryCharacters = 256;
+/** 单次 search_text 最多扫描的文件数。 */
 const maxSearchFiles = 1000;
+/** 单次 search_text 遍历目录时最多访问的条目数。 */
 const maxSearchDirectoryEntries = 10_000;
+/** search_text 从单个文件读取的最大字节数。 */
 const maxSearchFileBytes = 256 << 10;
+/** 单次 search_text 跨所有文件读取的总字节上限。 */
 const maxSearchTotalBytes = 16 << 20;
+/** 单次 search_text 最多返回的匹配数量。 */
 const maxSearchResults = 50;
+/** search_text 每条匹配结果最多保留的行文本字符数。 */
 const maxSearchLineCharacters = 400;
+/** search_text 递归搜索时跳过的 Git、依赖和生成目录。 */
 const ignoredSearchDirectories = new Set([".git", ".next", ".turbo", "coverage", "dist", "node_modules"]);
 
 interface ReadFileRange {

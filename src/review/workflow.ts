@@ -47,6 +47,7 @@ export interface Explanation {
   usage: ModelUsage;
 }
 
+/** 匹配 unified diff hunk 头，并捕获新文件侧的起始行号。 */
 const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 class ReviewJsonDecodeError extends Error {

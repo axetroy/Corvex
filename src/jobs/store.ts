@@ -24,10 +24,15 @@ import {
   type OperationsOverview,
 } from "./model.js";
 
+/** Worker 从任务开始到终止状态允许执行的最大尝试次数。 */
 const maxAttempts = 3;
+/** 已完成、失败、过期或取消的终态任务集合。 */
 const terminal = new Set<JobStatus>(["completed", "failed", "stale", "cancelled"]);
+/** 持有租约期间可能运行的状态，用于检测并恢复过期租约。 */
 const active = ["preparing", "analyzing", "fixing", "verifying", "publishing"];
+/** 单条持久化执行轨迹输入或输出允许保存的最大字节数。 */
 const maxExecutionPayloadBytes = 64 << 10;
+/** 执行轨迹中用于识别并脱敏凭证类字段名的匹配规则。 */
 const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|credential/i;
 
 interface JobRow {

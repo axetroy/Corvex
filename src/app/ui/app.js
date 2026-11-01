@@ -1,6 +1,8 @@
 import { en, resolveLocale, zhCN } from "./i18n.js";
 
+/** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
+/** 浏览器按偏好顺序提供的语言候选，用于首次访问时选择界面语言。 */
 const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
 
 function readSavedLocale() {
@@ -14,9 +16,13 @@ function readSavedLocale() {
 
 let locale = resolveLocale(readSavedLocale(), browserLanguages);
 let copy = locale === "zh-CN" ? zhCN : en;
+/** 运维台主内容的挂载节点。 */
 const app = document.querySelector("#app");
+/** 显示数据最近更新时间的节点。 */
 const updated = document.querySelector("#updated");
+/** 顶栏中的语言选择控件。 */
 const languageSelect = document.querySelector("#language");
+/** 与后端任务生命周期一致、用于概览筛选和展示的状态列表。 */
 const statuses = [
   "queued",
   "preparing",
@@ -29,6 +35,7 @@ const statuses = [
   "stale",
   "cancelled",
 ];
+/** 运维台当前筛选条件和分页位置；其属性会随用户操作更新。 */
 const queue = { status: "", type: "", search: "", offset: 0 };
 // 丢弃较早请求的响应，避免慢响应覆盖用户刚切换到的新页面。
 let renderVersion = 0;

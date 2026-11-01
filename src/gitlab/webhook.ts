@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
+/** 单个 GitLab Webhook 请求体允许的最大字节数。 */
 export const MAX_WEBHOOK_BODY_BYTES = 1 << 20;
 
 export interface NoteEvent {

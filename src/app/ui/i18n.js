@@ -15,6 +15,7 @@ export function resolveLocale(savedLocale, browserLanguages) {
   return "en";
 }
 
+/** 运维台英文界面文案，按界面用途提供本地化字符串。 */
 export const en = {
   documentTitle: "Corvex Operations",
   brandLabel: "Corvex Operations home",
@@ -203,6 +204,7 @@ export const en = {
   requestFailedTemplate: "Request failed ({status}): {message}",
 };
 
+/** 运维台简体中文界面文案，与 en 使用相同的键结构。 */
 export const zhCN = {
   documentTitle: "Corvex 运维控制台",
   brandLabel: "Corvex 运维控制台首页",

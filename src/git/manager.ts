@@ -6,11 +6,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { DiffEngine } from "./diff.js";
 import type { DiffResult, Workspace } from "./types.js";
 
+/** 单条 Git 命令允许捕获的标准输出上限。 */
 const maxOutput = 16 << 20;
+/** 单条 Git 命令保留的标准错误输出上限。 */
 const maxErrorOutput = 4 << 10;
+/** 安全读取 Git 工作区文件时允许的最大文件大小。 */
 const maxReadFileBytes = 16 << 20;
+/** 补丁解析和应用流程允许处理的最大字节数。 */
 const maxPatchBytes = 256 << 10;
+/** Git commit 对象的完整 SHA-1 或 SHA-256 十六进制格式。 */
 const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+/** 可安全用作工作区目录名的任务 ID 格式，并限制其最大长度。 */
 const jobIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
 interface GitResult {

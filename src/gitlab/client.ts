@@ -54,10 +54,15 @@ export class GitLabWriteError extends Error {
   }
 }
 
+/** GitLab 单个 API 响应正文的最大读取字节数。 */
 const MAX_RESPONSE_BYTES = 20 << 20;
+/** 分页合并请求 Diff 累计允许读取的最大字节数。 */
 const MAX_DIFF_BYTES = 16 << 20;
+/** 幂等 GET 请求允许的总尝试次数，包含首次请求。 */
 const MAX_READ_ATTEMPTS = 3;
+/** 仅接受不超过此毫秒数的 Retry-After 延迟，避免请求等待过久。 */
 const MAX_RETRY_AFTER_MS = 2_000;
+/** GET 请求中视为可能短暂恢复的 HTTP 状态码；POST 不使用此列表重试。 */
 const RETRYABLE_READ_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function retryDelay(response: Response, attempt: number): number | undefined {

@@ -23,7 +23,9 @@ export interface ReviewBenchmarkScore {
   f1: number;
 }
 
+/** 合成基准样例共用的占位 Base SHA，不对应真实 Git 提交。 */
 const baseSha = "a".repeat(40);
+/** 合成基准样例共用的占位 Head SHA，不对应真实 Git 提交。 */
 const headSha = "b".repeat(40);
 
 function benchmarkCase(
