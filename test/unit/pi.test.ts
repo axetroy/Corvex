@@ -169,7 +169,7 @@ describe("PiAgent", () => {
     const job = store.claimNextWithLease(30_000);
     if (!job) throw new Error("expected a queued job to be claimed");
     const agent = new PiAgent(config, store);
-    responseDelayMs = 700;
+    responseDelayMs = 1400;
     const startedAt = Date.now();
     const result = await agent.generate(
       { systemPrompt: "Return JSON.", userPrompt: "Say ok." },
