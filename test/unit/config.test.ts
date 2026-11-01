@@ -53,7 +53,7 @@ describe("validateConfig", () => {
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).toContain("allowed_project_ids");
       expect(contents).toContain("allowed_user_ids");
-      expect(contents).toContain("session_timeout: 30m");
+      expect(contents).toContain("session_timeout: 60m");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

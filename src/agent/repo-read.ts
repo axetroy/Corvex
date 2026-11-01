@@ -19,6 +19,10 @@ function isWithin(root: string, candidate: string): boolean {
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
+function toForwardSlashPath(path: string): string {
+  return path.split(sep).join("/");
+}
+
 interface ResolvedAllowedPath {
   path: string;
   root: string;
@@ -84,7 +88,7 @@ export async function readAllowedDirectory(
     type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other",
   }));
   return {
-    path: relative(resolvedPath.root, resolvedPath.path) || ".",
+    path: toForwardSlashPath(relative(resolvedPath.root, resolvedPath.path) || "."),
     entries,
     truncated: allEntries.length > maxDirectoryEntries,
   };
@@ -97,7 +101,7 @@ export async function statAllowedPath(
   const resolvedPath = await resolveAllowedPath(requestedPath, allowedRoots);
   const info = await stat(resolvedPath.path);
   return {
-    path: relative(resolvedPath.root, resolvedPath.path) || ".",
+    path: toForwardSlashPath(relative(resolvedPath.root, resolvedPath.path) || "."),
     type: pathType(info),
     size: info.size,
     modifiedAt: info.mtime.toISOString(),

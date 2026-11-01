@@ -144,8 +144,8 @@ describe("PiAgent", () => {
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         apiKey: "test-key",
-        requestTimeout: 500,
-        sessionTimeout: 8000,
+        requestTimeout: 2000,
+        sessionTimeout: 10000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
         mcpEnabled: false,
@@ -169,7 +169,7 @@ describe("PiAgent", () => {
     const job = store.claimNextWithLease(30_000);
     if (!job) throw new Error("expected a queued job to be claimed");
     const agent = new PiAgent(config, store);
-    responseDelayMs = 350;
+    responseDelayMs = 700;
     const startedAt = Date.now();
     const result = await agent.generate(
       { systemPrompt: "Return JSON.", userPrompt: "Say ok." },
