@@ -830,9 +830,9 @@ export class JobStore {
       this.recoverExpiredLeases();
       const row = readJobRow(this.db
         .prepare(
-          "SELECT * FROM jobs WHERE status = 'queued' AND type IN ('review','fix','explain') ORDER BY created_at LIMIT 1",
+          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain') ORDER BY created_at LIMIT 1",
         )
-        .get());
+        .get(Date.now()));
       if (!row) return undefined;
       const now = new Date();
       const leaseToken = randomUUID();
@@ -878,6 +878,47 @@ export class JobStore {
           .run(now, failure, jobId);
       }
       this.insertAudit(row.actor_id, "job_status", jobId, `${from}->${to}`);
+    });
+  }
+
+  retryLeasedJob(
+    jobId: string,
+    leaseToken: string,
+    from: JobStatus,
+    availableAt: number,
+    failure: string,
+  ): boolean {
+    if (!leaseToken) throw new Error("job lease token is required");
+    if (from === "publishing") throw new Error("publishing jobs cannot be retried automatically");
+    if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
+      throw new Error("retry availability must be a non-negative timestamp");
+    }
+    return this.transaction(() => {
+      const row = this.db
+        .prepare("SELECT actor_id, cancel_requested, attempt_count FROM jobs WHERE id=? AND status=? AND lease_token=?")
+        .get(jobId, from, leaseToken) as {
+        actor_id: number;
+        cancel_requested: number;
+        attempt_count: number;
+      } | undefined;
+      if (!row) throw new Error(`job "${jobId}" is no longer in status "${from}"`);
+      if (row.cancel_requested || row.attempt_count >= maxAttempts) return false;
+
+      const now = new Date();
+      const finishedAt = now.toISOString();
+      const result = this.db
+        .prepare(
+          `UPDATE jobs SET status='queued', last_error=?, failure_stage='', available_at=?, updated_at=?,
+           lease_token='', lease_until=0 WHERE id=? AND status=? AND lease_token=? AND cancel_requested=0`,
+        )
+        .run(failure, availableAt, finishedAt, jobId, from, leaseToken);
+      if (result.changes !== 1) throw new Error(`job "${jobId}" changed before it could be retried`);
+      this.db
+        .prepare("UPDATE job_attempts SET finished_at=?, error=? WHERE job_id=? AND finished_at IS NULL")
+        .run(finishedAt, failure, jobId);
+      this.insertAudit(row.actor_id, "job_status", jobId, `${from}->queued`);
+      this.insertAudit(row.actor_id, "automatic_retry", jobId, `available_at:${availableAt}`);
+      return true;
     });
   }
 
@@ -1087,7 +1128,7 @@ export class JobStore {
       const result = this.db
         .prepare(
           `UPDATE jobs SET status='queued', failure_stage='', cancel_requested=0,
-           lease_token='', lease_until=0, updated_at=? WHERE id=? AND status='failed'`,
+           lease_token='', lease_until=0, available_at=0, updated_at=? WHERE id=? AND status='failed'`,
         )
         .run(now, jobId);
       if (result.changes !== 1) throw new Error(`job "${jobId}" changed before it could be retried`);
@@ -1275,7 +1316,8 @@ export class JobStore {
         type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
         head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT ''
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
+        available_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_mr_created_idx ON jobs(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS webhook_events (
@@ -1327,10 +1369,12 @@ export class JobStore {
       lease_until: "INTEGER NOT NULL DEFAULT 0",
       cancel_requested: "INTEGER NOT NULL DEFAULT 0",
       failure_stage: "TEXT NOT NULL DEFAULT ''",
+      available_at: "INTEGER NOT NULL DEFAULT 0",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);
     }
+    this.db.exec("CREATE INDEX IF NOT EXISTS jobs_queue_available_idx ON jobs(status,available_at,created_at)");
     const traceColumns = this.db.prepare("PRAGMA table_info(job_trace)").all() as { name: string }[];
     const existingTraceColumns = new Set(traceColumns.map((column) => column.name));
     const traceAdditions: Record<string, string> = {

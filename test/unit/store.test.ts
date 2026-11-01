@@ -349,6 +349,66 @@ describe("JobStore", () => {
     expect(store.listJobs("failed", 10)).toHaveLength(0);
   });
 
+  it("persists automatic retry availability and attempt history across restart", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-retry-"));
+    const databasePath = join(directory, "state.db");
+    store = await JobStore.open(databasePath);
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    const availableAt = Date.now() + 60_000;
+
+    expect(store.retryLeasedJob(job.id, job.leaseToken, "analyzing", availableAt, "temporary API failure")).toBe(true);
+    expect(store.claimNextWithLease(30_000)).toBeUndefined();
+    store.close();
+    store = await JobStore.open(databasePath);
+
+    expect(store.claimNextWithLease(30_000)).toBeUndefined();
+    const database = new DatabaseSync(databasePath);
+    database.prepare("UPDATE jobs SET available_at=0 WHERE id=?").run(job.id);
+    database.close();
+
+    const retry = store.claimNextWithLease(30_000);
+    expect(retry).toMatchObject({ id: job.id, attemptCount: 2, status: "preparing" });
+    expect(store.getJobDetails(job.id)?.attempts).toMatchObject([
+      { attempt: 1, error: "temporary API failure", finishedAt: expect.any(String) },
+      { attempt: 2, error: "", finishedAt: null },
+    ]);
+    expect(store.getJobDetails(job.id)?.timeline.map(({ from, to }) => [from, to])).toEqual([
+      ["queued", "preparing"],
+      ["preparing", "analyzing"],
+      ["analyzing", "queued"],
+      ["queued", "preparing"],
+    ]);
+  });
+
+  it("does not automatically retry beyond the maximum attempt count", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const job = store.claimNextWithLease(30_000);
+      if (!job) throw new Error("expected a queued job to be claimed");
+      store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+      expect(store.retryLeasedJob(job.id, job.leaseToken, "analyzing", Date.now(), `failure ${attempt}`))
+        .toBe(attempt < 3);
+      if (attempt === 3) {
+        expect(store.getJob(job.id).status).toBe("analyzing");
+      }
+    }
+  });
+
   it("does not allow an operator retry after entering publishing", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

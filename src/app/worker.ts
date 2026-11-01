@@ -6,13 +6,69 @@ import { GitManager } from "../git/manager.js";
 import type { DiffResult, Workspace } from "../git/types.js";
 import type { Job, JobStatus } from "../jobs/model.js";
 import { JobStore } from "../jobs/store.js";
-import { GitLabClient, GitLabWriteError, type MergeRequest } from "../gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } from "../gitlab/client.js";
 import { PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
 /** Worker 任务租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
+/** 自动重试时按任务尝试序号递增的基础退避时长，单位为毫秒。 */
+const automaticRetryBaseDelayMs = 2_000;
+/** 自动重试退避的最大等待时长，单位为毫秒。 */
+const automaticRetryMaxDelayMs = 30_000;
+/** 视为瞬时故障的 HTTP 状态码；鉴权、校验和其他客户端错误不重试。 */
+const retryableHttpStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+/** Node.js/Undici 常见的短暂网络错误码。 */
+const retryableNetworkCodes = new Set([
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+/** Git CLI 在远端网络故障时可能返回文本而非系统错误码。 */
+const retryableNetworkMessage = /network error|connection (?:reset|refused|timed out)|could not resolve host|failed to connect|remote end hung up unexpectedly|tls connection.*(?:timeout|terminated)/i;
+
+function isRetryableJobFailure(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null || seen.has(current)) continue;
+    seen.add(current);
+    const value = current as {
+      cause?: unknown;
+      code?: unknown;
+      errors?: unknown;
+      message?: unknown;
+      name?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+    };
+    const status = value instanceof GitLabApiError
+      ? value.status
+      : typeof value.status === "number"
+        ? value.status
+        : value.statusCode;
+    if (typeof status === "number" && retryableHttpStatuses.has(status)) return true;
+    if (typeof value.code === "string" && retryableNetworkCodes.has(value.code)) return true;
+    if (value.name === "TimeoutError") return true;
+    if (typeof value.message === "string" && retryableNetworkMessage.test(value.message)) return true;
+    if (value.cause !== undefined) pending.push(value.cause);
+    if (Array.isArray(value.errors)) pending.push(...value.errors);
+  }
+  return false;
+}
+
+function automaticRetryDelay(attemptCount: number): number {
+  return Math.min(automaticRetryMaxDelayMs, automaticRetryBaseDelayMs * 2 ** Math.max(0, attemptCount - 1));
+}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -165,6 +221,35 @@ export class Worker {
         console.error("could not check cancellation after job failure", {
           jobId: job.id,
           error: message(leaseError),
+        });
+      }
+    }
+    if (
+      stage !== "publishing" &&
+      (isRetryableJobFailure(processingError) || jobSignal.reason?.name === "TimeoutError")
+    ) {
+      const delayMs = automaticRetryDelay(job.attemptCount);
+      const availableAt = Date.now() + delayMs;
+      try {
+        if (this.store.retryLeasedJob(
+          job.id,
+          job.leaseToken,
+          stage,
+          availableAt,
+          errorDetails(processingError),
+        )) {
+          console.warn("transient worker job failure; automatic retry scheduled", {
+            jobId: job.id,
+            attempt: job.attemptCount,
+            retryAt: new Date(availableAt).toISOString(),
+            error: message(processingError),
+          });
+          return;
+        }
+      } catch (retryError) {
+        console.error("could not schedule automatic worker retry", {
+          jobId: job.id,
+          error: message(retryError),
         });
       }
     }

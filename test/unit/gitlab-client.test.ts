@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { GitLabClient, GitLabWriteError } from "../../src/gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError } from "../../src/gitlab/client.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -97,7 +97,12 @@ describe("GitLab read retries", () => {
     const port = await listen(server);
     try {
       const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
-      await expect(client.getProject(1)).rejects.toThrow("GitLab API returned 503");
+      const request = client.getProject(1);
+      await expect(request).rejects.toBeInstanceOf(GitLabApiError);
+      await expect(request).rejects.toMatchObject({
+        status: 503,
+        message: expect.stringContaining("GitLab API returned 503"),
+      });
       expect(attempts).toBe(3);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

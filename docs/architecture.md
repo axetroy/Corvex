@@ -12,6 +12,8 @@ Corvex separates the request path from model and repository work:
 
 GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
 
+Worker jobs also persist retries for transient HTTP/network failures and job timeouts before publishing. The delay starts at 2 seconds, doubles per attempt, and is capped at 30 seconds; the three-attempt job limit still applies. Authentication, validation, cancellation, stale snapshots, and publishing failures are not automatically retried.
+
 The server can run without a worker: commands are accepted and persisted, but model tasks remain queued. In a split deployment the server and worker must use the same SQLite database and persistent Git storage root.
 
 ## Request and queue workflow
@@ -28,9 +30,9 @@ The currently supported commands are `review`, `explain <path>`, `fix [request]`
 ## Review workflow
 
 1. Fetch the MR and check that it is open and still has the Head SHA captured when the request was queued. A closed or changed MR is marked stale rather than reviewed at a moving revision.
-2. Update or create a per-project Git mirror, then create an isolated detached worktree at the exact Head SHA. The worker obtains the diff against the MR Base SHA and enforces the configured file and byte limits.
-3. Send bounded MR metadata and diff context to the configured model endpoint. Corvex expects one structured JSON response.
-4. Validate the response before publishing: findings must refer to an exact changed path and added line, include evidence found literally on that line, use a supported severity, pass size limits, and not duplicate an existing finding fingerprint. Unsupported findings are discarded.
+2. Update or create a per-project Git mirror, then create an isolated detached worktree at the exact Head SHA. The worker obtains the diff against the MR Base SHA and enforces the configured file and byte limits. Files within `review.max_files` are reviewed in batches of at most 10 files, further reduced as needed to fit `review.max_context_bytes`.
+3. Send bounded MR metadata and each diff batch to the configured model endpoint. Corvex expects one structured JSON response per batch and aggregates usage and findings across the review.
+4. Validate each response before publishing: findings must refer to an exact changed path and added line, include evidence found literally on that line, use a supported severity, pass size limits, and not duplicate an existing finding fingerprint. Findings are deduplicated and capped across all batches by `review.max_findings`. Unsupported findings are discarded; omitted files are reported as partial coverage.
 5. Fetch the MR again. If its state or relevant diff SHAs changed while the model was running, mark the job stale and do not publish its result.
 6. Publish supported findings as line discussions. If GitLab rejects an inline position, include that finding in the summary note instead. Clean up the worktree.
 
@@ -55,7 +57,7 @@ queued -> preparing -> analyzing -> publishing -> completed
 
 Jobs can also end as `failed`, `stale`, or `cancelled`. The worker polls at `worker.poll_interval` and bounds a job with `worker.job_timeout`.
 
-The 30-second lease is renewed while a worker is active. If a process disappears before publishing, an expired lease can return the job to the queue; interrupted jobs have at most three attempts. An ordinary processing error is recorded as failed. If the lease expires during publishing, the outcome may be uncertain, so Corvex fails the job rather than automatically retrying and potentially duplicating comments.
+The 30-second lease is renewed while a worker is active. If a process disappears before publishing, an expired lease can return the job to the queue; interrupted jobs have at most three attempts. Classified transient failures and job timeouts are also returned to the queue with persisted backoff. Other processing errors are recorded as failed. If a job fails during publishing or its lease expires there, the outcome may be uncertain, so Corvex does not automatically retry and risk duplicating comments.
 
 `@corvex status` reports the latest task on the MR. `@corvex cancel` immediately cancels a queued task or asks the worker to stop an active task. Only the task requester can cancel it. Cancellation is not available after the task has entered publishing, where GitLab may already have accepted a comment.
 

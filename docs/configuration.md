@@ -74,11 +74,11 @@ Pi sessions do not expose built-in shell, edit, or write tools. The custom `read
 
 | YAML key | Example/default | Accepted range | Description |
 |---|---:|---:|---|
-| `review.max_files` | `100` | 1–1000 | Maximum changed files considered by one review. |
-| `review.max_findings` | `30` | 1–100 | Maximum accepted findings in a model response. |
+| `review.max_files` | `100` | 1–1000 | Maximum changed files considered by one review; selected files are sent in batches of at most 10, further limited by context size. |
+| `review.max_findings` | `30` | 1–100 | Maximum unique accepted findings across all batches in one review. |
 | `review.max_context_bytes` | `2097152` (2 MiB) | 1 byte–8 MiB | Maximum serialized review/explain/fix context. |
 
-Files or findings outside limits can be omitted or rejected; they are not silently treated as reviewed.
+`review.max_files` is a total per-review ceiling, not the batch size. Files or findings outside configured or safety limits can be omitted or rejected; omitted files are reported as partial coverage and are not silently treated as reviewed.
 
 ## Worker
 

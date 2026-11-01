@@ -426,6 +426,115 @@ describe("review and fix response validation", () => {
     expect(generate).toHaveBeenCalledTimes(2);
   });
 
+  it("reviews large merge requests in bounded batches with global finding and usage limits", async () => {
+    const changes = Array.from({ length: 13 }, (_, index) => ({
+      path: `src/file-${index}.ts`,
+      status: "M" as const,
+      addedLines: 1,
+      removedLines: 0,
+      skipped: "",
+      patch: `@@ -0,0 +1 @@\n+const value = input${index};\n`,
+    }));
+    const largeDiff: DiffResult = { ...diff, changes };
+    const generate = vi.fn<PiAgent["generate"]>(async (request) => {
+      const input = JSON.parse(request.userPrompt) as { changes: { path: string; patch: string }[] };
+      const change = input.changes[0];
+      if (!change) throw new Error("expected a non-empty review batch");
+      const evidence = change.patch.split("\n").find((line) => line.startsWith("+"))?.slice(1);
+      if (!evidence) throw new Error("expected an added line in the review batch");
+      return {
+        content: JSON.stringify({
+          summary: `Reviewed ${input.changes.length} files.`,
+          findings: [{
+            severity: "high",
+            title: "Unchecked input",
+            file_path: change.path,
+            line: 1,
+            evidence,
+            explanation: "The added value is not validated.",
+          }],
+        }),
+        model: "test/model",
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+      };
+    });
+    const agent = { generate } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 12, 1, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Large test merge request",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, largeDiff, process.cwd(), undefined, reviewTrace);
+
+    const batchSizes = generate.mock.calls.map(([request]) => {
+      const input = JSON.parse(request.userPrompt) as { changes: unknown[] };
+      return input.changes.length;
+    });
+    expect(batchSizes).toEqual([10, 2]);
+    expect(outcome.result.findings).toHaveLength(1);
+    expect(outcome.rejected).toBe(1);
+    expect(outcome.usage).toEqual({ inputTokens: 4, outputTokens: 6, totalTokens: 10 });
+    expect(outcome.omittedFiles).toBe(1);
+    expect(outcome.result.summary).toContain("Coverage is partial");
+  });
+
+  it("splits review batches further when serialized context reaches the byte limit", async () => {
+    const changes = Array.from({ length: 3 }, (_, index) => ({
+      path: `src/large-${index}.ts`,
+      status: "M" as const,
+      addedLines: 1,
+      removedLines: 0,
+      skipped: "",
+      patch: `@@ -0,0 +1 @@\n+const value = ${"x".repeat(900)};\n`,
+    }));
+    const largeDiff: DiffResult = { ...diff, changes };
+    const generate = vi.fn<PiAgent["generate"]>(async (request) => {
+      const input = JSON.parse(request.userPrompt) as { changes: { path: string }[] };
+      const change = input.changes[0];
+      if (!change || input.changes.length !== 1) throw new Error("context limit should create single-file batches");
+      return {
+        content: JSON.stringify({
+          summary: "Reviewed one large file.",
+          findings: [{
+            severity: "medium",
+            title: "Review the value",
+            file_path: change.path,
+            line: 1,
+            evidence: "const value",
+            explanation: "Review the source of the assigned value.",
+          }],
+        }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    });
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1800);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Large context test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, largeDiff, process.cwd(), undefined, reviewTrace);
+
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(generate.mock.calls.every(([request]) => Buffer.byteLength(request.userPrompt) <= 1800)).toBe(true);
+    expect(outcome.result.findings).toHaveLength(3);
+    expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 3, totalTokens: 6 });
+  });
+
   it("retries malformed JSON returned by the coverage follow-up", async () => {
     const validResponse = {
       content: JSON.stringify({ summary: "Review complete", findings: [] }),

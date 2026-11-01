@@ -49,6 +49,8 @@ export interface Explanation {
 
 /** 匹配 unified diff hunk 头，并捕获新文件侧的起始行号。 */
 const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+/** 单个模型请求最多审查的变更文件数；上下文字节限制仍会进一步缩小批次。 */
+const reviewBatchFileLimit = 10;
 
 class ReviewJsonDecodeError extends Error {
   constructor(cause: unknown) {
@@ -349,11 +351,113 @@ export class ReviewWorkflow {
     trace?: JobTraceContext,
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
-    const { input, omittedFiles } = this.buildInput(context, diff);
-    if (input.changes.length === 0) {
+    const { input: selectedInput, omittedFiles: policyOmittedFiles } = this.buildInput(context, diff);
+    const batches: Change[][] = [];
+    let batch: Change[] = [];
+    let omittedFiles = policyOmittedFiles;
+    for (const change of selectedInput.changes) {
+      const candidate = [...batch, change];
+      const exceedsContext = Buffer.byteLength(JSON.stringify({
+        merge_request: context,
+        changes: candidate,
+      })) > this.maxContextBytes;
+      if (batch.length > 0 && (candidate.length > reviewBatchFileLimit || exceedsContext)) {
+        batches.push(batch);
+        batch = [];
+      }
+      if (Buffer.byteLength(JSON.stringify({
+        merge_request: context,
+        changes: [...batch, change],
+      })) > this.maxContextBytes) {
+        omittedFiles++;
+        continue;
+      }
+      batch.push(change);
+      if (batch.length >= reviewBatchFileLimit) {
+        batches.push(batch);
+        batch = [];
+      }
+    }
+    if (batch.length > 0) batches.push(batch);
+
+    if (batches.length === 0) {
       if (omittedFiles > 0) {
         throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
       }
+      return {
+        result: { summary: "No reviewable text changes were available.", findings: [] },
+        model: "",
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        omittedFiles,
+        rejected: 0,
+      };
+    }
+    const findings: Finding[] = [];
+    const seenFindings = new Set<string>();
+    const summaries: string[] = [];
+    let rejected = 0;
+    let model = "";
+    const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    for (const [index, changes] of batches.entries()) {
+      const outcome = await this.reviewBatch(
+        context,
+        { ...diff, changes, skippedFiles: 0 },
+        cwd,
+        signal,
+        trace,
+        omittedFiles,
+        findings.length > 0,
+      );
+      summaries.push(outcome.result.summary);
+      model = outcome.model;
+      usage.inputTokens += outcome.usage.inputTokens;
+      usage.outputTokens += outcome.usage.outputTokens;
+      usage.totalTokens += outcome.usage.totalTokens;
+      rejected += outcome.rejected;
+      for (const finding of outcome.result.findings) {
+        if (seenFindings.has(finding.fingerprint) || findings.length >= this.maxFindings) {
+          rejected++;
+          continue;
+        }
+        seenFindings.add(finding.fingerprint);
+        findings.push(finding);
+      }
+      if (index < batches.length - 1) {
+        console.info("review batch completed", { projectId: context.projectId, mrIid: context.mrIid, batch: index + 1, totalBatches: batches.length });
+      }
+    }
+    if (findings.length === 0 && omittedFiles > 0) {
+      throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
+    }
+    const summary = summaries.length === 1
+      ? summaries[0] ?? ""
+      : summaries.map((value, index) => this.responseLanguage === "zh-CN"
+        ? `第 ${index + 1} 批：${value}`
+        : `Batch ${index + 1}: ${value}`).join("\n\n");
+    const result: ReviewResult = { summary, findings };
+    const resultWithCoverage = omittedFiles > 0
+      ? {
+          ...result,
+          summary: `${result.summary}\n\n${this.responseLanguage === "zh-CN"
+            ? `本次审查覆盖不完整：有 ${omittedFiles} 个变更文件因大小或文件策略限制被省略；现有发现仅基于已审查文件。`
+            : `Coverage is partial: ${omittedFiles} changed file(s) were omitted by the review size or file policy; findings only cover the files reviewed.`}`,
+        }
+      : result;
+    return { result: resultWithCoverage, model, usage, omittedFiles, rejected };
+  }
+
+  private async reviewBatch(
+    context: ReviewContext,
+    diff: DiffResult,
+    cwd: string,
+    signal?: AbortSignal,
+    trace?: JobTraceContext,
+    coverageOmittedFiles = 0,
+    allowEmptyWithoutTrace = false,
+  ): Promise<ReviewOutcome> {
+    this.validateSnapshot(context, diff);
+    const { input, omittedFiles } = this.buildInput(context, diff);
+    if (input.changes.length === 0) {
       return {
         result: { summary: "No reviewable text changes were available.", findings: [] },
         model: "",
@@ -427,7 +531,10 @@ export class ReviewWorkflow {
     const initial = await generateParsedResponse(userPrompt);
     let { response, usage, parsed } = initial;
     const { result } = parsed;
-    if (result.findings.length === 0) {
+    if (result.findings.length === 0 && (!allowEmptyWithoutTrace || trace !== undefined)) {
+      if (coverageOmittedFiles > 0 && !trace) {
+        throw new Error(`review coverage is incomplete: ${coverageOmittedFiles} changed file(s) were omitted from the review context`);
+      }
       if (omittedFiles > 0) {
         throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
       }
@@ -533,23 +640,11 @@ export class ReviewWorkflow {
     const changes: Change[] = [];
     const representedSkipped = diff.changes.filter((change) => change.skipped).length;
     let omittedFiles = Math.max(0, diff.skippedFiles - representedSkipped);
-    let totalBytes =
-      Buffer.byteLength(context.title) +
-      Buffer.byteLength(context.description) +
-      Buffer.byteLength(context.sourceBranch) +
-      Buffer.byteLength(context.targetBranch) +
-      256;
     for (const change of diff.changes) {
       if (change.skipped || changes.length >= this.maxFiles || !change.patch) {
         omittedFiles++;
         continue;
       }
-      const size = Buffer.byteLength(change.path) + Buffer.byteLength(change.patch) + 64;
-      if (totalBytes + size > this.maxContextBytes) {
-        omittedFiles++;
-        continue;
-      }
-      totalBytes += size;
       changes.push(change);
     }
     return {

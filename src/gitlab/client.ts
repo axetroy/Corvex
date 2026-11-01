@@ -54,6 +54,14 @@ export class GitLabWriteError extends Error {
   }
 }
 
+/** GitLab 返回的非成功 HTTP 响应，保留状态码供上层重试策略判断。 */
+export class GitLabApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "GitLabApiError";
+  }
+}
+
 /** GitLab 单个 API 响应正文的最大读取字节数。 */
 const MAX_RESPONSE_BYTES = 20 << 20;
 /** 分页合并请求 Diff 累计允许读取的最大字节数。 */
@@ -367,6 +375,9 @@ export class GitLabClient {
     } catch (error) {
       body = `unable to read error response: ${String(error)}`;
     }
-    throw new Error(`GitLab API returned ${response.status} ${response.statusText}: ${body}`);
+    throw new GitLabApiError(
+      response.status,
+      `GitLab API returned ${response.status} ${response.statusText}: ${body}`,
+    );
   }
 }
