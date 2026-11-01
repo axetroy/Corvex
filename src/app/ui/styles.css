@@ -1248,6 +1248,18 @@ footer {
   background: #d94f42;
 }
 
+.trace-time-bar:hover {
+  background: #80689d;
+}
+
+.trace-time-bar-tool:hover {
+  background: #c97724;
+}
+
+.trace-time-bar-failed:hover {
+  background: #b9362c;
+}
+
 .trace-time-bar.is-selected,
 .trace-time-bar:focus-visible {
   z-index: 2;
