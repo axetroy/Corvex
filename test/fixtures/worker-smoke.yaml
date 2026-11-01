@@ -1,0 +1,46 @@
+server:
+  listen: "0.0.0.0:8080"
+  read_timeout: 5s
+  shutdown_timeout: 30s
+
+gitlab:
+  base_url: "https://gitlab.example.com"
+  allowed_project_ids:
+    - 1
+  allowed_user_ids:
+    - 1
+  bot_username: "corvex-bot"
+
+storage:
+  root: "/data/corvex"
+  database: "/data/corvex/state/corvex.db"
+  retention_days: 90
+  audit_retention_days: 365
+
+agent:
+  enabled: true
+  response_language: "en"
+  base_url: "https://api.openai.com/v1"
+  model: "ci-smoke-model"
+  request_timeout: 10s
+  session_timeout: 1m
+  max_output_tokens: 1024
+  daily_token_budget: 0
+  mcp_enabled: false
+  web_enabled: false
+  web_blocked_hosts: []
+  skill_paths: []
+
+review:
+  max_files: 10
+  max_findings: 5
+  max_context_bytes: 1048576
+
+worker:
+  poll_interval: 1s
+  job_timeout: 1m
+
+fix:
+  enabled: false
+  allowed_user_ids: []
+  max_patch_bytes: 131072

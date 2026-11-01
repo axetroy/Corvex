@@ -10,6 +10,8 @@ Corvex separates the request path from model and repository work:
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called only by the worker for review, explanation, or fix proposal tasks.
 
+GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
+
 The server can run without a worker: commands are accepted and persisted, but model tasks remain queued. In a split deployment the server and worker must use the same SQLite database and persistent Git storage root.
 
 ## Request and queue workflow

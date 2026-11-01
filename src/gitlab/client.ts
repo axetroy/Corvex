@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 export interface MergeRequest {
   iid: number;
   state: string;
@@ -54,6 +56,27 @@ export class GitLabWriteError extends Error {
 
 const MAX_RESPONSE_BYTES = 20 << 20;
 const MAX_DIFF_BYTES = 16 << 20;
+const MAX_READ_ATTEMPTS = 3;
+const MAX_RETRY_AFTER_MS = 2_000;
+const RETRYABLE_READ_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function retryDelay(response: Response, attempt: number): number | undefined {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    const dateDelay = Date.parse(retryAfter) - Date.now();
+    const delay = Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : dateDelay;
+    if (Number.isFinite(delay)) {
+      return delay <= MAX_RETRY_AFTER_MS ? Math.max(0, delay) : undefined;
+    }
+  }
+  return Math.min(1_000, 100 * 2 ** attempt);
+}
+
+async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal) await sleep(delayMs, undefined, { signal });
+  else await sleep(delayMs);
+}
 
 async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
   if (!response.body) return new Uint8Array();
@@ -282,24 +305,45 @@ export class GitLabClient {
     form?: URLSearchParams,
   ): Promise<Response> {
     if (!token) throw new Error("GitLab API token is required for this request");
-    const requestSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)])
-      : AbortSignal.timeout(this.requestTimeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}/api/v4${path}`, {
-        method,
-        headers: {
-          "PRIVATE-TOKEN": token,
-          ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
-        },
-        body: form,
-        signal: requestSignal,
-      });
-    } catch (error) {
-      throw new Error(`send GitLab API request: ${String(error)}`, { cause: error });
+    const maxAttempts = method === "GET" ? MAX_READ_ATTEMPTS : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const requestSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)])
+        : AbortSignal.timeout(this.requestTimeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(`${this.baseUrl}/api/v4${path}`, {
+          method,
+          headers: {
+            "PRIVATE-TOKEN": token,
+            ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+          },
+          body: form,
+          signal: requestSignal,
+        });
+      } catch (error) {
+        if (method !== "GET" || attempt + 1 >= maxAttempts || signal?.aborted) {
+          throw new Error(`send GitLab API request: ${String(error)}`, { cause: error });
+        }
+        await waitForRetry(Math.min(1_000, 100 * 2 ** attempt), signal);
+        continue;
+      }
+      if (
+        method === "GET" &&
+        attempt + 1 < maxAttempts &&
+        RETRYABLE_READ_STATUSES.has(response.status) &&
+        !signal?.aborted
+      ) {
+        const delay = retryDelay(response, attempt);
+        if (delay !== undefined) {
+          await response.body?.cancel().catch(() => {});
+          await waitForRetry(delay, signal);
+          continue;
+        }
+      }
+      return response;
     }
-    return response;
+    throw new Error("GitLab API request exhausted its retry attempts");
   }
 
   private async successBody(response: Response): Promise<Uint8Array> {

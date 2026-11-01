@@ -56,3 +56,72 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+  docker-smoke:
+    name: Docker server smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build --tag corvex-smoke .
+
+      - name: Start server and check readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          server=corvex-smoke-server
+          worker=corvex-smoke-worker
+          volume=corvex-smoke-data
+          cleanup() {
+            docker rm --force "$worker" "$server" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker volume create "$volume" >/dev/null
+          docker run --detach --name "$server" \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --publish 127.0.0.1:8080:8080 \
+            --mount "type=volume,source=$volume,target=/data/corvex" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/test/fixtures/worker-smoke.yaml,target=/etc/corvex/config.yaml,readonly" \
+            --env CORVEX_GITLAB_TOKEN=ci-write-token \
+            --env CORVEX_GITLAB_READ_TOKEN=ci-read-token \
+            --env CORVEX_WEBHOOK_SECRET=ci-webhook-secret \
+            --env CORVEX_STORAGE_ROOT=/data/corvex \
+            --env CORVEX_DATABASE=/data/corvex/state/corvex.db \
+            --env CORVEX_OPS_USERNAME=ci-ops \
+            --env CORVEX_OPS_PASSWORD=ci-smoke-password-with-32-chars \
+            corvex-smoke --config /etc/corvex/config.yaml server
+
+          docker run --detach --name "$worker" \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --mount "type=volume,source=$volume,target=/data/corvex" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/test/fixtures/worker-smoke.yaml,target=/etc/corvex/config.yaml,readonly" \
+            --env CORVEX_GITLAB_TOKEN=ci-write-token \
+            --env CORVEX_GITLAB_READ_TOKEN=ci-read-token \
+            --env CORVEX_MODEL_API_KEY=ci-model-key \
+            --env CORVEX_STORAGE_ROOT=/data/corvex \
+            --env CORVEX_DATABASE=/data/corvex/state/corvex.db \
+            corvex-smoke --config /etc/corvex/config.yaml worker
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null && \
+              curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null && \
+              curl --fail --silent --user ci-ops:ci-smoke-password-with-32-chars \
+                http://127.0.0.1:8080/api/ops/overview | grep -Eq '"onlineCount":[1-9]'; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs "$server" || true
+          docker logs "$worker" || true
+          exit 1

@@ -464,7 +464,15 @@ export class ReviewWorkflow {
       }
     }
     const { result: finalResult, rejected: finalRejected } = parsed;
-    return { result: finalResult, model: response.model, usage, omittedFiles, rejected: finalRejected };
+    const finalResultWithCoverage = omittedFiles > 0
+      ? {
+          ...finalResult,
+          summary: `${finalResult.summary}\n\n${this.responseLanguage === "zh-CN"
+            ? `本次审查覆盖不完整：有 ${omittedFiles} 个变更文件因大小或文件策略限制被省略；现有发现仅基于已审查文件。`
+            : `Coverage is partial: ${omittedFiles} changed file(s) were omitted by the review size or file policy; findings only cover the files reviewed.`}`,
+        }
+      : finalResult;
+    return { result: finalResultWithCoverage, model: response.model, usage, omittedFiles, rejected: finalRejected };
   }
 
   async explain(

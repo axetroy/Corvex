@@ -373,6 +373,59 @@ describe("review and fix response validation", () => {
     );
   });
 
+  it("marks reviews with findings as partial when files were omitted", async () => {
+    const generate = vi.fn(async () => ({
+      content: JSON.stringify({
+        summary: "One concrete defect found.",
+        findings: [{
+          severity: "high",
+          title: "Unchecked input",
+          file_path: "src/app.ts",
+          line: 3,
+          evidence: "user.input",
+          explanation: "The value is used without validation.",
+        }],
+      }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const agent = {
+      generate,
+      getTraceEntries: () => [completeFileRead("src/app.ts")],
+    } as unknown as PiAgent;
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    for (const language of ["en", "zh-CN"] as const) {
+      const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024, language);
+      const outcome = await workflow.review(
+        context,
+        { ...diff, skippedFiles: 1 },
+        process.cwd(),
+        undefined,
+        reviewTrace,
+      );
+
+      expect(outcome.result.findings).toHaveLength(1);
+      expect(outcome.omittedFiles).toBe(1);
+      expect(outcome.result.summary).toContain(
+        language === "en" ? "Coverage is partial" : "本次审查覆盖不完整",
+      );
+      expect(outcome.result.summary).toContain(
+        language === "en" ? "1 changed file(s) were omitted" : "有 1 个变更文件",
+      );
+    }
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
   it("retries malformed JSON returned by the coverage follow-up", async () => {
     const validResponse = {
       content: JSON.stringify({ summary: "Review complete", findings: [] }),
