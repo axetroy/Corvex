@@ -12,6 +12,8 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { CorvexConfig } from "../config/config.js";
 import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
+import type { Workspace } from "../git/types.js";
+import type { GitManager } from "../git/manager.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
 import { createWebReadExtension } from "./web-read.js";
 
@@ -47,12 +49,14 @@ export interface JobTraceContext {
   jobId: string;
   attempt: number;
   taskType: JobType;
+  workspace?: Workspace;
 }
 
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
+    private readonly git?: Pick<GitManager, "grep">,
   ) {}
 
   getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -179,6 +183,7 @@ export class PiAgent {
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
     const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
+    const workspace = trace?.workspace;
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -188,7 +193,12 @@ export class PiAgent {
       noPromptTemplates: true,
       additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
-        createReadOnlyFileExtension(allowedRoots),
+        createReadOnlyFileExtension(
+          allowedRoots,
+          workspace && this.git
+            ? (query, path) => this.git!.grep(workspace, query, path, signal)
+            : undefined,
+        ),
         ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
           : []),

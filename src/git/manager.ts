@@ -18,6 +18,17 @@ interface GitResult {
   truncated: boolean;
 }
 
+interface GitRunOptions {
+  timeoutMs?: number;
+  terminateOnOutputLimit?: boolean;
+  allowExitCodes?: number[];
+}
+
+export interface GitGrepResult {
+  matches: { path: string; line: number; text: string }[];
+  truncated: boolean;
+}
+
 export interface GitStorageCleanupPlan {
   workspaces: string[];
   mirrors: string[];
@@ -229,6 +240,72 @@ export class GitManager {
     return result.stdout;
   }
 
+  async grep(
+    workspace: Workspace,
+    query: string,
+    requestedPath = ".",
+    signal?: AbortSignal,
+  ): Promise<GitGrepResult> {
+    this.validateWorkspace(workspace);
+    const searchTerm = query.trim();
+    if (!searchTerm || searchTerm.length > 256 || /[\0\r\n]/.test(searchTerm)) {
+      throw new Error("Git search query must contain 1 to 256 single-line characters");
+    }
+    if (
+      requestedPath !== "." &&
+      (!this.validPatchPath(requestedPath) ||
+        ["*", "?", "[", "]", ":"].some((character) => requestedPath.includes(character)))
+    ) {
+      throw new Error("Git search path must be a literal workspace-relative path");
+    }
+    const result = await this.run(
+      workspace.path,
+      [
+        "grep", "--line-number", "--null", "--full-name", "--fixed-strings", "--ignore-case", "-I",
+        "--no-textconv", "--no-color", "--max-count=51", "-e", searchTerm,
+        workspace.headSha, "--", requestedPath,
+      ],
+      undefined,
+      256 << 10,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true, allowExitCodes: [1] },
+    );
+    const matches: GitGrepResult["matches"] = [];
+    let truncated = result.truncated;
+    const output = result.stdout.toString();
+    let offset = 0;
+    while (offset < output.length) {
+      const pathEnd = output.indexOf("\0", offset);
+      const lineEnd = pathEnd < 0 ? -1 : output.indexOf("\0", pathEnd + 1);
+      if (pathEnd < 0 || lineEnd < 0) {
+        truncated = true;
+        break;
+      }
+      const contentEndValue = output.indexOf("\n", lineEnd + 1);
+      const contentEnd = contentEndValue < 0 ? output.length : contentEndValue;
+      const rawPath = output.slice(offset, pathEnd);
+      const line = Number(output.slice(pathEnd + 1, lineEnd));
+      if (!Number.isSafeInteger(line) || line <= 0) {
+        truncated = true;
+        break;
+      }
+      if (matches.length >= 50) {
+        truncated = true;
+        break;
+      }
+      const path = rawPath.startsWith(`${workspace.headSha}:`)
+        ? rawPath.slice(workspace.headSha.length + 1)
+        : rawPath;
+      matches.push({
+        path,
+        line,
+        text: output.slice(lineEnd + 1, contentEnd).replace(/\r$/, "").slice(0, 400),
+      });
+      offset = contentEnd < output.length ? contentEnd + 1 : contentEnd;
+    }
+    return { matches, truncated };
+  }
+
   async applyPatch(
     workspace: Workspace,
     patch: string,
@@ -435,10 +512,14 @@ export class GitManager {
     input: Buffer | undefined,
     outputLimit: number,
     signal?: AbortSignal,
+    options: GitRunOptions = {},
   ): Promise<GitResult> {
     const env = this.gitEnvironment();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("git command timed out")), 10 * 60_000);
+    const timer = setTimeout(
+      () => controller.abort(new Error("git command timed out")),
+      options.timeoutMs ?? 10 * 60_000,
+    );
     const commandSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     return new Promise((resolvePromise, rejectPromise) => {
       const child = spawn("git", args, { cwd, env, signal: commandSignal, windowsHide: true });
@@ -455,7 +536,10 @@ export class GitManager {
           outBytes += part.length;
         }
         receivedOutBytes += chunk.length;
-        if (receivedOutBytes > outputLimit) truncated = true;
+        if (receivedOutBytes > outputLimit) {
+          truncated = true;
+          if (options.terminateOnOutputLimit && !child.killed) child.kill();
+        }
       });
       child.stderr.on("data", (chunk: Buffer) => {
         const remaining = maxErrorOutput - errBytes;
@@ -472,7 +556,11 @@ export class GitManager {
       child.on("close", (code) => {
         clearTimeout(timer);
         const output = Buffer.concat(stdout);
-        if (code !== 0) {
+        if (
+          code !== 0 &&
+          !options.allowExitCodes?.includes(code ?? -1) &&
+          !(options.terminateOnOutputLimit && truncated)
+        ) {
           const details = Buffer.concat(stderr).toString().trim();
           rejectPromise(new Error(`git command failed: ${details || `exit code ${code}`}`));
           return;

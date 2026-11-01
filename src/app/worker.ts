@@ -48,7 +48,7 @@ export class Worker {
       throw new Error("enabled fix mode requires an authorized user allowlist");
     }
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, config.gitlab.readToken);
-    this.agent = new PiAgent(config, store);
+    this.agent = new PiAgent(config, store, this.repo);
     this.reviewer = new ReviewWorkflow(
       this.agent,
       config.review.maxFiles,
@@ -309,6 +309,7 @@ export class Worker {
       ),
       (value) => ({ projectId: value.projectId, jobId: value.jobId, headSha: value.headSha }),
     );
+    trace.workspace = workspace;
     let cleaned = false;
     const cleanup = async (): Promise<void> => {
       if (cleaned) return;
@@ -514,6 +515,7 @@ export class Worker {
           jobId: job.id,
           attempt: job.attemptCount,
           taskType: job.type,
+          workspace,
         }),
         (value) => ({
           model: value.model,

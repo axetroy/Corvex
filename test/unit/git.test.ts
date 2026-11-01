@@ -83,6 +83,38 @@ describe("Git workflows", () => {
     expect(applied).toContain("+new");
   });
 
+  it("searches only the pinned Git tree with bounded literal path input", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-grep-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "job-1");
+    await mkdir(join(workspacePath, "src"), { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "src", "app.ts"), 'const targetValue = "colon:20:content";\n');
+    await execFile("git", ["-C", workspacePath, "add", "src/app.ts"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
+    await writeFile(join(workspacePath, "untracked.ts"), "targetValue\n");
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    await manager.initialize();
+    const workspace: Workspace = {
+      projectId: 7,
+      jobId: "job-1",
+      path: workspacePath,
+      headSha: stdout.trim(),
+    };
+
+    await expect(manager.grep(workspace, "targetValue", "src")).resolves.toEqual({
+      matches: [{ path: "src/app.ts", line: 1, text: 'const targetValue = "colon:20:content";' }],
+      truncated: false,
+    });
+    await expect(manager.grep(workspace, "missing", "src")).resolves.toEqual({ matches: [], truncated: false });
+    await expect(manager.grep(workspace, "targetValue", "../outside")).rejects.toThrow(
+      "literal workspace-relative path",
+    );
+  });
+
   it("dry-runs and removes only old unprotected Git storage", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-"));
     const root = join(directory, "storage");

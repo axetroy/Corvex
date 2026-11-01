@@ -88,6 +88,19 @@ describe("readAllowedFile", () => {
     });
   });
 
+  it("stops enumerating directories at the configured result limit", async () => {
+    await Promise.all(
+      Array.from({ length: 205 }, (_, index) => writeFile(join(root, `entry-${index}.txt`), "")),
+    );
+
+    await expect(readAllowedDirectory(".", [root])).resolves.toMatchObject({
+      entries: expect.arrayContaining([{ name: "entry-0.txt", type: "file" }]),
+      truncated: true,
+    });
+    const result = await readAllowedDirectory(".", [root]);
+    expect(result.entries).toHaveLength(200);
+  });
+
   it("keeps directory listing and metadata inspection inside allowed roots", async () => {
     await expect(readAllowedDirectory(outside, [root])).rejects.toThrow(
       "outside the configured read-only roots",
@@ -95,6 +108,51 @@ describe("readAllowedFile", () => {
     await expect(statAllowedPath(outside, [root])).rejects.toThrow(
       "outside the configured read-only roots",
     );
+  });
+
+  it("registers git_grep only when pinned Git search is available", async () => {
+    const registered = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+    const registrar = {
+      registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) =>
+        registered.set(tool.name, tool),
+    } as unknown as ExtensionAPI;
+    createReadOnlyFileExtension([root])(registrar);
+    expect(registered.has("git_grep")).toBe(false);
+
+    createReadOnlyFileExtension([root], async () => ({
+      matches: [{ path: "src/app.ts", line: 9, text: "const target = true" }],
+      truncated: true,
+    }))(registrar);
+    const tool = registered.get("git_grep");
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("call-1", { query: "target", path: "src" });
+    expect(result).toMatchObject({
+      content: [{
+        text: JSON.stringify({
+          matches: [{ path: "src/app.ts", line: 9, text: "const target = true" }],
+          truncated: true,
+        }),
+      }],
+    });
+  });
+
+  it("reuses a sequential range cursor without changing line headers", async () => {
+    await writeFile(join(root, "large.txt"), Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"));
+    let readFileTool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+    createReadOnlyFileExtension([root])({
+      registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+        if (tool.name === "read_file") readFileTool = tool;
+      },
+    } as unknown as ExtensionAPI);
+    if (!readFileTool) throw new Error("read_file tool was not registered");
+
+    const first = await readFileTool.execute("call-1", { path: "large.txt", startLine: 1, maxLines: 3 });
+    const second = await readFileTool.execute("call-2", { path: "large.txt", startLine: 4, maxLines: 3 });
+
+    expect(first).toMatchObject({ content: [{ text: expect.stringContaining("[Lines 1-3; more lines available from 4]") }] });
+    expect(first).toMatchObject({ content: [{ text: expect.stringContaining("line 1\nline 2\nline 3") }] });
+    expect(second).toMatchObject({ content: [{ text: expect.stringContaining("[Lines 4-6; more lines available from 7]") }] });
+    expect(second).toMatchObject({ content: [{ text: expect.stringContaining("line 4\nline 5\nline 6") }] });
   });
 
   it("registers read_dir and stat as agent tools", () => {
@@ -145,6 +203,15 @@ describe("readAllowedFile", () => {
     });
     const result = await searchAllowedFiles("match", "many.txt", [root]);
     expect(result.matches).toHaveLength(50);
+  });
+
+  it("does not mark exactly fifty complete matches as truncated", async () => {
+    await writeFile(join(root, "exact.txt"), Array.from({ length: 50 }, (_, index) => `match ${index}`).join("\n"));
+
+    await expect(searchAllowedFiles("match", "exact.txt", [root])).resolves.toMatchObject({
+      matches: expect.arrayContaining([{ path: "exact.txt", line: 50, text: "match 49" }]),
+      truncated: false,
+    });
   });
 
   it("skips oversized files and reports incomplete search results", async () => {
