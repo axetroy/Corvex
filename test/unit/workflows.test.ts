@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { JobTraceContext, PiAgent } from "../../src/agent/pi.js";
+import { getPromptTemplates } from "../../src/agent/prompts.js";
 import { FixWorkflow, parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
 import type { JobTraceEntry } from "../../src/jobs/model.js";
@@ -46,6 +47,29 @@ function completeFileRead(path: string): JobTraceEntry {
 }
 
 describe("review and fix response validation", () => {
+  it("keeps task guidance and output contracts aligned in both languages", () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const prompts = getPromptTemplates(language);
+      const taskPrompts = [prompts.reviewSystem, prompts.fixSystem, prompts.explainSystem];
+
+      for (const prompt of taskPrompts) {
+        expect(prompt).toContain("read_file");
+        expect(prompt).toContain("git_grep");
+        expect(prompt).toContain("search_text");
+      }
+
+      expect(prompts.reviewSystem).toContain('"summary"');
+      expect(prompts.reviewSystem).toContain('"findings"');
+      expect(prompts.fixSystem).toContain('"patch"');
+      expect(prompts.fixSystem).toContain(language === "en" ? "Only modify files" : "只允许修改");
+      expect(prompts.explainSystem).toContain("Markdown");
+
+      const followup = prompts.reviewCoverageFollowup(["src/app.ts"]);
+      expect(followup).toContain("src/app.ts");
+      expect(followup).toContain(language === "en" ? "complete file reads" : "分片读取规则");
+    }
+  });
+
   it("accepts only review evidence present on the exact added line", () => {
     const raw = JSON.stringify({
       summary: "One concrete defect.",
@@ -262,11 +286,11 @@ describe("review and fix response validation", () => {
     await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
 
     const request = generate.mock.calls[0]?.[0];
-    expect(request?.systemPrompt).toContain("complete contents of every changed file");
-    expect(request?.systemPrompt).toContain("read_file tool");
-    expect(request?.systemPrompt).toContain("Use repository-relative file paths exactly as shown in the diff");
-    expect(request?.systemPrompt).toContain("inspect the parent directory with read_dir");
-    expect(request?.systemPrompt).toContain("verify an exact candidate with stat");
+    expect(request?.systemPrompt).toContain("inspect every changed file completely");
+    expect(request?.systemPrompt).toContain("use read_file");
+    expect(request?.systemPrompt).toContain("exact repository-relative paths");
+    expect(request?.systemPrompt).toContain("inspect the parent with read_dir");
+    expect(request?.systemPrompt).toContain("verify the exact candidate with stat");
     expect(request?.systemPrompt).toContain("When read_file reports more lines available from N");
     expect(request?.systemPrompt).toContain('Count finding lines using the new-file line numbers on the "+" side of the diff');
     expect(request?.userPrompt).toContain('"path":"src/app.ts"');
@@ -318,7 +342,7 @@ describe("review and fix response validation", () => {
     expect(requests).toHaveLength(3);
     expect(requests.every((request) => request.systemPrompt.includes("简体中文"))).toBe(true);
     expect(requests[0]?.systemPrompt).toContain('finding 的行号必须按 diff 的 "+" 新文件侧行号计数');
-    expect(requests[0]?.systemPrompt).toContain("先用 read_dir 检查父目录中的实际条目，再用 stat 确认精确候选路径");
+    expect(requests[0]?.systemPrompt).toContain("先用 read_dir 检查父目录，再用 stat 确认精确候选路径");
   });
 
   it("does not accept an empty review when changed-file coverage is missing", async () => {
@@ -511,8 +535,9 @@ describe("review and fix response validation", () => {
     expect(outcome.result.findings).toEqual([]);
     expect(generate).toHaveBeenCalledTimes(2);
     expect(generate.mock.calls[1]?.[0].userPrompt).toContain("自动覆盖校验");
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("请严格使用上面列出的仓库相对路径");
-    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("startLine: 1 和 maxLines: 1000");
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("src/app.ts");
+    expect(generate.mock.calls[1]?.[0].systemPrompt).toContain("从第 1 行开始读取");
+    expect(generate.mock.calls[1]?.[0].systemPrompt).toContain("从 startLine N 继续");
   });
 
   it("does not accept an empty review when files were omitted from the review context", async () => {
