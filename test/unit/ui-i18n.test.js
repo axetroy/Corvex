@@ -20,6 +20,11 @@ describe("operations UI locale", () => {
     expect(zhCN.traceTabTrace).toBe("轨迹");
     expect(zhCN.traceSessionUser).toBe("用户");
     expect(zhCN.traceSessionAssistant).toBe("助手");
+    expect(zhCN.traceSessionFilterConversation).toBe("对话");
+    expect(zhCN.traceSessionFilterTools).toBe("工具");
+    expect(zhCN.traceSessionModelCall).toBe("模型回复");
+    expect(zhCN.traceSessionNoTools).toBe("没有记录工具调用。");
+    expect(zhCN.traceExpandAll).toBe("展开全部详情");
     expect(zhCN.executionEvents).toBe("执行步骤");
     expect(zhCN.executionStatuses.interrupted).toBe("已中断");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");

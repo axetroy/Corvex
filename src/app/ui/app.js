@@ -466,23 +466,24 @@ function describeSessionTool(name, input, outputValue) {
         typeof input?.url === "string" && input.url ? input.url : copy.traceUnknownPath,
       );
     default:
-      return copy.traceToolGenericTemplate.replace("{name}", name || copy.traceName);
+      return copy.traceToolGenericTemplate.replace("{name}", (name || copy.traceName).replaceAll(/[_-]+/g, " "));
   }
 }
 
-function formatModelOutput(value) {
+function readAssistantOutput(value) {
   const parsed = parseTraceValue(value);
-  if (!parsed || !Array.isArray(parsed.content)) return formatTraceJson(value);
-  return parsed.content.map((part) => {
-    if (part.type === "text" && typeof part.text === "string") return part.text;
-    if (part.type === "toolCall") {
-      return copy.traceToolCallTemplate.replace(
-        "{action}",
-        describeSessionTool(part.name, part.arguments),
-      );
-    }
-    return JSON.stringify(part, null, 2);
-  }).join("\n\n");
+  if (!parsed || !Array.isArray(parsed.content)) {
+    return { text: formatTraceJson(value), toolCalls: [] };
+  }
+  return {
+    text: parsed.content
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("\n\n"),
+    toolCalls: parsed.content
+      .filter((part) => part?.type === "toolCall")
+      .map((part) => describeSessionTool(part.name, part.arguments)),
+  };
 }
 
 function createSessionMessage(label, value, kind) {
@@ -497,83 +498,178 @@ function createSessionToolDetails(entry) {
   const details = element("details", undefined, "trace-session-tool-details");
   details.append(element("summary", copy.traceToolDetails));
   const input = formatTraceJson(entry.input ?? entry.rawContent);
-  if (input) {
-    details.append(element("strong", copy.traceArguments, "trace-session-role"));
-    details.append(element("pre", input, "trace-session-content"));
+  const output = formatSessionPayload(entry.output);
+  const detailGrid = element("div", undefined, "trace-session-detail-grid");
+  for (const [label, value] of [
+    [copy.traceArguments, input],
+    [copy.traceResult, output],
+  ]) {
+    if (!value) continue;
+    const section = element("section", undefined, "trace-session-detail");
+    section.append(element("strong", label, "trace-session-role"));
+    section.append(element("pre", value, "trace-session-content"));
+    detailGrid.append(section);
   }
-  const result = entry.status === "failed" && entry.errorDetail
-    ? entry.errorDetail
-    : entry.output ?? entry.errorDetail;
-  if (result) {
-    details.append(element("strong", entry.status === "failed" ? copy.error : copy.traceResult, "trace-session-role"));
-    details.append(element("pre", formatTraceJson(result), "trace-session-content"));
-  }
+  if (detailGrid.childElementCount > 0) details.append(detailGrid);
   return details;
+}
+
+function formatSessionPayload(value) {
+  const parsed = parseTraceValue(value);
+  if (parsed === undefined) return value ?? "";
+  if (typeof parsed === "string") return parsed;
+  if (Array.isArray(parsed)) return formatSessionContent(parsed);
+  if (Array.isArray(parsed.content)) return formatSessionContent(parsed.content);
+  return JSON.stringify(parsed, null, 2);
 }
 
 function createTraceSession(entries) {
   const view = element("div", undefined, "trace-session-view");
   const list = element("div", undefined, "trace-session-list");
   list.setAttribute("aria-label", copy.traceTabSession);
-  const seenUserMessages = new Set();
   const traces = [...entries].sort((left, right) => {
     const timeDifference = Date.parse(left.startedAt) - Date.parse(right.startedAt);
     return timeDifference || left.id - right.id;
   });
-
-  for (const entry of traces) {
-    const event = element("article", undefined, `trace-session-event trace-session-event-${entry.kind}`);
-    const toolInput = entry.kind === "tool" ? parseTraceValue(entry.input ?? entry.rawContent) : undefined;
-    const title = entry.kind === "llm"
-      ? entry.model || copy.traceAgent
-      : describeSessionTool(entry.name, toolInput, entry.output);
-    const round = copy.traceAttemptRoundTemplate
-      .replace("{attempt}", String(entry.attempt))
-      .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
-    const heading = append(
-      element("div", undefined, "trace-session-heading"),
-      element("span", copy.traceKinds[entry.kind], "trace-session-kind"),
-      element("strong", title, "trace-session-title"),
-      element("span", round, "trace-session-round"),
-      element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-session-status trace-session-status-${entry.status}`),
-      element("time", formatTraceDuration(entry.durationMs), "trace-session-duration"),
+  const modelCalls = traces.filter((entry) => entry.kind === "llm").length;
+  const toolCalls = traces.filter((entry) => entry.kind === "tool").length;
+  const failures = traces.filter((entry) => ["failed", "unknown", "interrupted"].includes(entry.status)).length;
+  const summary = element("p", copy.traceSessionSummaryTemplate
+    .replace("{messages}", String(modelCalls))
+    .replace("{tools}", String(toolCalls))
+    .replace("{errors}", String(failures)), "trace-session-summary");
+  const filterGroup = element("div", undefined, "trace-session-filters");
+  filterGroup.setAttribute("role", "group");
+  filterGroup.setAttribute("aria-label", copy.traceSessionControls);
+  const filterOptions = [
+    ["all", copy.traceSessionFilterAll],
+    ["conversation", copy.traceSessionFilterConversation],
+    ["tools", copy.traceSessionFilterTools],
+  ];
+  const filterButtons = new Map();
+  const renderList = () => {
+    const activeFilter = traceViewState.sessionFilter ?? "all";
+    const visibleTraces = traces.filter((entry) =>
+      activeFilter === "all" || (activeFilter === "tools" ? entry.kind === "tool" : entry.kind === "llm"),
     );
-    event.append(heading);
+    const seenUserMessages = new Set();
+    list.replaceChildren();
+    for (const [filter, button] of filterButtons) {
+      button.setAttribute("aria-pressed", String(filter === activeFilter));
+    }
+    const hasVisibleTools = visibleTraces.some((entry) => entry.kind === "tool");
+    expandAll.disabled = !hasVisibleTools;
+    collapseAll.disabled = !hasVisibleTools;
+    for (const entry of visibleTraces) {
+      const event = element("article", undefined, `trace-session-event trace-session-event-${entry.kind}`);
+      const toolInput = entry.kind === "tool" ? parseTraceValue(entry.input ?? entry.rawContent) : undefined;
+      const title = entry.kind === "llm" ? "" : describeSessionTool(entry.name, toolInput, entry.output);
+      const round = copy.traceAttemptRoundTemplate
+        .replace("{attempt}", String(entry.attempt))
+        .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
+      const started = Date.parse(entry.startedAt);
+      const time = Number.isFinite(started)
+        ? new Date(started).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        : copy.invalidDate;
+      const heading = append(
+        element("div", undefined, "trace-session-heading"),
+        element("span", entry.kind === "llm" ? copy.traceSessionModelCall : copy.traceKinds.tool, "trace-session-kind"),
+        ...(title ? [element("strong", title, "trace-session-title")] : []),
+        ...(entry.kind === "llm" && entry.model
+          ? [element("span", copy.traceSessionModelTemplate.replace("{model}", entry.model), "trace-session-model")]
+          : []),
+        element("span", round, "trace-session-round"),
+        element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-session-status trace-session-status-${entry.status}`),
+        element("time", time, "trace-session-time"),
+        element("span", formatTraceDuration(entry.durationMs), "trace-session-duration"),
+      );
+      event.append(heading);
 
-    if (entry.kind === "llm") {
-      const request = parseTraceValue(entry.rawContent);
-      const input = parseTraceValue(entry.input);
-      const userMessages = Array.isArray(input?.messages)
-        ? input.messages.flatMap((contextEntry) => {
-          const message = contextEntry?.message;
-          if (contextEntry?.type !== "message" || message?.role !== "user") return [];
-          const text = formatSessionContent(message.content);
-          if (!text) return [];
-          const key = String(contextEntry.id ?? message.id ?? `${message.timestamp ?? ""}:${text}`);
-          if (seenUserMessages.has(key)) return [];
-          seenUserMessages.add(key);
-          return [text];
-        })
-        : [];
-      if (userMessages.length > 0) {
-        for (const message of userMessages) {
-          event.append(createSessionMessage(copy.traceSessionUser, message, "user"));
+      if (entry.kind === "llm") {
+        const request = parseTraceValue(entry.rawContent);
+        const input = parseTraceValue(entry.input);
+        const userMessages = Array.isArray(input?.messages)
+          ? input.messages.flatMap((contextEntry) => {
+            const message = contextEntry?.message;
+            if (contextEntry?.type !== "message" || message?.role !== "user") return [];
+            const text = formatSessionContent(message.content);
+            if (!text) return [];
+            const key = String(contextEntry.id ?? message.id ?? `${message.timestamp ?? ""}:${text}`);
+            if (seenUserMessages.has(key)) return [];
+            seenUserMessages.add(key);
+            return [text];
+          })
+          : [];
+        if (userMessages.length > 0) {
+          for (const message of userMessages) {
+            event.append(createSessionMessage(copy.traceSessionUser, message, "user"));
+          }
+        } else if (typeof request?.userPrompt === "string" && seenUserMessages.size === 0) {
+          seenUserMessages.add(request.userPrompt);
+          event.append(createSessionMessage(copy.traceSessionUser, request.userPrompt, "user"));
         }
-      } else if (typeof request?.userPrompt === "string" && seenUserMessages.size === 0) {
-        seenUserMessages.add(request.userPrompt);
-        event.append(createSessionMessage(copy.traceSessionUser, request.userPrompt, "user"));
+        const assistant = readAssistantOutput(entry.output);
+        const assistantText = assistant.text || (assistant.toolCalls.length > 0
+          ? copy.traceSessionToolCallsTemplate.replace("{count}", String(assistant.toolCalls.length))
+          : "");
+        event.append(createSessionMessage(copy.traceSessionAssistant, assistantText, "assistant"));
+        if (assistant.toolCalls.length > 0 && assistant.text) {
+          event.append(element(
+            "div",
+            copy.traceSessionToolCallsTemplate.replace("{count}", String(assistant.toolCalls.length)),
+            "trace-session-tool-calls",
+          ));
+        }
+      } else {
+        if (entry.status === "failed" && entry.errorDetail) {
+          event.append(createSessionMessage(copy.error, entry.errorDetail, "error"));
+        }
+        event.append(createSessionToolDetails(entry));
       }
-      event.append(createSessionMessage(copy.traceSessionAssistant, formatModelOutput(entry.output), "assistant"));
-    } else {
-      event.append(createSessionToolDetails(entry));
+      if (entry.errorDetail && entry.kind === "llm") {
+        event.append(createSessionMessage(copy.error, entry.errorDetail, "error"));
+      }
+      list.append(event);
     }
-    if (entry.errorDetail && entry.kind === "llm") {
-      event.append(createSessionMessage(copy.error, entry.errorDetail, "error"));
+    if (visibleTraces.length === 0) {
+      const emptyText = activeFilter === "tools"
+        ? copy.traceSessionNoTools
+        : activeFilter === "conversation"
+          ? copy.traceSessionNoConversation
+          : copy.noTrajectory;
+      list.append(element("div", emptyText, "empty"));
     }
-    list.append(event);
-  }
+  };
 
-  view.append(traces.length > 0 ? list : element("div", copy.noTrajectory, "empty"));
+  for (const [filter, label] of filterOptions) {
+    const button = element("button", label, "trace-session-filter");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String((traceViewState.sessionFilter ?? "all") === filter));
+    button.addEventListener("click", () => {
+      traceViewState.sessionFilter = filter;
+      renderList();
+    });
+    filterButtons.set(filter, button);
+    filterGroup.append(button);
+  }
+  const expandAll = element("button", copy.traceExpandAll, "trace-session-action");
+  expandAll.type = "button";
+  expandAll.addEventListener("click", () => list.querySelectorAll("details").forEach((details) => {
+    details.open = true;
+  }));
+  const collapseAll = element("button", copy.traceCollapseAll, "trace-session-action");
+  collapseAll.type = "button";
+  collapseAll.addEventListener("click", () => list.querySelectorAll("details").forEach((details) => {
+    details.open = false;
+  }));
+  const toolbar = append(
+    element("div", undefined, "trace-session-toolbar"),
+    filterGroup,
+    append(element("div", undefined, "trace-session-actions"), expandAll, collapseAll),
+  );
+
+  renderList();
+  view.append(summary, toolbar, list);
   return view;
 }
 
@@ -584,6 +680,7 @@ function createTraceExperience(entries, jobId) {
       selectedIds: null,
       activeTab: "overview",
       activeView: "session",
+      sessionFilter: "all",
       sessionScrollTop: 0,
       sessionExpandedDetails: [],
       eventListScrollTop: 0,
