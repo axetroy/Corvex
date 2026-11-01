@@ -363,6 +363,57 @@ function traceField(label, value, emptyLabel) {
     : append(element("div", undefined, "trace-payload trace-payload-empty"), element("span", label), element("span", emptyLabel));
 }
 
+function formatExecutionPayload(value) {
+  const parsed = parseTraceValue(value);
+  if (parsed === undefined) return value ?? "";
+  return typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2);
+}
+
+function createExecutionEventDetails(event) {
+  const details = element("details", undefined, "execution-event-details");
+  details.append(element("summary", copy.executionDetails));
+  const identifiers = element("dl", undefined, "execution-event-identifiers");
+  if (event.deliveryId) detailItem(identifiers, copy.executionDeliveryId, event.deliveryId);
+  if (event.eventId) detailItem(identifiers, copy.executionEventId, event.eventId);
+  if (identifiers.childElementCount > 0) details.append(identifiers);
+  for (const [label, value] of [
+    [copy.traceInput, event.input],
+    [copy.traceOutput, event.output],
+    [copy.error, event.errorDetail],
+  ]) {
+    if (value) details.append(expandableText(formatExecutionPayload(value), label, "trace-payload"));
+  }
+  return details;
+}
+
+function createExecutionEvents(events) {
+  if (!events.length) return element("div", copy.noExecutionEvents, "empty");
+  const rows = [...events]
+    .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt) || left.id - right.id)
+    .map((event) => {
+      const row = element("tr");
+      const status = element(
+        "td",
+        copy.executionStatuses[event.status] ?? event.status,
+        `execution-event-status execution-event-status-${event.status}`,
+      );
+      append(
+        row,
+        element("td", event.step, "execution-event-step"),
+        status,
+        element("td", event.attempt ?? copy.none),
+        element("td", formatDate(event.startedAt)),
+        element("td", formatTraceDuration(event.durationMs)),
+        append(element("td"), createExecutionEventDetails(event)),
+      );
+      return row;
+    });
+  return table(
+    [copy.executionStep, copy.executionStatus, copy.executionAttempt, copy.executionStarted, copy.executionDuration, copy.executionDetails],
+    rows,
+  );
+}
+
 function parseTraceValue(value) {
   if (typeof value !== "string") return undefined;
   try {
@@ -953,6 +1004,7 @@ async function renderJobDetails(version, jobId) {
     return row;
   });
   const timelineContent = table([copy.transition, copy.time], timelineRows);
+  const executionEventsContent = createExecutionEvents(job.events ?? []);
   const attemptsContent = attempts.length
     ? table([copy.attempts, copy.started, copy.finished, copy.error], attempts)
     : element("div", copy.noAttempts, "empty");
@@ -966,6 +1018,7 @@ async function renderJobDetails(version, jobId) {
     ),
     panel(copy.taskDetails, details),
     panel(copy.lifecycleTimeline, timelineContent),
+    panel(copy.executionEvents, executionEventsContent),
     panel(copy.traceDiagram, trajectoryContent),
     panel(copy.attemptHistory, attemptsContent),
   );

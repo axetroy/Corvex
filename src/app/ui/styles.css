@@ -439,6 +439,42 @@ details summary {
   white-space: pre-wrap;
 }
 
+.execution-event-step {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.execution-event-status {
+  color: #278150;
+  font-weight: 650;
+}
+
+.execution-event-status-failed,
+.execution-event-status-interrupted {
+  color: #b63838;
+}
+
+.execution-event-status-ignored,
+.execution-event-status-unknown {
+  color: #687684;
+}
+
+.execution-event-identifiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 8px 0;
+}
+
+.execution-event-identifiers .detail-item {
+  padding: 4px 0;
+  border: 0;
+}
+
+.execution-event-details .trace-payload {
+  display: block;
+  margin: 8px 0;
+}
+
 .trace-raw {
   min-width: 180px;
 }

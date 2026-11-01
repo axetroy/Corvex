@@ -20,6 +20,8 @@ describe("operations UI locale", () => {
     expect(zhCN.traceTabTrace).toBe("轨迹");
     expect(zhCN.traceSessionUser).toBe("用户");
     expect(zhCN.traceSessionAssistant).toBe("助手");
+    expect(zhCN.executionEvents).toBe("执行步骤");
+    expect(zhCN.executionStatuses.interrupted).toBe("已中断");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
     expect(zhCN.traceToolDetails).toBe("查看调用详情");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());

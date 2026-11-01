@@ -6,6 +6,8 @@ import {
   jobStatuses,
   jobTypes,
   type EventResult,
+  type ExecutionEvent,
+  type ExecutionEventStatus,
   type Job,
   type JobAttemptSummary,
   type JobDetails,
@@ -25,6 +27,8 @@ import {
 const maxAttempts = 3;
 const terminal = new Set<JobStatus>(["completed", "failed", "stale", "cancelled"]);
 const active = ["preparing", "analyzing", "fixing", "verifying", "publishing"];
+const maxExecutionPayloadBytes = 64 << 10;
+const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|credential/i;
 
 interface JobRow {
   id: string;
@@ -56,6 +60,54 @@ function numberColumn(row: Record<string, unknown>, name: string): number {
     throw new Error(`SQLite column "${name}" is not a safe integer`);
   }
   return value;
+}
+
+function redactTraceText(value: string): string {
+  return value
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[REDACTED]")
+    .replace(/\b(?:glpat-|glrt-|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{16,}\b/gi, "[REDACTED]")
+    .replace(/\b(token|secret|api[_-]?key|password|authorization|private[_-]?token|client[_-]?secret)\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1$2[REDACTED]")
+    .replace(/([?&](?:access[_-]?token|token|key|secret|password|signature|auth)=)[^&#\s]*/gi, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/\s@]+@/gi, "$1[REDACTED]@");
+}
+
+function sanitizeTraceValue(value: unknown, depth = 0): unknown {
+  if (depth > 8) return "[MAX_DEPTH]";
+  if (typeof value === "string") return redactTraceText(value);
+  if (Array.isArray(value)) return value.slice(0, 500).map((item) => sanitizeTraceValue(item, depth + 1));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).slice(0, 500).map(([key, item]) => [
+        key,
+        sensitiveField.test(key) ? "[REDACTED]" : sanitizeTraceValue(item, depth + 1),
+      ]),
+    );
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return String(value);
+  return value;
+}
+
+function serializeTraceValue(value: unknown): string | null {
+  if (value === undefined) return null;
+  const serialized = JSON.stringify(sanitizeTraceValue(value));
+  if (Buffer.byteLength(serialized) <= maxExecutionPayloadBytes) return serialized;
+  const bytes = Buffer.from(serialized);
+  let previewBytes = maxExecutionPayloadBytes - 1024;
+  let truncated = JSON.stringify({
+    truncated: true,
+    originalBytes: bytes.byteLength,
+    preview: bytes.subarray(0, previewBytes).toString("utf8"),
+  });
+  while (Buffer.byteLength(truncated) > maxExecutionPayloadBytes) {
+    previewBytes = Math.floor(previewBytes * 0.9);
+    truncated = JSON.stringify({
+      truncated: true,
+      originalBytes: bytes.byteLength,
+      preview: bytes.subarray(0, previewBytes).toString("utf8"),
+    });
+  }
+  return truncated;
 }
 
 function isJobType(value: string): value is JobType {
@@ -147,6 +199,39 @@ function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
     output: nullableString("trace_output"),
     schema: nullableString("trace_schema"),
     rawContent: nullableString("raw_content"),
+    errorDetail: nullableString("error_detail"),
+  };
+}
+
+function readExecutionEvent(row: Record<string, unknown>): ExecutionEvent {
+  const status = stringColumn(row, "status");
+  if (!(["running", "succeeded", "failed", "ignored", "unknown", "interrupted"] as string[]).includes(status)) {
+    throw new Error(`SQLite execution event status "${status}" is invalid`);
+  }
+  const nullableString = (name: string): string | null => {
+    const value = row[name];
+    if (value !== null && typeof value !== "string") {
+      throw new Error(`SQLite column "${name}" is not text or null`);
+    }
+    return value;
+  };
+  const nullableNumber = (name: string): number | null => {
+    const value = row[name];
+    return value === null ? null : numberColumn(row, name);
+  };
+  return {
+    id: numberColumn(row, "id"),
+    deliveryId: nullableString("delivery_id"),
+    eventId: nullableString("event_id"),
+    jobId: nullableString("job_id"),
+    attempt: nullableNumber("attempt"),
+    step: stringColumn(row, "step"),
+    status: status as ExecutionEventStatus,
+    startedAt: stringColumn(row, "started_at"),
+    finishedAt: nullableString("finished_at"),
+    durationMs: nullableNumber("duration_ms"),
+    input: nullableString("input_json"),
+    output: nullableString("output_json"),
     errorDetail: nullableString("error_detail"),
   };
 }
@@ -406,6 +491,102 @@ export class JobStore {
     if (result.changes !== 1) throw new Error(`job trace "${traceId}" is not running`);
   }
 
+  startExecutionEvent(input: {
+    deliveryId?: string | null;
+    eventId?: string | null;
+    jobId?: string | null;
+    attempt?: number | null;
+    step: string;
+    input?: unknown;
+  }): number {
+    const deliveryId = input.deliveryId ?? null;
+    const eventId = input.eventId ?? null;
+    const jobId = input.jobId ?? (eventId
+      ? (this.db.prepare("SELECT id FROM jobs WHERE event_id=?").get(eventId) as { id: string } | undefined)?.id ?? null
+      : null);
+    const attempt = input.attempt ?? null;
+    if (
+      (!deliveryId && !eventId && !jobId) ||
+      [deliveryId, eventId, jobId].some((value) => value !== null && (!value.trim() || value.length > 256)) ||
+      !/^[a-z][a-z0-9_.-]{1,127}$/.test(input.step) ||
+      (attempt !== null && (!Number.isSafeInteger(attempt) || attempt <= 0))
+    ) {
+      throw new Error("execution event identity or step is invalid");
+    }
+    const result = this.db
+      .prepare(
+        `INSERT INTO execution_events
+         (delivery_id,event_id,job_id,attempt,step,status,started_at,input_json)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        deliveryId,
+        eventId,
+        jobId,
+        attempt,
+        input.step,
+        "running",
+        new Date().toISOString(),
+        serializeTraceValue(input.input),
+      );
+    const id = Number(result.lastInsertRowid);
+    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid execution event ID");
+    return id;
+  }
+
+  finishExecutionEvent(
+    id: number,
+    status: Exclude<ExecutionEventStatus, "running">,
+    durationMs: number,
+    output?: unknown,
+    errorDetail?: string,
+  ): void {
+    if (
+      !Number.isSafeInteger(id) || id <= 0 ||
+      !["succeeded", "failed", "ignored", "unknown", "interrupted"].includes(status) ||
+      !Number.isFinite(durationMs) || durationMs < 0
+    ) {
+      throw new Error("execution event completion is invalid");
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE execution_events SET status=?,finished_at=?,duration_ms=?,output_json=?,error_detail=?
+         WHERE id=? AND status='running'`,
+      )
+      .run(
+        status,
+        new Date().toISOString(),
+        Math.floor(durationMs),
+        serializeTraceValue(output),
+        errorDetail ? redactTraceText(errorDetail).slice(0, 8192) : null,
+        id,
+      );
+    if (result.changes !== 1) throw new Error(`execution event "${id}" is not running`);
+  }
+
+  recordExecutionEvent(input: {
+    deliveryId?: string | null;
+    eventId?: string | null;
+    jobId?: string | null;
+    attempt?: number | null;
+    step: string;
+    status: Exclude<ExecutionEventStatus, "running">;
+    input?: unknown;
+    output?: unknown;
+    errorDetail?: string;
+  }): number {
+    const id = this.startExecutionEvent(input);
+    this.finishExecutionEvent(id, input.status, 0, input.output, input.errorDetail);
+    return id;
+  }
+
+  linkExecutionEventsToEvent(deliveryId: string, eventId: string): void {
+    if (!deliveryId.trim() || !eventId.trim()) throw new Error("execution event correlation IDs are required");
+    this.db
+      .prepare("UPDATE execution_events SET event_id=? WHERE delivery_id=? AND event_id IS NULL")
+      .run(eventId, deliveryId);
+  }
+
   pruneHistory(historyBefore: Date, auditBefore: Date): void {
     if (Number.isNaN(historyBefore.valueOf()) || Number.isNaN(auditBefore.valueOf())) {
       throw new Error("history and audit retention cutoffs are required");
@@ -424,6 +605,7 @@ export class JobStore {
       this.db
         .prepare(`DELETE FROM jobs WHERE status IN (${statusParams}) AND updated_at < ?`)
         .run(...terminalStatuses, history);
+      this.db.prepare("DELETE FROM execution_events WHERE job_id IS NULL AND started_at < ?").run(history);
       this.db.prepare("DELETE FROM webhook_events WHERE received_at < ?").run(history);
       this.db
         .prepare("DELETE FROM model_token_usage WHERE day < ?")
@@ -506,7 +688,11 @@ export class JobStore {
   ): EventResult {
     return this.transaction(() => {
       const existingEvent = this.eventResult(eventId);
-      if (existingEvent) return existingEvent;
+      if (existingEvent) {
+        const existingJob = this.db.prepare("SELECT id FROM jobs WHERE event_id=?").get(eventId) as { id: string } | undefined;
+        if (existingJob) this.linkExecutionEvents(eventId, existingJob.id);
+        return existingEvent;
+      }
       let auditResult = "authorized_queued";
       let response: string;
       let resultJob: EventResult["job"];
@@ -539,6 +725,7 @@ export class JobStore {
         }
       }
       this.insertEvent(eventId, response);
+      if (resultJob) this.linkExecutionEvents(eventId, resultJob.id);
       this.insertAudit(job.actorId, "request_fix", `${job.projectId}:${job.mrIid}`, auditResult);
       return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
     });
@@ -838,7 +1025,11 @@ export class JobStore {
       .prepare("SELECT * FROM job_trace WHERE job_id=? ORDER BY started_at DESC,id DESC")
       .all(jobId)
       .map((value) => readJobTrace(value as Record<string, unknown>));
-    return { ...mapJobSummary(job), attempts, timeline, trajectory };
+    const events = this.db
+      .prepare("SELECT * FROM execution_events WHERE job_id=? ORDER BY started_at DESC,id DESC")
+      .all(jobId)
+      .map((value) => readExecutionEvent(value as Record<string, unknown>));
+    return { ...mapJobSummary(job), attempts, timeline, trajectory, events };
   }
 
   getJobTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -927,7 +1118,11 @@ export class JobStore {
     // 将事件去重、任务创建和事件记录放进同一事务，避免 webhook 重投创建重复任务。
     return this.transaction(() => {
       const previous = this.eventResult(eventId);
-      if (previous) return previous;
+      if (previous) {
+        const existingJob = this.db.prepare("SELECT id FROM jobs WHERE event_id=?").get(eventId) as { id: string } | undefined;
+        if (existingJob) this.linkExecutionEvents(eventId, existingJob.id);
+        return previous;
+      }
       const existing = this.db
         .prepare("SELECT id FROM jobs WHERE idempotency_key = ?")
         .get(key) as { id: string } | undefined;
@@ -953,6 +1148,7 @@ export class JobStore {
         response = `Queued ${type} task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
       }
       this.insertEvent(eventId, response);
+      if (resultJob) this.linkExecutionEvents(eventId, resultJob.id);
       this.insertAudit(job.actorId, `request_${type}`, `${job.projectId}:${job.mrIid}`, auditResult);
       return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
     });
@@ -995,6 +1191,18 @@ export class JobStore {
       this.db
         .prepare("UPDATE job_attempts SET finished_at=?,error=? WHERE job_id=? AND finished_at IS NULL")
         .run(now.toISOString(), error, row.id);
+      const runningEvents = this.db
+        .prepare("SELECT id,started_at FROM execution_events WHERE job_id=? AND attempt=? AND status='running'")
+        .all(row.id, row.attempt_count) as { id: number; started_at: string }[];
+      for (const event of runningEvents) {
+        const elapsed = Math.max(0, now.valueOf() - Date.parse(event.started_at));
+        this.db
+          .prepare(
+            `UPDATE execution_events SET status='interrupted',finished_at=?,duration_ms=?,error_detail=?
+             WHERE id=? AND status='running'`,
+          )
+          .run(now.toISOString(), elapsed, error, event.id);
+      }
       this.insertAudit(row.actor_id, "job_status", row.id, `${row.status}->${status}`);
     }
   }
@@ -1027,6 +1235,12 @@ export class JobStore {
     this.db
       .prepare("INSERT INTO audit_events(actor_id,action,resource,result,created_at) VALUES (?,?,?,?,?)")
       .run(actorId, action, resource, result, new Date().toISOString());
+  }
+
+  private linkExecutionEvents(eventId: string, jobId: string): void {
+    this.db
+      .prepare("UPDATE execution_events SET job_id=? WHERE event_id=? AND job_id IS NULL")
+      .run(jobId, eventId);
   }
 
   private transaction<T>(callback: () => T): T {
@@ -1078,6 +1292,13 @@ export class JobStore {
         input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
         raw_content TEXT, error_detail TEXT
       );
+      CREATE TABLE IF NOT EXISTS execution_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, event_id TEXT, job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+        duration_ms INTEGER, input_json TEXT, output_json TEXT, error_detail TEXT
+      );
+      CREATE INDEX IF NOT EXISTS execution_events_job_started_idx ON execution_events(job_id,started_at,id);
+      CREATE INDEX IF NOT EXISTS execution_events_event_idx ON execution_events(event_id,started_at,id);
       CREATE INDEX IF NOT EXISTS job_trace_job_started_idx ON job_trace(job_id,started_at,id);
       CREATE TABLE IF NOT EXISTS worker_heartbeats (
         worker_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL

@@ -87,10 +87,41 @@ export interface JobTraceEntry {
   errorDetail: string | null;
 }
 
+/**
+ * 执行步骤的持久化状态。`unknown` 表示副作用可能已生效但未收到回执；
+ * `interrupted` 表示步骤因 Worker 租约过期而未能正常收尾。
+ */
+export type ExecutionEventStatus = "running" | "succeeded" | "failed" | "ignored" | "unknown" | "interrupted";
+
+/** 单个 webhook 或 Worker 执行步骤的脱敏追踪记录。 */
+export interface ExecutionEvent {
+  id: number;
+  /** Webhook 投递关联 ID；纯 Worker 步骤为空。 */
+  deliveryId: string | null;
+  /** GitLab webhook 事件 ID；尚未关联到 webhook 时为空。 */
+  eventId: string | null;
+  /** 任务 ID；任务创建前记录的 webhook 步骤可能为空。 */
+  jobId: string | null;
+  /** Worker 尝试序号；webhook 步骤为空。 */
+  attempt: number | null;
+  step: string;
+  status: ExecutionEventStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  /** 脱敏且有大小上限的 JSON 文本；超限时会截断。 */
+  input: string | null;
+  /** 脱敏且有大小上限的 JSON 文本；超限时会截断。 */
+  output: string | null;
+  errorDetail: string | null;
+}
+
 export interface JobDetails extends JobSummary {
   attempts: JobAttemptSummary[];
   timeline: JobStatusTransition[];
   trajectory: JobTraceEntry[];
+  /** 执行事件按开始时间倒序排列，包含已关联到此任务的 webhook 与 Worker 步骤。 */
+  events: ExecutionEvent[];
 }
 
 export interface OperationsOverview {

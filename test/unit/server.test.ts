@@ -146,12 +146,13 @@ describe("CorvexServer", () => {
         "GitLab webhook received",
         expect.objectContaining({ eventType: "Note Hook" }),
       );
-      expect(info).toHaveBeenCalledWith("GitLab webhook body", { body: JSON.stringify(payload) });
+      expect(info).not.toHaveBeenCalledWith("GitLab webhook body", expect.anything());
+      expect(JSON.stringify(info.mock.calls)).not.toContain("x-gitlab-token");
+      expect(JSON.stringify(info.mock.calls)).not.toContain("@corvex review");
       expect(info).toHaveBeenCalledWith(
         "GitLab Note Hook validated",
         expect.objectContaining({
           actorUsername: "developer",
-          note: "@corvex review",
           system: false,
         }),
       );
@@ -159,6 +160,21 @@ describe("CorvexServer", () => {
         "GitLab task enqueued",
         expect.objectContaining({ eventId: "1:99", projectId: 1, mrIid: 10, type: "review" }),
       );
+      const reviewJob = store.listJobs("queued", 10).find((job) => job.type === "review");
+      if (!reviewJob) throw new Error("expected a review job");
+      const webhookSteps = store.getJobDetails(reviewJob.id)?.events ?? [];
+      expect(webhookSteps.map((step) => step.step)).toEqual(expect.arrayContaining([
+        "webhook.read_body",
+        "webhook.decode",
+        "webhook.parse_command",
+        "webhook.validate_command",
+        "webhook.process_command",
+        "gitlab.post_note",
+        "webhook.mark_delivered",
+        "webhook.http_response",
+      ]));
+      expect(new Set(webhookSteps.map((step) => step.deliveryId)).size).toBe(2);
+      expect(JSON.stringify(webhookSteps)).not.toContain("secret");
 
       const ignoredResponse = await fetch(`${base}/webhooks/gitlab`, {
         method: "POST",
@@ -230,6 +246,10 @@ describe("CorvexServer", () => {
       expect(await detailResponse.json()).toMatchObject({
         status: "queued",
         attempts: [],
+        events: expect.arrayContaining([
+          expect.objectContaining({ step: "webhook.decode", deliveryId: expect.any(String), jobId: jobs.items[0]!.id }),
+          expect.objectContaining({ step: "webhook.http_response", status: "succeeded", jobId: jobs.items[0]!.id }),
+        ]),
         trajectory: [
           expect.objectContaining({ kind: "tool", errorDetail: "ENOENT: file not found" }),
           expect.objectContaining({ kind: "llm", rawContent: "review prompt" }),

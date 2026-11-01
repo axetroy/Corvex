@@ -58,7 +58,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /ops` | 可选的 Basic Auth 保护只读运维控制台；未配置运维凭据时禁用。 |
 | `GET /api/ops/overview` | 运维概览：任务状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
 | `GET /api/ops/jobs` | 筛选/分页任务列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
-| `GET /api/ops/jobs/<id>` | 任务详情及持久化的尝试历史。 |
+| `GET /api/ops/jobs/<id>` | 任务详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出事件。 |
 
 运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含提交的请求文本和错误信息，应保护运维凭据并使用 HTTPS。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 
@@ -131,7 +131,7 @@ pnpm start -- backup \
 
 恢复前停止 Server 和 Worker，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启两个进程。不要覆盖正在使用的数据库。
 
-Server 启动时执行清理，之后约每 24 小时清理一次。终态任务、尝试记录、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的任务会保留。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
+Server 启动时执行清理，之后约每 24 小时清理一次。终态任务、尝试记录、关联的执行步骤事件、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联任务的执行事件也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的任务会保留。执行事件输入/输出有大小限制并会脱敏类似凭证的内容；源文件正文和 diff patch 仅记录大小及哈希。评论文本可能以脱敏形式保存在事件载荷中，因此应通过 HTTPS 访问并限制控制台权限。脱敏属于尽力而为，无法识别所有任意格式的秘密。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
 
 ## 升级与开发
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { JobStore } from "../../src/jobs/store.js";
+import { traceExecutionStep } from "../../src/jobs/execution.js";
 
 describe("JobStore", () => {
   let directory = "";
@@ -191,6 +192,142 @@ describe("JobStore", () => {
         output: "assistant response",
         schema: null,
       }),
+    ]);
+  });
+
+  it("persists redacted execution events before and after job creation", async () => {
+    store = await JobStore.open(":memory:");
+    const eventId = store.startExecutionEvent({
+      deliveryId: "delivery-1",
+      eventId: "1:2",
+      step: "webhook.decode",
+      input: {
+        project: { id: 7 },
+        api_token: "must-not-be-persisted",
+        note: "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      },
+    });
+    store.createReview("1:2", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    store.finishExecutionEvent(eventId, "succeeded", 12, { accepted: true, token: "another-secret" });
+    store.recordExecutionEvent({
+      jobId: job.id,
+      attempt: job.attemptCount,
+      step: "gitlab.get_project",
+      status: "succeeded",
+      input: { projectId: 7 },
+      output: { id: 7, http_url_to_repo: "https://gitlab.example.com/project.git" },
+    });
+
+    const details = store.getJobDetails(job.id);
+    const webhookEvent = details?.events.find((event) => event.step === "webhook.decode");
+    expect(webhookEvent).toMatchObject({
+      deliveryId: "delivery-1",
+      eventId: "1:2",
+      jobId: job.id,
+      attempt: null,
+      status: "succeeded",
+      output: JSON.stringify({ accepted: true, token: "[REDACTED]" }),
+    });
+    expect(webhookEvent?.input).not.toContain("must-not-be-persisted");
+    expect(webhookEvent?.input).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(details?.events.find((event) => event.step === "gitlab.get_project")).toMatchObject({
+      deliveryId: null,
+      jobId: job.id,
+      attempt: 1,
+      status: "succeeded",
+    });
+    const boundedEventId = store.recordExecutionEvent({
+      jobId: job.id,
+      attempt: job.attemptCount,
+      step: "webhook.sanitize",
+      status: "succeeded",
+      input: {
+        repositoryUrl: "https://user:pass@gitlab.example/project?private_token=private-value",
+        note: "🧪".repeat(30_000),
+      },
+    });
+    const boundedEvent = store.getJobDetails(job.id)?.events.find((event) => event.id === boundedEventId);
+    expect(boundedEvent?.input).not.toContain("user:pass");
+    expect(boundedEvent?.input).not.toContain("private-value");
+    expect(Buffer.byteLength(boundedEvent?.input ?? "")).toBeLessThanOrEqual(64 << 10);
+  });
+
+  it("marks in-flight execution events interrupted when a worker lease expires", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const firstAttempt = store.claimNextWithLease(10);
+    if (!firstAttempt) throw new Error("expected a queued job to be claimed");
+    const eventId = store.startExecutionEvent({
+      jobId: firstAttempt.id,
+      attempt: firstAttempt.attemptCount,
+      step: "gitlab.post_note",
+      input: { body: "comment text" },
+    });
+
+    await sleep(20);
+    const retry = store.claimNextWithLease(30_000);
+
+    expect(retry).toMatchObject({ id: firstAttempt.id, attemptCount: 2 });
+    expect(store.getJobDetails(firstAttempt.id)?.events).toEqual([
+      expect.objectContaining({ id: eventId, status: "interrupted", errorDetail: expect.stringContaining("lease expired") }),
+    ]);
+  });
+
+  it("records execution step outputs and failures", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+
+    await traceExecutionStep(
+      store,
+      { jobId: job.id, attempt: job.attemptCount },
+      "gitlab.get_project",
+      { projectId: 7 },
+      async () => ({ id: 7, http_url_to_repo: "https://gitlab.example.com/project.git" }),
+    );
+    await expect(traceExecutionStep(
+      store,
+      { jobId: job.id, attempt: job.attemptCount },
+      "gitlab.get_mr",
+      { projectId: 7, mrIid: 3 },
+      async () => {
+        throw new Error("GitLab unavailable");
+      },
+    )).rejects.toThrow("GitLab unavailable");
+    await expect(traceExecutionStep(
+      store,
+      { jobId: job.id, attempt: job.attemptCount },
+      "gitlab.post_note",
+      { body: "comment text" },
+      async () => {
+        throw new Error("connection closed before response");
+      },
+      undefined,
+      () => "unknown",
+    )).rejects.toThrow("connection closed before response");
+
+    expect(store.getJobDetails(job.id)?.events).toMatchObject([
+      { step: "gitlab.post_note", status: "unknown" },
+      { step: "gitlab.get_mr", status: "failed", errorDetail: "GitLab unavailable" },
+      { step: "gitlab.get_project", status: "succeeded", output: JSON.stringify({ id: 7, http_url_to_repo: "https://gitlab.example.com/project.git" }) },
     ]);
   });
 

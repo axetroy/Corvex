@@ -58,7 +58,7 @@ The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` a
 | `GET /ops` | Optional Basic Auth-protected read-only operations console. Disabled when operations credentials are unset. |
 | `GET /api/ops/overview` | Operations summary with job counts, oldest queued age, worker heartbeats, and model call metrics. |
 | `GET /api/ops/jobs` | Filtered and paginated job list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
-| `GET /api/ops/jobs/<id>` | Job details and persisted attempt history. |
+| `GET /api/ops/jobs/<id>` | Job details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output events for each execution step. |
 
 The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include submitted requests and error text; protect operator credentials and use HTTPS. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
 
@@ -133,7 +133,7 @@ For a container deployment, run the backup command in an environment that can ac
 
 To restore, stop both Server and Worker, preserve the current database for rollback, replace it with a verified backup at the configured database path, and restart both processes. Do not overwrite a live database.
 
-The Server runs cleanup at startup and then approximately every 24 hours. Terminal jobs, attempts, webhook delivery records, and daily token usage use `storage.retention_days` (90 days by default). Audit events use `storage.audit_retention_days` (365 days by default). Queued and active jobs are retained. Git mirrors under `storage.root` are not covered by this database cleanup; monitor disk use and define a separate mirror maintenance policy.
+The Server runs cleanup at startup and then approximately every 24 hours. Terminal jobs, attempts, linked execution-step events, webhook delivery records, and daily token usage use `storage.retention_days` (90 days by default). Unlinked execution events use the same retention. Audit events use `storage.audit_retention_days` (365 days by default). Queued and active jobs are retained. Execution inputs and outputs are bounded and credential-like values are redacted; source file contents and diff patches are recorded only as size/hash metadata. Comment text may be present in sanitized event payloads, so protect the console with HTTPS and restrict access. Redaction is best-effort and cannot identify every arbitrary secret. Git mirrors under `storage.root` are not covered by this database cleanup; monitor disk use and define a separate mirror maintenance policy.
 
 ## Upgrades and development
 

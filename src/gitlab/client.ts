@@ -34,6 +34,24 @@ export interface DiscussionPosition {
   newLine: number;
 }
 
+/** GitLab 写操作的最小回执，不包含响应正文。 */
+export interface GitLabWriteReceipt {
+  /** GitLab 返回的 HTTP 状态码。 */
+  status: number;
+  /** 从响应正文提取的资源 ID；响应无效或未提供 ID 时为空。 */
+  resourceId: number | string | null;
+}
+
+/** 写请求未收到 HTTP 回执；远端副作用是否生效无法确认。 */
+export class GitLabWriteError extends Error {
+  readonly outcomeUnknown = true;
+
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "GitLabWriteError";
+  }
+}
+
 const MAX_RESPONSE_BYTES = 20 << 20;
 const MAX_DIFF_BYTES = 16 << 20;
 
@@ -189,9 +207,9 @@ export class GitLabClient {
     mrIid: number,
     body: string,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<GitLabWriteReceipt> {
     const form = new URLSearchParams({ body });
-    await this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes`, form, signal);
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes`, form, signal);
   }
 
   async postDiscussion(
@@ -200,7 +218,7 @@ export class GitLabClient {
     body: string,
     position: DiscussionPosition,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<GitLabWriteReceipt> {
     if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
     if (!fullSha(position.baseSha) || !fullSha(position.startSha) || !fullSha(position.headSha)) {
       throw new Error("discussion position requires full base, start, and head SHAs");
@@ -222,7 +240,7 @@ export class GitLabClient {
       "position[new_path]": position.newPath,
       "position[new_line]": String(position.newLine),
     });
-    await this.write(`/projects/${projectId}/merge_requests/${mrIid}/discussions`, form, signal);
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/discussions`, form, signal);
   }
 
   private async getJson(path: string, signal?: AbortSignal): Promise<unknown> {
@@ -235,10 +253,25 @@ export class GitLabClient {
     }
   }
 
-  private async write(path: string, form: URLSearchParams, signal?: AbortSignal): Promise<void> {
-    const response = await this.request(path, this.writeToken, "POST", signal, form);
+  private async write(path: string, form: URLSearchParams, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+    let response: Response;
+    try {
+      response = await this.request(path, this.writeToken, "POST", signal, form);
+    } catch (error) {
+      throw new GitLabWriteError(`GitLab write outcome is unknown: ${String(error)}`, error);
+    }
     if (!response.ok) await this.throwResponseError(response);
-    await response.body?.cancel();
+    let resourceId: number | string | null = null;
+    try {
+      const body = await readBounded(response, 16 << 10);
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+      if (isRecord(parsed) && (typeof parsed.id === "string" || Number.isSafeInteger(parsed.id))) {
+        resourceId = parsed.id as number | string;
+      }
+    } catch {
+      await response.body?.cancel().catch(() => {});
+    }
+    return { status: response.status, resourceId };
   }
 
   private async request(
