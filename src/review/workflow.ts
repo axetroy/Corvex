@@ -529,18 +529,20 @@ export class ReviewWorkflow {
     };
     // 首轮审查和覆盖追问共用校验流程，避免追问分支跳过 JSON 纠错。
     const initial = await generateParsedResponse(userPrompt);
-    let { response, usage, parsed } = initial;
-    const { result } = parsed;
-    if (result.findings.length === 0 && (!allowEmptyWithoutTrace || trace !== undefined)) {
-      if (coverageOmittedFiles > 0 && !trace) {
+    let { response, usage } = initial;
+    const { parsed } = initial;
+    let result = parsed.result;
+    let rejected = parsed.rejected;
+    if (!trace && result.findings.length === 0 && !allowEmptyWithoutTrace) {
+      if (coverageOmittedFiles > 0) {
         throw new Error(`review coverage is incomplete: ${coverageOmittedFiles} changed file(s) were omitted from the review context`);
       }
       if (omittedFiles > 0) {
         throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
       }
-      if (!trace) {
-        throw new Error("review coverage is unavailable without trace context");
-      }
+      throw new Error("review coverage is unavailable without trace context");
+    }
+    if (trace) {
       const missingFiles = incompleteChangedFiles(
         input.changes,
         cwd,
@@ -549,38 +551,69 @@ export class ReviewWorkflow {
       if (missingFiles.length > 0) {
         const coveragePrompt = `${userPrompt}\n\n${prompts.reviewCoverageFollowup(missingFiles)}`;
         if (Buffer.byteLength(coveragePrompt) > this.maxContextBytes) {
-          throw new Error("review coverage is incomplete and its targeted follow-up exceeds the configured context limit");
-        }
-        const coverageResponse = await generateParsedResponse(coveragePrompt);
-        usage = {
-          inputTokens: usage.inputTokens + coverageResponse.usage.inputTokens,
-          outputTokens: usage.outputTokens + coverageResponse.usage.outputTokens,
-          totalTokens: usage.totalTokens + coverageResponse.usage.totalTokens,
-        };
-        response = coverageResponse.response;
-        parsed = coverageResponse.parsed;
-        if (parsed.result.findings.length === 0) {
+          if (result.findings.length === 0) {
+            throw new Error("review coverage is incomplete and its targeted follow-up exceeds the configured context limit");
+          }
+          result = {
+            ...result,
+            summary: `${result.summary}\n\n${this.responseLanguage === "zh-CN"
+              ? `本次审查覆盖不完整：有 ${missingFiles.length} 个变更文件未能完整读取。`
+              : `Coverage is partial: ${missingFiles.length} changed file(s) could not be read completely.`}`,
+          };
+        } else {
+          const previousResult = result;
+          const coverageResponse = await generateParsedResponse(coveragePrompt);
+          usage = {
+            inputTokens: usage.inputTokens + coverageResponse.usage.inputTokens,
+            outputTokens: usage.outputTokens + coverageResponse.usage.outputTokens,
+            totalTokens: usage.totalTokens + coverageResponse.usage.totalTokens,
+          };
+          response = coverageResponse.response;
+          rejected += coverageResponse.parsed.rejected;
+          const seenFindings = new Set(previousResult.findings.map((finding) => finding.fingerprint));
+          const findings = [...previousResult.findings];
+          for (const finding of coverageResponse.parsed.result.findings) {
+            if (seenFindings.has(finding.fingerprint) || findings.length >= this.maxFindings) {
+              rejected++;
+              continue;
+            }
+            seenFindings.add(finding.fingerprint);
+            findings.push(finding);
+          }
+          result = {
+            summary: previousResult.findings.length === 0
+              ? coverageResponse.parsed.result.summary
+              : `${previousResult.summary}\n\n${this.responseLanguage === "zh-CN" ? "覆盖追问" : "Coverage follow-up"}: ${coverageResponse.parsed.result.summary}`,
+            findings,
+          };
           const remainingFiles = incompleteChangedFiles(
             input.changes,
             cwd,
             this.agent.getTraceEntries(trace.jobId, trace.attempt),
           );
           if (remainingFiles.length > 0) {
-            throw new Error(`review coverage is incomplete for changed file(s): ${remainingFiles.join(", ")}`);
+            if (findings.length === 0) {
+              throw new Error(`review coverage is incomplete for changed file(s): ${remainingFiles.join(", ")}`);
+            }
+            result = {
+              ...result,
+              summary: `${result.summary}\n\n${this.responseLanguage === "zh-CN"
+                ? `本次审查覆盖不完整：追问后仍有 ${remainingFiles.length} 个变更文件未能完整读取。`
+                : `Coverage is partial: ${remainingFiles.length} changed file(s) remained unread after the follow-up.`}`,
+            };
           }
         }
       }
     }
-    const { result: finalResult, rejected: finalRejected } = parsed;
     const finalResultWithCoverage = omittedFiles > 0
       ? {
-          ...finalResult,
-          summary: `${finalResult.summary}\n\n${this.responseLanguage === "zh-CN"
+          ...result,
+          summary: `${result.summary}\n\n${this.responseLanguage === "zh-CN"
             ? `本次审查覆盖不完整：有 ${omittedFiles} 个变更文件因大小或文件策略限制被省略；现有发现仅基于已审查文件。`
             : `Coverage is partial: ${omittedFiles} changed file(s) were omitted by the review size or file policy; findings only cover the files reviewed.`}`,
         }
-      : finalResult;
-    return { result: finalResultWithCoverage, model: response.model, usage, omittedFiles, rejected: finalRejected };
+      : result;
+    return { result: finalResultWithCoverage, model: response.model, usage, omittedFiles, rejected };
   }
 
   async explain(

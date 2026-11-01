@@ -373,6 +373,113 @@ describe("review and fix response validation", () => {
     );
   });
 
+  it("keeps findings and follows up when a non-empty review has unread changed files", async () => {
+    const secondChange = {
+      ...diff.changes[0]!,
+      path: "src/other.ts",
+      patch: "@@ -0,0 +1 @@\n+const other = input;\n",
+    };
+    const multipleChanges: DiffResult = { ...diff, changes: [...diff.changes, secondChange] };
+    let followupCompleted = false;
+    const responseFor = (path: string, evidence: string) => ({
+      content: JSON.stringify({
+        summary: `Reviewed ${path}.`,
+        findings: [{
+          severity: "high",
+          title: `Validate ${path}`,
+          file_path: path,
+          line: path === "src/app.ts" ? 3 : 1,
+          evidence,
+          explanation: "The added value is not validated.",
+        }],
+      }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    });
+    const generate = vi.fn<PiAgent["generate"]>()
+      .mockResolvedValueOnce(responseFor("src/app.ts", "user.input"))
+      .mockImplementationOnce(async () => {
+        followupCompleted = true;
+        return responseFor("src/other.ts", "input");
+      });
+    const agent = {
+      generate,
+      getTraceEntries: () => followupCompleted
+        ? [completeFileRead("src/app.ts"), completeFileRead("src/other.ts")]
+        : [completeFileRead("src/app.ts")],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, multipleChanges, process.cwd(), undefined, reviewTrace);
+
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1]?.[0].userPrompt).toContain("src/other.ts");
+    expect(outcome.result.findings.map(({ filePath }) => filePath)).toEqual(["src/app.ts", "src/other.ts"]);
+    expect(outcome.result.summary).toContain("Coverage follow-up: Reviewed src/other.ts.");
+    expect(outcome.usage).toEqual({ inputTokens: 2, outputTokens: 2, totalTokens: 4 });
+  });
+
+  it("marks partial coverage when findings exist but a follow-up still leaves files unread", async () => {
+    const secondChange = {
+      ...diff.changes[0]!,
+      path: "src/other.ts",
+      patch: "@@ -0,0 +1 @@\n+const other = input;\n",
+    };
+    const multipleChanges: DiffResult = { ...diff, changes: [...diff.changes, secondChange] };
+    const generate = vi.fn<PiAgent["generate"]>()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          summary: "One issue found.",
+          findings: [{
+            severity: "high",
+            title: "Validate input",
+            file_path: "src/app.ts",
+            line: 3,
+            evidence: "user.input",
+            explanation: "The new value is not validated.",
+          }],
+        }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ summary: "No additional issues found.", findings: [] }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+    const agent = {
+      generate,
+      getTraceEntries: () => [completeFileRead("src/app.ts")],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, multipleChanges, process.cwd(), undefined, reviewTrace);
+
+    expect(outcome.result.findings).toHaveLength(1);
+    expect(outcome.result.summary).toContain("Coverage is partial: 1 changed file(s) remained unread");
+    expect(outcome.usage).toEqual({ inputTokens: 2, outputTokens: 2, totalTokens: 4 });
+  });
+
   it("marks reviews with findings as partial when files were omitted", async () => {
     const generate = vi.fn(async () => ({
       content: JSON.stringify({
@@ -458,7 +565,10 @@ describe("review and fix response validation", () => {
         usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
       };
     });
-    const agent = { generate } as unknown as PiAgent;
+    const agent = {
+      generate,
+      getTraceEntries: () => changes.map((change) => completeFileRead(change.path)),
+    } as unknown as PiAgent;
     const workflow = new ReviewWorkflow(agent, 12, 1, 1024 * 1024);
     const context = {
       projectId: 1,
@@ -515,7 +625,11 @@ describe("review and fix response validation", () => {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       };
     });
-    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1800);
+    const agent = {
+      generate,
+      getTraceEntries: () => changes.map((change) => completeFileRead(change.path)),
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1800);
     const context = {
       projectId: 1,
       mrIid: 1,

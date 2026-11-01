@@ -88,28 +88,35 @@ describe("review task loop", () => {
     await git(temporaryDirectory, "--git-dir", bareRepository, "update-server-info");
 
     let apiPort = 0;
-    let mergeRequestReads = 0;
+    const mergeRequestReads = new Map<number, number>();
+    const currentHeads = new Map<number, string>();
     const postedNotes: string[] = [];
     const postedDiscussions: URLSearchParams[] = [];
+    let discussionAttempts = 0;
+    let rejectDiscussionFor: number | undefined;
     apiServer = createServer((request, response) => {
       const url = new URL(request.url ?? "/", `http://127.0.0.1:${apiPort || 1}`);
-      if (url.pathname === "/api/v4/projects/1/merge_requests/3" && request.method === "GET") {
-        mergeRequestReads++;
-        if (mergeRequestReads <= 3) {
+      const mergeRequestMatch = /^\/api\/v4\/projects\/1\/merge_requests\/(\d+)$/.exec(url.pathname);
+      if (mergeRequestMatch && request.method === "GET") {
+        const mrIid = Number(mergeRequestMatch[1]);
+        const reads = (mergeRequestReads.get(mrIid) ?? 0) + 1;
+        mergeRequestReads.set(mrIid, reads);
+        if (mrIid === 3 && reads <= 3) {
           response.writeHead(503, { "content-type": "application/json" });
           response.end(JSON.stringify({ message: "temporary GitLab outage" }));
           return;
         }
+        const visibleHead = currentHeads.get(mrIid) ?? headSha;
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
-          iid: 3,
+          iid: mrIid,
           state: "opened",
           title: "Review this change",
           description: "",
           source_branch: "feature",
           target_branch: "main",
-          sha: headSha,
-          diff_refs: { base_sha: baseSha, start_sha: baseSha, head_sha: headSha },
+          sha: visibleHead,
+          diff_refs: { base_sha: baseSha, start_sha: baseSha, head_sha: visibleHead },
         }));
         return;
       }
@@ -130,6 +137,14 @@ describe("review task loop", () => {
         return;
       }
       if (url.pathname.endsWith("/discussions") && request.method === "POST") {
+        discussionAttempts++;
+        const discussionMrIid = Number(/\/merge_requests\/(\d+)\/discussions$/.exec(url.pathname)?.[1]);
+        if (discussionMrIid === rejectDiscussionFor) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ message: "position is invalid" }));
+          rejectDiscussionFor = undefined;
+          return;
+        }
         let body = "";
         request.setEncoding("utf8");
         request.on("data", (chunk: string) => { body += chunk; });
@@ -160,6 +175,24 @@ describe("review task loop", () => {
     });
     apiPort = await listen(apiServer);
 
+    type ModelAction = {
+      content: string;
+      delayMs?: number;
+      onStarted?: () => void;
+      beforeResponse?: () => void;
+    };
+    const reviewContent = JSON.stringify({
+      summary: "Unchecked input is used without validation.",
+      findings: [{
+        severity: "high",
+        title: "Validate the input before use",
+        file_path: "input.ts",
+        line: 1,
+        evidence: "unsafe",
+        explanation: "The new value is used without validation.",
+      }],
+    });
+    const modelActions: ModelAction[] = [];
     modelServer = createServer((request, response) => {
       let requestBody = "";
       request.setEncoding("utf8");
@@ -167,34 +200,34 @@ describe("review task loop", () => {
       request.on("end", () => {
         expect(request.url).toBe("/v1/chat/completions");
         expect(requestBody).toContain('"model":"test-model"');
-        const content = JSON.stringify({
-          summary: "Unchecked input is used without validation.",
-          findings: [{
-            severity: "high",
-            title: "Validate the input before use",
-            file_path: "input.ts",
-            line: 1,
-            evidence: "unsafe",
-            explanation: "The new value is used without validation.",
-          }],
+        const action = modelActions.shift() ?? { content: reviewContent };
+        action.onStarted?.();
+        const sendResponse = () => {
+          action.beforeResponse?.();
+          if (response.destroyed) return;
+          response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-review",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{ index: 0, delta: { role: "assistant", content: action.content }, finish_reason: null }],
+          })}\n\n`);
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-review",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
+          })}\n\n`);
+          response.end("data: [DONE]\n\n");
+        };
+        const timer = action.delayMs ? setTimeout(sendResponse, action.delayMs) : undefined;
+        response.once("close", () => {
+          if (timer) clearTimeout(timer);
         });
-        response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-        response.write(`data: ${JSON.stringify({
-          id: "chatcmpl-review",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "test-model",
-          choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
-        })}\n\n`);
-        response.write(`data: ${JSON.stringify({
-          id: "chatcmpl-review",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "test-model",
-          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
-        })}\n\n`);
-        response.end("data: [DONE]\n\n");
+        if (!action.delayMs) sendResponse();
       });
     });
     const modelPort = await listen(modelServer);
@@ -234,7 +267,7 @@ describe("review task loop", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
       worker: { pollInterval: 20, jobTimeout: 15_000 },
-      fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
+      fix: { enabled: true, allowedUserIds: [2], maxPatchBytes: 128 << 10 },
     };
     serverStore = await JobStore.open(config.storage.database);
     workerStore = await JobStore.open(config.storage.database);
@@ -250,26 +283,30 @@ describe("review task loop", () => {
       }
     }
     const applicationAddress = application.getListeningAddress();
-    const webhookResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/webhooks/gitlab`, {
-      method: "POST",
-      headers: {
-        "x-gitlab-token": "webhook-secret",
-        "x-gitlab-event": "Note Hook",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        object_kind: "note",
-        user: { id: 2, username: "developer" },
-        project: { id: 1 },
-        object_attributes: {
-          id: 99,
-          note: "@corvex review",
-          noteable_type: "MergeRequest",
-          system: false,
+    const sendNote = (noteId: number, mrIid: number, note: string) => fetch(
+      `http://127.0.0.1:${applicationAddress.port}/webhooks/gitlab`,
+      {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "webhook-secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
         },
-        merge_request: { iid: 3, last_commit: { id: headSha } },
-      }),
-    });
+        body: JSON.stringify({
+          object_kind: "note",
+          user: { id: 2, username: "developer" },
+          project: { id: 1 },
+          object_attributes: {
+            id: noteId,
+            note,
+            noteable_type: "MergeRequest",
+            system: false,
+          },
+          merge_request: { iid: mrIid, last_commit: { id: headSha } },
+        }),
+      },
+    );
+    const webhookResponse = await sendNote(99, 3, "@corvex review");
     expect(webhookResponse.status).toBe(202);
     const queued = serverStore.listJobs("queued", 10)[0];
     if (!queued) throw new Error("webhook did not enqueue a review job");
@@ -279,7 +316,7 @@ describe("review task loop", () => {
     await waitFor(() => serverStore!.listJobs("completed", 10).some((job) => job.id === queued.id));
 
     const details = serverStore.getJobDetails(queued.id);
-    expect(mergeRequestReads).toBe(5);
+    expect(mergeRequestReads.get(3)).toBe(5);
     expect(details?.attempts).toMatchObject([
       { attempt: 1, error: expect.stringContaining("GitLab API returned 503") },
       { attempt: 2, error: "" },
@@ -293,5 +330,67 @@ describe("review task loop", () => {
     expect(postedNotes.some((body) => body.includes("Unchecked input is used without validation"))).toBe(true);
     expect(details?.events.map(({ step }) => step)).toContain("gitlab.post_review_summary");
     expect(details?.trajectory.some((entry) => entry.kind === "llm" && entry.status === "succeeded")).toBe(true);
+
+    const enqueue = async (noteId: number, mrIid: number, note: string) => {
+      const existingIds = new Set(serverStore!.listJobs(undefined, 200).map((job) => job.id));
+      const response = await sendNote(noteId, mrIid, note);
+      expect(response.status).toBe(202);
+      await waitFor(() => serverStore!.listJobs(undefined, 200).some((job) => !existingIds.has(job.id)));
+      const job = serverStore.listJobs(undefined, 200).find((candidate) => !existingIds.has(candidate.id));
+      if (!job) throw new Error("webhook did not create a task");
+      return job;
+    };
+    const waitForStatus = (jobId: string, status: string) => waitFor(() =>
+      serverStore!.listJobs(undefined, 200).some((job) => job.id === jobId && job.status === status),
+    );
+
+    modelActions.push({ content: "The file assigns an unchecked value to `value`." });
+    const explainJob = await enqueue(100, 4, "@corvex explain input.ts");
+    await waitForStatus(explainJob.id, "completed");
+    expect(postedNotes.some((body) => body.includes("The file assigns an unchecked value"))).toBe(true);
+    expect(serverStore.getJobDetails(explainJob.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
+
+    const fixPatch = [
+      "diff --git a/input.ts b/input.ts",
+      "--- a/input.ts",
+      "+++ b/input.ts",
+      "@@ -1 +1 @@",
+      "-const value = unsafe;",
+      "+const value = safe;",
+      "",
+    ].join("\n");
+    modelActions.push({ content: JSON.stringify({ summary: "Replace the unsafe value.", patch: fixPatch }) });
+    const fixJob = await enqueue(101, 5, "@corvex fix Validate this value");
+    await waitForStatus(fixJob.id, "completed");
+    const fixDetails = serverStore.getJobDetails(fixJob.id);
+    expect(fixDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["fixing", "verifying", "publishing", "completed"]));
+    expect(fixDetails?.events.map(({ step }) => step)).toContain("gitlab.post_fix_proposal");
+    expect(postedNotes.some((body) => body.includes("Replace the unsafe value"))).toBe(true);
+
+    rejectDiscussionFor = 6;
+    modelActions.push({ content: reviewContent });
+    const fallbackJob = await enqueue(102, 6, "@corvex review");
+    await waitForStatus(fallbackJob.id, "completed");
+    expect(postedNotes.some((body) => body.includes("1 validated finding(s); 0 posted inline.") && body.includes("Validate the input before use"))).toBe(true);
+
+    const staleSha = "c".repeat(40);
+    modelActions.push({ content: reviewContent, beforeResponse: () => currentHeads.set(7, staleSha) });
+    const staleJob = await enqueue(103, 7, "@corvex review");
+    const discussionsBeforeStale = discussionAttempts;
+    await waitForStatus(staleJob.id, "stale");
+    expect(discussionAttempts).toBe(discussionsBeforeStale);
+    expect(serverStore.getJobDetails(staleJob.id)?.events.map(({ step }) => step)).toContain("worker.verify_snapshot");
+
+    let cancelModelStarted!: () => void;
+    const cancelModelStartedPromise = new Promise<void>((resolvePromise) => {
+      cancelModelStarted = resolvePromise;
+    });
+    modelActions.push({ content: reviewContent, delayMs: 15_000, onStarted: cancelModelStarted });
+    const cancelJob = await enqueue(104, 8, "@corvex review");
+    await cancelModelStartedPromise;
+    const cancelResponse = await sendNote(105, 8, "@corvex cancel");
+    expect(cancelResponse.status).toBe(202);
+    await waitForStatus(cancelJob.id, "cancelled");
+    expect(serverStore.getJobDetails(cancelJob.id)?.timeline.map(({ to }) => to)).toContain("cancelled");
   }, 35_000);
 });
