@@ -114,6 +114,9 @@ describe("CorvexServer", () => {
       expect(
         (await fetch(`${base}/ops/i18n.js`, { headers: { authorization } })).status,
       ).toBe(200);
+      expect(
+        (await fetch(`${base}/ops/trace.js`, { headers: { authorization } })).status,
+      ).toBe(200);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
 
       const payload = {

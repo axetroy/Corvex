@@ -329,6 +329,7 @@ export class CorvexServer {
     const assets: Record<string, { file: string; contentType: string }> = {
       "/ops/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
       "/ops/i18n.js": { file: "i18n.js", contentType: "text/javascript; charset=utf-8" },
+      "/ops/trace.js": { file: "trace.js", contentType: "text/javascript; charset=utf-8" },
       "/ops/styles.css": { file: "styles.css", contentType: "text/css; charset=utf-8" },
     };
     const file = path === "/ops" || path === "/ops/" ? "index.html" : assets[path]?.file;
