@@ -328,6 +328,9 @@ describe("review task loop", () => {
     expect(postedDiscussions[0]?.get("position[new_line]")).toBe("1");
     expect(postedDiscussions[0]?.get("body")).toContain("Validate the input before use");
     expect(postedNotes.some((body) => body.includes("Unchecked input is used without validation"))).toBe(true);
+    const inlineSummary = postedNotes.find((body) => body.includes("1 validated finding(s); 1 posted inline."));
+    expect(inlineSummary).toContain("<details>");
+    expect(inlineSummary).toContain("<summary>Finding 1: HIGH - Validate the input before use</summary>");
     expect(details?.events.map(({ step }) => step)).toContain("gitlab.post_review_summary");
     expect(details?.trajectory.some((entry) => entry.kind === "llm" && entry.status === "succeeded")).toBe(true);
 

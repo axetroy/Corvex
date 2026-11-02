@@ -527,7 +527,6 @@ export class Worker {
       // 模型调用可能超过 MR 快照的有效期；发布前必须再次确认 diff refs 未变化。
       if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
       transition("publishing");
-      const fallback: Finding[] = [];
       let inlinePosted = 0;
       for (const finding of outcome.result.findings) {
         try {
@@ -557,10 +556,9 @@ export class Worker {
             line: finding.line,
             error: message(error),
           });
-          fallback.push(finding);
         }
       }
-      const reviewBody = formatReview(job, outcome.result.summary, outcome.result.findings, inlinePosted, fallback);
+      const reviewBody = formatReview(job, outcome.result.summary, outcome.result.findings, inlinePosted);
       await traceExecutionStep(
         this.store,
         stepContext,
@@ -747,7 +745,6 @@ function formatReview(
   summary: string,
   findings: Finding[],
   inlinePosted: number,
-  fallback: Finding[],
 ): string {
   const lines = [
     `## Corvex review for \`${job.headSha.slice(0, 12)}\``,
@@ -756,7 +753,7 @@ function formatReview(
     "",
     `${findings.length} validated finding(s); ${inlinePosted} posted inline.`,
   ];
-  fallback.forEach((finding, index) => {
+  findings.forEach((finding, index) => {
     lines.push(
       "",
       "<details>",
