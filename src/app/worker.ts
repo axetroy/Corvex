@@ -756,11 +756,23 @@ function formatReview(
     "",
     `${findings.length} validated finding(s); ${inlinePosted} posted inline.`,
   ];
-  for (const finding of fallback) {
-    lines.push("", `### ${finding.severity.toUpperCase()}: ${escapeMarkdown(finding.title)}`);
-    lines.push(`\`${finding.filePath}:${finding.line}\` — ${escapeMarkdown(finding.explanation)}`);
-    lines.push(`Evidence: \`${finding.evidence.replace(/`/g, "\\`")}\``);
-  }
+  fallback.forEach((finding, index) => {
+    lines.push(
+      "",
+      "<details>",
+      `<summary>Finding ${index + 1}: ${finding.severity.toUpperCase()} - ${escapeMarkdown(finding.title)}</summary>`,
+      "",
+      `- **Severity:** ${finding.severity.toUpperCase()}`,
+      `- **Location:** \`${finding.filePath}:${finding.line}\``,
+      `- **Title:** ${escapeMarkdown(finding.title)}`,
+      `- **Explanation:** ${escapeMarkdown(finding.explanation)}`,
+      `- **Evidence:** \`${finding.evidence.replace(/`/g, "\\`")}\``,
+    );
+    if (finding.suggestion) {
+      lines.push(`- **Suggested fix:** ${escapeMarkdown(finding.suggestion)}`);
+    }
+    lines.push("", "</details>");
+  });
   return lines.join("\n");
 }
 

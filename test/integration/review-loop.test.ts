@@ -371,7 +371,14 @@ describe("review task loop", () => {
     modelActions.push({ content: reviewContent });
     const fallbackJob = await enqueue(102, 6, "@corvex review");
     await waitForStatus(fallbackJob.id, "completed");
-    expect(postedNotes.some((body) => body.includes("1 validated finding(s); 0 posted inline.") && body.includes("Validate the input before use"))).toBe(true);
+    const fallbackNote = postedNotes.find((body) => body.includes("1 validated finding(s); 0 posted inline."));
+    expect(fallbackNote).toContain("<details>");
+    expect(fallbackNote).toContain("<summary>Finding 1: HIGH - Validate the input before use</summary>");
+    expect(fallbackNote).toContain("- **Location:** `input.ts:1`");
+    expect(fallbackNote).toContain("- **Title:** Validate the input before use");
+    expect(fallbackNote).toContain("- **Explanation:** The new value is used without validation\\.");
+    expect(fallbackNote).toContain("- **Evidence:** `unsafe`");
+    expect(fallbackNote).toContain("</details>");
 
     const staleSha = "c".repeat(40);
     modelActions.push({ content: reviewContent, beforeResponse: () => currentHeads.set(7, staleSha) });
