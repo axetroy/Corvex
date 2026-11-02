@@ -840,6 +840,51 @@ describe("review and fix response validation", () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
+  it("completes an empty review when the only omitted file is binary", async () => {
+    const generate = vi.fn(async () => ({
+      content: JSON.stringify({ summary: "Review complete", findings: [] }),
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const agent = {
+      generate,
+      getTraceEntries: () => [completeFileRead("src/app.ts")],
+    } as unknown as PiAgent;
+    const workflow = new ReviewWorkflow(agent, 10, 10, 1024 * 1024);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const binaryDiff: DiffResult = {
+      ...diff,
+      skippedFiles: 1,
+      changes: [
+        ...diff.changes,
+        {
+          path: "assets/logo.png",
+          status: "A",
+          addedLines: 0,
+          removedLines: 0,
+          skipped: "binary file",
+          patch: "",
+        },
+      ],
+    };
+
+    const outcome = await workflow.review(context, binaryDiff, process.cwd(), undefined, reviewTrace);
+
+    expect(outcome.result.findings).toEqual([]);
+    expect(outcome.omittedFiles).toBe(1);
+    expect(outcome.result.summary).toContain("Coverage is partial: 1 changed file(s)");
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it("does not report no reviewable changes when every changed file was omitted", async () => {
     const generate = vi.fn();
     const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024);

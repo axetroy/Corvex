@@ -351,10 +351,15 @@ export class ReviewWorkflow {
     trace?: JobTraceContext,
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
-    const { input: selectedInput, omittedFiles: policyOmittedFiles } = this.buildInput(context, diff);
+    const {
+      input: selectedInput,
+      omittedFiles: policyOmittedFiles,
+      blockingOmittedFiles: policyBlockingOmittedFiles,
+    } = this.buildInput(context, diff);
     const batches: Change[][] = [];
     let batch: Change[] = [];
     let omittedFiles = policyOmittedFiles;
+    let blockingOmittedFiles = policyBlockingOmittedFiles;
     for (const change of selectedInput.changes) {
       const candidate = [...batch, change];
       const exceedsContext = Buffer.byteLength(JSON.stringify({
@@ -370,6 +375,7 @@ export class ReviewWorkflow {
         changes: [...batch, change],
       })) > this.maxContextBytes) {
         omittedFiles++;
+        blockingOmittedFiles++;
         continue;
       }
       batch.push(change);
@@ -405,7 +411,7 @@ export class ReviewWorkflow {
         cwd,
         signal,
         trace,
-        omittedFiles,
+        blockingOmittedFiles,
         findings.length > 0,
       );
       summaries.push(outcome.result.summary);
@@ -426,8 +432,8 @@ export class ReviewWorkflow {
         console.info("review batch completed", { projectId: context.projectId, mrIid: context.mrIid, batch: index + 1, totalBatches: batches.length });
       }
     }
-    if (findings.length === 0 && omittedFiles > 0) {
-      throw new Error(`review coverage is incomplete: ${omittedFiles} changed file(s) were omitted from the review context`);
+    if (findings.length === 0 && blockingOmittedFiles > 0) {
+      throw new Error(`review coverage is incomplete: ${blockingOmittedFiles} changed file(s) were omitted from the review context`);
     }
     const summary = summaries.length === 1
       ? summaries[0] ?? ""
@@ -439,8 +445,8 @@ export class ReviewWorkflow {
       ? {
           ...result,
           summary: `${result.summary}\n\n${this.responseLanguage === "zh-CN"
-            ? `本次审查覆盖不完整：有 ${omittedFiles} 个变更文件因大小或文件策略限制被省略；现有发现仅基于已审查文件。`
-            : `Coverage is partial: ${omittedFiles} changed file(s) were omitted by the review size or file policy; findings only cover the files reviewed.`}`,
+            ? `本次审查覆盖不完整：有 ${omittedFiles} 个变更文件因二进制内容、大小或文件策略限制被省略；现有发现仅基于已审查文件。`
+            : `Coverage is partial: ${omittedFiles} changed file(s) were omitted because of binary content, size, or file policy; findings only cover the files reviewed.`}`,
         }
       : result;
     return { result: resultWithCoverage, model, usage, omittedFiles, rejected };
@@ -669,13 +675,16 @@ export class ReviewWorkflow {
   private buildInput(context: ReviewContext, diff: DiffResult): {
     input: { merge_request: ReviewContext; changes: Change[]; notice?: string };
     omittedFiles: number;
+    blockingOmittedFiles: number;
   } {
     const changes: Change[] = [];
     const representedSkipped = diff.changes.filter((change) => change.skipped).length;
     let omittedFiles = Math.max(0, diff.skippedFiles - representedSkipped);
+    let blockingOmittedFiles = omittedFiles;
     for (const change of diff.changes) {
       if (change.skipped || changes.length >= this.maxFiles || !change.patch) {
         omittedFiles++;
+        if (change.skipped !== "binary file") blockingOmittedFiles++;
         continue;
       }
       changes.push(change);
@@ -686,11 +695,12 @@ export class ReviewWorkflow {
         changes,
         ...(omittedFiles > 0
           ? {
-              notice: `${omittedFiles} changed file(s) were omitted by the review size or file policy.`,
+              notice: `${omittedFiles} changed file(s) were omitted because of binary content, size, or file policy.`,
             }
           : {}),
       },
       omittedFiles,
+      blockingOmittedFiles,
     };
   }
 }
