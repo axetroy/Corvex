@@ -38,7 +38,7 @@ review:
 
 worker:
   poll_interval: 2s
-  job_timeout: 30m
+  job_timeout: 75m
 
 fix:
   enabled: false
