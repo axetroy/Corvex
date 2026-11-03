@@ -511,6 +511,7 @@ export async function readAllowedFile(
 export function createReadOnlyFileExtension(
   allowedRoots: string[],
   gitGrep?: GitGrep,
+  gitDiff?: (path?: string) => Promise<{ diff: string; truncated: boolean }>,
 ): (pi: ExtensionAPI) => void {
   const roots = allowedRoots.map((root) => resolve(root));
   return (pi) => {
@@ -613,6 +614,22 @@ export function createReadOnlyFileExtension(
             type: "text",
             text: JSON.stringify(await gitGrep(params.query, params.path ?? ".")),
           }],
+          details: {},
+        }),
+      });
+    }
+    if (gitDiff) {
+      pi.registerTool({
+        name: "git_diff",
+        label: "Inspect workspace diff",
+        executionMode: "sequential",
+        description: "Read staged and unstaged changes in the current isolated Git worktree compared with HEAD. Output is capped at 32 KiB; provide a repository-relative path to narrow a large diff.",
+        promptSnippet: "git_diff: Inspect current staged and unstaged worktree changes. If truncated, request a narrower path.",
+        parameters: Type.Object({
+          path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+        }),
+        execute: async (_toolCallId, params) => ({
+          content: [{ type: "text", text: JSON.stringify(await gitDiff(params.path)) }],
           details: {},
         }),
       });

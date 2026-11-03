@@ -96,7 +96,7 @@ export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
-    private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit">,
+    private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit" | "getWorkspaceDiff">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
     private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
     private readonly gitWriter?: Pick<
@@ -244,6 +244,9 @@ export class PiAgent {
           allowedRoots,
           workspace && this.git
             ? (query, path) => this.git!.grep(workspace, query, path, signal)
+            : undefined,
+          workspace && this.git
+            ? (path) => this.git!.getWorkspaceDiff(workspace, path, signal)
             : undefined,
         ),
         ...(toolAccess.webFetch

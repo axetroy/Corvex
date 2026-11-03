@@ -12,6 +12,8 @@ const maxOutput = 16 << 20;
 const maxErrorOutput = 4 << 10;
 /** 安全读取 Git 工作区文件时允许的最大文件大小。 */
 const maxReadFileBytes = 16 << 20;
+/** 单次工作区 diff 返回的最大字节数。 */
+const maxWorkspaceDiffBytes = 32 << 10;
 /** 补丁解析和应用流程允许处理的最大字节数。 */
 const maxPatchBytes = 256 << 10;
 /** Git commit 对象的完整 SHA-1 或 SHA-256 十六进制格式。 */
@@ -282,6 +284,27 @@ export class GitManager {
     );
     if (result.truncated) throw new Error(`file exceeds ${maxBytes}-byte read limit`);
     return result.stdout;
+  }
+
+  async getWorkspaceDiff(
+    workspace: Workspace,
+    requestedPath?: string,
+    signal?: AbortSignal,
+  ): Promise<{ diff: string; truncated: boolean }> {
+    this.validateWorkspace(workspace);
+    if (requestedPath !== undefined) this.validateWorkspaceFilePath(requestedPath);
+    const result = await this.run(
+      workspace.path,
+      [
+        "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", "HEAD", "--",
+        ...(requestedPath ? [`:(literal)${requestedPath}`] : []),
+      ],
+      undefined,
+      maxWorkspaceDiffBytes,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    return { diff: result.stdout.toString("utf8"), truncated: result.truncated };
   }
 
   async grep(

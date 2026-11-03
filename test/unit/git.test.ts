@@ -99,6 +99,46 @@ describe("Git workflows", () => {
     await expect(manager.applyWorkspacePatch(workspace, newFilePatch)).rejects.toThrow("unauthorized or unsupported path");
   });
 
+  it("returns a bounded worktree diff and supports literal path narrowing", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-worktree-diff-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "job-1");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "a.txt"), "old\n");
+    await writeFile(join(workspacePath, "b.txt"), "untouched\n");
+    await execFile("git", ["-C", workspacePath, "add", "a.txt", "b.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    await manager.initialize();
+    const workspace: Workspace = {
+      projectId: 7,
+      jobId: "job-1",
+      path: workspacePath,
+      headSha: stdout.trim(),
+    };
+    await writeFile(join(workspacePath, "a.txt"), "updated\n");
+
+    await expect(manager.getWorkspaceDiff(workspace)).resolves.toMatchObject({
+      diff: expect.stringContaining("+updated"),
+      truncated: false,
+    });
+    await expect(manager.getWorkspaceDiff(workspace, "a.txt")).resolves.toMatchObject({
+      diff: expect.stringContaining("+updated"),
+      truncated: false,
+    });
+    await expect(manager.getWorkspaceDiff(workspace, "../b.txt")).rejects.toThrow(
+      "file path must be relative to the workspace",
+    );
+    await writeFile(join(workspacePath, "a.txt"), "z".repeat(40 << 10));
+    const bounded = await manager.getWorkspaceDiff(workspace);
+    expect(Buffer.byteLength(bounded.diff)).toBeLessThanOrEqual(32 << 10);
+    expect(bounded.truncated).toBe(true);
+  });
+
   it("commits tracked worktree changes with the Corvex identity", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-commit-"));
     const root = join(directory, "storage");
