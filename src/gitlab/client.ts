@@ -9,6 +9,7 @@ export interface MergeRequest {
   target_branch: string;
   source_project_id?: number;
   target_project_id?: number;
+  draft?: boolean;
   sha: string;
   diff_refs: { base_sha: string; start_sha: string; head_sha: string };
 }
@@ -355,7 +356,19 @@ export class GitLabClient {
       throw new Error(`merge request description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
     }
     const form = new URLSearchParams();
-    if (update.title !== undefined) form.set("title", update.title);
+    if (update.title !== undefined) {
+      const current = await this.getMergeRequest(projectId, mrIid, signal);
+      let title = update.title;
+      if (current.draft) {
+        const draftMarker = /^(\s*(?:\[draft\]|draft:|wip:)\s*)/i;
+        const existingMarker = current.title.match(draftMarker)?.[1] ?? "Draft: ";
+        if (!draftMarker.test(title)) title = `${existingMarker}${title}`;
+        if ([...title].length > MAX_MR_TITLE_CHARACTERS) {
+          throw new Error(`draft merge request title must not exceed ${MAX_MR_TITLE_CHARACTERS} characters`);
+        }
+      }
+      form.set("title", title);
+    }
     if (update.description !== undefined) form.set("description", update.description);
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, form, signal, "PUT");
   }

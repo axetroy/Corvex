@@ -30,13 +30,70 @@ describe("GitLab write receipts", () => {
     }
   });
 
-  it("updates only the supplied merge request fields with PUT", async () => {
-    let requestMethod = "";
-    let requestPath = "";
+  it("keeps a draft merge request in draft when updating its title", async () => {
+    const requests: string[] = [];
     let submittedFields = new URLSearchParams();
     const server = createServer((request, response) => {
-      requestMethod = request.method ?? "";
-      requestPath = request.url ?? "";
+      requests.push(`${request.method} ${request.url}`);
+      if (request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          iid: 9,
+          state: "opened",
+          title: "Draft: Old title",
+          description: "",
+          source_branch: "feature",
+          target_branch: "main",
+          sha: "a".repeat(40),
+          diff_refs: { base_sha: "b".repeat(40), start_sha: "b".repeat(40), head_sha: "a".repeat(40) },
+          draft: true,
+        }));
+        return;
+      }
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        submittedFields = new URLSearchParams(body);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: 42, title: "Draft: Retitled" }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      await client.updateMergeRequest(5, 9, { title: "Retitled" });
+      expect(requests).toEqual([
+        "GET /api/v4/projects/5/merge_requests/9",
+        "PUT /api/v4/projects/5/merge_requests/9",
+      ]);
+      expect(submittedFields.get("title")).toBe("Draft: Retitled");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("updates only the supplied merge request fields with PUT", async () => {
+    const requestMethods: string[] = [];
+    const requestPaths: string[] = [];
+    let submittedFields = new URLSearchParams();
+    const server = createServer((request, response) => {
+      requestMethods.push(request.method ?? "");
+      requestPaths.push(request.url ?? "");
+      if (request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          iid: 9,
+          state: "opened",
+          title: "Existing title",
+          description: "",
+          source_branch: "feature",
+          target_branch: "main",
+          sha: "a".repeat(40),
+          diff_refs: { base_sha: "b".repeat(40), start_sha: "b".repeat(40), head_sha: "a".repeat(40) },
+          draft: false,
+        }));
+        return;
+      }
       let body = "";
       request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
       request.on("end", () => {
@@ -52,8 +109,11 @@ describe("GitLab write receipts", () => {
         status: 200,
         resourceId: 42,
       });
-      expect(requestMethod).toBe("PUT");
-      expect(requestPath).toBe("/api/v4/projects/5/merge_requests/9");
+      expect(requestMethods).toEqual(["GET", "PUT"]);
+      expect(requestPaths).toEqual([
+        "/api/v4/projects/5/merge_requests/9",
+        "/api/v4/projects/5/merge_requests/9",
+      ]);
       expect([...submittedFields.entries()]).toEqual([["title", "Retitled"]]);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -197,8 +257,23 @@ describe("GitLab read retries", () => {
 
   it("does not retry POST or PUT requests after a transient server response", async () => {
     let attempts = 0;
-    const server = createServer((_request, response) => {
+    const server = createServer((request, response) => {
       attempts++;
+      if (request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          iid: 2,
+          state: "opened",
+          title: "Existing title",
+          description: "",
+          source_branch: "feature",
+          target_branch: "main",
+          sha: "a".repeat(40),
+          diff_refs: { base_sha: "b".repeat(40), start_sha: "b".repeat(40), head_sha: "a".repeat(40) },
+          draft: false,
+        }));
+        return;
+      }
       response.writeHead(503);
       response.end("temporarily unavailable");
     });
@@ -208,7 +283,7 @@ describe("GitLab read retries", () => {
       await expect(client.postNote(1, 2, "comment text")).rejects.toThrow("GitLab API returned 503");
       expect(attempts).toBe(1);
       await expect(client.updateMergeRequest(1, 2, { title: "Retitled" })).rejects.toThrow("GitLab API returned 503");
-      expect(attempts).toBe(2);
+      expect(attempts).toBe(3);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
