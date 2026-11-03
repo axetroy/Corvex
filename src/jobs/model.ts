@@ -49,8 +49,12 @@ export interface JobListQuery {
 }
 
 export interface JobPage {
-  items: JobSummary[];
+  items: JobOperationsSummary[];
   total: number;
+}
+
+export interface JobOperationsSummary extends JobSummary {
+  activityStartedAt: string;
 }
 
 export interface JobAttemptSummary {

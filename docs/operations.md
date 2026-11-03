@@ -22,7 +22,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 ## Docker Compose
 
 1. Copy `.env.example` to `.env` and set the GitLab write token and webhook secret. The read token and model API key are needed only when running a Worker. Keep this file private and do not commit it.
-2. Copy `configs/config.example.yaml` to `configs/config.yaml`; set the GitLab URL and explicit project/user allowlists.
+2. Copy `configs/config.example.yaml` to `configs/config.yaml`; set the GitLab URL and project allowlist. Add user IDs to `gitlab.blocked_user_ids` only to deny command access.
 3. Start the Server:
 
    ```sh

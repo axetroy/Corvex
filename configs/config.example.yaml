@@ -7,8 +7,7 @@ gitlab:
   base_url: "https://gitlab.example.com"
   allowed_project_ids:
     - 101
-  allowed_user_ids:
-    - 1001
+  blocked_user_ids: []
   bot_username: "corvex-bot"
 
 storage:
@@ -42,5 +41,4 @@ worker:
 
 fix:
   enabled: false
-  allowed_user_ids: []
   max_patch_bytes: 131072

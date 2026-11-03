@@ -12,6 +12,7 @@ import {
   type JobAttemptSummary,
   type JobDetails,
   type JobListQuery,
+  type JobOperationsSummary,
   type JobPage,
   type JobSummary,
   type JobStatus,
@@ -689,7 +690,6 @@ export class JobStore {
     key: string,
     job: Partial<Job> & Pick<Job, "projectId" | "mrIid" | "actorId" | "headSha" | "request">,
     enabled: boolean,
-    authorized: boolean,
   ): EventResult {
     return this.transaction(() => {
       const existingEvent = this.eventResult(eventId);
@@ -704,9 +704,6 @@ export class JobStore {
       if (!enabled) {
         response = "Fix proposals are disabled.";
         auditResult = "denied_disabled";
-      } else if (!authorized) {
-        response = "You are not authorized to request fix proposals.";
-        auditResult = "denied_not_allowlisted";
       } else {
         const existing = this.db.prepare("SELECT id FROM jobs WHERE idempotency_key = ?").get(key) as
           | { id: string }
@@ -1016,12 +1013,32 @@ export class JobStore {
       .prepare(`SELECT COUNT(*) AS count FROM jobs ${where}`)
       .get(...parameters) as Record<string, unknown>;
     const rows = this.db
-      .prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT jobs.*,
+         CASE
+           WHEN jobs.status='queued' THEN COALESCE(
+             (SELECT created_at FROM audit_events
+              WHERE resource=jobs.id AND action IN ('job_status','operator_retry') AND result LIKE '%->queued'
+              ORDER BY id DESC LIMIT 1),
+             jobs.created_at
+           )
+           WHEN jobs.status IN ('preparing','analyzing','fixing','verifying','publishing') THEN COALESCE(
+             (SELECT started_at FROM job_attempts WHERE job_id=jobs.id AND attempt=jobs.attempt_count),
+             jobs.created_at
+           )
+           ELSE jobs.created_at
+         END AS activity_started_at
+         FROM jobs ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
       .all(...parameters, query.limit, query.offset);
     const items = rows.map((value) => {
-      const row = readJobRow(value as Record<string, unknown>);
+      const record = value as Record<string, unknown>;
+      const row = readJobRow(record);
       if (!row) throw new Error("SQLite returned an empty job row");
-      return mapJobSummary(row);
+      return {
+        ...mapJobSummary(row),
+        activityStartedAt: stringColumn(record, "activity_started_at"),
+      } satisfies JobOperationsSummary;
     });
     return { items, total: numberColumn(count, "count") };
   }

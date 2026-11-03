@@ -101,9 +101,6 @@ export class Worker {
     private readonly gitlab: GitLabClient,
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
-    if (config.fix.enabled && config.fix.allowedUserIds.length === 0) {
-      throw new Error("enabled fix mode requires an authorized user allowlist");
-    }
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, config.gitlab.readToken);
     this.agent = new PiAgent(config, store, this.repo);
     this.reviewer = new ReviewWorkflow(
@@ -323,8 +320,8 @@ export class Worker {
     if (!["review", "fix", "explain"].includes(job.type)) {
       throw new Error(`unsupported task type "${job.type}"`);
     }
-    if (job.type === "fix" && (!this.config.fix.enabled || !this.config.fix.allowedUserIds.includes(job.actorId))) {
-      throw new Error("fix task cannot run because fix mode is disabled or the user is not authorized");
+    if (job.type === "fix" && !this.config.fix.enabled) {
+      throw new Error("fix task cannot run because fix mode is disabled");
     }
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
       transition("stale");

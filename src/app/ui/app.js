@@ -287,7 +287,7 @@ async function renderJobs(version) {
       element("td", `${job.projectId}:${job.mrIid}`),
       append(element("td"), id),
       element("td", formatDate(job.createdAt)),
-      element("td", elapsedSince(job.createdAt)),
+      element("td", elapsedSince(job.activityStartedAt)),
       element("td", `${job.attemptCount}`),
       element("td", formatDate(job.updatedAt)),
     );

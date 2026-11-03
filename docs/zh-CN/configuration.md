@@ -27,8 +27,8 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 |---|---|---|---|
 | `gitlab.base_url` | `https://gitlab.example.com` | 有效 HTTP(S) URL | GitLab 实例根地址，不含凭据、查询参数或片段。`CORVEX_GITLAB_BASE_URL` 可覆盖。 |
 | `gitlab.allowed_project_ids` | `[101]` | 不能为空 | 允许使用 Corvex 的 GitLab 数字项目 ID。 |
-| `gitlab.allowed_user_ids` | `[1001]` | 不能为空 | 允许使用 Corvex 的 GitLab 数字用户 ID。 |
-| `gitlab.bot_username` | `corvex-bot` | 可选 | 忽略此用户名发出的评论，防止机器人反馈循环。 |
+| `gitlab.blocked_user_ids` | `[]` | 可选 | 不允许调用指令的 GitLab 数字用户 ID。默认情况下，项目白名单内的任意评论者都可以调用。 |
+| `gitlab.bot_username` | `corvex-bot` | 可选 | 调用指令时需要 @ 的账号名（例如 `@corvex-bot /review`）。 |
 
 以下凭据为必填环境变量：
 
@@ -95,10 +95,9 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
-| `fix.allowed_user_ids` | `[]` | 启用时不能为空 | Fix 请求的额外 GitLab 数字用户白名单。 |
 | `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | 模型补丁大小上限。 |
 
-Fix 发起者必须同时属于 `gitlab.allowed_user_ids` 和 `fix.allowed_user_ids`。
+Fix 请求与其他指令采用相同的项目白名单和可选用户黑名单规则。
 
 ## 完整环境变量列表
 

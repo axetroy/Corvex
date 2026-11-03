@@ -27,8 +27,8 @@ The optional operations console uses HTTP Basic Auth credentials supplied only t
 |---|---|---|---|
 | `gitlab.base_url` | `https://gitlab.example.com` | Valid HTTP(S) URL | GitLab instance root, without credentials, query, or fragment. `CORVEX_GITLAB_BASE_URL` overrides it. |
 | `gitlab.allowed_project_ids` | `[101]` | Must not be empty | GitLab numeric project IDs allowed to invoke Corvex. |
-| `gitlab.allowed_user_ids` | `[1001]` | Must not be empty | GitLab numeric user IDs allowed to invoke Corvex. |
-| `gitlab.bot_username` | `corvex-bot` | Optional | Notes from this username are ignored to prevent bot feedback loops. |
+| `gitlab.blocked_user_ids` | `[]` | Optional | GitLab numeric user IDs that cannot invoke commands. By default, any commenter in an allowed project may invoke them. |
+| `gitlab.bot_username` | `corvex-bot` | Optional | Username to mention when invoking commands (for example, `@corvex-bot /review`). |
 
 Credentials are mandatory environment variables:
 
@@ -94,10 +94,9 @@ The job lease is currently fixed at 30 seconds and renewed during execution; it 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
-| `fix.allowed_user_ids` | `[]` | Non-empty when enabled | Additional numeric GitLab user allowlist for fix requests. |
 | `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed patch size. |
 
-Fix requesters must be present in both `gitlab.allowed_user_ids` and `fix.allowed_user_ids`.
+Fix requests follow the same project allowlist and optional user blocklist as other commands.
 
 ## All environment variables
 

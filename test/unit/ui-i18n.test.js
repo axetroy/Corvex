@@ -16,6 +16,8 @@ describe("operations UI locale", () => {
 
   it("provides matching English and Simplified Chinese dashboard catalogs", () => {
     expect(zhCN.overviewTitle).toBe("概览");
+    expect(en.age).toBe("Duration");
+    expect(zhCN.age).toBe("耗时");
     expect(zhCN.traceTabSession).toBe("会话");
     expect(zhCN.traceTabTrace).toBe("轨迹");
     expect(zhCN.traceSessionUser).toBe("用户");

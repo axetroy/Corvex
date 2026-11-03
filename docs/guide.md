@@ -26,7 +26,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-Edit `configs/config.yaml` to set the GitLab URL and explicit project/user allowlists. Set these variables for the Server:
+Edit `configs/config.yaml` to set the GitLab URL and project allowlist. Add numeric user IDs to `gitlab.blocked_user_ids` only when you want to prevent them from invoking commands. Set these variables for the Server:
 
 ```sh
 export CORVEX_GITLAB_TOKEN='your-write-token'
@@ -71,17 +71,17 @@ The runtime service does not need the administrator token.
 
 ## 4. Use commands in a merge request
 
-Commands must start with `@corvex` as the first token in a merge request comment:
+Mention the configured GitLab bot account, then use a slash-prefixed command. The username comes from `gitlab.bot_username` (for example, `corvex-bot`):
 
 | Command | Behavior |
 |---|---|
-| `@corvex review` | Queue a review of the current merge request revision. |
-| `@corvex explain path/to/file.ts` | Explain a file at the pinned merge request Head SHA. |
-| `@corvex status` | Show the latest task state for the merge request. |
-| `@corvex cancel` | Cancel a queued task or request cancellation of an active task you started. |
-| `@corvex fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are allowlisted. |
+| `@corvex-bot /review` | Queue a review of the current merge request revision. |
+| `@corvex-bot /explain path/to/file.ts` | Explain a file at the pinned merge request Head SHA. |
+| `@corvex-bot /status` | Show the latest task state for the merge request. |
+| `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
+| `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
 
-`review`, `status`, and `cancel` take no arguments. `explain` takes one path; `fix` takes an optional natural-language request. The sender must be in `gitlab.allowed_user_ids`, and the project must be in `gitlab.allowed_project_ids`. For `fix`, the sender must also be in `fix.allowed_user_ids`.
+`/review`, `/status`, and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
 
 ## 5. Enable model tasks
 
@@ -98,7 +98,7 @@ When the agent is disabled, the server can still accept events and persist tasks
 
 ## Enable fix proposals carefully
 
-Fix mode is disabled by default. To enable it, set `fix.enabled: true`, enable the agent, and populate `fix.allowed_user_ids`. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
+Fix mode is disabled by default. To enable it, set `fix.enabled: true` and enable the agent. Any non-blocked commenter in an allowed project can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
 
 The Pi session exposes no built-in shell, edit, or write tools. Its read-only repository tools include bounded `read_file`, which reuses a session cursor for sequential ranges, and `git_grep`, which searches tracked files at the pinned HEAD with output/time limits. Literal `search_text` remains available for bounded searches in the worktree and trusted skill roots; it is limited to 1,000 files, 16 MiB, and 50 matches per call. `web_fetch` is available only to review and explain tasks when enabled; private/reserved addresses are always blocked, `agent.web_blocked_hosts` adds optional host blocks, and at most 10 pages can be fetched per session. Redirects are revalidated and page text is untrusted input. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP tools only for review tasks from the service's Pi agent directory. MCP server processes run with the worker's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
 

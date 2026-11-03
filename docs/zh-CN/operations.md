@@ -22,7 +22,7 @@ pnpm start -- --config configs/config.yaml worker
 ## Docker Compose
 
 1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。只有运行 Worker 时才需要读取令牌和模型 API 密钥。妥善保护此文件，不要提交到版本控制。
-2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`，填写 GitLab URL 和明确的项目/用户白名单。
+2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`，填写 GitLab URL 和项目白名单；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。
 3. 启动 Server：
 
    ```sh

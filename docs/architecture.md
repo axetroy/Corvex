@@ -19,13 +19,13 @@ The server can run without a worker: commands are accepted and persisted, but mo
 ## Request and queue workflow
 
 1. GitLab sends a `Note Hook` to `POST /webhooks/gitlab`.
-2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request notes only, limits the body to 1 MiB, and ignores system notes and notes authored by the configured bot username.
-3. Project and user IDs are checked against explicit allowlists. Notes that do not start with `@corvex` are acknowledged without creating work.
+2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request notes only, limits the body to 1 MiB, and ignores system notes.
+3. Project IDs must be allowlisted, and user IDs on `gitlab.blocked_user_ids` are rejected. Any other commenter can invoke a slash-prefixed command addressed to `@<gitlab.bot_username>`.
 4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) job are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
 5. The server posts an immediate acknowledgement or validation response to the MR using the GitLab write token. Model inference does not run in the webhook request.
 6. A worker claims queued review, explain, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
 
-The currently supported commands are `review`, `explain <path>`, `fix [request]`, `status`, and `cancel`. See [Getting started](./guide) for examples.
+The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel`. See [Getting started](./guide) for examples.
 
 ## Review workflow
 
@@ -42,7 +42,7 @@ The model is not told that tests were run; Corvex does not execute project tests
 
 **Explain** reads the requested file from the pinned MR Head SHA, not from an arbitrary path on the server. Workspace containment and configured context limits are enforced. The file and MR metadata are sent to the model, then the explanation is published as an MR note only if the MR snapshot is still current.
 
-**Fix** is disabled by default and has a separate `fix.allowed_user_ids` allowlist. The requester must also be on the general GitLab user allowlist. The worker sends the bounded MR diff and optional request to the model, accepts only a structured unified diff, and restricts changes to reviewable files already present in the MR diff. It applies the patch in the isolated worktree and runs `git apply --check` and `git diff --check`. After another MR snapshot check, it posts the proposed patch for a human to inspect and apply.
+**Fix** is disabled by default and follows the same project allowlist and optional `gitlab.blocked_user_ids` as other commands. The worker sends the bounded MR diff and optional request to the model, accepts only a structured unified diff, and restricts changes to reviewable files already present in the MR diff. It applies the patch in the isolated worktree and runs `git apply --check` and `git diff --check`. After another MR snapshot check, it posts the proposed patch for a human to inspect and apply.
 
 Fix mode does not execute tests, scripts, hooks, or other repository code. It does not create commits or push to GitLab. A posted patch is a proposal, not a verified change.
 
@@ -59,7 +59,7 @@ Jobs can also end as `failed`, `stale`, or `cancelled`. The worker polls at `wor
 
 The 30-second lease is renewed while a worker is active. If a process disappears before publishing, an expired lease can return the job to the queue; interrupted jobs have at most three attempts. Classified transient failures and job timeouts are also returned to the queue with persisted backoff. Other processing errors are recorded as failed. If a job fails during publishing or its lease expires there, the outcome may be uncertain, so Corvex does not automatically retry and risk duplicating comments.
 
-`@corvex status` reports the latest task on the MR. `@corvex cancel` immediately cancels a queued task or asks the worker to stop an active task. Only the task requester can cancel it. Cancellation is not available after the task has entered publishing, where GitLab may already have accepted a comment.
+`@<gitlab.bot_username> /status` reports the latest task on the MR. `@<gitlab.bot_username> /cancel` immediately cancels a queued task or asks the worker to stop an active task. Only the task requester can cancel it. Cancellation is not available after the task has entered publishing, where GitLab may already have accepted a comment.
 
 ## Persistence and retention
 
@@ -67,7 +67,7 @@ SQLite uses WAL mode, a single open connection, and a 5-second busy timeout. Kee
 
 ## Security boundaries and limitations
 
-- The webhook secret authenticates GitLab deliveries; project and user allowlists restrict which events and users can request work.
+- The webhook secret authenticates GitLab deliveries; the project allowlist and optional user blocklist restrict which events and users can request work.
 - Use a read token for API/repository reads and a separate write token for MR comments. Do not give the service the administrator token used by the optional hook-registration script.
 - Repository content, comments, filenames, and fix instructions are untrusted model input. Model output is validated, but validation is not a substitute for human review.
 - Model prompts may contain source code and MR text. Review the model provider's data handling and your organization's policies before enabling it.

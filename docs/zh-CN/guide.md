@@ -26,7 +26,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-编辑 `configs/config.yaml`，填写 GitLab URL 和明确的项目/用户白名单。为 Server 设置以下变量：
+编辑 `configs/config.yaml`，填写 GitLab URL 和项目白名单。只有需要禁止某些用户调用指令时，才将其数字 ID 加入 `gitlab.blocked_user_ids`。为 Server 设置以下变量：
 
 ```sh
 export CORVEX_GITLAB_TOKEN='写入令牌'
@@ -71,17 +71,17 @@ CORVEX_WEBHOOK_SECRET=... \
 
 ## 4. 在合并请求评论中使用命令
 
-命令必须以 `@corvex` 开头，并且它必须是合并请求评论的第一个词：
+先 @ GitLab 机器人账号，再使用以 `/` 开头的指令。账号名由 `gitlab.bot_username` 配置（例如 `corvex-bot`）：
 
 | 命令 | 功能 |
 |---|---|
-| `@corvex review` | 将当前合并请求版本加入审查队列。 |
-| `@corvex explain path/to/file.ts` | 解释合并请求固定 Head SHA 中的指定文件。 |
-| `@corvex status` | 查看该合并请求最近任务的状态。 |
-| `@corvex cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
-| `@corvex fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 并在对应白名单中。 |
+| `@corvex-bot /review` | 将当前合并请求版本加入审查队列。 |
+| `@corvex-bot /explain path/to/file.ts` | 解释合并请求固定 Head SHA 中的指定文件。 |
+| `@corvex-bot /status` | 查看该合并请求最近任务的状态。 |
+| `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
+| `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
 
-`review`、`status` 和 `cancel` 不接受参数；`explain` 接受一个路径；`fix` 可附带自然语言请求。发起者必须属于 `gitlab.allowed_user_ids`，项目必须属于 `gitlab.allowed_project_ids`。使用 `fix` 时，发起者还必须属于 `fix.allowed_user_ids`。
+`/review`、`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
 
 ## 5. 启用模型任务
 
@@ -98,7 +98,7 @@ Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会�
 
 ## 谨慎启用修复提案
 
-Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true`、启用 Agent，并填写 `fix.allowed_user_ids`。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
+Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent。项目白名单中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
 
 Pi Session 不开放内建 shell、编辑或写入工具。只读仓库工具包括支持连续游标的有界 `read_file`、搜索固定 HEAD 已跟踪文件的 `git_grep`（10 秒超时、256 KiB 输出上限、最多 50 条），以及可搜索工作树和可信 Skill 根目录的字面量 `search_text`（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 

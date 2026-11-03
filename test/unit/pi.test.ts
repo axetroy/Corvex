@@ -143,7 +143,7 @@ describe("PiAgent", () => {
         writeToken: "write",
         webhookSecret: "secret",
         allowedProjectIds: [1],
-        allowedUserIds: [2],
+        blockedUserIds: [],
         botUsername: "",
       },
       storage: {
@@ -169,7 +169,7 @@ describe("PiAgent", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
       worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
-      fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
     } satisfies CorvexConfig;
 
     await writeFile(join(temporaryDirectory, "README.md"), "private repository content");

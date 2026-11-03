@@ -11,7 +11,7 @@ const event = {
   project: { id: 1 },
   object_attributes: {
     id: 3,
-    note: "@corvex review",
+    note: "@corvex-bot /review",
     noteable_type: "MergeRequest",
     system: false,
   },

@@ -19,13 +19,13 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 ## 请求与入队流程
 
 1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
-2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，仅接受合并请求评论，限制请求体为 1 MiB，并忽略系统评论及由配置机器人用户名发布的评论。
-3. Server 检查项目 ID 和用户 ID 白名单。不以 `@corvex` 开头的评论会被确认接收，但不会创建任务。
+2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，仅接受合并请求评论，限制请求体为 1 MiB，并忽略系统评论。
+3. Server 检查项目 ID 白名单，并拒绝 `gitlab.blocked_user_ids` 中的用户。其他评论者都可以通过 @ `gitlab.bot_username` 并使用 `/` 前缀指令来调用。
 4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步任务）任务。重复 Webhook 投递具有幂等性。
 5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
 6. Worker 按创建顺序领取排队的审查、解释或修复任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
 
-支持的命令：`review`、`explain <path>`、`fix [request]`、`status` 和 `cancel`。用法请参阅[快速开始](./guide)。
+支持的命令：`/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`。用法请参阅[快速开始](./guide)。
 
 ## 审查流程
 
@@ -42,7 +42,7 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 
 **Explain** 从固定 MR Head SHA 的 worktree 中读取指定文件，而不是读取服务器上的任意路径。系统会限制文件路径在工作区内，并遵守配置的上下文大小限制。文件内容和 MR 元信息会发送给模型；只有 MR 快照仍有效时，解释结果才会作为 MR 评论发布。
 
-**Fix** 默认关闭，并有独立的 `fix.allowed_user_ids` 白名单。发起者也必须属于 GitLab 通用用户白名单。Worker 将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，Worker 将补丁作为提案发布，供人工检查和应用。
+**Fix** 默认关闭，并与其他指令采用相同的项目白名单和可选 `gitlab.blocked_user_ids` 黑名单。Worker 将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，Worker 将补丁作为提案发布，供人工检查和应用。
 
 Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创建提交或推送到 GitLab。发布的补丁只是提案，并不代表已验证。
 
@@ -59,7 +59,7 @@ queued -> preparing -> analyzing -> publishing -> completed
 
 任务租约固定为 30 秒，Worker 执行期间会续租。若进程在发布前中断，租约过期后任务可重新排队；中断恢复最多尝试三次。已分类的瞬时故障和任务超时也会带持久化退避重新入队。其他处理错误会将任务记为 failed。若任务在 publishing 阶段失败或租约过期，评论结果可能不确定，因此 Corvex 不会自动重试，以免重复评论。
 
-`@corvex status` 显示该 MR 的最近任务。`@corvex cancel` 会立即取消排队任务，或请求 Worker 停止正在执行的任务。只有任务发起者可以取消。任务进入 publishing 阶段后无法取消，因为 GitLab 可能已经接收评论。
+`@<gitlab.bot_username> /status` 显示该 MR 的最近任务。`@<gitlab.bot_username> /cancel` 会立即取消排队任务，或请求 Worker 停止正在执行的任务。只有任务发起者可以取消。任务进入 publishing 阶段后无法取消，因为 GitLab 可能已经接收评论。
 
 ## 持久化和数据保留
 
@@ -67,7 +67,7 @@ SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库�
 
 ## 安全边界和限制
 
-- Webhook Secret 用于验证 GitLab 投递；项目和用户白名单限制可发起任务的来源。
+- Webhook Secret 用于验证 GitLab 投递；项目白名单和可选用户黑名单限制可发起任务的来源。
 - 使用只读令牌读取 API 和仓库，并使用独立写令牌发布 MR 评论。不要把注册 Webhook 时使用的管理员令牌提供给运行中的服务。
 - 仓库内容、评论、文件名和 Fix 指令都是不可信模型输入。模型输出会经过校验，但校验不能替代人工审阅。
 - 模型提示内容可能包含源代码和 MR 文本。启用模型前，应审查服务商的数据处理方式及组织政策。

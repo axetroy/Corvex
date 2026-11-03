@@ -241,7 +241,7 @@ describe("review task loop", () => {
         writeToken: "write-token",
         webhookSecret: "webhook-secret",
         allowedProjectIds: [1],
-        allowedUserIds: [2],
+        blockedUserIds: [],
         botUsername: "corvex-bot",
       },
       storage: {
@@ -267,7 +267,7 @@ describe("review task loop", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
       worker: { pollInterval: 20, jobTimeout: 15_000 },
-      fix: { enabled: true, allowedUserIds: [2], maxPatchBytes: 128 << 10 },
+      fix: { enabled: true, maxPatchBytes: 128 << 10 },
     };
     serverStore = await JobStore.open(config.storage.database);
     workerStore = await JobStore.open(config.storage.database);
@@ -306,7 +306,7 @@ describe("review task loop", () => {
         }),
       },
     );
-    const webhookResponse = await sendNote(99, 3, "@corvex review");
+    const webhookResponse = await sendNote(99, 3, "@corvex-bot /review");
     expect(webhookResponse.status).toBe(202);
     const queued = serverStore.listJobs("queued", 10)[0];
     if (!queued) throw new Error("webhook did not enqueue a review job");
@@ -348,7 +348,7 @@ describe("review task loop", () => {
     );
 
     modelActions.push({ content: "The file assigns an unchecked value to `value`." });
-    const explainJob = await enqueue(100, 4, "@corvex explain input.ts");
+    const explainJob = await enqueue(100, 4, "@corvex-bot /explain input.ts");
     await waitForStatus(explainJob.id, "completed");
     expect(postedNotes.some((body) => body.includes("The file assigns an unchecked value"))).toBe(true);
     expect(serverStore.getJobDetails(explainJob.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
@@ -363,7 +363,7 @@ describe("review task loop", () => {
       "",
     ].join("\n");
     modelActions.push({ content: JSON.stringify({ summary: "Replace the unsafe value.", patch: fixPatch }) });
-    const fixJob = await enqueue(101, 5, "@corvex fix Validate this value");
+    const fixJob = await enqueue(101, 5, "@corvex-bot /fix Validate this value");
     await waitForStatus(fixJob.id, "completed");
     const fixDetails = serverStore.getJobDetails(fixJob.id);
     expect(fixDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["fixing", "verifying", "publishing", "completed"]));
@@ -372,7 +372,7 @@ describe("review task loop", () => {
 
     rejectDiscussionFor = 6;
     modelActions.push({ content: reviewContent });
-    const fallbackJob = await enqueue(102, 6, "@corvex review");
+    const fallbackJob = await enqueue(102, 6, "@corvex-bot /review");
     await waitForStatus(fallbackJob.id, "completed");
     const fallbackNote = postedNotes.find((body) => body.includes("1 validated finding(s); 0 posted inline."));
     expect(fallbackNote).toContain("<details>");
@@ -385,7 +385,7 @@ describe("review task loop", () => {
 
     const staleSha = "c".repeat(40);
     modelActions.push({ content: reviewContent, beforeResponse: () => currentHeads.set(7, staleSha) });
-    const staleJob = await enqueue(103, 7, "@corvex review");
+    const staleJob = await enqueue(103, 7, "@corvex-bot /review");
     const discussionsBeforeStale = discussionAttempts;
     await waitForStatus(staleJob.id, "stale");
     expect(discussionAttempts).toBe(discussionsBeforeStale);
@@ -396,9 +396,9 @@ describe("review task loop", () => {
       cancelModelStarted = resolvePromise;
     });
     modelActions.push({ content: reviewContent, delayMs: 15_000, onStarted: cancelModelStarted });
-    const cancelJob = await enqueue(104, 8, "@corvex review");
+    const cancelJob = await enqueue(104, 8, "@corvex-bot /review");
     await cancelModelStartedPromise;
-    const cancelResponse = await sendNote(105, 8, "@corvex cancel");
+    const cancelResponse = await sendNote(105, 8, "@corvex-bot /cancel");
     expect(cancelResponse.status).toBe(202);
     await waitForStatus(cancelJob.id, "cancelled");
     expect(serverStore.getJobDetails(cancelJob.id)?.timeline.map(({ to }) => to)).toContain("cancelled");

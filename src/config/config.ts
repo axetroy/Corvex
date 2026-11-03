@@ -21,7 +21,7 @@ export interface CorvexConfig {
     writeToken: string;
     webhookSecret: string;
     allowedProjectIds: number[];
-    allowedUserIds: number[];
+    blockedUserIds: number[];
     botUsername: string;
   };
   storage: {
@@ -56,7 +56,6 @@ export interface CorvexConfig {
   };
   fix: {
     enabled: boolean;
-    allowedUserIds: number[];
     maxPatchBytes: number;
   };
 }
@@ -76,7 +75,7 @@ const defaults: CorvexConfig = {
     writeToken: "",
     webhookSecret: "",
     allowedProjectIds: [],
-    allowedUserIds: [],
+    blockedUserIds: [],
     botUsername: "",
   },
   storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365 },
@@ -97,7 +96,7 @@ const defaults: CorvexConfig = {
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
   worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
-  fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
+  fix: { enabled: false, maxPatchBytes: 128 << 10 },
 };
 
 function object(value: unknown, label: string): JsonObject {
@@ -201,7 +200,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       writeToken: process.env.CORVEX_GITLAB_TOKEN ?? "",
       webhookSecret: process.env.CORVEX_WEBHOOK_SECRET ?? "",
       allowedProjectIds: numberArray(gitlab.allowed_project_ids, defaults.gitlab.allowedProjectIds),
-      allowedUserIds: numberArray(gitlab.allowed_user_ids, defaults.gitlab.allowedUserIds),
+      blockedUserIds: numberArray(gitlab.blocked_user_ids, defaults.gitlab.blockedUserIds),
       botUsername: string(gitlab.bot_username, defaults.gitlab.botUsername),
     },
     storage: {
@@ -249,7 +248,6 @@ function parseConfig(raw: unknown): CorvexConfig {
     },
     fix: {
       enabled: boolean(fix.enabled, defaults.fix.enabled),
-      allowedUserIds: numberArray(fix.allowed_user_ids, defaults.fix.allowedUserIds),
       maxPatchBytes: number(fix.max_patch_bytes, defaults.fix.maxPatchBytes),
     },
   };
@@ -326,9 +324,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.gitlab.allowedProjectIds.length === 0) {
     problems.push("gitlab.allowed_project_ids must not be empty");
   }
-  if (config.gitlab.allowedUserIds.length === 0) {
-    problems.push("gitlab.allowed_user_ids must not be empty");
-  }
   if (!config.storage.root.trim()) problems.push("storage.root is required");
   if (!config.storage.database.trim()) problems.push("storage.database is required");
   if (config.storage.retentionDays < 1 || config.storage.retentionDays > 36_500) {
@@ -348,9 +343,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.worker.pollInterval <= 0 || config.worker.jobTimeout <= 0) {
     problems.push("worker poll interval and job timeout must be positive");
-  }
-  if (config.fix.enabled && config.fix.allowedUserIds.length === 0) {
-    problems.push("fix.allowed_user_ids must not be empty when fix.enabled is true");
   }
   if (config.fix.enabled && !config.agent.enabled) {
     problems.push("agent.enabled must be true when fix.enabled is true");

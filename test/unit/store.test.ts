@@ -98,6 +98,31 @@ describe("JobStore", () => {
     expect(secondPage.items[0]?.id).not.toBe(firstPage.items[0]?.id);
   });
 
+  it("reports queue and execution start times for operations job ages", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+
+    const queued = store.listOperationsJobs({ limit: 10, offset: 0 }).items[0];
+    expect(queued?.activityStartedAt).toBe(queued?.createdAt);
+
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a queued job to be claimed");
+    const running = store.listOperationsJobs({ limit: 10, offset: 0 }).items[0];
+
+    expect(running?.activityStartedAt).toBe(store.getJobDetails(job.id)?.attempts[0]?.startedAt);
+
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "failed", "temporary failure");
+    const retried = store.retryFailedJob(job.id);
+    const queuedAgain = store.listOperationsJobs({ limit: 10, offset: 0 }).items[0];
+
+    expect(queuedAgain?.activityStartedAt).toBe(retried.updatedAt);
+  });
+
   it("returns job details with the persisted attempt timeline", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

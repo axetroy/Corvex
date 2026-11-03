@@ -19,7 +19,7 @@ function validConfig(): CorvexConfig {
       writeToken: "write",
       webhookSecret: "secret",
       allowedProjectIds: [1],
-      allowedUserIds: [2],
+      blockedUserIds: [],
       botUsername: "corvex",
     },
     storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
@@ -40,7 +40,7 @@ function validConfig(): CorvexConfig {
     },
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
     worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
-    fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
+    fix: { enabled: false, maxPatchBytes: 128 << 10 },
   };
 }
 
@@ -52,7 +52,7 @@ describe("validateConfig", () => {
       await initializeConfig(configPath);
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).toContain("allowed_project_ids");
-      expect(contents).toContain("allowed_user_ids");
+      expect(contents).toContain("blocked_user_ids");
       expect(contents).toContain("session_timeout: 60m");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -73,7 +73,7 @@ describe("validateConfig", () => {
           gitlab: {
             base_url: "https://gitlab.example.com",
             allowed_project_ids: [1],
-            allowed_user_ids: [2],
+            blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
           agent: { request_timeout: "45s", session_timeout: "20m" },
@@ -95,7 +95,7 @@ describe("validateConfig", () => {
         gitlab: {
           base_url: "https://gitlab.example.com",
           allowed_project_ids: [1],
-          allowed_user_ids: [2],
+          blocked_user_ids: [],
         },
         storage: { root, database: join(root, "state.db") },
       };
@@ -125,10 +125,13 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("rejects empty authorization allowlists", () => {
+  it("requires a project allowlist but permits an empty user blocklist", () => {
     const config = validConfig();
     config.gitlab.allowedProjectIds = [];
     expect(() => validateConfig(config)).toThrow("allowed_project_ids must not be empty");
+
+    config.gitlab.allowedProjectIds = [1];
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
   it("rejects credential-bearing model URLs when the agent is enabled", () => {
@@ -176,7 +179,7 @@ describe("validateConfig", () => {
       await writeFile(
         configPath,
         JSON.stringify({
-          gitlab: { allowed_project_ids: [1], allowed_user_ids: [2] },
+          gitlab: { allowed_project_ids: [1], blocked_user_ids: [] },
           storage: { root, database: join(root, "state.db") },
         }),
       );
@@ -211,7 +214,7 @@ describe("validateConfig", () => {
           gitlab: {
             base_url: "https://gitlab.example.com",
             allowed_project_ids: [1],
-            allowed_user_ids: [2],
+            blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
           agent: { enabled: true, model: "test-model" },

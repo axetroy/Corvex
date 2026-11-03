@@ -477,12 +477,8 @@ export class CorvexServer {
       system: event.object_attributes.system,
       headSha: event.merge_request.last_commit?.id ?? "",
     });
-    if (
-      event.object_attributes.system ||
-      (this.config.gitlab.botUsername &&
-        event.user.username.toLowerCase() === this.config.gitlab.botUsername.toLowerCase())
-    ) {
-      const reason = event.object_attributes.system ? "system_note" : "bot_note";
+    if (event.object_attributes.system) {
+      const reason = "system_note";
       this.store.recordExecutionEvent({
         deliveryId,
         eventId: id,
@@ -512,20 +508,20 @@ export class CorvexServer {
       });
       return;
     }
-    if (!contains(this.config.gitlab.allowedUserIds, event.user.id)) {
-      console.warn("GitLab webhook rejected", { ...details, reason: "user_not_allowed" });
+    if (contains(this.config.gitlab.blockedUserIds, event.user.id)) {
+      console.warn("GitLab webhook rejected", { ...details, reason: "user_blocked" });
       this.store.recordExecutionEvent({
         deliveryId,
         eventId: id,
         step: "webhook.filter",
         status: "failed",
         input: { actorId: event.user.id },
-        output: { allowed: false },
-        errorDetail: "user_not_allowed",
+        output: { blocked: true },
+        errorDetail: "user_blocked",
       });
-      this.respondTrackedWebhook(response, 403, "user is not allowed\n", deliveryId, id, {
+      this.respondTrackedWebhook(response, 403, "user is blocked\n", deliveryId, id, {
         ...details,
-        reason: "user_not_allowed",
+        reason: "user_blocked",
       });
       return;
     }
@@ -537,7 +533,7 @@ export class CorvexServer {
         { deliveryId, eventId: id },
         "webhook.parse_command",
         { note: event.object_attributes.note },
-        () => parseCommand(event.object_attributes.note),
+        () => parseCommand(event.object_attributes.note, this.config.gitlab.botUsername),
       );
     } catch (error) {
       if (error instanceof NotCorvexCommandError) {
@@ -569,7 +565,8 @@ export class CorvexServer {
         output: { accepted: false },
         errorDetail: "missing_path",
       });
-      await this.reply(response, event, "Usage: `@corvex explain <path>`. ", deliveryId);
+      const botUsername = this.config.gitlab.botUsername || "corvex";
+      await this.reply(response, event, `Usage: \`@${botUsername} /explain <path>\`. `, deliveryId);
       return;
     }
     if (
@@ -632,7 +629,6 @@ export class CorvexServer {
                 `${projectId}:${mrIid}:fix:${id}`,
                 { projectId, mrIid, headSha, actorId, request: command.args.join(" ") },
                 this.config.fix.enabled,
-                contains(this.config.fix.allowedUserIds, actorId),
               );
             case "explain":
               return this.store.createExplain(id, `${projectId}:${mrIid}:explain:${id}`, {
@@ -655,12 +651,9 @@ export class CorvexServer {
       } else if (result.delivered) {
         console.info("GitLab webhook duplicate delivery", { ...details, command: command.name });
       } else {
-        const reason =
-          command.name === "fix" && !this.config.fix.enabled
-            ? "fix_disabled"
-            : command.name === "fix" && !contains(this.config.fix.allowedUserIds, actorId)
-              ? "fix_user_not_allowed"
-              : "command_does_not_enqueue";
+        const reason = command.name === "fix" && !this.config.fix.enabled
+          ? "fix_disabled"
+          : "command_does_not_enqueue";
         console.info("GitLab command processed without enqueue", {
           ...details,
           command: command.name,

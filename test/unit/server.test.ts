@@ -40,7 +40,7 @@ describe("CorvexServer", () => {
         writeToken: "write",
         webhookSecret: "secret",
         allowedProjectIds: [1],
-        allowedUserIds: [2],
+        blockedUserIds: [3],
         botUsername: "corvex-bot",
       },
       storage: {
@@ -66,7 +66,7 @@ describe("CorvexServer", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
       worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
-      fix: { enabled: false, allowedUserIds: [], maxPatchBytes: 128 << 10 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
     };
     const controller = new AbortController();
     const application = new CorvexServer(
@@ -121,11 +121,11 @@ describe("CorvexServer", () => {
 
       const payload = {
         object_kind: "note",
-        user: { id: 2, username: "developer" },
+        user: { id: 99, username: "developer" },
         project: { id: 1 },
         object_attributes: {
           id: 99,
-          note: "@corvex review",
+          note: "@corvex-bot /review",
           noteable_type: "MergeRequest",
           system: false,
         },
@@ -151,7 +151,7 @@ describe("CorvexServer", () => {
       );
       expect(info).not.toHaveBeenCalledWith("GitLab webhook body", expect.anything());
       expect(JSON.stringify(info.mock.calls)).not.toContain("x-gitlab-token");
-      expect(JSON.stringify(info.mock.calls)).not.toContain("@corvex review");
+      expect(JSON.stringify(info.mock.calls)).not.toContain("@corvex-bot /review");
       expect(info).toHaveBeenCalledWith(
         "GitLab Note Hook validated",
         expect.objectContaining({
@@ -202,14 +202,34 @@ describe("CorvexServer", () => {
         expect.objectContaining({ eventId: "1:101", reason: "not_corvex_command" }),
       );
 
+      const unauthorizedBotResponse = await fetch(`${base}/webhooks/gitlab`, {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...payload,
+          user: { id: 3, username: "corvex-bot" },
+          object_attributes: {
+            ...payload.object_attributes,
+            id: 102,
+            note: "@corvex-bot /review",
+          },
+        }),
+      });
+      expect(unauthorizedBotResponse.status).toBe(403);
+      expect(store.jobCounts().queued).toBe(1);
+
       config.fix.enabled = true;
-      config.fix.allowedUserIds = [2];
       const fixPayload = {
         ...payload,
+        user: { id: 99, username: "developer" },
         object_attributes: {
           ...payload.object_attributes,
           id: 100,
-          note: "@corvex fix handle this error more gracefully",
+          note: "@corvex-bot /fix handle this error more gracefully",
         },
       };
       const fixResponse = await fetch(`${base}/webhooks/gitlab`, {
