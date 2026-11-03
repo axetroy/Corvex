@@ -38,7 +38,7 @@ function validConfig(): CorvexConfig {
       webBlockedHosts: [],
       skillPaths: [],
     },
-    review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
+    review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
     worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
   };
@@ -82,6 +82,34 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath, "storage");
       expect(config.agent.requestTimeout).toBe(45_000);
       expect(config.agent.sessionTimeout).toBe(20 * 60_000);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults and bounds review batch concurrency", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-review-concurrency-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      const base = {
+        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        storage: { root, database: join(root, "state.db") },
+      };
+      await writeFile(configPath, JSON.stringify(base));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        review: { batchConcurrency: 2 },
+      });
+
+      await writeFile(configPath, JSON.stringify({ ...base, review: { batch_concurrency: 3 } }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        review: { batchConcurrency: 3 },
+      });
+
+      await writeFile(configPath, JSON.stringify({ ...base, review: { batch_concurrency: 5 } }));
+
+      await expect(loadConfig(configPath, "storage")).rejects.toThrow(
+        "review.batch_concurrency must be between 1 and 4",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

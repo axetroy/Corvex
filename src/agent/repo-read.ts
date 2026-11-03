@@ -518,6 +518,7 @@ export function createReadOnlyFileExtension(
     pi.registerTool({
       name: "read_file",
       label: "Read file",
+      executionMode: "parallel",
       description: `Read a UTF-8 text file without modifying it. Relative paths resolve from ${roots[0]}. Absolute paths are allowed only within these roots: ${roots.join(", ")}. Files are limited to ${maxReadBytes} output bytes per call. For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
       promptSnippet: "read_file: Read a UTF-8 text file from the fixed repository worktree or trusted skill roots. Use startLine and maxLines to read large files in bounded ranges.",
       parameters: Type.Object({
@@ -552,6 +553,7 @@ export function createReadOnlyFileExtension(
     pi.registerTool({
       name: "read_dir",
       label: "List directory",
+      executionMode: "parallel",
       description: `List up to ${maxDirectoryEntries} immediate entries in a directory under the fixed repository worktree or trusted skill roots. Use this to inspect actual names after a read_file ENOENT; entries are not followed recursively.`,
       promptSnippet: "read_dir: List immediate directory entries when a requested path is missing or its actual name is uncertain.",
       parameters: Type.Object({
@@ -565,6 +567,7 @@ export function createReadOnlyFileExtension(
     pi.registerTool({
       name: "stat",
       label: "Inspect path",
+      executionMode: "parallel",
       description: "Inspect a file or directory under the fixed repository worktree or trusted skill roots. Returns the canonical repository-relative path and whether it is a file, directory, or other entry.",
       promptSnippet: "stat: Verify an exact candidate path and determine whether it is a file or directory before retrying read_file.",
       parameters: Type.Object({
@@ -578,6 +581,7 @@ export function createReadOnlyFileExtension(
     pi.registerTool({
       name: "search_text",
       label: "Search repository text",
+      executionMode: "parallel",
       description: `Search for a literal text string in UTF-8 files under the fixed repository worktree or trusted skill roots. Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use path to narrow the search and treat truncated results as incomplete.`,
       promptSnippet: "search_text: Find a literal string in bounded repository files; narrow with path and inspect matching files with read_file.",
       parameters: Type.Object({
@@ -597,6 +601,7 @@ export function createReadOnlyFileExtension(
       pi.registerTool({
         name: "git_grep",
         label: "Search pinned Git tree",
+        executionMode: "parallel",
         description: "Search tracked files in the exact pinned workspace HEAD using a bounded literal query. This does not inspect working-tree or untracked content. Narrow the search with a repository-relative path and inspect results with read_file.",
         promptSnippet: "git_grep: Search tracked files at the pinned HEAD with a literal query; use path to narrow results and read_file to inspect matches.",
         parameters: Type.Object({

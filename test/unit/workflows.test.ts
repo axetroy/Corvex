@@ -56,6 +56,9 @@ describe("review and fix response validation", () => {
         expect(prompt).toContain("read_file");
         expect(prompt).toContain("git_grep");
         expect(prompt).toContain("search_text");
+        expect(prompt).toContain(language === "en"
+          ? "issue independent read-only tool calls"
+          : "并行发出针对不同文件或搜索");
       }
 
       expect(prompts.reviewSystem).toContain('"summary"');
@@ -295,6 +298,84 @@ describe("review and fix response validation", () => {
     expect(request?.systemPrompt).toContain('Count finding lines using the new-file line numbers on the "+" side of the diff');
     expect(request?.userPrompt).toContain('"path":"src/app.ts"');
     expect(request?.userPrompt).toContain("const value = user.input;");
+  });
+
+  it("runs independent review batches concurrently up to the configured limit", async () => {
+    const changes = Array.from({ length: 11 }, (_, index) => ({
+      ...diff.changes[0]!,
+      path: `src/file-${index}.ts`,
+    }));
+    const traces = changes.map((change) => completeFileRead(change.path));
+    let active = 0;
+    let maxActive = 0;
+    const agent = {
+      generate: vi.fn<PiAgent["generate"]>(async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active--;
+        return {
+          content: JSON.stringify({ summary: "Review complete", findings: [] }),
+          model: "test/model",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }),
+      getTraceEntries: () => traces,
+    } as unknown as PiAgent;
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const workflow = new ReviewWorkflow(agent, 100, 30, 2 << 20, "en", 2);
+
+    await workflow.review(context, { ...diff, changes }, process.cwd(), undefined, reviewTrace);
+
+    expect(maxActive).toBe(2);
+  });
+
+  it("waits for active review batches to settle before propagating a failure", async () => {
+    const changes = Array.from({ length: 11 }, (_, index) => ({
+      ...diff.changes[0]!,
+      path: `src/file-${index}.ts`,
+    }));
+    const traces = changes.map((change) => completeFileRead(change.path));
+    let calls = 0;
+    let completedBatches = 0;
+    const agent = {
+      generate: vi.fn<PiAgent["generate"]>(async () => {
+        calls++;
+        if (calls === 1) throw new Error("first batch failed");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        completedBatches++;
+        return {
+          content: JSON.stringify({ summary: "Review complete", findings: [] }),
+          model: "test/model",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      }),
+      getTraceEntries: () => traces,
+    } as unknown as PiAgent;
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const workflow = new ReviewWorkflow(agent, 100, 30, 2 << 20, "en", 2);
+
+    await expect(workflow.review(context, { ...diff, changes }, process.cwd(), undefined, reviewTrace))
+      .rejects.toThrow("first batch failed");
+    expect(completedBatches).toBe(1);
   });
 
   it("uses the configured response language in review, fix, and explanation prompts", async () => {

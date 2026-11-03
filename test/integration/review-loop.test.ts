@@ -265,7 +265,7 @@ describe("review task loop", () => {
         webBlockedHosts: [],
         skillPaths: [],
       },
-      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       worker: { pollInterval: 20, jobTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
     };

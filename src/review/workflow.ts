@@ -333,6 +333,7 @@ export class ReviewWorkflow {
     private readonly maxFindings: number,
     private readonly maxContextBytes: number,
     private readonly responseLanguage: ResponseLanguage = "en",
+    private readonly maxConcurrentBatches = 2,
   ) {
     if (maxFiles <= 0 || maxFiles > 1000) throw new Error("max files must be between 1 and 1000");
     if (maxFindings <= 0 || maxFindings > 100) {
@@ -340,6 +341,9 @@ export class ReviewWorkflow {
     }
     if (maxContextBytes <= 0 || maxContextBytes > 8 << 20) {
       throw new Error("max context size must be between 1 byte and 8 MiB");
+    }
+    if (!Number.isInteger(maxConcurrentBatches) || maxConcurrentBatches < 1 || maxConcurrentBatches > 4) {
+      throw new Error("max concurrent review batches must be between 1 and 4");
     }
   }
 
@@ -404,32 +408,45 @@ export class ReviewWorkflow {
     let rejected = 0;
     let model = "";
     const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-    for (const [index, changes] of batches.entries()) {
-      const outcome = await this.reviewBatch(
-        context,
-        { ...diff, changes, skippedFiles: 0 },
-        cwd,
-        signal,
-        trace,
-        blockingOmittedFiles,
-        findings.length > 0,
+    const batchConcurrency = trace ? this.maxConcurrentBatches : 1;
+    for (let offset = 0; offset < batches.length; offset += batchConcurrency) {
+      const currentBatches = batches.slice(offset, offset + batchConcurrency);
+      const outcomes = await Promise.allSettled(
+        currentBatches.map((changes, index) => this.reviewBatch(
+          context,
+          { ...diff, changes, skippedFiles: 0 },
+          cwd,
+          signal,
+          trace,
+          blockingOmittedFiles,
+          findings.length > 0 || index > 0,
+        )),
       );
-      summaries.push(outcome.result.summary);
-      model = outcome.model;
-      usage.inputTokens += outcome.usage.inputTokens;
-      usage.outputTokens += outcome.usage.outputTokens;
-      usage.totalTokens += outcome.usage.totalTokens;
-      rejected += outcome.rejected;
-      for (const finding of outcome.result.findings) {
-        if (seenFindings.has(finding.fingerprint) || findings.length >= this.maxFindings) {
-          rejected++;
-          continue;
+      for (const [index, settled] of outcomes.entries()) {
+        if (settled.status === "rejected") throw settled.reason;
+        const outcome = settled.value;
+        summaries.push(outcome.result.summary);
+        model = outcome.model;
+        usage.inputTokens += outcome.usage.inputTokens;
+        usage.outputTokens += outcome.usage.outputTokens;
+        usage.totalTokens += outcome.usage.totalTokens;
+        rejected += outcome.rejected;
+        for (const finding of outcome.result.findings) {
+          if (seenFindings.has(finding.fingerprint) || findings.length >= this.maxFindings) {
+            rejected++;
+            continue;
+          }
+          seenFindings.add(finding.fingerprint);
+          findings.push(finding);
         }
-        seenFindings.add(finding.fingerprint);
-        findings.push(finding);
-      }
-      if (index < batches.length - 1) {
-        console.info("review batch completed", { projectId: context.projectId, mrIid: context.mrIid, batch: index + 1, totalBatches: batches.length });
+        if (offset + index < batches.length - 1) {
+          console.info("review batch completed", {
+            projectId: context.projectId,
+            mrIid: context.mrIid,
+            batch: offset + index + 1,
+            totalBatches: batches.length,
+          });
+        }
       }
     }
     if (findings.length === 0 && blockingOmittedFiles > 0) {

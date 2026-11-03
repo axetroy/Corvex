@@ -109,6 +109,7 @@ export class Worker {
       config.review.maxFindings,
       config.review.maxContextBytes,
       config.agent.responseLanguage,
+      config.review.batchConcurrency,
     );
     this.fixer = new FixWorkflow(
       this.agent,

@@ -34,6 +34,7 @@ review:
   max_files: 100
   max_findings: 30
   max_context_bytes: 2097152
+  batch_concurrency: 2
 
 worker:
   poll_interval: 2s

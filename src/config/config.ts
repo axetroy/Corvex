@@ -49,6 +49,7 @@ export interface CorvexConfig {
     maxFiles: number;
     maxFindings: number;
     maxContextBytes: number;
+    batchConcurrency: number;
   };
   worker: {
     pollInterval: number;
@@ -94,7 +95,7 @@ const defaults: CorvexConfig = {
     webBlockedHosts: [],
     skillPaths: [],
   },
-  review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
+  review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
   worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
   fix: { enabled: false, maxPatchBytes: 128 << 10 },
 };
@@ -241,6 +242,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       maxFiles: number(review.max_files, defaults.review.maxFiles),
       maxFindings: number(review.max_findings, defaults.review.maxFindings),
       maxContextBytes: number(review.max_context_bytes, defaults.review.maxContextBytes),
+      batchConcurrency: number(review.batch_concurrency, defaults.review.batchConcurrency),
     },
     worker: {
       pollInterval: duration(worker.poll_interval, defaults.worker.pollInterval, "worker.poll_interval"),
@@ -340,6 +342,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.review.maxContextBytes <= 0 || config.review.maxContextBytes > 8 << 20) {
     problems.push("review.max_context_bytes must be between 1 byte and 8 MiB");
+  }
+  if (!Number.isInteger(config.review.batchConcurrency) || config.review.batchConcurrency < 1 || config.review.batchConcurrency > 4) {
+    problems.push("review.batch_concurrency must be between 1 and 4");
   }
   if (config.worker.pollInterval <= 0 || config.worker.jobTimeout <= 0) {
     problems.push("worker poll interval and job timeout must be positive");

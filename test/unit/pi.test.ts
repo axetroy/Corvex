@@ -167,7 +167,7 @@ describe("PiAgent", () => {
         webBlockedHosts: ["blocked.corp.dev"],
         skillPaths: [],
       },
-      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20 },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
     } satisfies CorvexConfig;

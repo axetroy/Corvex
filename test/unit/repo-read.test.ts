@@ -156,14 +156,21 @@ describe("readAllowedFile", () => {
   });
 
   it("registers read_dir and stat as agent tools", () => {
-    const registered: string[] = [];
+    const registered = new Map<string, string | undefined>();
     const extension = createReadOnlyFileExtension([root]);
 
     extension({
-      registerTool: (tool: { name: string }) => registered.push(tool.name),
+      registerTool: (tool: { name: string; executionMode?: string }) => {
+        registered.set(tool.name, tool.executionMode);
+      },
     } as unknown as ExtensionAPI);
 
-    expect(registered).toEqual(expect.arrayContaining(["read_file", "read_dir", "stat", "search_text"]));
+    expect(registered).toEqual(new Map([
+      ["read_file", "parallel"],
+      ["read_dir", "parallel"],
+      ["stat", "parallel"],
+      ["search_text", "parallel"],
+    ]));
   });
 
   it("searches literal text with bounded, case-insensitive results", async () => {
