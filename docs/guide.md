@@ -5,7 +5,7 @@ Corvex is a self-hosted code review and repair agent for GitLab merge requests. 
 - **Server** receives GitLab Note Hook events, checks access, writes tasks to SQLite, and replies to the note.
 - **Worker** polls SQLite, reads the exact merge request revision, calls an OpenAI-compatible model when needed, and publishes the result.
 
-The server can run without a worker, but review, explain, and fix tasks remain queued until a worker is running. See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
+The server can run without a worker, but review, explain, fix, and Issue assistant tasks remain queued until a worker is running. See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ Create a project webhook whose URL is:
 https://corvex.example.com/webhooks/gitlab
 ```
 
-Use the same value as `CORVEX_WEBHOOK_SECRET` for the webhook secret token. Enable **Comments** (Note events); the current endpoint processes comments on merge requests only. It does not process merge-request state events or push events. Keep SSL verification enabled.
+Use the same value as `CORVEX_WEBHOOK_SECRET` for the webhook secret token. Enable **Comments** (Note events); the endpoint processes comments on merge requests and Issues. It does not process merge-request state events or push events. Keep SSL verification enabled.
 
 The optional `scripts/register-webhook.sh` helper creates or updates the project hook idempotently. It requires `curl`, `jq`, and a GitLab administrator token used only for registration:
 
@@ -69,9 +69,13 @@ CORVEX_WEBHOOK_SECRET=... \
 
 The runtime service does not need the administrator token.
 
-## 4. Use commands in a merge request
+## 4. Use the bot on GitLab
 
-Mention the configured GitLab bot account, then use a slash-prefixed command. The username comes from `gitlab.bot_username` (for example, `corvex-bot`):
+Mention the configured GitLab bot account. The username comes from `gitlab.bot_username` (for example, `corvex-bot`).
+
+### Merge request commands
+
+Use these commands in a merge request comment:
 
 | Command | Behavior |
 |---|---|
@@ -81,15 +85,24 @@ Mention the configured GitLab bot account, then use a slash-prefixed command. Th
 | `@corvex-bot /status` | Show the latest task state for the merge request. |
 | `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
 | `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
-| `@corvex-bot Is this change feasible?` | In a GitLab Issue, ask for analysis or clarification; the agent replies without changing code. |
-| `@corvex-bot Add the requested validation` | In a GitLab Issue, ask the agent to decide whether to reply or propose implementation. Code writes require Issue implementation to be enabled. |
-| `@corvex-bot /implement Add the requested validation` | Explicitly request implementation in an Issue; code writes still require Issue implementation to be enabled. |
 
-`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
+`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text MR mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
+
+### Issue mentions
+
+Plain-text mentions in an Issue start an assistant task. The agent can answer, ask for clarification, or propose implementation using the Issue and recent comments:
+
+| Mention | Behavior |
+|---|---|
+| `@corvex-bot Is this change feasible?` | Ask for analysis or clarification; the agent replies without changing code. |
+| `@corvex-bot Add the requested validation` | Let the agent decide whether to reply or propose implementation. Code writes require Issue implementation to be enabled. |
+| `@corvex-bot /implement Add the requested validation` | Explicitly request implementation; code writes still require Issue implementation to be enabled. |
+
+Any commenter in an allowed project can mention the bot unless their ID is in `gitlab.blocked_user_ids`.
 
 ## 5. Enable model tasks
 
-Reviews, explanations, and fix proposals require a worker and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
+Reviews, explanations, fix proposals, and Issue assistance require a worker and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
 
 ## Issue assistance and implementation
 

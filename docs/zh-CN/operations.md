@@ -51,7 +51,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 
 | 方法和路径 | 用途 |
 |---|---|
-| `POST /webhooks/gitlab` | GitLab 合并请求 Note Hook 接口，要求 `X-Gitlab-Token` 匹配；仅支持 Note Hook。 |
+| `POST /webhooks/gitlab` | GitLab 合并请求和 Issue Note Hook 接口，要求 `X-Gitlab-Token` 匹配；仅支持 Note Hook。 |
 | `GET /healthz` | 进程存活检查，返回 `200 ok`。 |
 | `GET /readyz` | SQLite 就绪检查；数据库不可用时返回 `503`。 |
 | `GET /metrics` | Prometheus 文本格式指标，包含任务状态、模型调用次数、耗时和 Token 汇总。 |
@@ -77,7 +77,7 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 | 现象 | 检查项 |
 |---|---|
 | Webhook 返回 `401` | 确认 GitLab Hook Secret 与 `CORVEX_WEBHOOK_SECRET` 完全相同。 |
-| Webhook 返回 `400` | 接口仅接受有效的合并请求 Note Hook；关闭不支持的事件，并确认请求来自合并请求评论。 |
+| Webhook 返回 `400` | 接口仅接受有效的合并请求或 Issue Note Hook；关闭不支持的事件，并确认请求来自合并请求或 Issue 评论。 |
 | Webhook 返回 `403` | 确认 Webhook 项目 ID 和评论作者用户 ID 均在配置白名单中。 |
 | 任务一直排队 | 确认 Worker 已启动、配置 `agent.enabled: true`、使用相同数据库卷/配置，并且模型配置有效。 |
 | Worker 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Worker 上是否安装 Git。 |

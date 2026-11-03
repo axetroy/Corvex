@@ -51,7 +51,7 @@ The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` a
 
 | Method and path | Purpose |
 |---|---|
-| `POST /webhooks/gitlab` | GitLab merge-request Note Hook endpoint. Requires the matching `X-Gitlab-Token`; only Note Hook events are supported. |
+| `POST /webhooks/gitlab` | GitLab merge-request and Issue Note Hook endpoint. Requires the matching `X-Gitlab-Token`; only Note Hook events are supported. |
 | `GET /healthz` | Process liveness check; returns `200 ok`. |
 | `GET /readyz` | Readiness check that pings SQLite; returns `503` if the database is unavailable. |
 | `GET /metrics` | Prometheus text metrics for job counts and model call counts, duration, and token totals. |
@@ -79,7 +79,7 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 | Symptom | Checks |
 |---|---|
 | Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |
-| Webhook returns `400` | The endpoint only accepts valid merge-request Note Hook payloads. Disable unsupported event types and ensure the request is a merge-request comment. |
+| Webhook returns `400` | The endpoint only accepts valid merge-request or Issue Note Hook payloads. Disable unsupported event types and ensure the request is a comment on a merge request or Issue. |
 | Webhook returns `403` | Confirm the webhook's project ID and comment author's user ID are in the configured allowlists. |
 | Tasks stay queued | Confirm a Worker is running with `agent.enabled: true`, using the same database volume/config, and that model settings are valid. |
 | Worker cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the worker has Git installed. |
