@@ -28,6 +28,10 @@ describe("operations UI locale", () => {
     expect(zhCN.traceSessionNoTools).toBe("没有记录工具调用。");
     expect(zhCN.traceExpandAll).toBe("展开全部详情");
     expect(zhCN.executionEvents).toBe("执行步骤");
+    expect(en.requester).toBe("Requester");
+    expect(zhCN.requester).toBe("发起人");
+    expect(en.triggerComment).toBe("Original comment");
+    expect(zhCN.triggerComment).toBe("触发评论");
     expect(zhCN.executionStatuses.interrupted).toBe("已中断");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
     expect(zhCN.traceToolDetails).toBe("查看调用详情");

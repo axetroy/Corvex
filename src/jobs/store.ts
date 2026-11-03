@@ -251,6 +251,24 @@ function readExecutionEvent(row: Record<string, unknown>): ExecutionEvent {
   };
 }
 
+function readWebhookOrigin(events: ExecutionEvent[]): Pick<JobDetails, "actorUsername" | "triggerComment"> {
+  const decodedEvent = events.find((event) => event.step === "webhook.decode");
+  if (!decodedEvent?.output) return { actorUsername: null, triggerComment: null };
+  try {
+    const output: unknown = JSON.parse(decodedEvent.output);
+    if (typeof output !== "object" || output === null || Array.isArray(output)) {
+      return { actorUsername: null, triggerComment: null };
+    }
+    const record = output as Record<string, unknown>;
+    return {
+      actorUsername: typeof record.actorUsername === "string" ? record.actorUsername : null,
+      triggerComment: typeof record.note === "string" ? record.note : null,
+    };
+  } catch {
+    return { actorUsername: null, triggerComment: null };
+  }
+}
+
 function mapJob(row: JobRow): Job {
   return {
     id: row.id,
@@ -1194,7 +1212,8 @@ export class JobStore {
       .prepare("SELECT * FROM execution_events WHERE job_id=? ORDER BY started_at DESC,id DESC")
       .all(jobId)
       .map((value) => readExecutionEvent(value as Record<string, unknown>));
-    return { ...mapJobSummary(job), attempts, timeline, trajectory, events };
+    const origin = readWebhookOrigin(events);
+    return { ...mapJobSummary(job), ...origin, attempts, timeline, trajectory, events };
   }
 
   getJobTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {

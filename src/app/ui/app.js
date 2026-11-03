@@ -1074,6 +1074,7 @@ async function renderJobDetails(version, jobId) {
   detailItem(details, copy.statusFilter, copy.statuses[job.status] ?? job.status);
   detailItem(details, copy.typeFilter, copy.types[job.type] ?? job.type);
   detailItem(details, copy.projectMrDetails, formatJobTarget(job));
+  detailItem(details, copy.requester, job.actorUsername || copy.none);
   detailItem(details, copy.requesterId, job.actorId);
   detailItem(details, copy.created, formatDate(job.createdAt));
   detailItem(details, copy.lastUpdated, formatDate(job.updatedAt));
@@ -1085,6 +1086,11 @@ async function renderJobDetails(version, jobId) {
     job.failureStage ? copy.statuses[job.failureStage] ?? job.failureStage : copy.none,
   );
   detailItem(details, copy.cancellationRequested, job.cancellationRequested ? copy.yes : copy.no);
+  if (job.triggerComment) {
+    detailNodeItem(details, copy.triggerComment, expandableText(job.triggerComment, copy.viewOriginalComment));
+  } else {
+    detailItem(details, copy.triggerComment, copy.none);
+  }
   detailItem(details, copy.request, job.request || copy.none, "pre-wrap");
   if (job.lastError) detailNodeItem(details, copy.lastError, expandableText(job.lastError, copy.viewErrorDetails));
   else detailItem(details, copy.lastError, copy.none);

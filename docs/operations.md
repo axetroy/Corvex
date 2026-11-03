@@ -60,9 +60,9 @@ The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` a
 | `GET /api/ops/jobs` | Filtered and paginated job list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
 | `GET /api/ops/jobs/<id>` | Job details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output events for each execution step. |
 
-The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include submitted requests and error text; protect operator credentials and use HTTPS. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
+The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include the requester username and ID, the triggering comment, the parsed request, and error text; protect operator credentials and use HTTPS. The triggering comment is sourced from the linked webhook execution event and follows its size limit and best-effort redaction. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
 
-The console has three read-only views: an overview of queue and worker status, a filterable job list, and a per-job detail/attempt history view. Job details include a Session transcript and the original Trace timeline. It refreshes automatically every 15 seconds. It does not retry, cancel, or create tasks.
+The console has three read-only views: an overview of queue and worker status, a filterable job list, and a per-job detail/attempt history view. Job details show who initiated the task and the triggering comment separately from the parsed request, alongside a Session transcript and the original Trace timeline. It refreshes automatically every 15 seconds. It does not retry, cancel, or create tasks.
 The interface supports English and Simplified Chinese. On first visit it selects the best supported browser language; a manual selection is saved in browser storage for later visits.
 
 ## Logs and troubleshooting

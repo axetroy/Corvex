@@ -126,6 +126,8 @@ export interface ExecutionEvent {
 }
 
 export interface JobDetails extends JobSummary {
+  actorUsername: string | null;
+  triggerComment: string | null;
   attempts: JobAttemptSummary[];
   timeline: JobStatusTransition[];
   trajectory: JobTraceEntry[];

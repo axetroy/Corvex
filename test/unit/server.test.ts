@@ -78,6 +78,7 @@ describe("CorvexServer", () => {
         skillPaths: [],
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
       worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
@@ -192,7 +193,11 @@ describe("CorvexServer", () => {
       const reviewJob = store.listJobs("queued", 10).find((job) => job.type === "review");
       if (!reviewJob) throw new Error("expected a review job");
       expect(reviewJob.request).toBe("重点检查安全与代码质量\n\n请按示例核对：\n  输入：  user input\n  输出：validated value");
-      const webhookSteps = store.getJobDetails(reviewJob.id)?.events ?? [];
+      const reviewDetails = store.getJobDetails(reviewJob.id);
+      expect(reviewDetails?.actorUsername).toBe("developer");
+      expect(reviewDetails?.triggerComment).toContain("@corvex-bot /review");
+      expect(reviewDetails?.triggerComment).not.toBe(reviewJob.request);
+      const webhookSteps = reviewDetails?.events ?? [];
       expect(webhookSteps.map((step) => step.step)).toEqual(expect.arrayContaining([
         "webhook.read_body",
         "webhook.decode",
