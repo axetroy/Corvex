@@ -101,7 +101,7 @@ Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会�
 
 Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent。项目白名单中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
 
-Pi Session 不开放内建 shell、编辑或写入工具。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户明确要求时，Chat 还可通过 `update_mr_metadata` 修改当前 MR 的标题和/或描述；未传入的字段保持不变。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
+Pi Session 不开放内建 shell 或任意命令执行。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户要求时，Chat 可通过 `update_mr_metadata` 修改当前 MR 标题和/或描述；未传入的字段保持不变。配置写令牌且 MR 源项目与目标项目相同时，Chat 还可使用 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert`，并固定绑定到当前隔离 worktree 和 MR 源分支。用户已要求修改后无需额外确认；补丁仅修改已跟踪普通文件，提交仅接受未暂存的已跟踪文件修改，推送只进行普通快进更新且永远不能强制推送；回滚只为最近的 Corvex 提交新增 revert commit。Fork MR 不提供 Git 写工具。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 
 ## 后续阅读
 

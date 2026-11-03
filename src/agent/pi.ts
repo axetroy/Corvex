@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import {
@@ -25,6 +26,7 @@ import { createReadOnlyFileExtension } from "./repo-read.js";
 import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createMergeRequestMetadataExtension } from "./mr-update.js";
+import { createGitWriteExtension } from "./git-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
 export interface ModelRequest {
@@ -36,13 +38,14 @@ export interface ModelRequest {
 export function getAgentToolAccess(
   taskType: JobType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
-): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean } {
+): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
   return {
     webFetch: taskType !== "fix" && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
     gitHistory: taskType === "chat",
+    gitWrite: taskType === "chat",
   };
 }
 
@@ -63,7 +66,16 @@ export interface JobTraceContext {
   attempt: number;
   taskType: JobType;
   workspace?: Workspace;
-  mergeRequest?: { projectId: number; mrIid: number };
+  mergeRequest?: {
+    projectId: number;
+    mrIid: number;
+    sourceProjectId?: number;
+    targetProjectId?: number;
+    sourceBranch?: string;
+    repositoryUrl?: string;
+    expectedRemoteSha?: string;
+    pushedSha?: string;
+  };
 }
 
 export type ReadMergeRequestComments = (
@@ -87,6 +99,10 @@ export class PiAgent {
     private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
     private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
+    private readonly gitWriter?: Pick<
+      GitManager,
+      "writeEnabled" | "getWorkspaceStatus" | "applyWorkspacePatch" | "commitWorkspace" | "pushWorkspace" | "revertWorkspaceCommit"
+    >,
   ) {}
 
   getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -214,6 +230,7 @@ export class PiAgent {
     if (!model) throw new Error("Pi could not resolve the configured model");
     const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
     const workspace = trace?.workspace;
+    const mergeRequest = trace?.mergeRequest;
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -277,6 +294,55 @@ export class PiAgent {
                 },
               )]
             : []),
+        ...(toolAccess.gitWrite &&
+          workspace &&
+          mergeRequest &&
+          mergeRequest.sourceProjectId === mergeRequest.projectId &&
+          mergeRequest.targetProjectId === mergeRequest.projectId &&
+          mergeRequest.sourceBranch &&
+          mergeRequest.repositoryUrl &&
+          this.gitWriter?.writeEnabled
+          ? [createGitWriteExtension({
+              status: () => this.runGitWrite(
+                trace!, "git.status", {}, () => this.gitWriter!.getWorkspaceStatus(workspace, signal),
+                (value) => ({ headSha: value.headSha, clean: value.clean, files: value.files }),
+              ),
+              applyPatch: (patch) => this.runGitWrite(
+                trace!, "git.apply_patch",
+                { patchBytes: Buffer.byteLength(patch), patchSha256: createHash("sha256").update(patch).digest("hex") },
+                () => this.gitWriter!.applyWorkspacePatch(workspace, patch, signal),
+                (value) => ({ changedFiles: value.changedFiles, patchBytes: Buffer.byteLength(value.patch) }),
+              ),
+              commit: (message) => this.runGitWrite(
+                trace!, "git.commit", { messageCharacters: [...message].length },
+                () => this.gitWriter!.commitWorkspace(workspace, message, signal),
+                (value) => ({ sha: value.sha, changedFiles: value.changedFiles }),
+              ),
+              push: async () => {
+                const result = await this.runGitWrite(
+                  trace!, "git.push",
+                  { projectId: mergeRequest.projectId, branch: mergeRequest.sourceBranch },
+                  () => this.gitWriter!.pushWorkspace(
+                    workspace,
+                    mergeRequest.sourceBranch!,
+                    mergeRequest.repositoryUrl!,
+                    signal,
+                    mergeRequest.expectedRemoteSha ?? workspace.headSha,
+                  ),
+                  (value) => value,
+                  (error) => error instanceof Error && "outcomeUnknown" in error ? "unknown" : "failed",
+                );
+                mergeRequest.expectedRemoteSha = result.sha;
+                mergeRequest.pushedSha = result.sha;
+                return result;
+              },
+              revert: (sha) => this.runGitWrite(
+                trace!, "git.revert", { sha },
+                () => this.gitWriter!.revertWorkspaceCommit(workspace, sha, signal),
+                (value) => value,
+              ),
+            })]
+          : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
       ],
       systemPrompt: request.systemPrompt,
@@ -425,6 +491,26 @@ export class PiAgent {
       }
       session.dispose();
     }
+  }
+
+  private runGitWrite<T>(
+    trace: JobTraceContext,
+    step: string,
+    input: unknown,
+    operation: () => Promise<T>,
+    output: (value: T) => unknown,
+    failureStatus: (error: unknown) => "failed" | "unknown" = () => "failed",
+  ): Promise<T> {
+    if (!this.store) return operation();
+    return traceExecutionStep(
+      this.store,
+      { jobId: trace.jobId, attempt: trace.attempt },
+      step,
+      input,
+      operation,
+      output,
+      failureStatus,
+    );
   }
 
   private startTrace(

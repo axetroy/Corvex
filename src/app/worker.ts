@@ -101,13 +101,19 @@ export class Worker {
     private readonly gitlab: GitLabClient,
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
-    this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, config.gitlab.readToken);
+    this.repo = new GitManager(
+      config.storage.root,
+      config.gitlab.baseUrl,
+      config.gitlab.readToken,
+      config.gitlab.writeToken,
+    );
     this.agent = new PiAgent(
       config,
       store,
       this.repo,
       (projectId, mrIid, limit, signal) => this.gitlab.getMergeRequestComments(projectId, mrIid, limit, signal),
       (projectId, mrIid, update, signal) => this.gitlab.updateMergeRequest(projectId, mrIid, update, signal),
+      this.repo,
     );
     this.reviewer = new ReviewWorkflow(
       this.agent,
@@ -351,7 +357,14 @@ export class Worker {
         diffRefs: value.diff_refs,
       }),
     );
-    trace.mergeRequest = { projectId: job.projectId, mrIid: job.mrIid };
+    trace.mergeRequest = {
+      projectId: job.projectId,
+      mrIid: job.mrIid,
+      sourceProjectId: mergeRequest.source_project_id,
+      targetProjectId: mergeRequest.target_project_id,
+      sourceBranch: mergeRequest.source_branch,
+      expectedRemoteSha: job.headSha,
+    };
     if (mergeRequest.state !== "opened") {
       this.store.recordExecutionEvent({
         ...stepContext,
@@ -386,6 +399,7 @@ export class Worker {
       () => this.gitlab.getProject(job.projectId, signal),
       (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
     );
+    if (trace.mergeRequest) trace.mergeRequest.repositoryUrl = project.http_url_to_repo;
     const workspace = await traceExecutionStep(
       this.store,
       stepContext,
@@ -545,7 +559,10 @@ export class Worker {
           this.store.recordModelCall("chat", "failure", Date.now() - started, 0, 0);
           throw error;
         }
-        if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
+        const chatSnapshotIsCurrent = trace.mergeRequest?.pushedSha
+          ? await this.verifyPushedHead(job, mergeRequest, trace.mergeRequest.pushedSha, signal, transition)
+          : await this.verifySnapshot(job, mergeRequest, signal, transition);
+        if (!chatSnapshotIsCurrent) return;
         transition("publishing");
         const body = `## Corvex\n\n${answer.text}`;
         await traceExecutionStep(
@@ -749,6 +766,41 @@ export class Worker {
       step: "worker.verify_snapshot",
       status: current ? "succeeded" : "ignored",
       input: { expectedHeadSha: job.headSha, original: original.diff_refs },
+      output: { current, latest: latest.diff_refs, latestState: latest.state },
+    });
+    if (!current) {
+      transition("stale");
+      return false;
+    }
+    return true;
+  }
+
+  private async verifyPushedHead(
+    job: Job,
+    original: MergeRequest,
+    pushedSha: string,
+    signal: AbortSignal,
+    transition: (status: JobStatus) => void,
+  ): Promise<boolean> {
+    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const latest = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "gitlab.get_merge_request_after_push",
+      { projectId: job.projectId, mrIid: job.mrIid, pushedSha },
+      () => this.gitlab.getMergeRequest(job.projectId, job.mrIid, signal),
+      (value) => ({ state: value.state, sha: value.sha, diffRefs: value.diff_refs }),
+    );
+    const current =
+      latest.state === "opened" &&
+      sameSha(headSha(latest), pushedSha) &&
+      sameSha(original.diff_refs.base_sha, latest.diff_refs.base_sha) &&
+      sameSha(original.diff_refs.start_sha, latest.diff_refs.start_sha);
+    this.store.recordExecutionEvent({
+      ...stepContext,
+      step: "worker.verify_pushed_head",
+      status: current ? "succeeded" : "ignored",
+      input: { expectedHeadSha: pushedSha, original: original.diff_refs },
       output: { current, latest: latest.diff_refs, latestState: latest.state },
     });
     if (!current) {

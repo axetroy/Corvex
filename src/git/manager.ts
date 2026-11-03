@@ -26,6 +26,7 @@ interface GitResult {
 }
 
 interface GitRunOptions {
+  authToken?: string;
   timeoutMs?: number;
   terminateOnOutputLimit?: boolean;
   allowExitCodes?: number[];
@@ -48,6 +49,21 @@ export interface GitCommitLogResult {
   truncated: boolean;
 }
 
+export interface GitWorkspaceStatus {
+  headSha: string;
+  clean: boolean;
+  files: { path: string; status: string }[];
+}
+
+export class GitPushError extends Error {
+  readonly outcomeUnknown = true;
+
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "GitPushError";
+  }
+}
+
 export interface GitStorageCleanupPlan {
   workspaces: string[];
   mirrors: string[];
@@ -62,7 +78,12 @@ export class GitManager {
   private readonly projectLocks = new Map<number, Promise<void>>();
   private readonly diffEngine: DiffEngine;
 
-  constructor(root: string, gitlabBaseUrl: string, private readonly token: string) {
+  constructor(
+    root: string,
+    gitlabBaseUrl: string,
+    private readonly token: string,
+    private readonly writeToken = "",
+  ) {
     if (!root.trim()) throw new Error("Git storage root is required");
     let url: URL;
     try {
@@ -80,6 +101,10 @@ export class GitManager {
     this.diffEngine = new DiffEngine((workspace, args, input, limit, signal) =>
       this.run(workspace.path, args, input, limit, signal),
     );
+  }
+
+  get writeEnabled(): boolean {
+    return this.writeToken.length > 0;
   }
 
   async initialize(): Promise<void> {
@@ -458,6 +483,214 @@ export class GitManager {
     return finalPatch.stdout.toString();
   }
 
+  async applyWorkspacePatch(
+    workspace: Workspace,
+    patch: string,
+    signal?: AbortSignal,
+  ): Promise<{ patch: string; changedFiles: string[] }> {
+    this.validateWorkspace(workspace);
+    const tracked = await this.run(workspace.path, ["ls-files", "-z"], undefined, maxOutput, signal);
+    if (tracked.truncated) throw new Error("tracked file list exceeds the output limit");
+    const allowedPaths = tracked.stdout.toString().split("\0").filter(Boolean);
+    const changedFiles = this.validateFixPatch(patch, allowedPaths);
+    for (const name of changedFiles) {
+      const entry = await this.run(workspace.path, ["ls-tree", "-z", "HEAD", "--", name], undefined, maxErrorOutput, signal);
+      if (!entry.stdout.toString().startsWith("100644 blob ") && !entry.stdout.toString().startsWith("100755 blob ")) {
+        throw new Error(`patch target "${name}" is not a regular tracked file`);
+      }
+    }
+    const appliedPatch = await this.applyPatch(workspace, patch, allowedPaths, maxPatchBytes, signal);
+    return { patch: appliedPatch, changedFiles };
+  }
+
+  async getWorkspaceStatus(workspace: Workspace, signal?: AbortSignal): Promise<GitWorkspaceStatus> {
+    this.validateWorkspace(workspace);
+    const [head, status] = await Promise.all([
+      this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal),
+      this.run(
+        workspace.path,
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+        undefined,
+        64 << 10,
+        signal,
+        { timeoutMs: 10_000, terminateOnOutputLimit: true },
+      ),
+    ]);
+    if (status.truncated) throw new Error("Git status exceeds the 64 KiB output limit");
+    const files = status.stdout.toString().split("\n").filter(Boolean).map((line) => ({
+      status: line.slice(0, 2),
+      path: line.slice(3),
+    }));
+    return { headSha: head.stdout.toString().trim(), clean: files.length === 0, files };
+  }
+
+  async commitWorkspace(
+    workspace: Workspace,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; message: string; changedFiles: string[] }> {
+    this.validateWorkspace(workspace);
+    if (!message.trim() || message.length > 2000 || message.includes("\0")) {
+      throw new Error("commit message must contain 1-2000 characters");
+    }
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (status.clean) throw new Error("cannot commit a clean worktree");
+    if (status.files.some(({ status: fileStatus }) => fileStatus !== " M")) {
+      throw new Error("commit only supports unstaged modifications to tracked files; untracked, deleted, or staged files are not allowed");
+    }
+    const baseAncestor = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (baseAncestor.exitCode !== 0) throw new Error("workspace HEAD is not descended from the pinned MR HEAD");
+    await this.run(workspace.path, ["add", "-u", "--"], undefined, maxErrorOutput, signal);
+    await this.run(workspace.path, ["diff", "--cached", "--check"], undefined, maxErrorOutput, signal);
+    await this.run(
+      workspace.path,
+      [
+        "-c", "user.name=Corvex Agent",
+        "-c", "user.email=corvex-agent@localhost",
+        "-c", "commit.gpgsign=false",
+        "commit", "--no-verify", "-m", message,
+      ],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000 },
+    );
+    const [head, changed] = await Promise.all([
+      this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal),
+      this.run(workspace.path, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"], undefined, 64 << 10, signal),
+    ]);
+    if (changed.truncated) throw new Error("committed file list exceeds the output limit");
+    return {
+      sha: head.stdout.toString().trim(),
+      message: message.trim(),
+      changedFiles: changed.stdout.toString().split("\0").filter(Boolean),
+    };
+  }
+
+  async pushWorkspace(
+    workspace: Workspace,
+    branch: string,
+    expectedRepositoryUrl: string,
+    signal?: AbortSignal,
+    expectedRemoteSha = workspace.headSha,
+  ): Promise<{ sha: string; branch: string }> {
+    this.validateWorkspace(workspace);
+    if (!this.writeToken) throw new Error("Git write token is required to push changes");
+    if (!shaPattern.test(expectedRemoteSha)) throw new Error("expected remote commit SHA must be full-length");
+    if (!branch || branch.startsWith("-") || branch.length > 255) {
+      throw new Error("target branch is invalid");
+    }
+    await this.run(workspace.path, ["check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
+    const [fetchUrl, pushUrl, status] = await Promise.all([
+      this.run(workspace.path, ["remote", "get-url", "origin"], undefined, maxErrorOutput, signal),
+      this.run(workspace.path, ["remote", "get-url", "--push", "origin"], undefined, maxErrorOutput, signal),
+      this.getWorkspaceStatus(workspace, signal),
+    ]);
+    if (
+      fetchUrl.stdout.toString().trim() !== expectedRepositoryUrl ||
+      pushUrl.stdout.toString().trim() !== expectedRepositoryUrl
+    ) {
+      throw new Error("Git origin does not match the authorized merge request repository");
+    }
+    if (!status.clean) throw new Error("push requires a clean worktree");
+    const remote = await this.run(
+      workspace.path,
+      ["ls-remote", "--heads", "origin", `refs/heads/${branch}`],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000, authToken: this.writeToken },
+    );
+    const remoteSha = remote.stdout.toString().trim().split(/\s+/u)[0];
+    if (remoteSha?.toLowerCase() !== expectedRemoteSha.toLowerCase()) {
+      throw new Error("remote MR source branch no longer matches the pinned MR HEAD");
+    }
+    const ancestry = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (ancestry.exitCode !== 0) throw new Error("workspace HEAD is not descended from the pinned MR HEAD");
+    const remoteAncestor = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", expectedRemoteSha, status.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (remoteAncestor.exitCode !== 0) throw new Error("workspace HEAD is not descended from the expected remote commit");
+    try {
+      await this.run(
+        workspace.path,
+        ["push", "--porcelain", "origin", `${status.headSha}:refs/heads/${branch}`],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 60_000, authToken: this.writeToken },
+      );
+    } catch (error) {
+      throw new GitPushError(`Git push outcome is unknown: ${String(error)}`, error);
+    }
+    return { sha: status.headSha, branch };
+  }
+
+  async revertWorkspaceCommit(
+    workspace: Workspace,
+    sha: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; revertedSha: string }> {
+    this.validateWorkspace(workspace);
+    if (!shaPattern.test(sha)) throw new Error("rollback requires a full commit SHA");
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (!status.clean) throw new Error("rollback requires a clean worktree");
+    if (status.headSha.toLowerCase() !== sha.toLowerCase()) {
+      throw new Error("rollback is limited to the latest Corvex commit");
+    }
+    const result = await this.run(
+      workspace.path,
+      ["show", "-s", "--format=%H%x00%an%x00%ae%x00%P", sha],
+      undefined,
+      maxErrorOutput,
+      signal,
+    );
+    const [commitSha, author, email, parents] = result.stdout.toString().trimEnd().split("\0");
+    if (
+      commitSha?.toLowerCase() !== sha.toLowerCase() ||
+      author !== "Corvex Agent" ||
+      email !== "corvex-agent@localhost" ||
+      !parents ||
+      parents.split(" ").length !== 1
+    ) {
+      throw new Error("rollback is limited to the latest Corvex commit");
+    }
+    await this.run(
+      workspace.path,
+      [
+        "-c", "user.name=Corvex Agent",
+        "-c", "user.email=corvex-agent@localhost",
+        "-c", "commit.gpgsign=false",
+        "revert", "--no-edit", sha,
+      ],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000 },
+    );
+    const reverted = await this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal);
+    return { sha: reverted.stdout.toString().trim(), revertedSha: sha };
+  }
+
   private validateFixPatch(patch: string, allowedPaths: string[]): string[] {
     // 修复提案只能修改本次 MR 已变更的现有文件。
     const allowed = new Set(allowedPaths);
@@ -492,7 +725,7 @@ export class GitManager {
       ) {
         throw new Error(`fix patch modifies an unauthorized or unsupported path "${oldPath}"`);
       }
-      if (!section.some((line) => line.startsWith("--- a/")) || !section.some((line) => line.startsWith("+++ b/"))) {
+      if (!section.includes(`--- a/${oldPath}`) || !section.includes(`+++ b/${newPath}`)) {
         throw new Error("fix patch must modify existing files");
       }
       if (!paths.includes(oldPath)) paths.push(oldPath);
@@ -618,7 +851,7 @@ export class GitManager {
     signal?: AbortSignal,
     options: GitRunOptions = {},
   ): Promise<GitResult> {
-    const env = this.gitEnvironment();
+    const env = this.gitEnvironment(options.authToken ?? this.token);
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error("git command timed out")),
@@ -676,7 +909,7 @@ export class GitManager {
     });
   }
 
-  private gitEnvironment(): NodeJS.ProcessEnv {
+  private gitEnvironment(authToken: string): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of Object.keys(env)) {
       if (
@@ -690,14 +923,14 @@ export class GitManager {
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_CONFIG_GLOBAL = join(this.root, ".corvex-no-global-git-config");
     env.GIT_TERMINAL_PROMPT = "0";
-    env.GIT_CONFIG_COUNT = this.token ? "3" : "2";
+    env.GIT_CONFIG_COUNT = authToken ? "3" : "2";
     env.GIT_CONFIG_KEY_0 = "core.hooksPath";
     env.GIT_CONFIG_VALUE_0 = process.platform === "win32" ? "NUL" : "/dev/null";
     env.GIT_CONFIG_KEY_1 = "credential.helper";
     env.GIT_CONFIG_VALUE_1 = "";
-    if (this.token) {
+    if (authToken) {
       env.GIT_CONFIG_KEY_2 = `http.${this.gitlabUrl.protocol}//${this.gitlabUrl.host}/.extraHeader`;
-      env.GIT_CONFIG_VALUE_2 = `Authorization: Basic ${Buffer.from(`oauth2:${this.token}`).toString("base64")}`;
+      env.GIT_CONFIG_VALUE_2 = `Authorization: Basic ${Buffer.from(`oauth2:${authToken}`).toString("base64")}`;
     }
     return env;
   }

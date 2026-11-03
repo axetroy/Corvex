@@ -35,7 +35,7 @@ Credentials are mandatory environment variables:
 | Variable | Use |
 |---|---|
 | `CORVEX_GITLAB_READ_TOKEN` | Required. GitLab API reads and authenticated Git repository fetches. |
-| `CORVEX_GITLAB_TOKEN` | Required. Posts MR notes and inline discussions. Use a separate write token. |
+| `CORVEX_GITLAB_TOKEN` | Required. Posts MR notes and inline discussions; when Chat writes are enabled, also commits and pushes to same-project MR source branches. Use a separate write token with only the required permissions. |
 | `CORVEX_WEBHOOK_SECRET` | Required. Must match the project webhook's secret token. |
 
 ## Storage

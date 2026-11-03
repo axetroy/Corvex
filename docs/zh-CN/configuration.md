@@ -35,7 +35,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | 变量 | 用途 |
 |---|---|
 | `CORVEX_GITLAB_READ_TOKEN` | 必填。读取 GitLab API 及通过 Git 抓取仓库。 |
-| `CORVEX_GITLAB_TOKEN` | 必填。发布 MR 评论和行级讨论；应使用独立写令牌。 |
+| `CORVEX_GITLAB_TOKEN` | 必填。发布 MR 评论和行级讨论；启用 Chat 写操作时，也用于提交和推送同项目 MR 源分支。应使用权限最小化的独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
 | `CORVEX_OPS_PASSWORD` | 可选运维控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |

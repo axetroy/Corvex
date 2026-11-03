@@ -40,7 +40,7 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 
 ## Chat、Explain 与 Fix 流程
 
-**Chat** 会将受限 Diff、固定 MR 元信息、配置数量的最近非系统 MR 评论和调用者的自然语言请求一起发送给模型。`read_mr_comments` 工具只能读取当前 MR 的更多评论。Chat 还可通过 `git_log` 和 `git_show` 读取固定 MR HEAD 可达的提交；读取详情必须提供完整 SHA。用户明确要求时，`update_mr_metadata` 可修改当前 MR 标题和/或描述；执行记录只保存目标及字段长度，不保存正文。Git 输出和评论均为不可信输入；达到上下文字节上限时会优先省略较旧评论。发布前 Worker 会再次验证 MR 快照，并将回复作为普通 MR 评论发布。Chat 不创建行级讨论。
+**Chat** 会将受限 Diff、固定 MR 元信息、配置数量的最近非系统 MR 评论和调用者的自然语言请求一起发送给模型。`read_mr_comments` 工具只能读取当前 MR 的更多评论。Chat 还可通过 `git_log` 和 `git_show` 读取固定 MR HEAD 可达的提交；读取详情必须提供完整 SHA。用户明确要求时，`update_mr_metadata` 可修改当前 MR 标题和/或描述；执行记录只保存目标及字段长度，不保存正文。配置写令牌且 MR 源项目与目标项目相同时，Chat 还会获得有界的 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert` 工具。它们固定绑定到任务隔离 worktree 和 MR 源分支，不开放 shell 或任意命令；补丁只能修改已跟踪的普通文件，提交只接受已跟踪文件的未暂存修改，推送要求远端分支仍等于 pinned SHA 或本任务上次推送 SHA，并且只执行普通快进更新；回滚会为最近的 Corvex 提交新增 revert commit。Fork MR 不开放 Git 写工具，永远不能强制推送。执行记录不会保存补丁正文或凭据。Git 输出和评论均为不可信输入；达到上下文字节上限时会优先省略较旧评论。推送后，Worker 会验证 MR 当前 Head 与刚推送的 SHA 完全一致，再将回复作为普通 MR 评论发布。Chat 不创建行级讨论。
 
 **Explain** 从固定 MR Head SHA 的 worktree 中读取指定文件，而不是读取服务器上的任意路径。系统会限制文件路径在工作区内，并遵守配置的上下文大小限制。文件内容和 MR 元信息会发送给模型；只有 MR 快照仍有效时，解释结果才会作为 MR 评论发布。
 

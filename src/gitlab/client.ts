@@ -7,6 +7,8 @@ export interface MergeRequest {
   description: string;
   source_branch: string;
   target_branch: string;
+  source_project_id?: number;
+  target_project_id?: number;
   sha: string;
   diff_refs: { base_sha: string; start_sha: string; head_sha: string };
 }
