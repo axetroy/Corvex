@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { reconstructLlmInput } from "../../src/app/ui/trace.js";
+import { calculateOutputTokensPerSecond, reconstructLlmInput } from "../../src/app/ui/trace.js";
 
 describe("operations UI trace reconstruction", () => {
+  it("calculates output TPS weighted by model call duration", () => {
+    expect(calculateOutputTokensPerSecond([
+      { outputTokens: 30, durationMs: 1000 },
+      { outputTokens: 20, durationMs: 3000 },
+    ])).toBe(12.5);
+  });
+
+  it("ignores traces without valid output token counts or durations", () => {
+    expect(calculateOutputTokensPerSecond([
+      { outputTokens: 10, durationMs: 0 },
+      { outputTokens: null, durationMs: 1000 },
+    ])).toBeNull();
+  });
+
   it("reconstructs the selected model turn from incremental entries and resets", () => {
     const userMessage = { id: "user-1", type: "message", message: { role: "user", content: "Review this" } };
     const toolMessage = { id: "tool-1", type: "message", message: { role: "toolResult", content: "File contents" } };

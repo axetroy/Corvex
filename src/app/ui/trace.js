@@ -7,6 +7,22 @@ function parseTraceValue(value) {
   }
 }
 
+export function calculateOutputTokensPerSecond(entries) {
+  let outputTokens = 0;
+  let durationMs = 0;
+  for (const entry of entries) {
+    if (
+      !Number.isFinite(entry.outputTokens) ||
+      entry.outputTokens < 0 ||
+      !Number.isFinite(entry.durationMs) ||
+      entry.durationMs <= 0
+    ) continue;
+    outputTokens += entry.outputTokens;
+    durationMs += entry.durationMs;
+  }
+  return durationMs > 0 ? outputTokens * 1000 / durationMs : null;
+}
+
 export function reconstructLlmInput(traces, selectedEntry) {
   const selectedIndex = traces.findIndex((entry) => entry.id === selectedEntry.id);
   const selectedInput = parseTraceValue(selectedEntry.input);

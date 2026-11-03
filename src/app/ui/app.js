@@ -1,5 +1,5 @@
 import { en, resolveLocale, zhCN } from "./i18n.js";
-import { reconstructLlmInput } from "./trace.js";
+import { calculateOutputTokensPerSecond, reconstructLlmInput } from "./trace.js";
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -85,6 +85,10 @@ function formatTraceDuration(durationMs) {
     return copy.traceDurationMsTemplate.replace("{value}", String(Math.round(durationMs)));
   }
   return formatDuration(Math.floor(durationMs / 1000));
+}
+
+function formatOutputTps(value) {
+  return value === null ? copy.none : copy.traceTpsTemplate.replace("{value}", value.toFixed(1));
 }
 
 function elapsedSince(value) {
@@ -540,12 +544,14 @@ function createTraceSession(entries) {
     return timeDifference || left.id - right.id;
   });
   const modelCalls = traces.filter((entry) => entry.kind === "llm").length;
+  const modelTraces = traces.filter((entry) => entry.kind === "llm");
   const toolCalls = traces.filter((entry) => entry.kind === "tool").length;
   const failures = traces.filter((entry) => ["failed", "unknown", "interrupted"].includes(entry.status)).length;
   const summary = element("p", copy.traceSessionSummaryTemplate
     .replace("{messages}", String(modelCalls))
     .replace("{tools}", String(toolCalls))
-    .replace("{errors}", String(failures)), "trace-session-summary");
+    .replace("{errors}", String(failures))
+    .replace("{tps}", formatOutputTps(calculateOutputTokensPerSecond(modelTraces))), "trace-session-summary");
   const filterGroup = element("div", undefined, "trace-session-filters");
   filterGroup.setAttribute("role", "group");
   filterGroup.setAttribute("aria-label", copy.traceSessionControls);
@@ -585,6 +591,9 @@ function createTraceSession(entries) {
         ...(title ? [element("strong", title, "trace-session-title")] : []),
         ...(entry.kind === "llm" && entry.model
           ? [element("span", copy.traceSessionModelTemplate.replace("{model}", entry.model), "trace-session-model")]
+          : []),
+        ...(entry.kind === "llm"
+          ? [element("span", formatOutputTps(calculateOutputTokensPerSecond([entry])), "trace-session-tps")]
           : []),
         element("span", round, "trace-session-round"),
         element("span", copy.traceStatuses[entry.status] ?? entry.status, `trace-session-status trace-session-status-${entry.status}`),
@@ -915,6 +924,7 @@ function createTraceDiagram(entries) {
       detailItem(details, copy.traceSelectedCountTemplate.replace("{count}", String(selected.length)), selected.length);
       detailItem(details, copy.traceDuration, formatTraceDuration(selected.reduce((sum, entry) => sum + (entry.durationMs ?? 0), 0)));
       detailItem(details, copy.traceStatus, `${selected.filter((entry) => entry.status === "succeeded").length} / ${selected.length}`);
+      detailItem(details, copy.traceTps, formatOutputTps(calculateOutputTokensPerSecond(selected)));
       inspectorContent.append(details);
       return;
     }
@@ -930,6 +940,7 @@ function createTraceDiagram(entries) {
       if (entry.kind === "llm") {
         detailItem(details, copy.inputTokens, entry.inputTokens ?? copy.none);
         detailItem(details, copy.outputTokens, entry.outputTokens ?? copy.none);
+        detailItem(details, copy.traceTps, formatOutputTps(calculateOutputTokensPerSecond([entry])));
       }
       inspectorContent.append(details);
     } else if (activeTab === "parameters") {
