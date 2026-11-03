@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeIssueNoteEvent,
   decodeNoteEvent,
   MAX_WEBHOOK_BODY_BYTES,
   validateWebhookToken,
@@ -27,6 +28,25 @@ describe("GitLab webhook validation", () => {
 
   it("decodes a complete merge request note event", () => {
     expect(decodeNoteEvent(Buffer.from(JSON.stringify(event)))).toEqual(event);
+  });
+
+  it("decodes a complete issue note event", () => {
+    const issueEvent = {
+      ...event,
+      object_attributes: { ...event.object_attributes, noteable_type: "Issue" },
+      issue: { iid: 5 },
+    };
+    delete issueEvent.merge_request;
+    expect(decodeIssueNoteEvent(Buffer.from(JSON.stringify(issueEvent)))).toEqual(issueEvent);
+  });
+
+  it("rejects issue notes without a valid Issue IID", () => {
+    const issueEvent = {
+      ...event,
+      object_attributes: { ...event.object_attributes, noteable_type: "Issue" },
+      issue: { iid: 0 },
+    };
+    expect(() => decodeIssueNoteEvent(Buffer.from(JSON.stringify(issueEvent)))).toThrow("issue note event");
   });
 
   it("rejects malformed, unsupported, and oversized events", () => {

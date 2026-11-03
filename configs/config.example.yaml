@@ -46,3 +46,7 @@ worker:
 fix:
   enabled: false
   max_patch_bytes: 131072
+
+issue:
+  implement_enabled: false
+  history_comments: 20

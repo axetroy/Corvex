@@ -8,7 +8,7 @@ Corvex 将请求接入与模型、仓库处理分离：
 2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、模型调用指标以及可选的每日 Token 预留。
 3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求快照和仓库并执行请求的工作流。启动 Worker 必须设置 `agent.enabled: true`。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
-5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释或修复提案任务。
+5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现任务。
 
 GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、503、504 时，最多尝试三次并使用有界退避。POST 写请求不会自动重试，因为远端副作用可能无法确认。
 
@@ -19,13 +19,13 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 ## 请求与入队流程
 
 1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
-2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，仅接受合并请求评论，限制请求体为 1 MiB，并忽略系统评论。
+2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，接受合并请求和 Issue 评论，限制请求体为 1 MiB，并忽略系统评论。
 3. Server 检查项目 ID 白名单，并拒绝 `gitlab.blocked_user_ids` 中的用户。其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本。
 4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步任务）任务。重复 Webhook 投递具有幂等性。
 5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
-6. Worker 按创建顺序领取排队的审查、解释、聊天或修复任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
+6. Worker 按创建顺序领取排队的审查、解释、聊天、修复或实现任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
 
-支持的命令：`/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。用法请参阅[快速开始](./guide)。
+MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。Issue 中的普通提及会进入助手任务，模型可基于 Issue 和近期非系统评论进行回复、追问或提出实现。代码写入由默认关闭的 `issue.implement_enabled` 单独控制；`/implement [request]` 仍可显式请求实现。用法请参阅[快速开始](./guide)。
 
 ## 审查流程
 
@@ -47,6 +47,8 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 **Fix** 默认关闭，并与其他指令采用相同的项目白名单和可选 `gitlab.blocked_user_ids` 黑名单。Worker 将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，Worker 将补丁作为提案发布，供人工检查和应用。
 
 Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创建提交或推送到 GitLab。发布的补丁只是提案，并不代表已验证。
+
+**Issue 助手**遵循项目白名单和可选用户黑名单。任何普通机器人提及都会排队；模型会收到 Issue 及最多 `issue.history_comments` 条近期非系统评论（默认 20，范围 0–50，另有分页和字节上限），可直接回复或请求澄清而不发布代码。`issue.implement_enabled` 是独立且默认关闭的写入开关：启用后，明确的实现请求才可生成有界 unified diff。目标分支默认为项目默认分支；只有当前请求明确命名另一个已存在分支时才会改投该分支，评论不能授权分支选择。Worker 固定目标基线 SHA，校验补丁（仅普通文本文件；拒绝路径穿越、Git 元数据路径、符号链接父目录、二进制、重命名和模式变更），并在推送前再次验证 Issue 与目标 SHA。随后创建新的 `corvex/issue-*` 分支和 Draft MR。不会运行项目脚本/测试、自动合并或关闭 Issue。远端结果不确定时不会自动重试。
 
 ## 任务状态、租约、重试和取消
 

@@ -35,7 +35,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | 变量 | 用途 |
 |---|---|
 | `CORVEX_GITLAB_READ_TOKEN` | 必填。读取 GitLab API 及通过 Git 抓取仓库。 |
-| `CORVEX_GITLAB_TOKEN` | 必填。发布 MR 评论和行级讨论；启用 Chat 写操作时，也用于提交和推送同项目 MR 源分支。应使用权限最小化的独立写令牌。 |
+| `CORVEX_GITLAB_TOKEN` | GitLab 写操作必填。发布评论和行级讨论；Chat 可提交/推送同项目 MR 分支；启用 Issue 实现后会推送新分支并创建 Draft MR。应使用权限最小化的独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
 | `CORVEX_OPS_PASSWORD` | 可选运维控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
@@ -56,7 +56,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `agent.enabled` | `false` | 布尔值 | 启动 Worker 时必须设为 `true`。 |
-| `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明和文件解释所用语言。JSON 键名、代码、路径和引用证据保持原样。 |
+| `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 启用时必填；有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。 |
 | `agent.model` | `your-model-name` | 启用时必填 | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。 |
 | `agent.request_timeout` | `120s` | 启用时必须为正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |
@@ -102,9 +102,18 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
-| `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | 模型补丁大小上限。 |
+| `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | Fix 或 Issue 实现模型补丁大小上限。 |
 
 Fix 请求与其他指令采用相同的项目白名单和可选用户黑名单规则。
+
+## Issue 实现
+
+| YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
+|---|---:|---|---|
+| `issue.implement_enabled` | `false` | 布尔值；要求 `agent.enabled: true` | 启用 Issue 任务的代码写入。关闭时，普通 `@<bot> <request>` 仍可获得分析或回复；启用后，Agent 可为实现请求创建新的 `corvex/issue-*` 分支并打开 Draft MR。不执行仓库代码，也不会自动合并。 |
+| `issue.history_comments` | `20` | 0–50 | 初始助手上下文中包含的最近非系统 Issue 评论数。`0` 表示不包含评论历史；分页和总字节限制会进一步限制上下文大小。 |
+
+Issue 任务默认使用项目默认分支；只有当前请求明确命名另一个已存在分支时才会选择该分支，评论不能授权分支选择。实现需要 `CORVEX_GITLAB_TOKEN` 具有推送分支和创建合并请求的权限。生成的补丁仅允许普通文本文件变更，并会校验路径。发布失败或结果不确定时不会自动重试；重试前请检查 Issue 任务事件及项目分支。
 
 ## 完整环境变量列表
 

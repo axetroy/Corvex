@@ -39,6 +39,7 @@ describe("JobStore", () => {
     const job = store.claimNextWithLease(30_000);
     expect(job?.status).toBe("preparing");
     expect(job?.attemptCount).toBe(1);
+    expect(job).toMatchObject({ targetType: "merge_request", targetIid: 3 });
     expect(() =>
       store!.updateLeasedStatus(job!.id, job!.leaseToken, "preparing", "publishing"),
     ).toThrow("invalid job transition");
@@ -84,6 +85,26 @@ describe("JobStore", () => {
     expect(store.claimNextWithLease(30_000)).toMatchObject({
       type: "chat",
       request,
+      status: "preparing",
+    });
+  });
+
+  it("queues Issue assistant jobs with a distinct issue target", async () => {
+    store = await JobStore.open(":memory:");
+    const result = store.createIssueImplementation("issue-event", "project:issue:17:note:9", {
+      projectId: 7,
+      issueIid: 17,
+      actorId: 11,
+      request: "Add the requested setting",
+    });
+
+    expect(result.response).toContain("Queued Issue assistant task");
+    expect(store.claimNextWithLease(30_000)).toMatchObject({
+      type: "implement",
+      targetType: "issue",
+      targetIid: 17,
+      mrIid: 0,
+      request: "Add the requested setting",
       status: "preparing",
     });
   });

@@ -35,7 +35,7 @@ Credentials are mandatory environment variables:
 | Variable | Use |
 |---|---|
 | `CORVEX_GITLAB_READ_TOKEN` | Required. GitLab API reads and authenticated Git repository fetches. |
-| `CORVEX_GITLAB_TOKEN` | Required. Posts MR notes and inline discussions; when Chat writes are enabled, also commits and pushes to same-project MR source branches. Use a separate write token with only the required permissions. |
+| `CORVEX_GITLAB_TOKEN` | Required for GitLab writes. Posts notes and inline discussions; Chat may commit/push to same-project MR branches, and enabled Issue implementation pushes a new branch and creates a Draft MR. Use a separate write token with only the required permissions. |
 | `CORVEX_WEBHOOK_SECRET` | Required. Must match the project webhook's secret token. |
 
 ## Storage
@@ -54,7 +54,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `agent.enabled` | `false` | Boolean | Must be `true` to start a worker. |
-| `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, and explanations. JSON keys, code, paths, and quoted evidence remain unchanged. |
+| `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, explanations, and Issue replies or implementation summaries. JSON keys, code, paths, and quoted evidence remain unchanged. |
 | `agent.base_url` | `https://api.openai.com/v1` | Required when enabled; HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. |
 | `agent.model` | `your-model-name` | Required when enabled | Provider model name. `CORVEX_MODEL_NAME` overrides it. |
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |
@@ -101,9 +101,18 @@ The job lease is currently fixed at 30 seconds and renewed during execution; it 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
-| `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed patch size. |
+| `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed Fix or Issue implementation patch size. |
 
 Fix requests follow the same project allowlist and optional user blocklist as other commands.
+
+## Issue implementation
+
+| YAML key | Example/default | Required / limits | Description |
+|---|---:|---|---|
+| `issue.implement_enabled` | `false` | Boolean; requires `agent.enabled: true` | Enables code writes for Issue tasks. Ordinary `@<bot> <request>` mentions can still receive analysis/replies while this is false. When enabled, the worker may create a new `corvex/issue-*` branch and Draft MR for an implementation request. It does not execute repository code or merge automatically. |
+| `issue.history_comments` | `20` | 0–50 | Number of most recent non-system Issue comments included in the initial assistant context. `0` disables comment history. Pagination and aggregate byte limits cap the context. |
+
+Issue tasks use the project default branch unless the current request explicitly names another existing branch; comments do not authorize branch selection. Implementation needs `CORVEX_GITLAB_TOKEN` with permission to push branches and create merge requests. Generated patches are restricted to ordinary text-file changes and validated paths. A failed/uncertain publish is not automatically retried; inspect the Issue task events and project branches before retrying.
 
 ## All environment variables
 

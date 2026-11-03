@@ -81,12 +81,21 @@ CORVEX_WEBHOOK_SECRET=... \
 | `@corvex-bot /status` | 查看该合并请求最近任务的状态。 |
 | `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
 | `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
+| `@corvex-bot 这个改动可行吗？` | 在 GitLab Issue 中请求分析或澄清；Agent 会回复但不会修改代码。 |
+| `@corvex-bot 添加所需校验` | 在 GitLab Issue 中让 Agent 判断应回复还是提出实现；代码写入需要启用 Issue 实现。 |
+| `@corvex-bot /implement 添加所需校验` | 在 Issue 中明确请求实现；代码写入仍要求启用 Issue 实现。 |
 
 `/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。不带 slash 的普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息、diff 和近期评论作为聊天上下文。默认注入最近 20 条评论，可通过 `chat.history_comments` 配置为 0–50 条；Chat 也可按需读取当前 MR 的更多近期评论。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
 
 ## 5. 启用模型任务
 
-审查、解释和修复提案需要 Worker 及模型配置。设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
+审查、解释、修复提案和 Issue 实现需要 Worker 及模型配置。设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
+
+## Issue 助手与实现
+
+Issue 提及要求启用 Agent。默认会向 Agent 提供 Issue 和最近 20 条非系统评论；可通过 `issue.history_comments` 设置为 0–50 条。Agent 会自行判断是回复、追问还是提出实现；回复不会创建或推送代码。
+
+代码写入默认关闭。若要允许实现，请设置 `issue.implement_enabled: true`，并配置有权限推送分支和创建合并请求的 GitLab 写令牌。除非当前请求明确命名另一个已存在分支，否则 Worker 使用项目默认分支；评论不能选择目标分支。Worker 创建新的 `corvex/issue-*` 分支并打开 Draft MR，不会运行仓库脚本或测试，也不会自动合并。合并前请人工审查生成的 MR。
 
 在另一个进程中启动：
 

@@ -10,6 +10,7 @@ export interface MergeRequest {
   source_project_id?: number;
   target_project_id?: number;
   draft?: boolean;
+  web_url?: string;
   sha: string;
   diff_refs: { base_sha: string; start_sha: string; head_sha: string };
 }
@@ -17,6 +18,22 @@ export interface MergeRequest {
 export interface Project {
   id: number;
   http_url_to_repo: string;
+  default_branch?: string;
+}
+
+export interface GitLabIssue {
+  iid: number;
+  title: string;
+  description: string;
+  state: string;
+  web_url?: string;
+}
+
+export interface CreatedMergeRequest {
+  iid: number;
+  webUrl: string;
+  sourceBranch: string;
+  targetBranch: string;
 }
 
 export interface MergeRequestDiff {
@@ -37,6 +54,8 @@ export interface MergeRequestComment {
   body: string;
   truncated: boolean;
 }
+
+export type IssueComment = MergeRequestComment;
 
 export interface MergeRequestMetadataUpdate {
   title?: string;
@@ -84,6 +103,8 @@ const MAX_RESPONSE_BYTES = 20 << 20;
 const MAX_DIFF_BYTES = 16 << 20;
 /** 单条历史评论最多保留的字符数，避免超大评论占满模型上下文。 */
 const MAX_COMMENT_CHARACTERS = 4_000;
+/** Issue 历史评论的总模型上下文预算。 */
+const MAX_ISSUE_COMMENT_CONTEXT_BYTES = 24 << 10;
 /** 历史评论最多扫描的 Notes API 页数。 */
 const MAX_COMMENT_PAGES = 10;
 /** MR 标题和描述工具的输入上限。 */
@@ -199,6 +220,21 @@ export class GitLabClient {
       throw new Error("GitLab returned a merge request with a mismatched IID");
     }
     return result as unknown as MergeRequest;
+  }
+
+  async getIssue(projectId: number, issueIid: number, signal?: AbortSignal): Promise<GitLabIssue> {
+    if (projectId <= 0 || issueIid <= 0) throw new Error("project ID and issue IID must be positive");
+    const result = await this.getJson(`/projects/${projectId}/issues/${issueIid}`, signal);
+    if (
+      !isRecord(result) ||
+      result.iid !== issueIid ||
+      typeof result.title !== "string" ||
+      typeof result.description !== "string" ||
+      typeof result.state !== "string"
+    ) {
+      throw new Error("GitLab returned incomplete or mismatched Issue metadata");
+    }
+    return result as unknown as GitLabIssue;
   }
 
   async getProject(projectId: number, signal?: AbortSignal): Promise<Project> {
@@ -327,6 +363,88 @@ export class GitLabClient {
     throw new Error("merge request comments exceed the 10-page safety limit");
   }
 
+  async getIssueComments(
+    projectId: number,
+    issueIid: number,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<IssueComment[]> {
+    if (projectId <= 0 || issueIid <= 0) throw new Error("project ID and issue IID must be positive");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      throw new Error("Issue comment limit must be between 1 and 50");
+    }
+    const comments: IssueComment[] = [];
+    let totalBytes = 0;
+    for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+      const query = new URLSearchParams({
+        order_by: "created_at",
+        sort: "desc",
+        per_page: "100",
+        page: String(page),
+      });
+      const response = await this.request(
+        `/projects/${projectId}/issues/${issueIid}/notes?${query}`,
+        this.readToken,
+        "GET",
+        signal,
+      );
+      const body = await this.successBody(response);
+      let pageNotes: unknown;
+      try {
+        pageNotes = JSON.parse(new TextDecoder().decode(body));
+      } catch (error) {
+        throw new Error(`decode GitLab API response: ${String(error)}`, { cause: error });
+      }
+      if (!Array.isArray(pageNotes)) throw new Error("GitLab Issue notes response is not an array");
+      for (const note of pageNotes) {
+        if (!isRecord(note)) throw new Error("GitLab returned an invalid Issue note");
+        if (note.system === true) continue;
+        const noteId = typeof note.id === "number" && Number.isSafeInteger(note.id)
+          ? note.id
+          : typeof note.id === "string" ? note.id : undefined;
+        if (
+          noteId === undefined ||
+          typeof note.body !== "string" ||
+          typeof note.created_at !== "string" ||
+          !isRecord(note.author) ||
+          typeof note.author.username !== "string"
+        ) {
+          throw new Error("GitLab returned an incomplete Issue note");
+        }
+        let bodyText = "";
+        let characters = 0;
+        let commentBytes = 0;
+        let truncated = false;
+        const availableBytes = MAX_ISSUE_COMMENT_CONTEXT_BYTES - totalBytes;
+        for (const character of note.body) {
+          const bytes = Buffer.byteLength(character);
+          if (characters >= MAX_COMMENT_CHARACTERS || commentBytes + bytes > availableBytes) {
+            truncated = true;
+            break;
+          }
+          bodyText += character;
+          characters++;
+          commentBytes += bytes;
+        }
+        comments.push({
+          id: noteId,
+          author: note.author.username.slice(0, 128),
+          createdAt: note.created_at.slice(0, 64),
+          body: bodyText,
+          truncated,
+        });
+        totalBytes += commentBytes;
+        if (comments.length >= limit || totalBytes >= MAX_ISSUE_COMMENT_CONTEXT_BYTES) return comments;
+      }
+      const next = response.headers.get("x-next-page") ?? "";
+      if (!next && pageNotes.length < 100) return comments;
+      if (next && Number(next) !== page + 1) {
+        throw new Error(`GitLab returned invalid Issue notes pagination cursor "${next}"`);
+      }
+    }
+    throw new Error("Issue comments exceed the 10-page safety limit");
+  }
+
   async postNote(
     projectId: number,
     mrIid: number,
@@ -335,6 +453,72 @@ export class GitLabClient {
   ): Promise<GitLabWriteReceipt> {
     const form = new URLSearchParams({ body });
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes`, form, signal);
+  }
+
+  async postIssueNote(
+    projectId: number,
+    issueIid: number,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(issueIid) || issueIid <= 0) {
+      throw new Error("project ID and issue IID must be positive safe integers");
+    }
+    return this.write(`/projects/${projectId}/issues/${issueIid}/notes`, new URLSearchParams({ body }), signal);
+  }
+
+  async createDraftMergeRequest(
+    projectId: number,
+    input: { title: string; description: string; sourceBranch: string; targetBranch: string },
+    signal?: AbortSignal,
+  ): Promise<CreatedMergeRequest> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be a positive safe integer");
+    if (!input.title.trim() || [...input.title].length > MAX_MR_TITLE_CHARACTERS - 7) {
+      throw new Error("draft merge request title must contain 1-248 characters");
+    }
+    if ([...input.description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
+      throw new Error(`merge request description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
+    }
+    for (const [label, branch] of [["source", input.sourceBranch], ["target", input.targetBranch]] as const) {
+      if (!branch.trim() || branch.length > 255 || branch.startsWith("-") || branch.includes("\0")) {
+        throw new Error(`merge request ${label} branch is invalid`);
+      }
+    }
+    const form = new URLSearchParams({
+      title: `Draft: ${input.title.trim()}`,
+      description: input.description,
+      source_branch: input.sourceBranch,
+      target_branch: input.targetBranch,
+    });
+    let response: Response;
+    try {
+      response = await this.request(`/projects/${projectId}/merge_requests`, this.writeToken, "POST", signal, form);
+    } catch (error) {
+      throw new GitLabWriteError(`GitLab merge request creation outcome is unknown: ${String(error)}`, error);
+    }
+    if (!response.ok) await this.throwResponseError(response);
+    const body = await this.successBody(response);
+    let result: unknown;
+    try {
+      result = JSON.parse(new TextDecoder().decode(body));
+    } catch (error) {
+      throw new Error(`decode created merge request response: ${String(error)}`, { cause: error });
+    }
+    if (
+      !isRecord(result) ||
+      !Number.isSafeInteger(result.iid) ||
+      typeof result.web_url !== "string" ||
+      result.source_branch !== input.sourceBranch ||
+      result.target_branch !== input.targetBranch
+    ) {
+      throw new Error("GitLab returned incomplete or mismatched created merge request metadata");
+    }
+    return {
+      iid: result.iid as number,
+      webUrl: result.web_url,
+      sourceBranch: input.sourceBranch,
+      targetBranch: input.targetBranch,
+    };
   }
 
   async updateMergeRequest(

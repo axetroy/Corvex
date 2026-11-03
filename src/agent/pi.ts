@@ -45,7 +45,7 @@ export function getAgentToolAccess(
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
 ): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
   return {
-    webFetch: taskType !== "fix" && config.webEnabled,
+    webFetch: ["review", "explain", "chat"].includes(taskType) && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
@@ -80,6 +80,14 @@ export interface JobTraceContext {
     repositoryUrl?: string;
     expectedRemoteSha?: string;
     pushedSha?: string;
+  };
+  issue?: {
+    projectId: number;
+    issueIid: number;
+    sourceBranch: string;
+    targetBranch: string;
+    repositoryUrl?: string;
+    expectedTargetSha?: string;
   };
 }
 

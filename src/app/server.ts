@@ -7,7 +7,7 @@ import { JobStore } from "../jobs/store.js";
 import { jobStatuses, jobTypes, type JobStatus, type JobType } from "../jobs/model.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
 import { GitLabClient, GitLabWriteError } from "../gitlab/client.js";
-import { decodeNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
+import { decodeGitLabNoteEvent, isIssueNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
 const maxReviewRequestCharacters = 2000;
@@ -83,7 +83,7 @@ function contains(values: number[], target: number): boolean {
   return values.includes(target);
 }
 
-function eventId(event: ReturnType<typeof decodeNoteEvent>): string {
+function eventId(event: ReturnType<typeof decodeGitLabNoteEvent>): string {
   return `${event.project.id}:${event.object_attributes.id}`;
 }
 
@@ -420,7 +420,7 @@ export class CorvexServer {
       this.respondTrackedWebhook(response, 400, "unsupported event\n", deliveryId, null, { reason: "unsupported_event" });
       return;
     }
-    let event: ReturnType<typeof decodeNoteEvent>;
+    let event: ReturnType<typeof decodeGitLabNoteEvent>;
     try {
       const body = await traceExecutionStep(
         this.store,
@@ -436,18 +436,22 @@ export class CorvexServer {
         { deliveryId },
         "webhook.decode",
         { eventType, bodyBytes },
-        () => decodeNoteEvent(body),
-        (value) => ({
-          projectId: value.project.id,
-          mrIid: value.merge_request.iid,
-          noteId: value.object_attributes.id,
-          actorId: value.user.id,
-          actorUsername: value.user.username,
-          note: value.object_attributes.note,
-          noteableType: value.object_attributes.noteable_type,
-          system: value.object_attributes.system,
-          headSha: value.merge_request.last_commit?.id ?? "",
-        }),
+        () => decodeGitLabNoteEvent(body),
+        (value) => {
+          const issue = isIssueNoteEvent(value);
+          return {
+            projectId: value.project.id,
+            targetType: issue ? "issue" : "merge_request",
+            targetIid: issue ? value.issue.iid : value.merge_request.iid,
+            noteId: value.object_attributes.id,
+            actorId: value.user.id,
+            actorUsername: value.user.username,
+            note: value.object_attributes.note,
+            noteableType: value.object_attributes.noteable_type,
+            system: value.object_attributes.system,
+            headSha: issue ? "" : value.merge_request.last_commit?.id ?? "",
+          };
+        },
       );
     } catch (error) {
       const tooLarge = errorMessage(error).includes("exceeds 1 MiB");
@@ -466,10 +470,14 @@ export class CorvexServer {
     }
     const id = eventId(event);
     this.store.linkExecutionEventsToEvent(deliveryId, id);
+    const isIssue = isIssueNoteEvent(event);
+    const targetType = isIssue ? "issue" : "merge_request";
+    const targetIid = isIssueNoteEvent(event) ? event.issue.iid : event.merge_request.iid;
     const details = {
       eventId: id,
       projectId: event.project.id,
-      mrIid: event.merge_request.iid,
+      targetType,
+      targetIid,
       noteId: event.object_attributes.id,
       actorId: event.user.id,
     };
@@ -478,7 +486,7 @@ export class CorvexServer {
       actorUsername: event.user.username,
       noteableType: event.object_attributes.noteable_type,
       system: event.object_attributes.system,
-      headSha: event.merge_request.last_commit?.id ?? "",
+      headSha: isIssueNoteEvent(event) ? "" : event.merge_request.last_commit?.id ?? "",
     });
     if (event.object_attributes.system) {
       const reason = "system_note";
@@ -557,6 +565,18 @@ export class CorvexServer {
       return;
     }
     console.info("GitLab command recognized", { ...details, command: command.name });
+    if ((isIssue && command.name !== "chat" && command.name !== "implement") || (!isIssue && command.name === "implement")) {
+      const botUsername = this.config.gitlab.botUsername || "corvex";
+      await this.reply(
+        response,
+        event,
+        isIssue
+          ? `Mention \`@${botUsername}\` with your question or request. Use \`/implement\` only when you explicitly want code changes.`
+          : `The \`/implement\` command is only supported on Issues.`,
+        deliveryId,
+      );
+      return;
+    }
     if (command.name === "explain" && command.args.length === 0) {
       console.warn("GitLab command rejected", { ...details, command: command.name, reason: "missing_path" });
       this.store.recordExecutionEvent({
@@ -574,7 +594,7 @@ export class CorvexServer {
     }
     const reviewRequest = command.rawArgs.trim() ? command.rawArgs : "";
     const reviewRequestCharacters = [...reviewRequest].length;
-    if ((command.name === "review" || command.name === "chat") && reviewRequestCharacters > maxReviewRequestCharacters) {
+    if ((command.name === "review" || command.name === "chat" || command.name === "implement") && reviewRequestCharacters > maxReviewRequestCharacters) {
       this.store.recordExecutionEvent({
         deliveryId,
         eventId: id,
@@ -618,6 +638,60 @@ export class CorvexServer {
       output: { accepted: true },
     });
 
+    if (isIssueNoteEvent(event)) {
+      const projectId = event.project.id;
+      const issueIid = event.issue.iid;
+      const actorId = event.user.id;
+      try {
+        const result = await traceExecutionStep(
+          this.store,
+          { deliveryId, eventId: id },
+          "webhook.process_issue_request",
+          { command: command.name, projectId, issueIid, actorId },
+          () => this.store.createIssueImplementation(
+            id,
+            `${projectId}:issue:${issueIid}:note:${event.object_attributes.id}`,
+            { projectId, issueIid, actorId, request: reviewRequest.trim() },
+          ),
+          (value) => ({ response: value.response, delivered: value.delivered, job: value.job ?? null }),
+        );
+        if (result.job) {
+          console.info(result.job.created ? "GitLab task enqueued" : "GitLab task already queued", {
+            ...details,
+            type: "implement",
+            jobId: result.job.id,
+          });
+        }
+        if (!result.delivered) {
+          const delivery = await this.publishWebhookResponse(
+            deliveryId,
+            id,
+            projectId,
+            issueIid,
+            result.response,
+            result.job?.id,
+            "issue",
+          );
+          if (delivery === "in_progress") {
+            this.respondTrackedWebhook(response, 503, "webhook response delivery is in progress\n", deliveryId, id, {
+              ...details,
+              retryable: true,
+            });
+            return;
+          }
+        }
+        this.respondTrackedWebhook(response, 202, "", deliveryId, id, {
+          ...details,
+          command: command.name,
+          jobId: result.job?.id ?? "",
+        });
+      } catch (error) {
+        console.error("process GitLab issue command failed", { eventId: id, error: errorMessage(error) });
+        this.respondTrackedWebhook(response, 500, "failed to process issue command\n", deliveryId, id, { ...details });
+      }
+      return;
+    }
+
     const projectId = event.project.id;
     const mrIid = event.merge_request.iid;
     const actorId = event.user.id;
@@ -657,6 +731,8 @@ export class CorvexServer {
                 { projectId, mrIid, headSha, actorId, request: command.args.join(" ") },
                 this.config.fix.enabled,
               );
+            case "implement":
+              throw new Error("Issue implementation command reached the merge request dispatcher");
             case "explain":
               return this.store.createExplain(id, `${projectId}:${mrIid}:explain:${id}`, {
                 projectId,
@@ -715,17 +791,25 @@ export class CorvexServer {
 
   private async reply(
     response: ServerResponse,
-    event: ReturnType<typeof decodeNoteEvent>,
+    event: ReturnType<typeof decodeGitLabNoteEvent>,
     message: string,
     deliveryId: string,
   ): Promise<void> {
     const id = eventId(event);
+    const isIssue = isIssueNoteEvent(event);
+    const targetType = isIssue ? "issue" : "merge_request";
+    const targetIid = isIssue ? event.issue.iid : event.merge_request.iid;
     try {
       const result = await traceExecutionStep(
         this.store,
         { deliveryId, eventId: id },
         "webhook.record_response",
-        { projectId: event.project.id, mrIid: event.merge_request.iid, body: message },
+        {
+          projectId: event.project.id,
+          targetType,
+          targetIid,
+          body: message,
+        },
         () => this.store.recordResponse(id, message),
         (value) => ({ response: value.response, delivered: value.delivered }),
       );
@@ -734,8 +818,10 @@ export class CorvexServer {
           deliveryId,
           id,
           event.project.id,
-          event.merge_request.iid,
+          targetIid,
           result.response,
+          undefined,
+          targetType,
         );
         if (delivery === "in_progress") {
           this.respondTrackedWebhook(response, 503, "webhook response delivery is in progress\n", deliveryId, id, {
@@ -746,19 +832,19 @@ export class CorvexServer {
         console.info("GitLab command feedback published", {
           eventId: id,
           projectId: event.project.id,
-          mrIid: event.merge_request.iid,
+          targetIid,
         });
       } else {
         console.info("GitLab webhook duplicate delivery", {
           eventId: id,
           projectId: event.project.id,
-          mrIid: event.merge_request.iid,
+          targetIid,
         });
       }
       this.respondTrackedWebhook(response, 202, "", deliveryId, id, {
         eventId: id,
         projectId: event.project.id,
-        mrIid: event.merge_request.iid,
+        targetIid,
       });
     } catch (error) {
       console.error("publish GitLab command response failed", { eventId: id, error: errorMessage(error) });
@@ -773,6 +859,7 @@ export class CorvexServer {
     mrIid: number,
     body: string,
     jobId?: string,
+    targetType: "merge_request" | "issue" = "merge_request",
   ): Promise<"delivered" | "in_progress"> {
     const claim = this.store.claimWebhookDelivery(eventId, webhookDeliveryLeaseMs);
     if (claim.status !== "claimed") return claim.status;
@@ -783,7 +870,9 @@ export class CorvexServer {
         context,
         "gitlab.post_note",
         { projectId, mrIid, body },
-        () => this.gitlab.postNote(projectId, mrIid, body),
+        () => targetType === "issue"
+          ? this.gitlab.postIssueNote(projectId, mrIid, body)
+          : this.gitlab.postNote(projectId, mrIid, body),
         (receipt) => receipt,
         (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
       );

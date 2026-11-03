@@ -42,10 +42,44 @@ function validConfig(): CorvexConfig {
     chat: { historyComments: 20 },
     worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
+    issue: { implementEnabled: false, historyComments: 20 },
   };
 }
 
 describe("validateConfig", () => {
+  it("keeps issue implementation disabled by default and requires the Agent when enabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-issue-config-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(configPath, "issue:\n  implement_enabled: true\n", "utf8");
+      await expect(loadConfig(configPath)).rejects.toThrow("agent.enabled must be true when issue.implement_enabled is true");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+    expect(validConfig().issue.implementEnabled).toBe(false);
+  });
+
+  it("defaults and bounds Issue history comments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-issue-comments-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      const base = {
+        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        storage: { root, database: join(root, "state.db") },
+      };
+      await writeFile(configPath, JSON.stringify(base));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({ issue: { historyComments: 20 } });
+
+      await writeFile(configPath, JSON.stringify({ ...base, issue: { history_comments: 8 } }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({ issue: { historyComments: 8 } });
+
+      await writeFile(configPath, JSON.stringify({ ...base, issue: { history_comments: 51 } }));
+      await expect(loadConfig(configPath, "storage")).rejects.toThrow("issue.history_comments must be between 0 and 50");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("initializes a config file from the packaged example template", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-init-"));
     const configPath = join(root, "config.yaml");

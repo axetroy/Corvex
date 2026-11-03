@@ -1,5 +1,5 @@
 export interface CorvexCommand {
-  name: "review" | "explain" | "fix" | "status" | "cancel" | "chat";
+  name: "review" | "explain" | "fix" | "status" | "cancel" | "chat" | "implement";
   args: string[];
   rawArgs: string;
 }
@@ -30,7 +30,7 @@ export function parseCommand(note: string, botUsername = "corvex"): CorvexComman
     throw new NotCorvexCommandError();
   }
   if (fields.length < 2) {
-    throw new Error("missing command; use /review, /explain, /fix, /status, or /cancel");
+    throw new Error("missing command; use /review, /explain, /fix, /implement, /status, or /cancel");
   }
   if (!fields[1]!.startsWith("/")) {
     return {
@@ -43,9 +43,9 @@ export function parseCommand(note: string, botUsername = "corvex"): CorvexComman
   if (!name) {
     throw new Error("missing command; use /review, /explain, /fix, /status, or /cancel");
   }
-  if (!["review", "explain", "fix", "status", "cancel"].includes(name)) {
+  if (!["review", "explain", "fix", "implement", "status", "cancel"].includes(name)) {
     throw new Error(
-      `unknown command "${fields[1]}"; supported commands are /review, /explain, /fix, /status, and /cancel`,
+      `unknown command "${fields[1]}"; supported commands are /review, /explain, /fix, /implement, /status, and /cancel`,
     );
   }
   const rawArgs = rawAfterTokens(note, 2);

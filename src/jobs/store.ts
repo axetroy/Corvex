@@ -16,6 +16,7 @@ import {
   type JobPage,
   type JobSummary,
   type JobStatus,
+  type JobTargetType,
   type JobStatusTransition,
   type JobTraceEntry,
   type JobTraceKind,
@@ -42,6 +43,8 @@ interface JobRow {
   status: JobStatus;
   project_id: number;
   mr_iid: number;
+  target_type: JobTargetType;
+  target_iid: number;
   head_sha: string;
   actor_id: number;
   request: string;
@@ -130,6 +133,10 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
   if (!isJobType(type)) throw new Error(`SQLite job type "${type}" is invalid`);
   const status = stringColumn(row, "status");
   if (!isJobStatus(status)) throw new Error(`SQLite job status "${status}" is invalid`);
+  const targetType = stringColumn(row, "target_type");
+  if (targetType !== "merge_request" && targetType !== "issue") {
+    throw new Error(`SQLite job target type "${targetType}" is invalid`);
+  }
   const failureStage = stringColumn(row, "failure_stage");
   if (failureStage && !isJobStatus(failureStage)) {
     throw new Error(`SQLite job failure stage "${failureStage}" is invalid`);
@@ -140,6 +147,8 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
     status,
     project_id: numberColumn(row, "project_id"),
     mr_iid: numberColumn(row, "mr_iid"),
+    target_type: targetType,
+    target_iid: numberColumn(row, "target_iid"),
     head_sha: stringColumn(row, "head_sha"),
     actor_id: numberColumn(row, "actor_id"),
     request: stringColumn(row, "request"),
@@ -249,6 +258,8 @@ function mapJob(row: JobRow): Job {
     status: row.status,
     projectId: row.project_id,
     mrIid: row.mr_iid,
+    targetType: row.target_type,
+    targetIid: row.target_iid,
     headSha: row.head_sha,
     actorId: row.actor_id,
     request: row.request,
@@ -269,6 +280,8 @@ function mapJobSummary(row: JobRow): JobSummary {
     status: job.status,
     projectId: job.projectId,
     mrIid: job.mrIid,
+    targetType: job.targetType,
+    targetIid: job.targetIid,
     headSha: job.headSha,
     actorId: job.actorId,
     request: job.request,
@@ -390,7 +403,7 @@ export class JobStore {
     inputTokens: number,
     outputTokens: number,
   ): void {
-    if (!["review", "explain", "fix", "chat"].includes(taskType)) {
+    if (!["review", "explain", "fix", "chat", "implement"].includes(taskType)) {
       throw new Error(`unsupported model call task type "${taskType}"`);
     }
     if (!["success", "failure"].includes(outcome)) {
@@ -726,10 +739,10 @@ export class JobStore {
           this.db
             .prepare(
               `INSERT INTO jobs
-               (id,idempotency_key,event_id,type,status,project_id,mr_iid,head_sha,actor_id,request,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+              (id,idempotency_key,event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
-            .run(id, key, eventId, "fix", "queued", job.projectId, job.mrIid, job.headSha, job.actorId, job.request, created, created);
+            .run(id, key, eventId, "fix", "queued", job.projectId, job.mrIid, "merge_request", job.mrIid, job.headSha, job.actorId, job.request, created, created);
           resultJob = { id, created: true };
           response = `Queued fix task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
         }
@@ -737,6 +750,44 @@ export class JobStore {
       this.insertEvent(eventId, response);
       if (resultJob) this.linkExecutionEvents(eventId, resultJob.id);
       this.insertAudit(job.actorId, "request_fix", `${job.projectId}:${job.mrIid}`, auditResult);
+      return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
+    });
+  }
+
+  createIssueImplementation(
+    eventId: string,
+    key: string,
+    job: { projectId: number; issueIid: number; actorId: number; request: string },
+  ): EventResult {
+    return this.transaction(() => {
+      const previous = this.eventResult(eventId);
+      if (previous) return previous;
+      let response: string;
+      let resultJob: EventResult["job"];
+      let auditResult = "queued";
+      const existing = this.db.prepare("SELECT id FROM jobs WHERE idempotency_key = ?").get(key) as
+        | { id: string }
+        | undefined;
+      if (existing) {
+        resultJob = { id: existing.id, created: false };
+        response = `Issue assistant task \`${existing.id}\` is already queued for this comment.`;
+        auditResult = "authorized_duplicate";
+      } else {
+        const created = new Date().toISOString();
+        const id = randomUUID();
+        this.db
+          .prepare(
+            `INSERT INTO jobs
+             (id,idempotency_key,event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          )
+          .run(id, key, eventId, "implement", "queued", job.projectId, 0, "issue", job.issueIid, "", job.actorId, job.request, created, created);
+        resultJob = { id, created: true };
+        response = `Queued Issue assistant task \`${id}\` for issue #${job.issueIid}.`;
+      }
+      this.insertEvent(eventId, response);
+      if (resultJob) this.linkExecutionEvents(eventId, resultJob.id);
+      this.insertAudit(job.actorId, "request_issue_assistant", `${job.projectId}:#${job.issueIid}`, auditResult);
       return { response, delivered: false, ...(resultJob ? { job: resultJob } : {}) };
     });
   }
@@ -878,7 +929,7 @@ export class JobStore {
       this.recoverExpiredLeases();
       const row = readJobRow(this.db
         .prepare(
-          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat') ORDER BY created_at LIMIT 1",
+          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat','implement') ORDER BY created_at LIMIT 1",
         )
         .get(Date.now()));
       if (!row) return undefined;
@@ -1210,6 +1261,8 @@ export class JobStore {
         status: summary.status,
         projectId: summary.projectId,
         mrIid: summary.mrIid,
+        targetType: summary.targetType,
+        targetIid: summary.targetIid,
         headSha: summary.headSha,
         actorId: summary.actorId,
         request: summary.request,
@@ -1254,10 +1307,10 @@ export class JobStore {
         this.db
           .prepare(
             `INSERT INTO jobs
-             (id,idempotency_key,event_id,type,status,project_id,mr_iid,head_sha,actor_id,request,created_at,updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+             (id,idempotency_key,event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           )
-          .run(id, key, eventId, type, "queued", job.projectId, job.mrIid, job.headSha, job.actorId, job.request ?? "", created, created);
+           .run(id, key, eventId, type, "queued", job.projectId, job.mrIid, "merge_request", job.mrIid, job.headSha, job.actorId, job.request ?? "", created, created);
         resultJob = { id, created: true };
         response = `Queued ${label.toLowerCase()} task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
       }
@@ -1382,6 +1435,7 @@ export class JobStore {
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
+        target_type TEXT NOT NULL DEFAULT 'merge_request', target_iid INTEGER NOT NULL DEFAULT 0,
         head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
@@ -1447,10 +1501,13 @@ export class JobStore {
       cancel_requested: "INTEGER NOT NULL DEFAULT 0",
       failure_stage: "TEXT NOT NULL DEFAULT ''",
       available_at: "INTEGER NOT NULL DEFAULT 0",
+      target_type: "TEXT NOT NULL DEFAULT 'merge_request'",
+      target_iid: "INTEGER NOT NULL DEFAULT 0",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);
     }
+    this.db.exec("UPDATE jobs SET target_iid=mr_iid WHERE target_iid=0 AND target_type='merge_request'");
     this.db.exec("CREATE INDEX IF NOT EXISTS jobs_queue_available_idx ON jobs(status,available_at,created_at)");
     const traceColumns = this.db.prepare("PRAGMA table_info(job_trace)").all() as { name: string }[];
     const existingTraceColumns = new Set(traceColumns.map((column) => column.name));

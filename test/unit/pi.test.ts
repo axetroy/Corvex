@@ -34,6 +34,7 @@ describe("PiAgent", () => {
     expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
     expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
     expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true, mrMetadata: true, gitHistory: true, gitWrite: true });
+    expect(getAgentToolAccess("implement", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
     expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
       webFetch: false,
       mcp: true,

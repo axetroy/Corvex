@@ -8,7 +8,7 @@ Corvex separates the request path from model and repository work:
 2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, model call metrics, and optional daily token reservations.
 3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
-5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, or fix proposal tasks.
+5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks.
 
 GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
 
@@ -19,13 +19,13 @@ The server can run without a worker: commands are accepted and persisted, but mo
 ## Request and queue workflow
 
 1. GitLab sends a `Note Hook` to `POST /webhooks/gitlab`.
-2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request notes only, limits the body to 1 MiB, and ignores system notes.
+2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request and Issue notes, limits the body to 1 MiB, and ignores system notes.
 3. Project IDs must be allowlisted, and user IDs on `gitlab.blocked_user_ids` are rejected. Any other commenter can invoke a slash command or send plain text addressed to `@<gitlab.bot_username>`.
 4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) job are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
 5. The server posts an immediate acknowledgement or validation response to the MR using the GitLab write token. Model inference does not run in the webhook request.
-6. A worker claims queued review, explain, chat, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
+6. A worker claims queued review, explain, chat, fix, or implement jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
 
-The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel`; plain text after the bot mention starts a chat about the current MR. See [Getting started](./guide) for examples.
+The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel` on MRs. Plain text after the bot mention starts a chat about the current MR or an assistant task on an Issue. Issue tasks include recent non-system comments and let the model reply, ask for clarification, or propose implementation. Code writes require `issue.implement_enabled: true`; `/implement [request]` remains available as an explicit implementation request. See [Getting started](./guide) for examples.
 
 ## Review workflow
 
@@ -47,6 +47,8 @@ The model is not told that tests were run; Corvex does not execute project tests
 **Fix** is disabled by default and follows the same project allowlist and optional `gitlab.blocked_user_ids` as other commands. The worker sends the bounded MR diff and optional request to the model, accepts only a structured unified diff, and restricts changes to reviewable files already present in the MR diff. It applies the patch in the isolated worktree and runs `git apply --check` and `git diff --check`. After another MR snapshot check, it posts the proposed patch for a human to inspect and apply.
 
 Fix mode does not execute tests, scripts, hooks, or other repository code. It does not create commits or push to GitLab. A posted patch is a proposal, not a verified change.
+
+**Issue assistance** follows the project allowlist and optional user blocklist. Any ordinary bot mention queues an assistant task; the model receives the Issue and up to `issue.history_comments` recent non-system comments (default 20, range 0–50; comment context also has page and byte caps). It can reply or request clarification without publishing code. `issue.implement_enabled` is a separate, default-off write gate: when enabled, an explicit implementation request can produce a bounded unified diff. The project default branch is the target unless the current request explicitly names another existing branch; comments cannot authorize a branch change. The worker pins that target's base SHA, validates the patch (regular text files only; no traversal, Git metadata paths, symlink parents, binary content, renames, or mode changes), and rechecks the Issue and target SHA before pushing a new `corvex/issue-*` branch and creating a Draft MR. It never runs project scripts/tests, auto-merges, or closes the Issue. Publishing is not automatically retried when the remote outcome may be uncertain.
 
 ## Job states, leases, retries, and cancellation
 

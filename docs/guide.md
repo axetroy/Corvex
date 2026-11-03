@@ -81,12 +81,21 @@ Mention the configured GitLab bot account, then use a slash-prefixed command. Th
 | `@corvex-bot /status` | Show the latest task state for the merge request. |
 | `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
 | `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
+| `@corvex-bot Is this change feasible?` | In a GitLab Issue, ask for analysis or clarification; the agent replies without changing code. |
+| `@corvex-bot Add the requested validation` | In a GitLab Issue, ask the agent to decide whether to reply or propose implementation. Code writes require Issue implementation to be enabled. |
+| `@corvex-bot /implement Add the requested validation` | Explicitly request implementation in an Issue; code writes still require Issue implementation to be enabled. |
 
 `/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
 
 ## 5. Enable model tasks
 
 Reviews, explanations, and fix proposals require a worker and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
+
+## Issue assistance and implementation
+
+Issue mentions require the agent to be enabled. The agent receives the Issue and the latest 20 non-system comments by default; configure `issue.history_comments` from 0 to 50. It decides whether to answer, ask a clarifying question, or propose implementation. Replies do not create or push code.
+
+Code writes are disabled by default. To allow implementation, set `issue.implement_enabled: true` and provide a GitLab write token with permission to push branches and create merge requests. The worker targets the project's default branch unless the current request explicitly names another existing branch; comments cannot select a branch. It creates a new `corvex/issue-*` branch and opens a Draft MR. It does not run repository scripts, tests, or automatically merge. Review the resulting MR before merging.
 
 In another process, start:
 

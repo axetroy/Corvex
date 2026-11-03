@@ -62,6 +62,10 @@ export interface CorvexConfig {
     enabled: boolean;
     maxPatchBytes: number;
   };
+  issue: {
+    implementEnabled: boolean;
+    historyComments: number;
+  };
 }
 
 export type ResponseLanguage = "en" | "zh-CN";
@@ -102,6 +106,7 @@ const defaults: CorvexConfig = {
   chat: { historyComments: 20 },
   worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
   fix: { enabled: false, maxPatchBytes: 128 << 10 },
+  issue: { implementEnabled: false, historyComments: 20 },
 };
 
 function object(value: unknown, label: string): JsonObject {
@@ -259,6 +264,10 @@ function parseConfig(raw: unknown): CorvexConfig {
       enabled: boolean(fix.enabled, defaults.fix.enabled),
       maxPatchBytes: number(fix.max_patch_bytes, defaults.fix.maxPatchBytes),
     },
+    issue: {
+      implementEnabled: boolean(object(root.issue, "issue").implement_enabled, defaults.issue.implementEnabled),
+      historyComments: number(object(root.issue, "issue").history_comments, defaults.issue.historyComments),
+    },
   };
 }
 
@@ -361,6 +370,12 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.fix.enabled && !config.agent.enabled) {
     problems.push("agent.enabled must be true when fix.enabled is true");
+  }
+  if (config.issue.implementEnabled && !config.agent.enabled) {
+    problems.push("agent.enabled must be true when issue.implement_enabled is true");
+  }
+  if (!Number.isInteger(config.issue.historyComments) || config.issue.historyComments < 0 || config.issue.historyComments > 50) {
+    problems.push("issue.history_comments must be between 0 and 50");
   }
   if (config.fix.maxPatchBytes <= 0 || config.fix.maxPatchBytes > 256 << 10) {
     problems.push("fix.max_patch_bytes must be between 1 byte and 256 KiB");

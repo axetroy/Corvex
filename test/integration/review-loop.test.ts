@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import { Worker } from "../../src/app/worker.js";
 import type { CorvexConfig } from "../../src/config/config.js";
+import { GitManager } from "../../src/git/manager.js";
 import { JobStore } from "../../src/jobs/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
 
@@ -91,6 +92,7 @@ describe("review task loop", () => {
     const mergeRequestReads = new Map<number, number>();
     const currentHeads = new Map<number, string>();
     const postedNotes: string[] = [];
+    const createdMergeRequests: URLSearchParams[] = [];
     const postedDiscussions: URLSearchParams[] = [];
     let discussionAttempts = 0;
     let rejectDiscussionFor: number | undefined;
@@ -120,9 +122,31 @@ describe("review task loop", () => {
         }));
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/v4/projects/1/issues/9") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ iid: 9, title: "Add generated file", description: "Create a small source file.", state: "opened" }));
+        return;
+      }
       if (url.pathname === "/api/v4/projects/1" && request.method === "GET") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ id: 1, http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git` }));
+        response.end(JSON.stringify({ id: 1, http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`, default_branch: "main" }));
+        return;
+      }
+      if (url.pathname === "/api/v4/projects/1/merge_requests" && request.method === "POST") {
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => { body += chunk; });
+        request.on("end", () => {
+          const fields = new URLSearchParams(body);
+          createdMergeRequests.push(fields);
+          response.writeHead(201, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            iid: 12,
+            web_url: "https://gitlab.example.test/project/-/merge_requests/12",
+            source_branch: fields.get("source_branch"),
+            target_branch: fields.get("target_branch"),
+          }));
+        });
         return;
       }
       if (url.pathname.endsWith("/notes") && request.method === "POST") {
@@ -282,6 +306,7 @@ describe("review task loop", () => {
       chat: { historyComments: 20 },
       worker: { pollInterval: 20, jobTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
     };
     serverStore = await JobStore.open(config.storage.database);
     workerStore = await JobStore.open(config.storage.database);
@@ -401,6 +426,63 @@ describe("review task loop", () => {
     expect(fixDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["fixing", "verifying", "publishing", "completed"]));
     expect(fixDetails?.events.map(({ step }) => step)).toContain("gitlab.post_fix_proposal");
     expect(postedNotes.some((body) => body.includes("Replace the unsafe value"))).toBe(true);
+
+    const issuePatch = [
+      "diff --git a/generated.ts b/generated.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/generated.ts",
+      "@@ -0,0 +1 @@",
+      "+export const generated = true;",
+      "",
+    ].join("\n");
+    modelActions.push({ content: JSON.stringify({
+      action: "implement",
+      summary: "Add the requested generated source file.",
+      patch: issuePatch,
+    }) });
+    config.issue.implementEnabled = true;
+    const pushIssueBranch = vi.spyOn(GitManager.prototype, "pushIssueWorkspace").mockImplementation(async (workspace, sourceBranch) => ({
+      sha: await git(workspace.path, "rev-parse", "HEAD"),
+      branch: sourceBranch,
+    }));
+    const enabledIssueResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/webhooks/gitlab`, {
+      method: "POST",
+      headers: {
+        "x-gitlab-token": "webhook-secret",
+        "x-gitlab-event": "Note Hook",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        object_kind: "note",
+        user: { id: 2, username: "developer" },
+        project: { id: 1 },
+        object_attributes: { id: 107, note: "@corvex-bot /implement Add the requested file", noteable_type: "Issue", system: false },
+        issue: { iid: 9 },
+      }),
+    });
+    expect(enabledIssueResponse.status).toBe(202);
+    const issueJob = serverStore.listJobs(undefined, 50).find((candidate) => candidate.type === "implement");
+    if (!issueJob) throw new Error("Issue webhook did not enqueue an implementation job");
+    await waitForStatus(issueJob.id, "completed");
+    const issueDetails = serverStore.getJobDetails(issueJob.id);
+    expect(issueDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["analyzing", "fixing", "verifying", "publishing", "completed"]));
+    expect(issueDetails?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
+      "gitlab.get_issue",
+      "git.prepare_issue_workspace",
+      "workflow.issue_decision",
+      "git.apply_issue_patch",
+      "git.commit_issue",
+      "git.push_issue_branch",
+      "gitlab.create_draft_merge_request",
+      "gitlab.post_issue_result",
+    ]));
+    expect(pushIssueBranch).toHaveBeenCalledOnce();
+    expect(createdMergeRequests).toHaveLength(1);
+    expect(createdMergeRequests[0]?.get("title")).toMatch(/^Draft: Implement issue #9:/);
+    expect(createdMergeRequests[0]?.get("target_branch")).toBe("main");
+    expect(createdMergeRequests[0]?.get("source_branch")).toMatch(/^corvex\/issue-9-/);
+    expect(postedNotes.some((body) => body.includes("Draft merge request created: https://gitlab.example.test/project/-/merge_requests/12"))).toBe(true);
 
     rejectDiscussionFor = 6;
     modelActions.push({ content: reviewContent });

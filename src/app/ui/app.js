@@ -67,6 +67,13 @@ function formatDate(value) {
   return Number.isNaN(date.valueOf()) ? copy.invalidDate : date.toLocaleString(locale);
 }
 
+function formatJobTarget(job) {
+  const issue = job.targetType === "issue";
+  return (issue ? copy.issueTargetTemplate : copy.mrTargetTemplate)
+    .replace("{project}", String(job.projectId))
+    .replace("{iid}", String(issue ? job.targetIid : job.mrIid));
+}
+
 function formatDuration(seconds) {
   if (seconds === null || seconds === undefined) return copy.none;
   if (seconds < 60) return copy.durationSecondsTemplate.replace("{value}", String(seconds));
@@ -250,7 +257,7 @@ async function renderJobs(version) {
       typeSelect,
       copy.typeFilter,
       copy.allTypes,
-      [["review", copy.types.review], ["fix", copy.types.fix], ["explain", copy.types.explain], ["chat", copy.types.chat]],
+      [["review", copy.types.review], ["fix", copy.types.fix], ["explain", copy.types.explain], ["chat", copy.types.chat], ["implement", copy.types.implement]],
       queue.type,
     ),
   );
@@ -282,7 +289,7 @@ async function renderJobs(version) {
       row,
       append(element("td"), statusBadge(job.status)),
       element("td", copy.types[job.type] ?? job.type),
-      element("td", `${job.projectId}:${job.mrIid}`),
+      element("td", formatJobTarget(job)),
       append(element("td"), id),
       element("td", formatDate(job.createdAt)),
       element("td", formatDuration(calculateJobDurationSeconds(job))),
@@ -1066,7 +1073,7 @@ async function renderJobDetails(version, jobId) {
   const details = element("dl", undefined, "detail-grid");
   detailItem(details, copy.statusFilter, copy.statuses[job.status] ?? job.status);
   detailItem(details, copy.typeFilter, copy.types[job.type] ?? job.type);
-  detailItem(details, copy.projectMrDetails, `${job.projectId}:${job.mrIid}`);
+  detailItem(details, copy.projectMrDetails, formatJobTarget(job));
   detailItem(details, copy.requesterId, job.actorId);
   detailItem(details, copy.created, formatDate(job.createdAt));
   detailItem(details, copy.lastUpdated, formatDate(job.updatedAt));

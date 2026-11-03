@@ -19,6 +19,13 @@ describe("parseCommand", () => {
     });
   });
 
+  it("parses an explicit issue implementation request", () => {
+    expect(parseCommand("@corvex /implement Add a setting\nwith tests")).toMatchObject({
+      name: "implement",
+      rawArgs: "Add a setting\nwith tests",
+    });
+  });
+
   it("routes free-text mentions to chat and preserves the full request", () => {
     const request = "总结一下这个 PR 的内容\n\n例子：\n  标题：Improve validation";
     expect(parseCommand(`@corvex-bot ${request}`, "corvex-bot")).toEqual({
@@ -47,7 +54,7 @@ describe("parseCommand", () => {
 
   it("rejects unknown commands", () => {
     expect(() => parseCommand("@corvex /deploy")).toThrow(
-      'unknown command "/deploy"; supported commands are /review, /explain, /fix, /status, and /cancel',
+      'unknown command "/deploy"; supported commands are /review, /explain, /fix, /implement, /status, and /cancel',
     );
   });
 });

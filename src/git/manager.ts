@@ -240,16 +240,81 @@ export class GitManager {
     });
   }
 
-  async cleanupWorkspace(workspace: Workspace, signal?: AbortSignal): Promise<void> {
+  async prepareIssueWorkspace(
+    projectId: number,
+    jobId: string,
+    repositoryUrl: string,
+    targetBranch: string,
+    sourceBranch: string,
+    signal?: AbortSignal,
+  ): Promise<{ workspace: Workspace; baseSha: string }> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    if (!jobIdPattern.test(jobId)) throw new Error("job ID contains invalid path characters");
+    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
+    return this.withProjectLock(projectId, async () => {
+      const mirror = join(this.mirrorRoot, `${projectId}.git`);
+      await this.updateMirror(mirror, canonicalUrl, signal);
+      for (const branch of [targetBranch, sourceBranch]) {
+        await this.run(mirror, ["--git-dir", mirror, "check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
+      }
+      if (!sourceBranch.startsWith("corvex/issue-") || sourceBranch === targetBranch) {
+        throw new Error("Issue source branches must use the corvex/issue- prefix and differ from the target branch");
+      }
+      const base = await this.run(
+        mirror,
+        ["--git-dir", mirror, "rev-parse", "--verify", `refs/heads/${targetBranch}^{commit}`],
+        undefined,
+        maxErrorOutput,
+        signal,
+      );
+      const baseSha = base.stdout.toString().trim();
+      if (!shaPattern.test(baseSha)) throw new Error("GitLab target branch did not resolve to a full commit SHA");
+      const projectRoot = join(this.workspaceRoot, String(projectId));
+      await mkdir(projectRoot, { recursive: true, mode: 0o750 });
+      const rootInfo = await lstat(projectRoot);
+      if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+        throw new Error("project workspace path is not a regular directory");
+      }
+      const workspacePath = join(projectRoot, jobId);
+      try {
+        await lstat(workspacePath);
+        throw new Error(`workspace "${jobId}" already exists`);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
+      await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, baseSha], undefined, maxErrorOutput, signal);
+      try {
+        await this.run(workspacePath, ["switch", "--create", sourceBranch], undefined, maxErrorOutput, signal);
+        const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+        if (actual.toLowerCase() !== baseSha.toLowerCase()) {
+          throw new Error(`Issue workspace HEAD mismatch: got ${actual}, expected ${baseSha}`);
+        }
+      } catch (error) {
+        await this.removeWorktree(mirror, workspacePath);
+        throw error;
+      }
+      return { workspace: { projectId, jobId, path: workspacePath, headSha: baseSha }, baseSha };
+    });
+  }
+
+  async cleanupWorkspace(workspace: Workspace, signal?: AbortSignal, issueSourceBranch?: string): Promise<void> {
     if (workspace.projectId <= 0 || !jobIdPattern.test(workspace.jobId)) {
       throw new Error("invalid workspace identity");
+    }
+    if (issueSourceBranch && !issueSourceBranch.startsWith("corvex/issue-")) {
+      throw new Error("invalid Issue source branch");
     }
     const expectedPath = join(this.workspaceRoot, String(workspace.projectId), workspace.jobId);
     if (resolve(workspace.path) !== resolve(expectedPath)) {
       throw new Error("workspace path does not match its managed location");
     }
     await this.withProjectLock(workspace.projectId, async () => {
-      await this.removeWorktree(join(this.mirrorRoot, `${workspace.projectId}.git`), expectedPath, signal);
+      const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+      await this.removeWorktree(mirror, expectedPath, signal);
+      if (issueSourceBranch) {
+        await this.run(mirror, ["--git-dir", mirror, "check-ref-format", "--branch", issueSourceBranch], undefined, maxErrorOutput, signal);
+        await this.run(mirror, ["--git-dir", mirror, "branch", "-D", issueSourceBranch], undefined, maxErrorOutput, signal);
+      }
     });
   }
 
@@ -526,6 +591,68 @@ export class GitManager {
     return { patch: appliedPatch, changedFiles };
   }
 
+  async applyIssuePatch(
+    workspace: Workspace,
+    patch: string,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<{ patch: string; changedFiles: string[] }> {
+    this.validateWorkspace(workspace);
+    if (!patch.trim() || Buffer.byteLength(patch) > limit || limit <= 0 || limit > maxPatchBytes) {
+      throw new Error("Issue patch is empty or exceeds its configured size limit");
+    }
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (!status.clean) throw new Error("Issue patch worktree is not clean");
+    const trackedResult = await this.run(workspace.path, ["ls-files", "-z"], undefined, maxOutput, signal);
+    if (trackedResult.truncated) throw new Error("tracked file list exceeds the output limit");
+    const trackedPaths = new Set(trackedResult.stdout.toString().split("\0").filter(Boolean));
+    const paths = this.validateIssuePatch(patch, trackedPaths);
+    for (const name of paths) {
+      const parts = name.split("/");
+      for (let index = 1; index < parts.length; index++) {
+        const parentPath = join(workspace.path, ...parts.slice(0, index));
+        try {
+          const parent = await lstat(parentPath);
+          if (!parent.isDirectory() || parent.isSymbolicLink()) {
+            throw new Error(`Issue patch path "${name}" has a non-directory or symbolic-link parent`);
+          }
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") break;
+          throw error;
+        }
+      }
+      if (!trackedPaths.has(name)) {
+        try {
+          await lstat(join(workspace.path, ...parts));
+          throw new Error(`Issue patch new file "${name}" already exists`);
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        }
+      }
+      const current = await this.run(workspace.path, ["ls-tree", "-z", "HEAD", "--", name], undefined, maxErrorOutput, signal);
+      const entry = current.stdout.toString();
+      if (trackedPaths.has(name) && !entry.startsWith("100644 blob ") && !entry.startsWith("100755 blob ")) {
+        throw new Error(`Issue patch target "${name}" is not a regular tracked file`);
+      }
+    }
+    await this.run(workspace.path, ["apply", "--check", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
+    await this.run(workspace.path, ["apply", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
+    await this.run(workspace.path, ["diff", "--check", "HEAD", "--"], undefined, maxErrorOutput, signal);
+    const [modified, untracked] = await Promise.all([
+      this.run(workspace.path, ["diff", "--name-only", "-z", "HEAD", "--"], undefined, maxPatchBytes, signal),
+      this.run(workspace.path, ["ls-files", "--others", "--exclude-standard", "-z"], undefined, maxPatchBytes, signal),
+    ]);
+    if (modified.truncated || untracked.truncated) throw new Error("Issue patch changed-file list exceeds output limits");
+    const changedFiles = [...new Set([
+      ...modified.stdout.toString().split("\0").filter(Boolean),
+      ...untracked.stdout.toString().split("\0").filter(Boolean),
+    ])].sort();
+    if (changedFiles.length !== paths.length || changedFiles.some((name) => !paths.includes(name)) || paths.some((name) => !changedFiles.includes(name))) {
+      throw new Error("Issue patch changed no files or modified an unauthorized path");
+    }
+    return { patch, changedFiles };
+  }
+
   async getWorkspaceStatus(workspace: Workspace, signal?: AbortSignal): Promise<GitWorkspaceStatus> {
     this.validateWorkspace(workspace);
     const [head, status] = await Promise.all([
@@ -594,6 +721,67 @@ export class GitManager {
       sha: head.stdout.toString().trim(),
       message: message.trim(),
       changedFiles: changed.stdout.toString().split("\0").filter(Boolean),
+    };
+  }
+
+  async commitIssueWorkspace(
+    workspace: Workspace,
+    message: string,
+    changedFiles: string[],
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; message: string; changedFiles: string[] }> {
+    this.validateWorkspace(workspace);
+    if (!message.trim() || message.length > 2000 || message.includes("\0")) {
+      throw new Error("commit message must contain 1-2000 characters");
+    }
+    if (changedFiles.length === 0 || changedFiles.length > 1000 || changedFiles.some((name) => !this.validPatchPath(name))) {
+      throw new Error("Issue commit requires a bounded list of valid patch paths");
+    }
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (status.clean || status.files.some(({ status: fileStatus, path }) =>
+      !changedFiles.includes(path) || ![" M", " D", "??"].includes(fileStatus),
+    )) {
+      throw new Error("Issue commit worktree contains changes outside the validated patch");
+    }
+    await this.run(workspace.path, ["--literal-pathspecs", "add", "-A", "--", ...changedFiles], undefined, maxErrorOutput, signal);
+    await this.run(workspace.path, ["diff", "--cached", "--check"], undefined, maxErrorOutput, signal);
+    const staged = await this.run(workspace.path, ["diff", "--cached", "--name-only", "-z"], undefined, maxPatchBytes, signal);
+    if (staged.truncated) throw new Error("Issue staged file list exceeds output limit");
+    const stagedFiles = staged.stdout.toString().split("\0").filter(Boolean).sort();
+    const expectedFiles = [...new Set(changedFiles)].sort();
+    if (stagedFiles.length !== expectedFiles.length || stagedFiles.some((name, index) => name !== expectedFiles[index])) {
+      throw new Error("Issue commit staged paths do not match the validated patch");
+    }
+    const ancestry = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (ancestry.exitCode !== 0) throw new Error("Issue workspace HEAD is not descended from its pinned base");
+    await this.run(
+      workspace.path,
+      ["-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", message.trim()],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000 },
+    );
+    const committed = await this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal);
+    const committedFiles = await this.run(
+      workspace.path,
+      ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"],
+      undefined,
+      maxPatchBytes,
+      signal,
+    );
+    if (committedFiles.truncated) throw new Error("Issue committed file list exceeds output limit");
+    return {
+      sha: committed.stdout.toString().trim(),
+      message: message.trim(),
+      changedFiles: committedFiles.stdout.toString().split("\0").filter(Boolean),
     };
   }
 
@@ -666,6 +854,81 @@ export class GitManager {
       throw new GitPushError(`Git push outcome is unknown: ${String(error)}`, error);
     }
     return { sha: status.headSha, branch };
+  }
+
+  async pushIssueWorkspace(
+    workspace: Workspace,
+    sourceBranch: string,
+    targetBranch: string,
+    expectedRepositoryUrl: string,
+    expectedTargetSha: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; branch: string }> {
+    this.validateWorkspace(workspace);
+    if (!this.writeToken) throw new Error("Git write token is required to push changes");
+    if (!sourceBranch.startsWith("corvex/issue-") || sourceBranch === targetBranch) {
+      throw new Error("Issue pushes are restricted to a new corvex/issue- branch");
+    }
+    if (!shaPattern.test(expectedTargetSha)) throw new Error("expected target SHA must be full-length");
+    for (const branch of [sourceBranch, targetBranch]) {
+      if (!branch || branch.startsWith("-")) throw new Error("target branch is invalid");
+      await this.run(workspace.path, ["check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
+    }
+    const [fetchUrl, pushUrl, status] = await Promise.all([
+      this.run(workspace.path, ["remote", "get-url", "origin"], undefined, maxErrorOutput, signal),
+      this.run(workspace.path, ["remote", "get-url", "--push", "origin"], undefined, maxErrorOutput, signal),
+      this.getWorkspaceStatus(workspace, signal),
+    ]);
+    if (
+      fetchUrl.stdout.toString().trim() !== expectedRepositoryUrl ||
+      pushUrl.stdout.toString().trim() !== expectedRepositoryUrl
+    ) {
+      throw new Error("Git origin does not match the authorized GitLab project repository");
+    }
+    if (!status.clean) throw new Error("Issue branch push requires a clean worktree");
+    const target = await this.run(
+      workspace.path,
+      ["ls-remote", "--heads", "origin", `refs/heads/${targetBranch}`],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000, authToken: this.writeToken },
+    );
+    const targetSha = target.stdout.toString().trim().split(/\s+/u)[0];
+    if (targetSha?.toLowerCase() !== expectedTargetSha.toLowerCase()) {
+      throw new Error("GitLab target branch changed while the Issue task was running");
+    }
+    const source = await this.run(
+      workspace.path,
+      ["ls-remote", "--heads", "origin", `refs/heads/${sourceBranch}`],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000, authToken: this.writeToken },
+    );
+    if (source.stdout.toString().trim()) throw new Error("Issue source branch already exists; refusing to overwrite it");
+    const ancestry = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", expectedTargetSha, status.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (ancestry.exitCode !== 0) throw new Error("Issue branch is not descended from the pinned target commit");
+    try {
+      await this.run(
+        workspace.path,
+        ["push", "--porcelain", "origin", `${status.headSha}:refs/heads/${sourceBranch}`],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 60_000, authToken: this.writeToken },
+      );
+    } catch (error) {
+      throw new GitPushError(`Git push outcome is unknown: ${String(error)}`, error);
+    }
+    return { sha: status.headSha, branch: sourceBranch };
   }
 
   async revertWorkspaceCommit(
@@ -741,7 +1004,7 @@ export class GitManager {
       const newPath = match[2]!;
       if (
         oldPath !== newPath ||
-        !this.validPatchPath(oldPath) ||
+        !this.validIssuePatchPath(oldPath) ||
         !allowed.has(oldPath) ||
         section.some((line) => /^(?:new file mode|deleted file mode|old mode|new mode|similarity index|rename from|rename to)\b/.test(line)) ||
         !section.some((line) => line.startsWith("@@ "))
@@ -757,6 +1020,52 @@ export class GitManager {
     return paths;
   }
 
+  private validateIssuePatch(patch: string, trackedPaths: Set<string>): string[] {
+    const lines = patch.split("\n");
+    const paths: string[] = [];
+    for (let index = 0; index < lines.length;) {
+      const header = (lines[index] ?? "").replace(/\r$/, "");
+      if (!header.startsWith("diff --git ")) {
+        if (!header.trim() && paths.length === 0) {
+          index++;
+          continue;
+        }
+        throw new Error("Issue patch contains data outside a git diff section");
+      }
+      const sectionStart = index++;
+      while (index < lines.length && !lines[index]!.startsWith("diff --git ")) index++;
+      const section = lines.slice(sectionStart, index).map((line) => line.replace(/\r$/, ""));
+      const match = /^diff --git a\/(.+) b\/(.+)$/.exec(section[0]!);
+      if (!match) throw new Error("Issue patch contains an invalid git diff header");
+      const oldPath = match[1]!;
+      const newPath = match[2]!;
+      const isNew = section.includes("--- /dev/null");
+      const isDeleted = section.includes("+++ /dev/null");
+      const modeChange = section.some((line) => /^(?:old mode|new mode|rename from|rename to|copy from|copy to|GIT binary patch|Binary files )/.test(line));
+      if (
+        oldPath !== newPath ||
+        !this.validPatchPath(oldPath) ||
+        paths.includes(oldPath) ||
+        modeChange ||
+        !section.some((line) => line.startsWith("@@ ")) ||
+        (isNew && (trackedPaths.has(oldPath) || !section.some((line) => line === "new file mode 100644"))) ||
+        (isDeleted && (!trackedPaths.has(oldPath) || !section.some((line) => line === "deleted file mode 100644"))) ||
+        (!isNew && !isDeleted && !trackedPaths.has(oldPath)) ||
+        (isNew ? !section.includes("+++ b/" + oldPath) :
+          isDeleted ? !section.includes("--- a/" + oldPath) :
+            !section.includes("--- a/" + oldPath) || !section.includes("+++ b/" + oldPath))
+      ) {
+        throw new Error(`Issue patch modifies an unauthorized or unsupported path "${oldPath}"`);
+      }
+      if (section.includes("new file mode 100755") || section.includes("deleted file mode 100755")) {
+        throw new Error("Issue patch cannot add or delete executable files");
+      }
+      paths.push(oldPath);
+    }
+    if (paths.length === 0) throw new Error("Issue patch contains no file changes");
+    return paths;
+  }
+
   private validPatchPath(value: string): boolean {
     return (
       value !== "" &&
@@ -764,6 +1073,15 @@ export class GitManager {
       !value.includes("\\") &&
       !value.includes("\0") &&
       value.split("/").every((part) => part !== "" && part !== "." && part !== "..")
+    );
+  }
+
+  private validIssuePatchPath(value: string): boolean {
+    return this.validPatchPath(value) && value.split("/").every((part) =>
+      part.toLowerCase() !== ".git" &&
+      !/[<>:"|?*]/.test(part) &&
+      !/[. ]$/.test(part) &&
+      !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part),
     );
   }
 

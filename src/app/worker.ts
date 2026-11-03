@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { FixWorkflow } from "../fix/workflow.js";
-import { GitManager } from "../git/manager.js";
+import { ImplementWorkflow } from "../implement/workflow.js";
+import { GitManager, GitPushError } from "../git/manager.js";
 import type { DiffResult, Workspace } from "../git/types.js";
 import type { Job, JobStatus } from "../jobs/model.js";
 import { JobStore } from "../jobs/store.js";
@@ -93,6 +94,7 @@ export class Worker {
   private readonly repo: GitManager;
   private readonly reviewer: ReviewWorkflow;
   private readonly fixer: FixWorkflow;
+  private readonly implementer: ImplementWorkflow;
   private readonly agent: PiAgent;
   private readonly contextByteLimit: number;
 
@@ -131,6 +133,12 @@ export class Worker {
       config.fix.maxPatchBytes,
       config.agent.responseLanguage,
     );
+    this.implementer = new ImplementWorkflow(
+      this.agent,
+      this.contextByteLimit,
+      config.fix.maxPatchBytes,
+      config.agent.responseLanguage,
+    );
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -154,6 +162,8 @@ export class Worker {
           type: job.type,
           projectId: job.projectId,
           mrIid: job.mrIid,
+          targetType: job.targetType,
+          targetIid: job.targetIid,
           status: job.status,
         });
         await this.process(job, signal);
@@ -189,6 +199,8 @@ export class Worker {
           type: job.type,
           projectId: job.projectId,
           mrIid: job.mrIid,
+          targetType: job.targetType,
+          targetIid: job.targetIid,
           from: previous,
           to: next,
         });
@@ -206,6 +218,8 @@ export class Worker {
         type: job.type,
         projectId: job.projectId,
         mrIid: job.mrIid,
+        targetType: job.targetType,
+        targetIid: job.targetIid,
       });
       return;
     }
@@ -332,12 +346,18 @@ export class Worker {
       taskType: job.type,
     };
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    if (!["review", "fix", "explain", "chat"].includes(job.type)) {
+    if (!["review", "fix", "explain", "chat", "implement"].includes(job.type)) {
       throw new Error(`unsupported task type "${job.type}"`);
     }
     if (job.type === "fix" && !this.config.fix.enabled) {
       throw new Error("fix task cannot run because fix mode is disabled");
     }
+      if (job.type === "implement") {
+        if (job.targetType !== "issue") throw new Error("Issue task has an invalid target type");
+        await this.executeIssueImplementation(job, signal, transition);
+        return;
+      }
+      if (job.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
       transition("stale");
       throw new Error("The review task did not include a full MR Head SHA.");
@@ -646,6 +666,255 @@ export class Worker {
         (receipt) => receipt,
         (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
       );
+      transition("completed");
+    } finally {
+      await cleanup();
+    }
+  }
+
+  private async executeIssueImplementation(
+    job: Job,
+    signal: AbortSignal,
+    transition: (status: JobStatus) => void,
+  ): Promise<void> {
+    if (job.targetIid <= 0) throw new Error("Issue implementation job has an invalid Issue IID");
+    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const issue = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "gitlab.get_issue",
+      { projectId: job.projectId, issueIid: job.targetIid },
+      () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
+      (value) => ({ iid: value.iid, title: value.title, state: value.state, descriptionCharacters: [...value.description].length }),
+    );
+    if (issue.state !== "opened") {
+      this.store.recordExecutionEvent({
+        ...stepContext,
+        step: "worker.validate_issue_state",
+        status: "ignored",
+        input: { state: issue.state },
+        output: { accepted: false, reason: "issue_not_opened" },
+      });
+      transition("stale");
+      return;
+    }
+    const comments = this.config.issue.historyComments > 0
+      ? await traceExecutionStep(
+          this.store,
+          stepContext,
+          "gitlab.get_issue_comments",
+          { projectId: job.projectId, issueIid: job.targetIid, limit: this.config.issue.historyComments },
+          () => this.gitlab.getIssueComments(job.projectId, job.targetIid, this.config.issue.historyComments, signal),
+          (value) => ({ count: value.length, ids: value.map((comment) => comment.id), bytes: value.reduce((sum, comment) => sum + Buffer.byteLength(comment.body), 0) }),
+        )
+      : [];
+    const project = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "gitlab.get_project",
+      { projectId: job.projectId },
+      () => this.gitlab.getProject(job.projectId, signal),
+      (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo, defaultBranch: value.default_branch }),
+    );
+    if (!project.default_branch?.trim()) throw new Error("GitLab project does not have a default branch");
+    let sourceBranch = `corvex/issue-${job.targetIid}-${job.id.slice(0, 8)}-a${job.attemptCount}`;
+    const prepareBranch = (targetBranch: string) => traceExecutionStep(
+      this.store,
+      stepContext,
+      "git.prepare_issue_workspace",
+      { projectId: job.projectId, jobId: job.id, repositoryUrl: project.http_url_to_repo, targetBranch, sourceBranch },
+      () => this.repo.prepareIssueWorkspace(job.projectId, job.id, project.http_url_to_repo, targetBranch, sourceBranch, signal),
+      (value) => ({ projectId: value.workspace.projectId, jobId: value.workspace.jobId, baseSha: value.baseSha, sourceBranch, targetBranch }),
+    );
+    let prepared = await prepareBranch(project.default_branch);
+    let workspace = prepared.workspace;
+    const cleanedWorkspaces = new Set<string>();
+    const trace: JobTraceContext = {
+      jobId: job.id,
+      attempt: job.attemptCount,
+      taskType: job.type,
+      workspace,
+      issue: {
+        projectId: job.projectId,
+        issueIid: job.targetIid,
+        sourceBranch,
+        targetBranch: project.default_branch,
+        repositoryUrl: project.http_url_to_repo,
+        expectedTargetSha: prepared.baseSha,
+      },
+    };
+    let targetBranch = project.default_branch;
+    const cleanupWorkspace = async (target: Workspace, issueSourceBranch = sourceBranch): Promise<void> => {
+      if (cleanedWorkspaces.has(target.path)) return;
+      await traceExecutionStep(
+        this.store,
+        stepContext,
+        "git.cleanup_workspace",
+        { projectId: target.projectId, jobId: target.jobId, sourceBranch: issueSourceBranch },
+        () => this.repo.cleanupWorkspace(target, undefined, issueSourceBranch),
+        () => ({ cleaned: true }),
+      );
+      cleanedWorkspaces.add(target.path);
+    };
+    const cleanup = async (): Promise<void> => cleanupWorkspace(workspace, sourceBranch);
+    try {
+      transition("analyzing");
+      const decide = async () => {
+        const started = Date.now();
+        try {
+          const outcome = await traceExecutionStep(
+            this.store,
+            stepContext,
+            "workflow.issue_decision",
+            { issueIid: issue.iid, baseSha: prepared.baseSha, request: job.request, commentCount: comments.length },
+            () => this.implementer.implement({
+              projectId: job.projectId,
+              issueIid: issue.iid,
+              title: issue.title,
+              description: issue.description,
+              webUrl: issue.web_url,
+              defaultBranch: targetBranch,
+              baseSha: prepared.baseSha,
+              comments,
+              implementationEnabled: this.config.issue.implementEnabled,
+            }, job.request, workspace.path, signal, trace),
+            (value) => value.action === "reply"
+              ? { action: value.action, model: value.model, usage: value.usage, replyCharacters: [...value.reply].length }
+              : { action: value.action, model: value.model, usage: value.usage, summaryCharacters: [...value.summary].length, patchBytes: Buffer.byteLength(value.patch), targetBranch: value.targetBranch ?? "" },
+          );
+          this.store.recordModelCall("implement", "success", Date.now() - started, outcome.usage.inputTokens, outcome.usage.outputTokens);
+          return outcome;
+        } catch (error) {
+          this.store.recordModelCall("implement", "failure", Date.now() - started, 0, 0);
+          throw error;
+        }
+      };
+      const publishReply = async (body: string): Promise<void> => {
+        transition("publishing");
+        await traceExecutionStep(
+          this.store,
+          stepContext,
+          "gitlab.post_issue_reply",
+          { projectId: job.projectId, issueIid: job.targetIid, bodyCharacters: [...body].length },
+          () => this.gitlab.postIssueNote(job.projectId, job.targetIid, body, signal),
+          (receipt) => receipt,
+          (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+        );
+        transition("completed");
+      };
+      let outcome = await decide();
+      if (outcome.action === "reply") {
+        await publishReply(`## Corvex\n\n${outcome.reply}`);
+        return;
+      }
+      if (!this.config.issue.implementEnabled) {
+        const reply = this.config.agent.responseLanguage === "zh-CN"
+          ? "管理员尚未启用 Issue 代码实现；我可以继续分析需求和可行性，但不会修改或推送代码。"
+          : "Issue code implementation is disabled by the administrator. I can still discuss the request and its feasibility, but will not modify or push code.";
+        await publishReply(`## Corvex\n\n${reply}`);
+        return;
+      }
+      const requestedTargetBranch = outcome.targetBranch ?? project.default_branch;
+      if (requestedTargetBranch !== project.default_branch) {
+        const previousWorkspace = workspace;
+        await cleanupWorkspace(previousWorkspace, sourceBranch);
+        sourceBranch = `${sourceBranch}-t${createHash("sha256").update(requestedTargetBranch).digest("hex").slice(0, 8)}`;
+        targetBranch = requestedTargetBranch;
+        if (trace.issue) trace.issue.sourceBranch = sourceBranch;
+        prepared = await prepareBranch(targetBranch);
+        workspace = prepared.workspace;
+        trace.workspace = workspace;
+        if (trace.issue) {
+          trace.issue.targetBranch = targetBranch;
+          trace.issue.expectedTargetSha = prepared.baseSha;
+        }
+        outcome = await decide();
+        if (outcome.action === "reply") {
+          await publishReply(`## Corvex\n\n${outcome.reply}`);
+          return;
+        }
+        if (outcome.targetBranch && outcome.targetBranch !== targetBranch) {
+          throw new Error("Issue agent selected inconsistent target branches across the pinned workspaces");
+        }
+      }
+
+      transition("fixing");
+      const applied = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "git.apply_issue_patch",
+        { patchBytes: Buffer.byteLength(outcome.patch), patchSha256: createHash("sha256").update(outcome.patch).digest("hex") },
+        () => this.repo.applyIssuePatch(workspace, outcome.patch, this.config.fix.maxPatchBytes, signal),
+        (value) => ({ changedFiles: value.changedFiles, patchBytes: Buffer.byteLength(value.patch) }),
+      );
+      const commitTitle = `Implement issue #${issue.iid}: ${[...issue.title.replace(/[\r\n]+/g, " ").trim()].slice(0, 140).join("")}`;
+      const commit = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "git.commit_issue",
+        { message: commitTitle, changedFiles: applied.changedFiles },
+        () => this.repo.commitIssueWorkspace(workspace, commitTitle, applied.changedFiles, signal),
+        (value) => ({ sha: value.sha, changedFiles: value.changedFiles }),
+      );
+
+      transition("verifying");
+      const latestIssue = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "gitlab.verify_issue_open",
+        { projectId: job.projectId, issueIid: job.targetIid },
+        () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
+        (value) => ({ iid: value.iid, state: value.state }),
+      );
+      if (latestIssue.state !== "opened") {
+        transition("stale");
+        return;
+      }
+      transition("publishing");
+      const pushed = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "git.push_issue_branch",
+        { projectId: job.projectId, sourceBranch, targetBranch, sha: commit.sha },
+        () => this.repo.pushIssueWorkspace(
+          workspace,
+          sourceBranch,
+          targetBranch,
+          project.http_url_to_repo,
+          prepared.baseSha,
+          signal,
+        ),
+        (value) => value,
+        (error) => error instanceof GitPushError ? "unknown" : "failed",
+      );
+      const titlePrefix = `Implement issue #${issue.iid}: `;
+      const mr = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "gitlab.create_draft_merge_request",
+        { projectId: job.projectId, sourceBranch, targetBranch, sha: pushed.sha },
+        () => this.gitlab.createDraftMergeRequest(job.projectId, {
+          title: titlePrefix + [...issue.title.trim()].slice(0, Math.max(1, 248 - [...titlePrefix].length)).join(""),
+          description: `Relates to issue #${issue.iid}.\n\n${outcome.summary}`,
+          sourceBranch,
+          targetBranch,
+        }, signal),
+        (value) => value,
+        (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+      );
+      try {
+        await traceExecutionStep(
+          this.store,
+          stepContext,
+          "gitlab.post_issue_result",
+          { projectId: job.projectId, issueIid: job.targetIid, mergeRequestIid: mr.iid },
+          () => this.gitlab.postIssueNote(job.projectId, job.targetIid, `Draft merge request created: ${mr.webUrl}`, signal),
+          (receipt) => receipt,
+          (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+        );
+      } catch (error) {
+        console.warn("Issue result note failed after draft merge request creation", { jobId: job.id, mergeRequestIid: mr.iid, error: message(error) });
+      }
       transition("completed");
     } finally {
       await cleanup();

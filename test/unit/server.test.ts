@@ -80,6 +80,7 @@ describe("CorvexServer", () => {
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
     };
     const controller = new AbortController();
     const application = new CorvexServer(
@@ -180,7 +181,13 @@ describe("CorvexServer", () => {
       );
       expect(info).toHaveBeenCalledWith(
         "GitLab task enqueued",
-        expect.objectContaining({ eventId: "1:99", projectId: 1, mrIid: 10, type: "review" }),
+        expect.objectContaining({
+          eventId: "1:99",
+          projectId: 1,
+          targetType: "merge_request",
+          targetIid: 10,
+          type: "review",
+        }),
       );
       const reviewJob = store.listJobs("queued", 10).find((job) => job.type === "review");
       if (!reviewJob) throw new Error("expected a review job");
@@ -287,12 +294,57 @@ describe("CorvexServer", () => {
       expect(postedNotes).toBe(3);
       expect(store.listJobs("queued", 10).find((job) => job.type === "chat")?.request).toBe(chatRequest);
 
+      const issuePayload = {
+        object_kind: "note",
+        user: { id: 99, username: "developer" },
+        project: { id: 1 },
+        object_attributes: {
+          id: 104,
+          note: "@corvex-bot Is implementing the requested labels feasible?",
+          noteable_type: "Issue",
+          system: false,
+        },
+        issue: { iid: 17 },
+      };
+      const sendIssue = (noteId: number) => fetch(`${base}/webhooks/gitlab`, {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...issuePayload,
+          object_attributes: {
+            ...issuePayload.object_attributes,
+            id: noteId,
+            note: noteId === 104
+              ? issuePayload.object_attributes.note
+              : "@corvex-bot /implement Add issue labels",
+          },
+        }),
+      });
+      expect((await sendIssue(104)).status).toBe(202);
+      const assistantJob = store.listJobs("queued", 10).find((job) => job.type === "implement");
+      expect(assistantJob?.request).toBe("Is implementing the requested labels feasible?");
+      config.issue.implementEnabled = true;
+      const enabledIssueResponse = await sendIssue(105);
+      expect(enabledIssueResponse.status).toBe(202);
+      const implementationJob = store.listJobs("queued", 10).find((job) => job.request === "Add issue labels");
+      expect(implementationJob).toMatchObject({
+        targetType: "issue",
+        targetIid: 17,
+        mrIid: 0,
+        request: "Add issue labels",
+      });
+      expect(postedNotes).toBe(5);
+
       const jobsResponse = await fetch(`${base}/api/ops/jobs?status=queued&limit=1`, {
         headers: { authorization },
       });
       expect(jobsResponse.status).toBe(200);
       const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
-      expect(jobs.total).toBe(3);
+      expect(jobs.total).toBe(5);
       expect(jobs.items).toHaveLength(1);
       store.startJobTrace(jobs.items[0]!.id, 1, "llm", "review", "test/model", "review prompt");
       const failedTrace = store.startJobTrace(
