@@ -55,7 +55,7 @@ export function createGitWriteExtension(
       label: "Push current MR branch",
       executionMode: "sequential",
       description: "Push the current commit to the source branch of the current same-project MR. The remote URL, project, branch, and expected pinned MR head are fixed. Only normal fast-forward updates are possible; force-push is never available.",
-      promptSnippet: "git_push: Push committed changes to this MR's source branch. This performs only a normal fast-forward push; never force-push.",
+      promptSnippet: "git_push: Call only after all requested edits and available checks are complete and the final commit is created; this must be the last repository operation before replying. Do not change files afterward. Pushes only to this MR's source branch with normal fast-forward semantics; never force-push.",
       parameters: Type.Object({}),
       execute: async () => ({
         content: [{ type: "text", text: JSON.stringify(await writer.push()) }],

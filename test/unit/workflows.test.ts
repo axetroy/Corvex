@@ -66,6 +66,9 @@ describe("review and fix response validation", () => {
       expect(prompts.fixSystem).toContain('"patch"');
       expect(prompts.fixSystem).toContain(language === "en" ? "Only modify files" : "只允许修改");
       expect(prompts.explainSystem).toContain("Markdown");
+      expect(prompts.chatSystem).toContain(language === "en"
+        ? "call git_push as the final repository operation before replying"
+        : "把 git_push 作为回复前最后一次仓库操作自动执行");
 
       const followup = prompts.reviewCoverageFollowup(["src/app.ts"]);
       expect(followup).toContain("src/app.ts");
