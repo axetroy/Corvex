@@ -1,4 +1,5 @@
 import { en, resolveLocale, zhCN } from "./i18n.js";
+import { calculateJobDurationSeconds } from "./time.js";
 import { calculateOutputTokensPerSecond, reconstructLlmInput } from "./trace.js";
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
@@ -89,13 +90,6 @@ function formatTraceDuration(durationMs) {
 
 function formatOutputTps(value) {
   return value === null ? copy.none : copy.traceTpsTemplate.replace("{value}", value.toFixed(1));
-}
-
-function elapsedSince(value) {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp)
-    ? formatDuration(Math.max(0, Math.floor((Date.now() - timestamp) / 1000)))
-    : copy.invalidDate;
 }
 
 function setUpdated(value) {
@@ -291,7 +285,7 @@ async function renderJobs(version) {
       element("td", `${job.projectId}:${job.mrIid}`),
       append(element("td"), id),
       element("td", formatDate(job.createdAt)),
-      element("td", elapsedSince(job.activityStartedAt)),
+      element("td", formatDuration(calculateJobDurationSeconds(job))),
       element("td", `${job.attemptCount}`),
       element("td", formatDate(job.updatedAt)),
     );
