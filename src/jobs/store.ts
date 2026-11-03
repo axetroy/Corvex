@@ -816,8 +816,51 @@ export class JobStore {
     });
   }
 
-  markDelivered(eventId: string): void {
-    this.db.prepare("UPDATE webhook_events SET delivered = 1 WHERE event_id = ?").run(eventId);
+  markDelivered(eventId: string, token: string): void {
+    if (!eventId.trim() || !token.trim()) throw new Error("webhook delivery completion requires an event ID and token");
+    const result = this.db
+      .prepare(
+        "UPDATE webhook_events SET delivered=1,delivery_token='',delivery_until=0 WHERE event_id=? AND delivery_token=? AND delivered=0",
+      )
+      .run(eventId, token);
+    if (result.changes === 1) return;
+    const row = this.db.prepare("SELECT delivered FROM webhook_events WHERE event_id=?").get(eventId) as
+      | { delivered: number }
+      | undefined;
+    if (row?.delivered) return;
+    throw new Error(`webhook delivery claim for "${eventId}" is no longer owned`);
+  }
+
+  claimWebhookDelivery(
+    eventId: string,
+    leaseMs: number,
+  ): { status: "claimed"; token: string } | { status: "delivered" | "in_progress" } {
+    if (!eventId.trim() || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
+      throw new Error("webhook delivery claim requires an event ID and positive lease duration");
+    }
+    const now = Date.now();
+    const token = randomUUID();
+    const result = this.db
+      .prepare(
+        `UPDATE webhook_events SET delivery_token=?,delivery_until=?
+         WHERE event_id=? AND delivered=0 AND (delivery_token='' OR delivery_until<=?)`,
+      )
+      .run(token, now + leaseMs, eventId, now);
+    if (result.changes === 1) return { status: "claimed", token };
+    const row = this.db
+      .prepare("SELECT delivered FROM webhook_events WHERE event_id=?")
+      .get(eventId) as { delivered: number } | undefined;
+    if (!row) throw new Error(`webhook event "${eventId}" not found`);
+    return { status: row.delivered ? "delivered" : "in_progress" };
+  }
+
+  releaseWebhookDelivery(eventId: string, token: string): void {
+    if (!eventId.trim() || !token.trim()) throw new Error("webhook delivery release requires an event ID and token");
+    this.db
+      .prepare(
+        "UPDATE webhook_events SET delivery_token='',delivery_until=0 WHERE event_id=? AND delivery_token=? AND delivered=0",
+      )
+      .run(eventId, token);
   }
 
   recordResponse(eventId: string, response: string): EventResult {
@@ -1384,6 +1427,15 @@ export class JobStore {
         output_tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(task_type,outcome)
       );
     `);
+    const webhookColumns = this.db.prepare("PRAGMA table_info(webhook_events)").all() as { name: string }[];
+    const existingWebhookColumns = new Set(webhookColumns.map((column) => column.name));
+    const webhookAdditions: Record<string, string> = {
+      delivery_token: "TEXT NOT NULL DEFAULT ''",
+      delivery_until: "INTEGER NOT NULL DEFAULT 0",
+    };
+    for (const [name, definition] of Object.entries(webhookAdditions)) {
+      if (!existingWebhookColumns.has(name)) this.db.exec(`ALTER TABLE webhook_events ADD COLUMN ${name} ${definition}`);
+    }
     const columns = this.db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
     const existing = new Set(columns.map((column) => column.name));
     const additions: Record<string, string> = {

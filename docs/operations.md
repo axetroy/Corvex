@@ -103,6 +103,10 @@ pnpm start -- jobs retry <job-id> --database ./data/state/corvex.db
 
 Publishing failures cannot be retried because GitLab may already have accepted the comment. The CLI writes an operator retry audit event; run it on a host with access to the persistent database.
 
+If a job fails while publishing, treat the result as potentially partial. Open the job in the operations console and inspect its execution events for successful `gitlab.post_discussion`, `gitlab.post_review_summary`, or `gitlab.post_fix_proposal` steps; then compare them with the MR before taking action. Do not retry the failed job: publishing may have succeeded remotely even when Corvex did not receive the response, and retrying could duplicate comments. Corvex does not currently resume or reconcile individual publication steps. If work must be repeated, first determine which comments are already present and account for possible duplicates.
+
+Webhook command replies use a short database delivery lease to prevent concurrent redeliveries from posting the same response at once. This is not an exactly-once guarantee: if GitLab accepts a note but its response is lost, a later retry after the lease expires may post a duplicate. Inspect the event's `gitlab.post_note` and `webhook.mark_delivered` steps before investigating repeated command replies.
+
 ## Git storage cleanup
 
 Preview old workspaces and project mirrors before removing them:

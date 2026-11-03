@@ -18,10 +18,23 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 describe("CorvexServer", () => {
   it("authenticates and queues a GitLab command idempotently", async () => {
     let postedNotes = 0;
+    let pausePostNotes = false;
+    let notifyPostStarted!: () => void;
+    let releasePostNote!: () => void;
+    const postStarted = new Promise<void>((resolve) => {
+      notifyPostStarted = resolve;
+    });
+    const postGate = new Promise<void>((resolve) => {
+      releasePostNote = resolve;
+    });
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const fakeGitLab = createServer((request, response) => {
+    const fakeGitLab = createServer(async (request, response) => {
       if (request.method === "POST" && request.url?.endsWith("/notes")) {
         postedNotes++;
+        if (pausePostNotes) {
+          notifyPostStarted();
+          await postGate;
+        }
         response.writeHead(201, { "content-type": "application/json" });
         response.end(JSON.stringify({ id: 1 }));
         return;
@@ -141,7 +154,13 @@ describe("CorvexServer", () => {
           },
           body: JSON.stringify(payload),
         });
-      expect((await send()).status).toBe(202);
+      pausePostNotes = true;
+      const activeDelivery = send();
+      await postStarted;
+      expect((await send()).status).toBe(503);
+      releasePostNote();
+      expect((await activeDelivery).status).toBe(202);
+      pausePostNotes = false;
       expect((await send()).status).toBe(202);
       expect(store.jobCounts().queued).toBe(1);
       expect(postedNotes).toBe(1);
@@ -177,7 +196,7 @@ describe("CorvexServer", () => {
         "webhook.mark_delivered",
         "webhook.http_response",
       ]));
-      expect(new Set(webhookSteps.map((step) => step.deliveryId)).size).toBe(2);
+      expect(new Set(webhookSteps.map((step) => step.deliveryId)).size).toBe(3);
       expect(JSON.stringify(webhookSteps)).not.toContain("secret");
 
       const ignoredResponse = await fetch(`${base}/webhooks/gitlab`, {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JobTraceContext, PiAgent } from "../../src/agent/pi.js";
+import { maxAgentUserPromptBytes, type JobTraceContext, type PiAgent } from "../../src/agent/pi.js";
 import { getPromptTemplates } from "../../src/agent/prompts.js";
 import { FixWorkflow, parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
@@ -818,6 +818,53 @@ describe("review and fix response validation", () => {
     expect(outcome.usage).toEqual({ inputTokens: 3, outputTokens: 3, totalTokens: 6 });
   });
 
+  it("keeps review batches below the model-safe user context budget", async () => {
+    const changes = Array.from({ length: 3 }, (_, index) => ({
+      path: `src/budget-${index}.ts`,
+      status: "M" as const,
+      addedLines: 1,
+      removedLines: 0,
+      skipped: "",
+      patch: `@@ -0,0 +1 @@\n+const value${"x".repeat(39 << 10)}\n`,
+    }));
+    const largeDiff: DiffResult = { ...diff, changes };
+    const generate = vi.fn<PiAgent["generate"]>(async (request) => {
+      expect(Buffer.byteLength(request.userPrompt)).toBeLessThanOrEqual(maxAgentUserPromptBytes);
+      const input = JSON.parse(request.userPrompt) as { changes: { path: string }[] };
+      return {
+        content: JSON.stringify({
+          summary: "Reviewed the bounded batch.",
+          findings: input.changes.map((change) => ({
+            severity: "low",
+            title: "Review the value",
+            file_path: change.path,
+            line: 1,
+            evidence: "const value",
+            explanation: "Review the assigned value.",
+          })),
+        }),
+        model: "test/model",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    });
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 8 << 20);
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Context budget test",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const outcome = await workflow.review(context, largeDiff, process.cwd());
+
+    expect(generate.mock.calls.length).toBeGreaterThan(1);
+    expect(outcome.result.findings).toHaveLength(3);
+  });
+
   it("retries malformed JSON returned by the coverage follow-up", async () => {
     const validResponse = {
       content: JSON.stringify({ summary: "Review complete", findings: [] }),
@@ -1107,6 +1154,27 @@ describe("review and fix response validation", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it("rejects a fix payload above the model-safe user context budget before calling the model", async () => {
+    const generate = vi.fn<PiAgent["generate"]>();
+    const fixer = new FixWorkflow({ generate } as unknown as PiAgent, 8 << 20, 128 << 10);
+    const oversizedDiff: DiffResult = {
+      ...diff,
+      changes: [{ ...diff.changes[0]!, patch: `@@ -1 +1 @@\n+${"x".repeat(90 << 10)}\n` }],
+    };
+
+    await expect(fixer.fix({
+      projectId: 1,
+      mrIid: 1,
+      title: "Large fix context",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    }, "", oversizedDiff, process.cwd())).rejects.toThrow("fix context exceeds configured size limit");
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it("validates fix JSON and enforces the patch byte limit", () => {

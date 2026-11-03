@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { getPromptTemplates } from "../agent/prompts.js";
-import { PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import type { Change, DiffResult } from "../git/types.js";
 import type { MergeRequestComment } from "../gitlab/client.js";
@@ -328,11 +328,13 @@ export function parseAndValidateReview(
 }
 
 export class ReviewWorkflow {
+  private readonly maxContextBytes: number;
+
   constructor(
     private readonly agent: PiAgent,
     private readonly maxFiles: number,
     private readonly maxFindings: number,
-    private readonly maxContextBytes: number,
+    maxContextBytes: number,
     private readonly responseLanguage: ResponseLanguage = "en",
     private readonly maxConcurrentBatches = 2,
   ) {
@@ -343,6 +345,7 @@ export class ReviewWorkflow {
     if (maxContextBytes <= 0 || maxContextBytes > 8 << 20) {
       throw new Error("max context size must be between 1 byte and 8 MiB");
     }
+    this.maxContextBytes = Math.min(maxContextBytes, maxAgentUserPromptBytes);
     if (!Number.isInteger(maxConcurrentBatches) || maxConcurrentBatches < 1 || maxConcurrentBatches > 4) {
       throw new Error("max concurrent review batches must be between 1 and 4");
     }

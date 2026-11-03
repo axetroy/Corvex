@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
-import { getAgentToolAccess, PiAgent } from "../../src/agent/pi.js";
+import { getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
 import { JobStore } from "../../src/jobs/store.js";
 
 describe("PiAgent", () => {
@@ -188,6 +188,12 @@ describe("PiAgent", () => {
     const job = store.claimNextWithLease(30_000);
     if (!job) throw new Error("expected a queued job to be claimed");
     const agent = new PiAgent(config, store);
+    const requestCountBeforeOversizedPrompt = requestCount;
+    await expect(agent.generate(
+      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "x".repeat(maxAgentPromptBytes) },
+      temporaryDirectory,
+    )).rejects.toThrow("conservative");
+    expect(requestCount).toBe(requestCountBeforeOversizedPrompt);
     responseDelayMs = 1400;
     const startedAt = Date.now();
     const result = await agent.generate(

@@ -7,7 +7,7 @@ import type { DiffResult, Workspace } from "../git/types.js";
 import type { Job, JobStatus } from "../jobs/model.js";
 import { JobStore } from "../jobs/store.js";
 import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } from "../gitlab/client.js";
-import { PiAgent, type JobTraceContext } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
@@ -94,6 +94,7 @@ export class Worker {
   private readonly reviewer: ReviewWorkflow;
   private readonly fixer: FixWorkflow;
   private readonly agent: PiAgent;
+  private readonly contextByteLimit: number;
 
   constructor(
     private readonly config: CorvexConfig,
@@ -101,6 +102,7 @@ export class Worker {
     private readonly gitlab: GitLabClient,
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
+    this.contextByteLimit = Math.min(config.review.maxContextBytes, maxAgentUserPromptBytes);
     this.repo = new GitManager(
       config.storage.root,
       config.gitlab.baseUrl,
@@ -119,13 +121,13 @@ export class Worker {
       this.agent,
       config.review.maxFiles,
       config.review.maxFindings,
-      config.review.maxContextBytes,
+      this.contextByteLimit,
       config.agent.responseLanguage,
       config.review.batchConcurrency,
     );
     this.fixer = new FixWorkflow(
       this.agent,
-      config.review.maxContextBytes,
+      this.contextByteLimit,
       config.fix.maxPatchBytes,
       config.agent.responseLanguage,
     );
@@ -435,11 +437,11 @@ export class Worker {
           this.store,
           stepContext,
           "git.read_file",
-          { path: job.request, maxBytes: this.config.review.maxContextBytes, headSha: workspace.headSha },
+          { path: job.request, maxBytes: this.contextByteLimit, headSha: workspace.headSha },
           () => this.repo.readFile(
             workspace,
             job.request,
-            this.config.review.maxContextBytes,
+            this.contextByteLimit,
             signal,
           ),
           (value) => ({ bytes: value.byteLength, sha256: createHash("sha256").update(value).digest("hex") }),
@@ -494,12 +496,12 @@ export class Worker {
         this.store,
         stepContext,
         "git.create_diff",
-        { baseSha, headSha: workspace.headSha, maxFiles: this.config.review.maxFiles, maxBytes: this.config.review.maxContextBytes },
+        { baseSha, headSha: workspace.headSha, maxFiles: this.config.review.maxFiles, maxBytes: this.contextByteLimit },
         () => this.repo.diff(
           workspace,
           baseSha,
           this.config.review.maxFiles,
-          this.config.review.maxContextBytes,
+          this.contextByteLimit,
           signal,
         ),
         (value) => ({

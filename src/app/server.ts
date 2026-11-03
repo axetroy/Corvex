@@ -11,6 +11,7 @@ import { decodeNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from ".
 import { traceExecutionStep } from "../jobs/execution.js";
 
 const maxReviewRequestCharacters = 2000;
+const webhookDeliveryLeaseMs = 60_000;
 
 function requestBody(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -688,23 +689,21 @@ export class CorvexServer {
       }
       // 只有 GitLab 接受回复后才标记已送达，失败时才能通过 webhook 重投重试。
       if (!result.delivered) {
-        await traceExecutionStep(
-          this.store,
-          { deliveryId, eventId: id, jobId: result.job?.id ?? null },
-          "gitlab.post_note",
-          { projectId, mrIid, body: result.response },
-          () => this.gitlab.postNote(projectId, mrIid, result.response),
-          (receipt) => receipt,
-          (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+        const delivery = await this.publishWebhookResponse(
+          deliveryId,
+          id,
+          projectId,
+          mrIid,
+          result.response,
+          result.job?.id,
         );
-        await traceExecutionStep(
-          this.store,
-          { deliveryId, eventId: id, jobId: result.job?.id ?? null },
-          "webhook.mark_delivered",
-          { eventId: id },
-          () => this.store.markDelivered(id),
-          () => ({ delivered: true }),
-        );
+        if (delivery === "in_progress") {
+          this.respondTrackedWebhook(response, 503, "webhook response delivery is in progress\n", deliveryId, id, {
+            ...details,
+            retryable: true,
+          });
+          return;
+        }
         console.info("GitLab command response published", { ...details, command: command.name });
       }
       this.respondTrackedWebhook(response, 202, "", deliveryId, id, { ...details, command: command.name, jobId: result.job?.id ?? "" });
@@ -731,23 +730,19 @@ export class CorvexServer {
         (value) => ({ response: value.response, delivered: value.delivered }),
       );
       if (!result.delivered) {
-        await traceExecutionStep(
-          this.store,
-          { deliveryId, eventId: id },
-          "gitlab.post_note",
-          { projectId: event.project.id, mrIid: event.merge_request.iid, body: result.response },
-          () => this.gitlab.postNote(event.project.id, event.merge_request.iid, result.response),
-          (receipt) => receipt,
-          (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+        const delivery = await this.publishWebhookResponse(
+          deliveryId,
+          id,
+          event.project.id,
+          event.merge_request.iid,
+          result.response,
         );
-        await traceExecutionStep(
-          this.store,
-          { deliveryId, eventId: id },
-          "webhook.mark_delivered",
-          { eventId: id },
-          () => this.store.markDelivered(id),
-          () => ({ delivered: true }),
-        );
+        if (delivery === "in_progress") {
+          this.respondTrackedWebhook(response, 503, "webhook response delivery is in progress\n", deliveryId, id, {
+            retryable: true,
+          });
+          return;
+        }
         console.info("GitLab command feedback published", {
           eventId: id,
           projectId: event.project.id,
@@ -768,6 +763,44 @@ export class CorvexServer {
     } catch (error) {
       console.error("publish GitLab command response failed", { eventId: id, error: errorMessage(error) });
       this.respondTrackedWebhook(response, 502, "failed to publish command response\n", deliveryId, id, { eventId: id });
+    }
+  }
+
+  private async publishWebhookResponse(
+    deliveryId: string,
+    eventId: string,
+    projectId: number,
+    mrIid: number,
+    body: string,
+    jobId?: string,
+  ): Promise<"delivered" | "in_progress"> {
+    const claim = this.store.claimWebhookDelivery(eventId, webhookDeliveryLeaseMs);
+    if (claim.status !== "claimed") return claim.status;
+    const context = { deliveryId, eventId, jobId: jobId ?? null };
+    try {
+      await traceExecutionStep(
+        this.store,
+        context,
+        "gitlab.post_note",
+        { projectId, mrIid, body },
+        () => this.gitlab.postNote(projectId, mrIid, body),
+        (receipt) => receipt,
+        (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+      );
+      await traceExecutionStep(
+        this.store,
+        context,
+        "webhook.mark_delivered",
+        { eventId },
+        () => this.store.markDelivered(eventId, claim.token),
+        () => ({ delivered: true }),
+      );
+      return "delivered";
+    } catch (error) {
+      if (!(error instanceof GitLabWriteError && error.outcomeUnknown)) {
+        this.store.releaseWebhookDelivery(eventId, claim.token);
+      }
+      throw error;
     }
   }
 }

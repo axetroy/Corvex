@@ -29,6 +29,11 @@ import { createMergeRequestMetadataExtension } from "./mr-update.js";
 import { createGitWriteExtension } from "./git-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
+/** 128K-token model window minus output and system/tool safety reserves. */
+export const maxAgentPromptBytes = 96 << 10;
+/** Keep initial workflow payload below the total prompt cap to reserve system prompt space. */
+export const maxAgentUserPromptBytes = 80 << 10;
+
 export interface ModelRequest {
   taskType: JobType;
   systemPrompt: string;
@@ -119,11 +124,12 @@ export class PiAgent {
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }
+    const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt);
+    if (promptBytes > maxAgentPromptBytes) {
+      throw new Error(`agent prompt exceeds the conservative ${maxAgentPromptBytes}-byte request budget`);
+    }
     // 以提示词字节数加最大输出量预留预算，避免并发请求突破每日上限。
-    const reservedTokens =
-      Buffer.byteLength(request.systemPrompt) +
-      Buffer.byteLength(request.userPrompt) +
-      this.config.agent.maxOutputTokens;
+    const reservedTokens = promptBytes + this.config.agent.maxOutputTokens;
     const budgetDay =
       this.config.agent.dailyTokenBudget > 0
         ? this.store?.reserveModelTokens(this.config.agent.dailyTokenBudget, reservedTokens)

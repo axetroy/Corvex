@@ -47,6 +47,28 @@ describe("JobStore", () => {
     expect(store.jobCounts().analyzing).toBe(1);
   });
 
+  it("leases webhook response delivery to one concurrent sender", async () => {
+    store = await JobStore.open(":memory:");
+    store.createReview("event-delivery", "key-delivery", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+
+    const first = store.claimWebhookDelivery("event-delivery", 10_000);
+    expect(first.status).toBe("claimed");
+    expect(store.claimWebhookDelivery("event-delivery", 10_000)).toEqual({ status: "in_progress" });
+    if (first.status !== "claimed") throw new Error("expected a delivery lease");
+    store.releaseWebhookDelivery("event-delivery", first.token);
+
+    const retry = store.claimWebhookDelivery("event-delivery", 10_000);
+    expect(retry.status).toBe("claimed");
+    if (retry.status !== "claimed") throw new Error("expected a replacement delivery lease");
+    store.markDelivered("event-delivery", retry.token);
+    expect(store.claimWebhookDelivery("event-delivery", 10_000)).toEqual({ status: "delivered" });
+  });
+
   it("queues chat jobs with their full request text", async () => {
     store = await JobStore.open(":memory:");
     const request = "总结这个 PR\n\n请给出一个标题";

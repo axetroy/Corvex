@@ -101,6 +101,10 @@ pnpm start -- jobs retry <job-id> --database ./data/state/corvex.db
 
 发布阶段失败不能重试，因为 GitLab 可能已经接受了评论。CLI 会写入操作员重试审计事件；请在能访问持久数据库的主机上运行。
 
+任务在发布阶段失败时，应将结果视为可能只部分生效。请在运维控制台打开任务详情，检查执行事件中的 `gitlab.post_discussion`、`gitlab.post_review_summary` 或 `gitlab.post_fix_proposal` 成功记录，再与 MR 中实际出现的评论逐项核对。不要重试失败任务：即使 Corvex 没收到响应，GitLab 也可能已接受评论，重试可能造成重复。目前 Corvex 不会恢复或对账单个发布步骤。如需重新执行，先确认哪些评论已经存在，并评估重复发布的风险。
+
+Webhook 命令回复使用短期数据库发送租约，避免并发重投同时发布同一回复。但这不保证 exactly-once：如果 GitLab 已接受评论但响应丢失，租约到期后的重试仍可能产生重复评论。排查命令回复重复时，请检查事件的 `gitlab.post_note` 和 `webhook.mark_delivered` 步骤。
+
 ## Git 存储清理
 
 先预览旧 worktree 和项目镜像，再决定是否删除：

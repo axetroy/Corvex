@@ -1,5 +1,5 @@
 import { getPromptTemplates } from "../agent/prompts.js";
-import { PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import type { DiffResult } from "../git/types.js";
 import type { ReviewContext } from "../review/workflow.js";
@@ -46,15 +46,18 @@ export function parseFixResponse(raw: string, maxPatchBytes: number): FixModelRe
 }
 
 export class FixWorkflow {
+  private readonly maxContextBytes: number;
+
   constructor(
     private readonly agent: PiAgent,
-    private readonly maxContextBytes: number,
+    maxContextBytes: number,
     private readonly maxPatchBytes: number,
     private readonly responseLanguage: ResponseLanguage = "en",
   ) {
     if (maxContextBytes <= 0 || maxContextBytes > 8 << 20) {
       throw new Error("max fix context must be between 1 byte and 8 MiB");
     }
+    this.maxContextBytes = Math.min(maxContextBytes, maxAgentUserPromptBytes);
     if (maxPatchBytes <= 0 || maxPatchBytes > 256 << 10) {
       throw new Error("max fix patch must be between 1 byte and 256 KiB");
     }
