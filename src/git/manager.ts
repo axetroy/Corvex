@@ -659,7 +659,7 @@ export class GitManager {
       this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal),
       this.run(
         workspace.path,
-        ["status", "--porcelain=v1", "--untracked-files=all"],
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         undefined,
         64 << 10,
         signal,
@@ -667,7 +667,7 @@ export class GitManager {
       ),
     ]);
     if (status.truncated) throw new Error("Git status exceeds the 64 KiB output limit");
-    const files = status.stdout.toString().split("\n").filter(Boolean).map((line) => ({
+    const files = status.stdout.toString().split("\0").filter(Boolean).map((line) => ({
       status: line.slice(0, 2),
       path: line.slice(3),
     }));

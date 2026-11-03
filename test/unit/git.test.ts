@@ -174,6 +174,10 @@ describe("Git workflows", () => {
     };
     await execFile("git", ["-C", workspacePath, "switch", "-c", "corvex/issue-9-job1"]);
     await writeFile(join(workspacePath, "result.txt"), "implemented\n");
+    await expect(manager.getWorkspaceStatus(workspace)).resolves.toMatchObject({
+      clean: false,
+      files: [{ status: "??", path: "result.txt" }],
+    });
     const committed = await manager.commitIssueWorkspace(workspace, "Implement issue #9", ["result.txt"]);
     await expect(manager.pushIssueWorkspace(
       workspace,
