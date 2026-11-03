@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** 单次 read_file 返回内容的 UTF-8 字节上限。 */
-const maxReadBytes = 64 << 10;
+const maxReadBytes = 256 << 10;
 /** read_file 未指定行范围时默认返回的行数。 */
 const defaultMaxLines = 200;
 /** read_file 单次请求允许的最大行数。 */

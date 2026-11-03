@@ -508,7 +508,7 @@ export class Worker {
           stepContext,
           "workflow.review",
           { baseSha, headSha: workspace.headSha, changedFiles: diff.changes.map((change) => change.path) },
-          () => this.reviewer.review(context, diff, workspace.path, signal, trace),
+          () => this.reviewer.review(context, diff, workspace.path, signal, trace, job.request),
           (value) => ({ model: value.model, usage: value.usage, findings: value.result.findings, rejected: value.rejected }),
         );
         this.store.recordModelCall(

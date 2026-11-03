@@ -6,6 +6,16 @@ describe("parseCommand", () => {
     expect(parseCommand("  @Corvex   /EXPLAIN  src/main.ts ")).toEqual({
       name: "explain",
       args: ["src/main.ts"],
+      rawArgs: "src/main.ts ",
+    });
+  });
+
+  it("preserves multiline command text while keeping tokenized arguments", () => {
+    const text = "重点检查安全\n\n示例：\n  输入：  user input\n  输出：validated value";
+    expect(parseCommand(`@corvex /review\n${text}`)).toEqual({
+      name: "review",
+      args: ["重点检查安全", "示例：", "输入：", "user", "input", "输出：validated", "value"],
+      rawArgs: text,
     });
   });
 
@@ -13,6 +23,7 @@ describe("parseCommand", () => {
     expect(parseCommand("@review-assistant /review", "review-assistant")).toEqual({
       name: "review",
       args: [],
+      rawArgs: "",
     });
     expect(() => parseCommand("@review-assistant review", "review-assistant")).toThrow(
       "commands must start with /",

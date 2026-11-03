@@ -10,6 +10,8 @@ import { GitLabClient, GitLabWriteError } from "../gitlab/client.js";
 import { decodeNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
+const maxReviewRequestCharacters = 2000;
+
 function requestBody(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolvePromise, rejectPromise) => {
     const chunks: Buffer[] = [];
@@ -569,9 +571,24 @@ export class CorvexServer {
       await this.reply(response, event, `Usage: \`@${botUsername} /explain <path>\`. `, deliveryId);
       return;
     }
+    const reviewRequest = command.rawArgs.trim() ? command.rawArgs : "";
+    const reviewRequestCharacters = [...reviewRequest].length;
+    if (command.name === "review" && reviewRequestCharacters > maxReviewRequestCharacters) {
+      this.store.recordExecutionEvent({
+        deliveryId,
+        eventId: id,
+        step: "webhook.validate_command",
+        status: "failed",
+        input: { name: command.name, requestCharacters: reviewRequestCharacters },
+        output: { accepted: false },
+        errorDetail: "review_request_too_long",
+      });
+      await this.reply(response, event, `Review request must be ${maxReviewRequestCharacters} characters or fewer.`, deliveryId);
+      return;
+    }
     if (
       (command.name === "explain" && command.args.length > 1) ||
-      (command.args.length > 0 && command.name !== "fix" && command.name !== "explain")
+      ((command.name === "status" || command.name === "cancel") && command.args.length > 0)
     ) {
       console.warn("GitLab command rejected", {
         ...details,
@@ -618,6 +635,7 @@ export class CorvexServer {
                 mrIid,
                 headSha,
                 actorId,
+                request: reviewRequest,
               });
             case "status":
               return this.store.status(id, projectId, mrIid);

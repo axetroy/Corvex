@@ -353,6 +353,7 @@ export class ReviewWorkflow {
     cwd: string,
     signal?: AbortSignal,
     trace?: JobTraceContext,
+    reviewRequest = "",
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
     const {
@@ -369,6 +370,7 @@ export class ReviewWorkflow {
       const exceedsContext = Buffer.byteLength(JSON.stringify({
         merge_request: context,
         changes: candidate,
+        ...(reviewRequest ? { review_request: reviewRequest } : {}),
       })) > this.maxContextBytes;
       if (batch.length > 0 && (candidate.length > reviewBatchFileLimit || exceedsContext)) {
         batches.push(batch);
@@ -377,6 +379,7 @@ export class ReviewWorkflow {
       if (Buffer.byteLength(JSON.stringify({
         merge_request: context,
         changes: [...batch, change],
+        ...(reviewRequest ? { review_request: reviewRequest } : {}),
       })) > this.maxContextBytes) {
         omittedFiles++;
         blockingOmittedFiles++;
@@ -420,6 +423,7 @@ export class ReviewWorkflow {
           trace,
           blockingOmittedFiles,
           findings.length > 0 || index > 0,
+          reviewRequest,
         )),
       );
       for (const [index, settled] of outcomes.entries()) {
@@ -477,6 +481,7 @@ export class ReviewWorkflow {
     trace?: JobTraceContext,
     coverageOmittedFiles = 0,
     allowEmptyWithoutTrace = false,
+    reviewRequest = "",
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
     const { input, omittedFiles } = this.buildInput(context, diff);
@@ -489,7 +494,7 @@ export class ReviewWorkflow {
         rejected: 0,
       };
     }
-    const userPrompt = JSON.stringify(input);
+    const userPrompt = JSON.stringify(reviewRequest ? { ...input, review_request: reviewRequest } : input);
     if (Buffer.byteLength(userPrompt) > this.maxContextBytes) {
       throw new Error("review context exceeds configured size limit");
     }

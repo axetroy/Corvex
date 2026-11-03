@@ -125,7 +125,7 @@ describe("CorvexServer", () => {
         project: { id: 1 },
         object_attributes: {
           id: 99,
-          note: "@corvex-bot /review",
+          note: "@corvex-bot /review\n重点检查安全与代码质量\n\n请按示例核对：\n  输入：  user input\n  输出：validated value",
           noteable_type: "MergeRequest",
           system: false,
         },
@@ -165,6 +165,7 @@ describe("CorvexServer", () => {
       );
       const reviewJob = store.listJobs("queued", 10).find((job) => job.type === "review");
       if (!reviewJob) throw new Error("expected a review job");
+      expect(reviewJob.request).toBe("重点检查安全与代码质量\n\n请按示例核对：\n  输入：  user input\n  输出：validated value");
       const webhookSteps = store.getJobDetails(reviewJob.id)?.events ?? [];
       expect(webhookSteps.map((step) => step.step)).toEqual(expect.arrayContaining([
         "webhook.read_body",

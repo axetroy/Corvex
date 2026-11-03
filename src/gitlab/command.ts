@@ -1,6 +1,7 @@
 export interface CorvexCommand {
   name: "review" | "explain" | "fix" | "status" | "cancel";
   args: string[];
+  rawArgs: string;
 }
 
 export class NotCorvexCommandError extends Error {
@@ -31,5 +32,11 @@ export function parseCommand(note: string, botUsername = "corvex"): CorvexComman
       `unknown command "${fields[1]}"; supported commands are /review, /explain, /fix, /status, and /cancel`,
     );
   }
-  return { name: name as CorvexCommand["name"], args: fields.slice(2) };
+  const commandMatch = /^\s*\S+\s+\S+/.exec(note);
+  let rawArgs = commandMatch ? note.slice(commandMatch[0].length) : "";
+  rawArgs = rawArgs.replace(/^[\t ]+/, "");
+  if (rawArgs.startsWith("\r\n")) rawArgs = rawArgs.slice(2);
+  else if (/^\s/u.test(rawArgs)) rawArgs = rawArgs.slice(1);
+  if (!rawArgs.trim()) rawArgs = "";
+  return { name: name as CorvexCommand["name"], args: fields.slice(2), rawArgs };
 }

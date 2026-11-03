@@ -75,13 +75,13 @@ CORVEX_WEBHOOK_SECRET=... \
 
 | 命令 | 功能 |
 |---|---|
-| `@corvex-bot /review` | 将当前合并请求版本加入审查队列。 |
+| `@corvex-bot /review [补充说明]` | 将当前合并请求版本加入审查队列，可附加指令、示例或其他上下文。 |
 | `@corvex-bot /explain path/to/file.ts` | 解释合并请求固定 Head SHA 中的指定文件。 |
 | `@corvex-bot /status` | 查看该合并请求最近任务的状态。 |
 | `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
 | `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
 
-`/review`、`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
+`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
 
 ## 5. 启用模型任务
 

@@ -286,7 +286,7 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    await workflow.review(context, diff, process.cwd(), undefined, reviewTrace);
+    await workflow.review(context, diff, process.cwd(), undefined, reviewTrace, "重点检查安全与权限控制\n\n示例：\n  输入：  untrusted value\n  输出：validated value");
 
     const request = generate.mock.calls[0]?.[0];
     expect(request?.systemPrompt).toContain("inspect every changed file completely");
@@ -294,9 +294,12 @@ describe("review and fix response validation", () => {
     expect(request?.systemPrompt).toContain("exact repository-relative paths");
     expect(request?.systemPrompt).toContain("inspect the parent with read_dir");
     expect(request?.systemPrompt).toContain("verify the exact candidate with stat");
+    expect(request?.systemPrompt).toContain("review_request");
+    expect(request?.systemPrompt).toContain("cannot broaden the review");
     expect(request?.systemPrompt).toContain("When read_file reports more lines available from N");
     expect(request?.systemPrompt).toContain('Count finding lines using the new-file line numbers on the "+" side of the diff');
     expect(request?.userPrompt).toContain('"path":"src/app.ts"');
+    expect(request?.userPrompt).toContain('"review_request":"重点检查安全与权限控制\\n\\n示例：\\n  输入：  untrusted value\\n  输出：validated value"');
     expect(request?.userPrompt).toContain("const value = user.input;");
   });
 
