@@ -252,7 +252,7 @@ async function renderJobs(version) {
       typeSelect,
       copy.typeFilter,
       copy.allTypes,
-      [["review", copy.types.review], ["fix", copy.types.fix], ["explain", copy.types.explain]],
+      [["review", copy.types.review], ["fix", copy.types.fix], ["explain", copy.types.explain], ["chat", copy.types.chat]],
       queue.type,
     ),
   );

@@ -47,6 +47,25 @@ describe("JobStore", () => {
     expect(store.jobCounts().analyzing).toBe(1);
   });
 
+  it("queues chat jobs with their full request text", async () => {
+    store = await JobStore.open(":memory:");
+    const request = "总结这个 PR\n\n请给出一个标题";
+    const result = store.createChat("event-chat", "key-chat", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+      request,
+    });
+
+    expect(result.response).toContain("Queued chat task");
+    expect(store.claimNextWithLease(30_000)).toMatchObject({
+      type: "chat",
+      request,
+      status: "preparing",
+    });
+  });
+
   it("summarizes lifecycle counts and the oldest queued task for the operations dashboard", async () => {
     store = await JobStore.open(":memory:");
     store.createReview("event-1", "key-1", {

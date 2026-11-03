@@ -8,7 +8,7 @@ Corvex 将请求接入与模型、仓库处理分离：
 2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、模型调用指标以及可选的每日 Token 预留。
 3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求快照和仓库并执行请求的工作流。启动 Worker 必须设置 `agent.enabled: true`。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
-5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、解释或修复提案任务。
+5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释或修复提案任务。
 
 GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、503、504 时，最多尝试三次并使用有界退避。POST 写请求不会自动重试，因为远端副作用可能无法确认。
 
@@ -20,12 +20,12 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 
 1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
 2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，仅接受合并请求评论，限制请求体为 1 MiB，并忽略系统评论。
-3. Server 检查项目 ID 白名单，并拒绝 `gitlab.blocked_user_ids` 中的用户。其他评论者都可以通过 @ `gitlab.bot_username` 并使用 `/` 前缀指令来调用。
+3. Server 检查项目 ID 白名单，并拒绝 `gitlab.blocked_user_ids` 中的用户。其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本。
 4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步任务）任务。重复 Webhook 投递具有幂等性。
 5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
-6. Worker 按创建顺序领取排队的审查、解释或修复任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
+6. Worker 按创建顺序领取排队的审查、解释、聊天或修复任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
 
-支持的命令：`/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`。用法请参阅[快速开始](./guide)。
+支持的命令：`/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。用法请参阅[快速开始](./guide)。
 
 ## 审查流程
 
@@ -38,7 +38,9 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 
 模型不会被告知测试已执行；Corvex 不会运行项目测试或仓库脚本。
 
-## Explain 与 Fix 流程
+## Chat、Explain 与 Fix 流程
+
+**Chat** 会将受限 Diff、固定 MR 元信息和调用者的自然语言请求一起发送给模型。发布前 Worker 会再次验证 MR 快照，并将回复作为普通 MR 评论发布。Chat 仅使用只读工具，不创建行级讨论。
 
 **Explain** 从固定 MR Head SHA 的 worktree 中读取指定文件，而不是读取服务器上的任意路径。系统会限制文件路径在工作区内，并遵守配置的上下文大小限制。文件内容和 MR 元信息会发送给模型；只有 MR 快照仍有效时，解释结果才会作为 MR 评论发布。
 

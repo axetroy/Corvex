@@ -1,5 +1,5 @@
 /** 系统可入队并由 Worker 处理的任务类型集合。 */
-export const jobTypes = ["review", "fix", "explain"] as const;
+export const jobTypes = ["review", "fix", "explain", "chat"] as const;
 export type JobType = (typeof jobTypes)[number];
 
 /** SQLite、Worker 和运维界面共同使用的任务生命周期状态集合。 */

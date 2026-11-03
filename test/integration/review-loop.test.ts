@@ -353,6 +353,17 @@ describe("review task loop", () => {
     expect(postedNotes.some((body) => body.includes("The file assigns an unchecked value"))).toBe(true);
     expect(serverStore.getJobDetails(explainJob.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
 
+    const chatRequest = "Summarize this PR\n\nSuggest a concise title";
+    modelActions.push({ content: "This PR introduces an unchecked value.\n\nSuggested title: Validate input values" });
+    const chatJob = await enqueue(106, 7, `@corvex-bot ${chatRequest}`);
+    expect(chatJob.type).toBe("chat");
+    expect(chatJob.request).toBe(chatRequest);
+    await waitForStatus(chatJob.id, "completed");
+    expect(postedNotes.some((body) => body.includes("Suggested title: Validate input values"))).toBe(true);
+    expect(serverStore.getJobDetails(chatJob.id)?.events.map(({ step }) => step)).toEqual(
+      expect.arrayContaining(["git.create_diff", "workflow.chat", "worker.verify_snapshot", "gitlab.post_note"]),
+    );
+
     const fixPatch = [
       "diff --git a/input.ts b/input.ts",
       "--- a/input.ts",

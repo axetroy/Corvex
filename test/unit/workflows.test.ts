@@ -73,6 +73,49 @@ describe("review and fix response validation", () => {
     }
   });
 
+  it("answers chat requests from merge request context and the diff without review JSON parsing", async () => {
+    const requestText = "总结本次变更\n\n建议一个简洁标题";
+    const generate = vi.fn<PiAgent["generate"]>(async () => ({
+      content: "This change updates the request flow.\n\nSuggested title: Improve request handling",
+      model: "test/model",
+      usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+    }));
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 1024 * 1024, "en");
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Request flow",
+      description: "Update request handling",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+
+    const answer = await workflow.chat(context, diff, requestText, process.cwd());
+
+    expect(answer.text).toContain("Suggested title");
+    expect(answer.usage.inputTokens).toBe(12);
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskType: "chat",
+        systemPrompt: getPromptTemplates("en").chatSystem,
+        userPrompt: expect.any(String),
+      }),
+      process.cwd(),
+      undefined,
+      undefined,
+    );
+    const input = JSON.parse(generate.mock.calls[0]![0].userPrompt) as {
+      merge_request: { title: string };
+      changes: { patch: string }[];
+      request: string;
+    };
+    expect(input.merge_request.title).toBe("Request flow");
+    expect(input.changes[0]?.patch).toContain("const value = user.input;");
+    expect(input.request).toBe(requestText);
+  });
+
   it("accepts only review evidence present on the exact added line", () => {
     const raw = JSON.stringify({
       summary: "One concrete defect.",

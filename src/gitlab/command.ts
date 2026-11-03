@@ -1,5 +1,5 @@
 export interface CorvexCommand {
-  name: "review" | "explain" | "fix" | "status" | "cancel";
+  name: "review" | "explain" | "fix" | "status" | "cancel" | "chat";
   args: string[];
   rawArgs: string;
 }
@@ -9,6 +9,18 @@ export class NotCorvexCommandError extends Error {
     super("not a Corvex command");
     this.name = "NotCorvexCommandError";
   }
+}
+
+function rawAfterTokens(note: string, tokenCount: number): string {
+  let cursor = 0;
+  for (let token = 0; token < tokenCount; token++) {
+    while (cursor < note.length && /\s/u.test(note[cursor]!)) cursor++;
+    while (cursor < note.length && !/\s/u.test(note[cursor]!)) cursor++;
+  }
+  let body = note.slice(cursor).replace(/^[\t ]+/, "");
+  if (body.startsWith("\r\n")) body = body.slice(2);
+  else if (/^\s/u.test(body)) body = body.slice(1);
+  return body.trim() ? body : "";
 }
 
 export function parseCommand(note: string, botUsername = "corvex"): CorvexCommand {
@@ -21,7 +33,11 @@ export function parseCommand(note: string, botUsername = "corvex"): CorvexComman
     throw new Error("missing command; use /review, /explain, /fix, /status, or /cancel");
   }
   if (!fields[1]!.startsWith("/")) {
-    throw new Error("commands must start with /; use /review, /explain, /fix, /status, or /cancel");
+    return {
+      name: "chat",
+      args: fields.slice(1),
+      rawArgs: rawAfterTokens(note, 1),
+    };
   }
   const name = fields[1]!.slice(1).toLowerCase();
   if (!name) {
@@ -32,11 +48,6 @@ export function parseCommand(note: string, botUsername = "corvex"): CorvexComman
       `unknown command "${fields[1]}"; supported commands are /review, /explain, /fix, /status, and /cancel`,
     );
   }
-  const commandMatch = /^\s*\S+\s+\S+/.exec(note);
-  let rawArgs = commandMatch ? note.slice(commandMatch[0].length) : "";
-  rawArgs = rawArgs.replace(/^[\t ]+/, "");
-  if (rawArgs.startsWith("\r\n")) rawArgs = rawArgs.slice(2);
-  else if (/^\s/u.test(rawArgs)) rawArgs = rawArgs.slice(1);
-  if (!rawArgs.trim()) rawArgs = "";
+  const rawArgs = rawAfterTokens(note, 2);
   return { name: name as CorvexCommand["name"], args: fields.slice(2), rawArgs };
 }

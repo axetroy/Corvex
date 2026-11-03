@@ -19,15 +19,26 @@ describe("parseCommand", () => {
     });
   });
 
-  it("uses the configured bot username and requires a slash command", () => {
+  it("routes free-text mentions to chat and preserves the full request", () => {
+    const request = "总结一下这个 PR 的内容\n\n例子：\n  标题：Improve validation";
+    expect(parseCommand(`@corvex-bot ${request}`, "corvex-bot")).toEqual({
+      name: "chat",
+      args: ["总结一下这个", "PR", "的内容", "例子：", "标题：Improve", "validation"],
+      rawArgs: request,
+    });
+  });
+
+  it("uses the configured bot username and routes non-command text to chat", () => {
     expect(parseCommand("@review-assistant /review", "review-assistant")).toEqual({
       name: "review",
       args: [],
       rawArgs: "",
     });
-    expect(() => parseCommand("@review-assistant review", "review-assistant")).toThrow(
-      "commands must start with /",
-    );
+    expect(parseCommand("@review-assistant review this PR", "review-assistant")).toMatchObject({
+      name: "chat",
+      rawArgs: "review this PR",
+    });
+    expect(() => parseCommand("@review-assistant", "review-assistant")).toThrow("missing command");
   });
 
   it("rejects unrelated notes", () => {

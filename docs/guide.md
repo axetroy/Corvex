@@ -76,12 +76,13 @@ Mention the configured GitLab bot account, then use a slash-prefixed command. Th
 | Command | Behavior |
 |---|---|
 | `@corvex-bot /review [request]` | Queue a review of the current merge request revision, optionally with supplemental instructions or examples. |
+| `@corvex-bot <message>` | Chat about the current merge request, such as summarizing its changes or suggesting a title. |
 | `@corvex-bot /explain path/to/file.ts` | Explain a file at the pinned merge request Head SHA. |
 | `@corvex-bot /status` | Show the latest task state for the merge request. |
 | `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
 | `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
 
-`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
+`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text mentions also accept up to 2,000 characters and use the pinned MR metadata and diff as chat context. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
 
 ## 5. Enable model tasks
 

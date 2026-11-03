@@ -318,7 +318,7 @@ export class Worker {
       taskType: job.type,
     };
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    if (!["review", "fix", "explain"].includes(job.type)) {
+    if (!["review", "fix", "explain", "chat"].includes(job.type)) {
       throw new Error(`unsupported task type "${job.type}"`);
     }
     if (job.type === "fix" && !this.config.fix.enabled) {
@@ -497,6 +497,45 @@ export class Worker {
       );
       if (job.type === "fix") {
         await this.executeFix(job, mergeRequest, workspace, diff, context, signal, transition, cleanup);
+        return;
+      }
+      if (job.type === "chat") {
+        transition("analyzing");
+        const started = Date.now();
+        let answer;
+        try {
+          answer = await traceExecutionStep(
+            this.store,
+            stepContext,
+            "workflow.chat",
+            { baseSha, headSha: workspace.headSha, request: job.request },
+            () => this.reviewer.chat(context, diff, job.request, workspace.path, signal, trace),
+            (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.text) }),
+          );
+          this.store.recordModelCall(
+            "chat",
+            "success",
+            Date.now() - started,
+            answer.usage.inputTokens,
+            answer.usage.outputTokens,
+          );
+        } catch (error) {
+          this.store.recordModelCall("chat", "failure", Date.now() - started, 0, 0);
+          throw error;
+        }
+        if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
+        transition("publishing");
+        const body = `## Corvex\n\n${answer.text}`;
+        await traceExecutionStep(
+          this.store,
+          stepContext,
+          "gitlab.post_note",
+          { projectId: job.projectId, mrIid: job.mrIid, body },
+          () => this.gitlab.postNote(job.projectId, job.mrIid, body, signal),
+          (receipt) => receipt,
+          (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+        );
+        transition("completed");
         return;
       }
       transition("analyzing");

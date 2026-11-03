@@ -685,6 +685,38 @@ export class ReviewWorkflow {
     return { text: explanation, model: response.model, usage: response.usage };
   }
 
+  async chat(
+    context: ReviewContext,
+    diff: DiffResult,
+    request: string,
+    cwd: string,
+    signal?: AbortSignal,
+    trace?: JobTraceContext,
+  ): Promise<Explanation> {
+    this.validateSnapshot(context, diff);
+    if (!validText(request, 1, 2000)) throw new Error("chat request is empty or too long");
+    const { input } = this.buildInput(context, diff);
+    const userPrompt = JSON.stringify({ ...input, request });
+    if (Buffer.byteLength(userPrompt) > this.maxContextBytes) {
+      throw new Error("chat context exceeds configured size limit");
+    }
+    const response = await this.agent.generate(
+      {
+        taskType: "chat",
+        systemPrompt: getPromptTemplates(this.responseLanguage).chatSystem,
+        userPrompt,
+      },
+      cwd,
+      signal,
+      trace,
+    );
+    const text = response.content.trim();
+    if (!validText(text, 1, 8000)) {
+      throw new Error("model returned an empty, invalid, or oversized chat response");
+    }
+    return { text, model: response.model, usage: response.usage };
+  }
+
   private validateSnapshot(context: ReviewContext, diff: DiffResult): void {
     if (context.projectId <= 0 || context.mrIid <= 0 || !context.baseSha || !context.headSha) {
       throw new Error("merge request identity and exact base/head SHAs are required");

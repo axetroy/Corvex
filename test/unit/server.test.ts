@@ -246,12 +246,34 @@ describe("CorvexServer", () => {
       expect(store.jobCounts().queued).toBe(2);
       expect(postedNotes).toBe(2);
 
+      const chatRequest = "总结这个 PR\n\n再建议一个标题";
+      const chatResponse = await fetch(`${base}/webhooks/gitlab`, {
+        method: "POST",
+        headers: {
+          "x-gitlab-token": "secret",
+          "x-gitlab-event": "Note Hook",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...payload,
+          object_attributes: {
+            ...payload.object_attributes,
+            id: 103,
+            note: `@corvex-bot ${chatRequest}`,
+          },
+        }),
+      });
+      expect(chatResponse.status).toBe(202);
+      expect(store.jobCounts().queued).toBe(3);
+      expect(postedNotes).toBe(3);
+      expect(store.listJobs("queued", 10).find((job) => job.type === "chat")?.request).toBe(chatRequest);
+
       const jobsResponse = await fetch(`${base}/api/ops/jobs?status=queued&limit=1`, {
         headers: { authorization },
       });
       expect(jobsResponse.status).toBe(200);
       const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
-      expect(jobs.total).toBe(2);
+      expect(jobs.total).toBe(3);
       expect(jobs.items).toHaveLength(1);
       store.startJobTrace(jobs.items[0]!.id, 1, "llm", "review", "test/model", "review prompt");
       const failedTrace = store.startJobTrace(

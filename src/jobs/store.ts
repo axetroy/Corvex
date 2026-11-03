@@ -390,7 +390,7 @@ export class JobStore {
     inputTokens: number,
     outputTokens: number,
   ): void {
-    if (!["review", "explain", "fix"].includes(taskType)) {
+    if (!["review", "explain", "fix", "chat"].includes(taskType)) {
       throw new Error(`unsupported model call task type "${taskType}"`);
     }
     if (!["success", "failure"].includes(outcome)) {
@@ -685,6 +685,14 @@ export class JobStore {
     return this.createQueuedTask(eventId, key, job, "explain");
   }
 
+  createChat(
+    eventId: string,
+    key: string,
+    job: Partial<Job> & Pick<Job, "projectId" | "mrIid" | "actorId" | "headSha" | "request">,
+  ): EventResult {
+    return this.createQueuedTask(eventId, key, job, "chat");
+  }
+
   createFix(
     eventId: string,
     key: string,
@@ -827,7 +835,7 @@ export class JobStore {
       this.recoverExpiredLeases();
       const row = readJobRow(this.db
         .prepare(
-          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain') ORDER BY created_at LIMIT 1",
+          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat') ORDER BY created_at LIMIT 1",
         )
         .get(Date.now()));
       if (!row) return undefined;
@@ -1176,7 +1184,7 @@ export class JobStore {
     eventId: string,
     key: string,
     job: Partial<Job> & Pick<Job, "projectId" | "mrIid" | "actorId" | "headSha">,
-    type: "review" | "explain",
+    type: "review" | "explain" | "chat",
   ): EventResult {
     // 将事件去重、任务创建和事件记录放进同一事务，避免 webhook 重投创建重复任务。
     return this.transaction(() => {
@@ -1189,7 +1197,7 @@ export class JobStore {
       const existing = this.db
         .prepare("SELECT id FROM jobs WHERE idempotency_key = ?")
         .get(key) as { id: string } | undefined;
-      const label = type === "review" ? "Review" : "Explain";
+      const label = type === "review" ? "Review" : type === "explain" ? "Explain" : "Chat";
       let response: string;
       let resultJob: EventResult["job"];
       let auditResult = "queued";
@@ -1208,7 +1216,7 @@ export class JobStore {
           )
           .run(id, key, eventId, type, "queued", job.projectId, job.mrIid, job.headSha, job.actorId, job.request ?? "", created, created);
         resultJob = { id, created: true };
-        response = `Queued ${type} task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
+        response = `Queued ${label.toLowerCase()} task \`${id}\` for MR !${job.mrIid} at \`${job.headSha.slice(0, 12)}\`.`;
       }
       this.insertEvent(eventId, response);
       if (resultJob) this.linkExecutionEvents(eventId, resultJob.id);

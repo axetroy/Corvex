@@ -573,7 +573,7 @@ export class CorvexServer {
     }
     const reviewRequest = command.rawArgs.trim() ? command.rawArgs : "";
     const reviewRequestCharacters = [...reviewRequest].length;
-    if (command.name === "review" && reviewRequestCharacters > maxReviewRequestCharacters) {
+    if ((command.name === "review" || command.name === "chat") && reviewRequestCharacters > maxReviewRequestCharacters) {
       this.store.recordExecutionEvent({
         deliveryId,
         eventId: id,
@@ -581,9 +581,9 @@ export class CorvexServer {
         status: "failed",
         input: { name: command.name, requestCharacters: reviewRequestCharacters },
         output: { accepted: false },
-        errorDetail: "review_request_too_long",
+        errorDetail: `${command.name}_request_too_long`,
       });
-      await this.reply(response, event, `Review request must be ${maxReviewRequestCharacters} characters or fewer.`, deliveryId);
+      await this.reply(response, event, `Request must be ${maxReviewRequestCharacters} characters or fewer.`, deliveryId);
       return;
     }
     if (
@@ -636,6 +636,14 @@ export class CorvexServer {
                 headSha,
                 actorId,
                 request: reviewRequest,
+              });
+            case "chat":
+              return this.store.createChat(id, `${projectId}:${mrIid}:chat:${id}`, {
+                projectId,
+                mrIid,
+                headSha,
+                actorId,
+                request: command.rawArgs,
               });
             case "status":
               return this.store.status(id, projectId, mrIid);

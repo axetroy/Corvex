@@ -8,7 +8,7 @@ Corvex separates the request path from model and repository work:
 2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, model call metrics, and optional daily token reservations.
 3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
-5. **OpenAI-compatible model API** is called only by the worker for review, explanation, or fix proposal tasks.
+5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, or fix proposal tasks.
 
 GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
 
@@ -20,12 +20,12 @@ The server can run without a worker: commands are accepted and persisted, but mo
 
 1. GitLab sends a `Note Hook` to `POST /webhooks/gitlab`.
 2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request notes only, limits the body to 1 MiB, and ignores system notes.
-3. Project IDs must be allowlisted, and user IDs on `gitlab.blocked_user_ids` are rejected. Any other commenter can invoke a slash-prefixed command addressed to `@<gitlab.bot_username>`.
+3. Project IDs must be allowlisted, and user IDs on `gitlab.blocked_user_ids` are rejected. Any other commenter can invoke a slash command or send plain text addressed to `@<gitlab.bot_username>`.
 4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) job are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
 5. The server posts an immediate acknowledgement or validation response to the MR using the GitLab write token. Model inference does not run in the webhook request.
-6. A worker claims queued review, explain, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
+6. A worker claims queued review, explain, chat, or fix jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
 
-The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel`. See [Getting started](./guide) for examples.
+The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel`; plain text after the bot mention starts a chat about the current MR. See [Getting started](./guide) for examples.
 
 ## Review workflow
 
@@ -38,7 +38,9 @@ The currently supported commands are `/review`, `/explain <path>`, `/fix [reques
 
 The model is not told that tests were run; Corvex does not execute project tests or repository scripts.
 
-## Explain and fix workflows
+## Chat, explain, and fix workflows
+
+**Chat** sends the bounded diff and pinned MR metadata with the caller's natural-language request. The worker verifies the MR snapshot again before publishing the response as a normal MR note. Chat uses read-only tools and does not create line discussions.
 
 **Explain** reads the requested file from the pinned MR Head SHA, not from an arbitrary path on the server. Workspace containment and configured context limits are enforced. The file and MR metadata are sent to the model, then the explanation is published as an MR note only if the MR snapshot is still current.
 

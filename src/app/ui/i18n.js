@@ -68,6 +68,7 @@ export const en = {
     review: "Review",
     fix: "Fix",
     explain: "Explain",
+    chat: "Chat",
   },
   outcomes: {
     success: "Success",
@@ -257,6 +258,7 @@ export const zhCN = {
     review: "审查",
     fix: "修复",
     explain: "解释",
+    chat: "对话",
   },
   outcomes: {
     success: "成功",
