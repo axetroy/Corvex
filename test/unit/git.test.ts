@@ -159,7 +159,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", seedPath, "commit", "-q", "-m", "base"]);
     await execFile("git", ["-C", seedPath, "remote", "add", "origin", barePath]);
     await execFile("git", ["-C", seedPath, "push", "-q", "origin", "main"]);
-    await execFile("git", ["clone", "-q", "--branch", "main", barePath, workspacePath]);
+    await execFile("git", ["clone", "-q", "--config", "core.autocrlf=false", "--branch", "main", barePath, workspacePath]);
     await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
     await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
     const { stdout: baseOutput } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
