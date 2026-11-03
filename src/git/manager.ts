@@ -22,6 +22,7 @@ const jobIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 interface GitResult {
   stdout: Buffer;
   truncated: boolean;
+  exitCode: number;
 }
 
 interface GitRunOptions {
@@ -32,6 +33,18 @@ interface GitRunOptions {
 
 export interface GitGrepResult {
   matches: { path: string; line: number; text: string }[];
+  truncated: boolean;
+}
+
+export interface GitCommit {
+  sha: string;
+  author: string;
+  authoredAt: string;
+  subject: string;
+}
+
+export interface GitCommitLogResult {
+  commits: GitCommit[];
   truncated: boolean;
 }
 
@@ -312,6 +325,91 @@ export class GitManager {
     return { matches, truncated };
   }
 
+  async getCommitLog(
+    workspace: Workspace,
+    limit: number,
+    requestedPath?: string,
+    signal?: AbortSignal,
+  ): Promise<GitCommitLogResult> {
+    this.validateWorkspace(workspace);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      throw new Error("Git commit log limit must be between 1 and 50");
+    }
+    if (requestedPath !== undefined) this.validateWorkspaceFilePath(requestedPath);
+    const args = [
+      "log",
+      `--max-count=${limit}`,
+      "--format=%H%x00%an%x00%aI%x00%s%x00",
+      workspace.headSha,
+      ...(requestedPath ? ["--", `:(literal)${requestedPath}`] : []),
+    ];
+    const result = await this.run(
+      workspace.path,
+      args,
+      undefined,
+      128 << 10,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    const records = result.stdout.toString("utf8").split(/\r?\n/u);
+    const commits: GitCommit[] = [];
+    for (const record of records) {
+      if (!record) continue;
+      const [sha, author, authoredAt, subject] = record.split("\0");
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha ?? "")) break;
+      commits.push({
+        sha: sha!,
+        author: author!.slice(0, 256),
+        authoredAt: authoredAt!.slice(0, 64),
+        subject: subject!.slice(0, 512),
+      });
+    }
+    return { commits, truncated: result.truncated };
+  }
+
+  async showCommit(
+    workspace: Workspace,
+    sha: string,
+    requestedPath?: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; output: string; truncated: boolean }> {
+    this.validateWorkspace(workspace);
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+      throw new Error("Git commit lookup requires a full commit SHA");
+    }
+    if (requestedPath !== undefined) this.validateWorkspaceFilePath(requestedPath);
+    const ancestry = await this.run(
+      workspace.path,
+      ["merge-base", "--is-ancestor", sha, workspace.headSha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (ancestry.exitCode !== 0) {
+      throw new Error("Git commit is not reachable from the pinned MR HEAD");
+    }
+    const result = await this.run(
+      workspace.path,
+      [
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--no-color",
+        "--format=fuller",
+        "--unified=3",
+        sha,
+        ...(requestedPath ? ["--", `:(literal)${requestedPath}`] : []),
+      ],
+      undefined,
+      256 << 10,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    return { sha, output: result.stdout.toString("utf8"), truncated: result.truncated };
+  }
+
   async applyPatch(
     workspace: Workspace,
     patch: string,
@@ -571,7 +669,7 @@ export class GitManager {
           rejectPromise(new Error(`git command failed: ${details || `exit code ${code}`}`));
           return;
         }
-        resolvePromise({ stdout: output, truncated });
+        resolvePromise({ stdout: output, truncated, exitCode: code ?? -1 });
       });
       if (input) child.stdin.end(input);
       else child.stdin.end();

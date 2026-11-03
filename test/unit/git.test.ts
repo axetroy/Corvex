@@ -115,6 +115,39 @@ describe("Git workflows", () => {
     );
   });
 
+  it("reads commit history from the pinned Git HEAD", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-log-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "job-1");
+    await mkdir(join(workspacePath, "src"), { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "src", "app.ts"), "first\n");
+    await execFile("git", ["-C", workspacePath, "add", "src/app.ts"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "initial implementation"]);
+    await writeFile(join(workspacePath, "src", "app.ts"), "second\n");
+    await execFile("git", ["-C", workspacePath, "commit", "-qam", "tighten validation"]);
+    const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
+    const headSha = stdout.trim();
+    const manager = new GitManager(root, "https://gitlab.example.com", "");
+    const workspace: Workspace = { projectId: 7, jobId: "job-1", path: workspacePath, headSha };
+
+    await expect(manager.getCommitLog(workspace, 2, "src/app.ts")).resolves.toMatchObject({
+      commits: [
+        { sha: headSha, subject: "tighten validation" },
+        { subject: "initial implementation" },
+      ],
+      truncated: false,
+    });
+    await expect(manager.showCommit(workspace, headSha, "src/app.ts")).resolves.toMatchObject({
+      sha: headSha,
+      truncated: false,
+      output: expect.stringContaining("+second"),
+    });
+    await expect(manager.showCommit(workspace, "HEAD")).rejects.toThrow("full commit SHA");
+  });
+
   it("dry-runs and removes only old unprotected Git storage", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-"));
     const root = join(directory, "storage");

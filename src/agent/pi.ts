@@ -16,6 +16,7 @@ import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import type { MergeRequestComment } from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
+import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createWebReadExtension } from "./web-read.js";
 
@@ -28,11 +29,12 @@ export interface ModelRequest {
 export function getAgentToolAccess(
   taskType: JobType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
-): { webFetch: boolean; mcp: boolean; mrComments: boolean } {
+): { webFetch: boolean; mcp: boolean; mrComments: boolean; gitHistory: boolean } {
   return {
     webFetch: taskType !== "fix" && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
     mrComments: taskType === "chat",
+    gitHistory: taskType === "chat",
   };
 }
 
@@ -67,7 +69,7 @@ export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
-    private readonly git?: Pick<GitManager, "grep">,
+    private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
   ) {}
 
@@ -213,6 +215,12 @@ export class PiAgent {
         ),
         ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
+          : []),
+        ...(toolAccess.gitHistory && trace?.workspace && this.git
+          ? [createGitHistoryExtension(
+              (limit, path) => this.git!.getCommitLog(trace.workspace!, limit, path, signal),
+              (sha, path) => this.git!.showCommit(trace.workspace!, sha, path, signal),
+            )]
           : []),
         ...(toolAccess.mrComments && trace?.mergeRequest && this.readMergeRequestComments
           ? [createMergeRequestCommentsExtension(
