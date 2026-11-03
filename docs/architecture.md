@@ -40,7 +40,7 @@ The model is not told that tests were run; Corvex does not execute project tests
 
 ## Chat, explain, and fix workflows
 
-**Chat** sends the bounded diff and pinned MR metadata with the caller's natural-language request. The worker verifies the MR snapshot again before publishing the response as a normal MR note. Chat uses read-only tools and does not create line discussions.
+**Chat** sends the bounded diff, pinned MR metadata, and the configured number of most recent non-system MR comments with the caller's natural-language request. The `read_mr_comments` tool can retrieve more comments from the current MR only. Comments are untrusted input; when the context byte limit is reached, older comments are omitted first. The worker verifies the MR snapshot again before publishing the response as a normal MR note. Chat uses read-only tools and does not create line discussions.
 
 **Explain** reads the requested file from the pinned MR Head SHA, not from an arbitrary path on the server. Workspace containment and configured context limits are enforced. The file and MR metadata are sent to the model, then the explanation is published as an MR note only if the MR snapshot is still current.
 

@@ -14,7 +14,9 @@ import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
+import type { MergeRequestComment } from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
+import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createWebReadExtension } from "./web-read.js";
 
 export interface ModelRequest {
@@ -26,10 +28,11 @@ export interface ModelRequest {
 export function getAgentToolAccess(
   taskType: JobType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
-): { webFetch: boolean; mcp: boolean } {
+): { webFetch: boolean; mcp: boolean; mrComments: boolean } {
   return {
     webFetch: taskType !== "fix" && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
+    mrComments: taskType === "chat",
   };
 }
 
@@ -50,13 +53,22 @@ export interface JobTraceContext {
   attempt: number;
   taskType: JobType;
   workspace?: Workspace;
+  mergeRequest?: { projectId: number; mrIid: number };
 }
+
+export type ReadMergeRequestComments = (
+  projectId: number,
+  mrIid: number,
+  limit: number,
+  signal?: AbortSignal,
+) => Promise<MergeRequestComment[]>;
 
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
     private readonly git?: Pick<GitManager, "grep">,
+    private readonly readMergeRequestComments?: ReadMergeRequestComments,
   ) {}
 
   getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -201,6 +213,17 @@ export class PiAgent {
         ),
         ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
+          : []),
+        ...(toolAccess.mrComments && trace?.mergeRequest && this.readMergeRequestComments
+          ? [createMergeRequestCommentsExtension(
+              (limit) => this.readMergeRequestComments!(
+                trace.mergeRequest!.projectId,
+                trace.mergeRequest!.mrIid,
+                limit,
+                signal,
+              ),
+              this.config.chat.historyComments,
+            )]
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
       ],

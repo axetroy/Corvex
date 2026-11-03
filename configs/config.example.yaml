@@ -36,6 +36,9 @@ review:
   max_context_bytes: 2097152
   batch_concurrency: 2
 
+chat:
+  history_comments: 20
+
 worker:
   poll_interval: 2s
   job_timeout: 130m

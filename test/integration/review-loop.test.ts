@@ -136,6 +136,17 @@ describe("review task loop", () => {
         });
         return;
       }
+      if (url.pathname.endsWith("/notes") && request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify([{
+          id: 501,
+          system: false,
+          body: "Please validate the new input.",
+          created_at: "2026-11-03T10:00:00Z",
+          author: { username: "reviewer" },
+        }]));
+        return;
+      }
       if (url.pathname.endsWith("/discussions") && request.method === "POST") {
         discussionAttempts++;
         const discussionMrIid = Number(/\/merge_requests\/(\d+)\/discussions$/.exec(url.pathname)?.[1]);
@@ -193,6 +204,7 @@ describe("review task loop", () => {
       }],
     });
     const modelActions: ModelAction[] = [];
+    const modelRequests: string[] = [];
     modelServer = createServer((request, response) => {
       let requestBody = "";
       request.setEncoding("utf8");
@@ -200,6 +212,7 @@ describe("review task loop", () => {
       request.on("end", () => {
         expect(request.url).toBe("/v1/chat/completions");
         expect(requestBody).toContain('"model":"test-model"');
+        modelRequests.push(requestBody);
         const action = modelActions.shift() ?? { content: reviewContent };
         action.onStarted?.();
         const sendResponse = () => {
@@ -266,6 +279,7 @@ describe("review task loop", () => {
         skillPaths: [],
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
       worker: { pollInterval: 20, jobTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
     };
@@ -360,8 +374,15 @@ describe("review task loop", () => {
     expect(chatJob.request).toBe(chatRequest);
     await waitForStatus(chatJob.id, "completed");
     expect(postedNotes.some((body) => body.includes("Suggested title: Validate input values"))).toBe(true);
+    expect(modelRequests.some((body) => body.includes("Please validate the new input."))).toBe(true);
     expect(serverStore.getJobDetails(chatJob.id)?.events.map(({ step }) => step)).toEqual(
-      expect.arrayContaining(["git.create_diff", "workflow.chat", "worker.verify_snapshot", "gitlab.post_note"]),
+      expect.arrayContaining([
+        "git.create_diff",
+        "gitlab.get_merge_request_comments",
+        "workflow.chat",
+        "worker.verify_snapshot",
+        "gitlab.post_note",
+      ]),
     );
 
     const fixPatch = [

@@ -102,7 +102,12 @@ export class Worker {
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, config.gitlab.readToken);
-    this.agent = new PiAgent(config, store, this.repo);
+    this.agent = new PiAgent(
+      config,
+      store,
+      this.repo,
+      (projectId, mrIid, limit, signal) => this.gitlab.getMergeRequestComments(projectId, mrIid, limit, signal),
+    );
     this.reviewer = new ReviewWorkflow(
       this.agent,
       config.review.maxFiles,
@@ -345,6 +350,7 @@ export class Worker {
         diffRefs: value.diff_refs,
       }),
     );
+    trace.mergeRequest = { projectId: job.projectId, mrIid: job.mrIid };
     if (mergeRequest.state !== "opened") {
       this.store.recordExecutionEvent({
         ...stepContext,
@@ -504,12 +510,27 @@ export class Worker {
         const started = Date.now();
         let answer;
         try {
+          const comments = this.config.chat.historyComments > 0
+            ? await traceExecutionStep(
+                this.store,
+                stepContext,
+                "gitlab.get_merge_request_comments",
+                { projectId: job.projectId, mrIid: job.mrIid, limit: this.config.chat.historyComments },
+                () => this.gitlab.getMergeRequestComments(
+                  job.projectId,
+                  job.mrIid,
+                  this.config.chat.historyComments,
+                  signal,
+                ),
+                (value) => ({ count: value.length, ids: value.map((comment) => comment.id) }),
+              )
+            : [];
           answer = await traceExecutionStep(
             this.store,
             stepContext,
             "workflow.chat",
             { baseSha, headSha: workspace.headSha, request: job.request },
-            () => this.reviewer.chat(context, diff, job.request, workspace.path, signal, trace),
+            () => this.reviewer.chat(context, diff, job.request, workspace.path, signal, trace, comments),
             (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.text) }),
           );
           this.store.recordModelCall(

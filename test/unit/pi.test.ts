@@ -27,15 +27,17 @@ describe("PiAgent", () => {
     }
   });
 
-  it("limits web and MCP tools to the intended task types", () => {
+  it("limits web, MCP, and MR comments tools to the intended task types", () => {
     const config = { webEnabled: true, mcpEnabled: true };
 
-    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true });
-    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false });
-    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false });
+    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true, mrComments: false });
+    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false, mrComments: false });
+    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false });
+    expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true });
     expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
       webFetch: false,
       mcp: true,
+      mrComments: false,
     });
   });
 

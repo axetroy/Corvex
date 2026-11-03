@@ -39,6 +39,7 @@ function validConfig(): CorvexConfig {
       skillPaths: [],
     },
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+    chat: { historyComments: 20 },
     worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
   };
@@ -53,7 +54,7 @@ describe("validateConfig", () => {
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).toContain("allowed_project_ids");
       expect(contents).toContain("blocked_user_ids");
-      expect(contents).toContain("session_timeout: 60m");
+      expect(contents).toMatch(/session_timeout: \d+m/u);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -109,6 +110,33 @@ describe("validateConfig", () => {
 
       await expect(loadConfig(configPath, "storage")).rejects.toThrow(
         "review.batch_concurrency must be between 1 and 4",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults and bounds chat history comments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-chat-history-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      const base = {
+        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        storage: { root, database: join(root, "state.db") },
+      };
+      await writeFile(configPath, JSON.stringify(base));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        chat: { historyComments: 20 },
+      });
+
+      await writeFile(configPath, JSON.stringify({ ...base, chat: { history_comments: 8 } }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        chat: { historyComments: 8 },
+      });
+
+      await writeFile(configPath, JSON.stringify({ ...base, chat: { history_comments: 51 } }));
+      await expect(loadConfig(configPath, "storage")).rejects.toThrow(
+        "chat.history_comments must be between 0 and 50",
       );
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -27,6 +27,14 @@ export interface MergeRequestDiff {
   collapsed: boolean;
 }
 
+export interface MergeRequestComment {
+  id: number | string;
+  author: string;
+  createdAt: string;
+  body: string;
+  truncated: boolean;
+}
+
 export interface DiscussionPosition {
   baseSha: string;
   startSha: string;
@@ -66,6 +74,10 @@ export class GitLabApiError extends Error {
 const MAX_RESPONSE_BYTES = 20 << 20;
 /** 分页合并请求 Diff 累计允许读取的最大字节数。 */
 const MAX_DIFF_BYTES = 16 << 20;
+/** 单条历史评论最多保留的字符数，避免超大评论占满模型上下文。 */
+const MAX_COMMENT_CHARACTERS = 4_000;
+/** 历史评论最多扫描的 Notes API 页数。 */
+const MAX_COMMENT_PAGES = 10;
 /** 幂等 GET 请求允许的总尝试次数，包含首次请求。 */
 const MAX_READ_ATTEMPTS = 3;
 /** 仅接受不超过此毫秒数的 Retry-After 延迟，避免请求等待过久。 */
@@ -236,6 +248,72 @@ export class GitLabClient {
       }
     }
     throw new Error("merge request diff exceeds the 20-page safety limit");
+  }
+
+  async getMergeRequestComments(
+    projectId: number,
+    mrIid: number,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<MergeRequestComment[]> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      throw new Error("merge request comment limit must be between 1 and 50");
+    }
+    const comments: MergeRequestComment[] = [];
+    for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+      const query = new URLSearchParams({
+        order_by: "created_at",
+        sort: "desc",
+        per_page: "100",
+        page: String(page),
+      });
+      const response = await this.request(
+        `/projects/${projectId}/merge_requests/${mrIid}/notes?${query}`,
+        this.readToken,
+        "GET",
+        signal,
+      );
+      const body = await this.successBody(response);
+      let pageNotes: unknown;
+      try {
+        pageNotes = JSON.parse(new TextDecoder().decode(body));
+      } catch (error) {
+        throw new Error(`decode GitLab API response: ${String(error)}`, { cause: error });
+      }
+      if (!Array.isArray(pageNotes)) throw new Error("GitLab merge request notes response is not an array");
+      for (const note of pageNotes) {
+        if (!isRecord(note)) throw new Error("GitLab returned an invalid merge request note");
+        if (note.system === true) continue;
+        const noteId = typeof note.id === "number" && Number.isSafeInteger(note.id)
+          ? note.id
+          : typeof note.id === "string" ? note.id : undefined;
+        if (
+          noteId === undefined ||
+          typeof note.body !== "string" ||
+          typeof note.created_at !== "string" ||
+          !isRecord(note.author) ||
+          typeof note.author.username !== "string"
+        ) {
+          throw new Error("GitLab returned an incomplete merge request note");
+        }
+        const characters = [...note.body];
+        comments.push({
+          id: noteId,
+          author: note.author.username.slice(0, 128),
+          createdAt: note.created_at.slice(0, 64),
+          body: characters.slice(0, MAX_COMMENT_CHARACTERS).join(""),
+          truncated: characters.length > MAX_COMMENT_CHARACTERS,
+        });
+        if (comments.length >= limit) return comments;
+      }
+      const next = response.headers.get("x-next-page") ?? "";
+      if (!next && pageNotes.length < 100) return comments;
+      if (next && Number(next) !== page + 1) {
+        throw new Error(`GitLab returned invalid notes pagination cursor "${next}"`);
+      }
+    }
+    throw new Error("merge request comments exceed the 10-page safety limit");
   }
 
   async postNote(

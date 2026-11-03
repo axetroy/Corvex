@@ -51,6 +51,9 @@ export interface CorvexConfig {
     maxContextBytes: number;
     batchConcurrency: number;
   };
+  chat: {
+    historyComments: number;
+  };
   worker: {
     pollInterval: number;
     jobTimeout: number;
@@ -96,6 +99,7 @@ const defaults: CorvexConfig = {
     skillPaths: [],
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+  chat: { historyComments: 20 },
   worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
   fix: { enabled: false, maxPatchBytes: 128 << 10 },
 };
@@ -244,6 +248,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       maxContextBytes: number(review.max_context_bytes, defaults.review.maxContextBytes),
       batchConcurrency: number(review.batch_concurrency, defaults.review.batchConcurrency),
     },
+    chat: {
+      historyComments: number(object(root.chat, "chat").history_comments, defaults.chat.historyComments),
+    },
     worker: {
       pollInterval: duration(worker.poll_interval, defaults.worker.pollInterval, "worker.poll_interval"),
       jobTimeout: duration(worker.job_timeout, defaults.worker.jobTimeout, "worker.job_timeout"),
@@ -345,6 +352,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (!Number.isInteger(config.review.batchConcurrency) || config.review.batchConcurrency < 1 || config.review.batchConcurrency > 4) {
     problems.push("review.batch_concurrency must be between 1 and 4");
+  }
+  if (!Number.isInteger(config.chat.historyComments) || config.chat.historyComments < 0 || config.chat.historyComments > 50) {
+    problems.push("chat.history_comments must be between 0 and 50");
   }
   if (config.worker.pollInterval <= 0 || config.worker.jobTimeout <= 0) {
     problems.push("worker poll interval and job timeout must be positive");

@@ -71,6 +71,12 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读取固定 SHA worktree 或配置的 Skill 根目录中的 UTF-8 文本文件，单文件上限为 64 KiB；连续读取行范围时会复用 Session 内游标。`git_grep` 仅搜索固定 workspace HEAD 的已跟踪文件，单次超时 10 秒、输出上限 256 KiB、最多返回 50 条。字面量搜索工具 `search_text` 跳过常见依赖/生成目录，每次最多扫描 1,000 个文件和 16 MiB，每个文件最多 256 KiB，最多返回 50 条匹配。启用后，`web_fetch` 仅对 review 和 explain 任务开放，可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址和配置的黑名单主机；拒绝 HTML/纯文本之外的响应。单页响应体上限为 1 MiB，最多返回 40,000 个文本字符和 20 个同主机链接，每个 Session 最多抓取 10 页。网页内容是不可信模型输入。启用 MCP 时，Pi 仅为 review 任务从 `storage.root` 下服务的 Agent 目录（`pi-agent/mcp.json`）加载 MCP 工具；只能使用管理员控制的配置。
 
+## Chat 上下文
+
+| YAML 键 | 示例/默认值 | 可接受范围 | 说明 |
+|---|---:|---:|---|
+| `chat.history_comments` | `20` | 0–50 | 初始聊天上下文中包含的最近非系统 MR 评论数。`0` 表示关闭自动注入；Chat 仍可按需通过 `read_mr_comments` 读取评论。 |
+
 ## 审查限制
 
 | YAML 键 | 示例/默认值 | 可接受范围 | 说明 |

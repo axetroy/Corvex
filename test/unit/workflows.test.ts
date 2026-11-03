@@ -92,7 +92,14 @@ describe("review and fix response validation", () => {
       headSha: diff.headSha,
     };
 
-    const answer = await workflow.chat(context, diff, requestText, process.cwd());
+    const comments = [{
+      id: 8,
+      author: "reviewer",
+      createdAt: "2026-11-03T10:00:00Z",
+      body: "Please validate this input.",
+      truncated: false,
+    }];
+    const answer = await workflow.chat(context, diff, requestText, process.cwd(), undefined, undefined, comments);
 
     expect(answer.text).toContain("Suggested title");
     expect(answer.usage.inputTokens).toBe(12);
@@ -109,11 +116,43 @@ describe("review and fix response validation", () => {
     const input = JSON.parse(generate.mock.calls[0]![0].userPrompt) as {
       merge_request: { title: string };
       changes: { patch: string }[];
+      comments: typeof comments;
       request: string;
     };
     expect(input.merge_request.title).toBe("Request flow");
     expect(input.changes[0]?.patch).toContain("const value = user.input;");
     expect(input.request).toBe(requestText);
+    expect(input.comments).toEqual(comments);
+  });
+
+  it("drops older comments first when chat context exceeds its byte limit", async () => {
+    const generate = vi.fn<PiAgent["generate"]>(async () => ({
+      content: "The latest discussion is about validation.",
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const workflow = new ReviewWorkflow({ generate } as unknown as PiAgent, 10, 10, 4096, "en");
+    const context = {
+      projectId: 1,
+      mrIid: 1,
+      title: "Request flow",
+      description: "",
+      sourceBranch: "feature",
+      targetBranch: "main",
+      baseSha: diff.baseSha,
+      headSha: diff.headSha,
+    };
+    const comments = [
+      { id: 8, author: "reviewer", createdAt: "2026-11-03T10:00:00Z", body: "Keep the new validation.", truncated: false },
+      { id: 7, author: "reviewer", createdAt: "2026-11-02T10:00:00Z", body: "old ".repeat(1500), truncated: false },
+    ];
+
+    await workflow.chat(context, diff, "Summarize", process.cwd(), undefined, undefined, comments);
+
+    const input = JSON.parse(generate.mock.calls[0]![0].userPrompt) as {
+      comments: { id: number }[];
+    };
+    expect(input.comments).toEqual([comments[0]]);
   });
 
   it("accepts only review evidence present on the exact added line", () => {

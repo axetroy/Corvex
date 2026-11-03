@@ -82,7 +82,7 @@ CORVEX_WEBHOOK_SECRET=... \
 | `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
 | `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
 
-`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。不带 slash 的普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息和 diff 作为聊天上下文。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
+`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。不带 slash 的普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息、diff 和近期评论作为聊天上下文。默认注入最近 20 条评论，可通过 `chat.history_comments` 配置为 0–50 条；Chat 也可按需读取当前 MR 的更多近期评论。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
 
 ## 5. 启用模型任务
 

@@ -44,6 +44,53 @@ describe("GitLab write receipts", () => {
 });
 
 describe("GitLab read retries", () => {
+  it("returns only the requested recent non-system merge request comments", async () => {
+    let requestUrl = "";
+    let requestToken = "";
+    const server = createServer((request, response) => {
+      requestUrl = request.url ?? "";
+      requestToken = request.headers["private-token"] ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([
+        {
+          id: 8,
+          body: "Latest reply",
+          system: false,
+          created_at: "2026-11-03T10:00:00Z",
+          author: { username: "reviewer" },
+        },
+        {
+          id: 7,
+          body: "Merged",
+          system: true,
+          created_at: "2026-11-03T09:00:00Z",
+          author: { username: "system" },
+        },
+        {
+          id: 6,
+          body: "Earlier question",
+          system: false,
+          created_at: "2026-11-03T08:00:00Z",
+          author: { username: "author" },
+        },
+      ]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read-token", "write-token");
+      await expect(client.getMergeRequestComments(5, 9, 2)).resolves.toMatchObject([
+        { id: 8, body: "Latest reply", author: "reviewer" },
+        { id: 6, body: "Earlier question", author: "author" },
+      ]);
+      expect(requestUrl).toContain("/projects/5/merge_requests/9/notes?");
+      expect(requestUrl).toContain("order_by=created_at");
+      expect(requestUrl).toContain("sort=desc");
+      expect(requestToken).toBe("read-token");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("retries a transient network failure", async () => {
     let attempts = 0;
     const server = createServer((request, response) => {

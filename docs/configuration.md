@@ -70,6 +70,12 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 
 Pi sessions do not expose built-in shell, edit, or write tools. The custom `read_file` tool only reads UTF-8 text files inside the fixed-SHA worktree or configured Skill roots and rejects files larger than 64 KiB. Sequential line-range reads reuse an internal session cursor. `git_grep` searches tracked files at the exact pinned workspace HEAD with a 10-second timeout, 256 KiB output cap, and 50-result limit. The literal `search_text` tool skips common dependency/generated directories and is limited to 1,000 files, 16 MiB, 256 KiB per file, and 50 matches per call. When enabled, `web_fetch` is available only to review and explain tasks; it can request HTTPS pages from any public DNS host on its default port, revalidates redirects, rejects private/reserved IPs and configured blocked hosts, rejects non-HTML/plain-text content, caps each response at 1 MiB, returns at most 40,000 text characters and 20 same-host links, and allows at most 10 pages per session. Web content is untrusted model input. When MCP is enabled, Pi loads MCP tools only for review tasks from the service's agent directory under `storage.root` (`pi-agent/mcp.json`); only administrator-controlled configurations should be used.
 
+## Chat context
+
+| YAML key | Example/default | Accepted range | Description |
+|---|---:|---:|---|
+| `chat.history_comments` | `20` | 0–50 | Number of most recent non-system MR comments included in initial chat context. `0` disables automatic inclusion; chat can still use `read_mr_comments` to retrieve comments on demand. |
+
 ## Review limits
 
 | YAML key | Example/default | Accepted range | Description |

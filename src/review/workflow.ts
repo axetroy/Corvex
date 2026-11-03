@@ -4,6 +4,7 @@ import { getPromptTemplates } from "../agent/prompts.js";
 import { PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import type { Change, DiffResult } from "../git/types.js";
+import type { MergeRequestComment } from "../gitlab/client.js";
 import type { JobTraceEntry } from "../jobs/model.js";
 
 export interface ReviewContext {
@@ -692,11 +693,17 @@ export class ReviewWorkflow {
     cwd: string,
     signal?: AbortSignal,
     trace?: JobTraceContext,
+    comments: MergeRequestComment[] = [],
   ): Promise<Explanation> {
     this.validateSnapshot(context, diff);
     if (!validText(request, 1, 2000)) throw new Error("chat request is empty or too long");
     const { input } = this.buildInput(context, diff);
-    const userPrompt = JSON.stringify({ ...input, request });
+    const includedComments = [...comments];
+    let userPrompt = JSON.stringify({ ...input, comments: includedComments, request });
+    while (Buffer.byteLength(userPrompt) > this.maxContextBytes && includedComments.length > 0) {
+      includedComments.pop();
+      userPrompt = JSON.stringify({ ...input, comments: includedComments, request });
+    }
     if (Buffer.byteLength(userPrompt) > this.maxContextBytes) {
       throw new Error("chat context exceeds configured size limit");
     }
