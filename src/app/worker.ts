@@ -107,6 +107,7 @@ export class Worker {
       store,
       this.repo,
       (projectId, mrIid, limit, signal) => this.gitlab.getMergeRequestComments(projectId, mrIid, limit, signal),
+      (projectId, mrIid, update, signal) => this.gitlab.updateMergeRequest(projectId, mrIid, update, signal),
     );
     this.reviewer = new ReviewWorkflow(
       this.agent,

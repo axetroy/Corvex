@@ -27,17 +27,18 @@ describe("PiAgent", () => {
     }
   });
 
-  it("limits web, MCP, MR comments, and Git history tools to the intended task types", () => {
+  it("limits web, MCP, and MR tools to the intended task types", () => {
     const config = { webEnabled: true, mcpEnabled: true };
 
-    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true, mrComments: false, gitHistory: false });
-    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, gitHistory: false });
-    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, gitHistory: false });
-    expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true, gitHistory: true });
+    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true, mrComments: false, mrMetadata: false, gitHistory: false });
+    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false });
+    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false });
+    expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true, mrMetadata: true, gitHistory: true });
     expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
       webFetch: false,
       mcp: true,
       mrComments: false,
+      mrMetadata: false,
       gitHistory: false,
     });
   });

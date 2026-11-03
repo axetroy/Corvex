@@ -12,12 +12,19 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { CorvexConfig } from "../config/config.js";
 import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
+import { traceExecutionStep } from "../jobs/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
-import type { MergeRequestComment } from "../gitlab/client.js";
+import {
+  GitLabWriteError,
+  type GitLabWriteReceipt,
+  type MergeRequestComment,
+  type MergeRequestMetadataUpdate,
+} from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
 import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
+import { createMergeRequestMetadataExtension } from "./mr-update.js";
 import { createWebReadExtension } from "./web-read.js";
 
 export interface ModelRequest {
@@ -29,11 +36,12 @@ export interface ModelRequest {
 export function getAgentToolAccess(
   taskType: JobType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
-): { webFetch: boolean; mcp: boolean; mrComments: boolean; gitHistory: boolean } {
+): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean } {
   return {
     webFetch: taskType !== "fix" && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
     mrComments: taskType === "chat",
+    mrMetadata: taskType === "chat",
     gitHistory: taskType === "chat",
   };
 }
@@ -65,12 +73,20 @@ export type ReadMergeRequestComments = (
   signal?: AbortSignal,
 ) => Promise<MergeRequestComment[]>;
 
+export type UpdateMergeRequestMetadata = (
+  projectId: number,
+  mrIid: number,
+  update: MergeRequestMetadataUpdate,
+  signal?: AbortSignal,
+) => Promise<GitLabWriteReceipt>;
+
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: JobStore,
     private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
+    private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
   ) {}
 
   getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -233,6 +249,34 @@ export class PiAgent {
               this.config.chat.historyComments,
             )]
           : []),
+          ...(toolAccess.mrMetadata && trace?.mergeRequest && this.updateMergeRequestMetadata
+            ? [createMergeRequestMetadataExtension(
+                (update) => {
+                  const operation = () => this.updateMergeRequestMetadata!(
+                    trace.mergeRequest!.projectId,
+                    trace.mergeRequest!.mrIid,
+                    update,
+                    signal,
+                  );
+                  if (!this.store) return operation();
+                  return traceExecutionStep(
+                    this.store,
+                    { jobId: trace.jobId, attempt: trace.attempt },
+                    "gitlab.update_merge_request_metadata",
+                    {
+                      projectId: trace.mergeRequest!.projectId,
+                      mrIid: trace.mergeRequest!.mrIid,
+                      fields: Object.keys(update),
+                      titleCharacters: update.title === undefined ? 0 : [...update.title].length,
+                      descriptionCharacters: update.description === undefined ? 0 : [...update.description].length,
+                    },
+                    operation,
+                    (receipt) => receipt,
+                    (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
+                  );
+                },
+              )]
+            : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
       ],
       systemPrompt: request.systemPrompt,

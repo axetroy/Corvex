@@ -35,6 +35,11 @@ export interface MergeRequestComment {
   truncated: boolean;
 }
 
+export interface MergeRequestMetadataUpdate {
+  title?: string;
+  description?: string;
+}
+
 export interface DiscussionPosition {
   baseSha: string;
   startSha: string;
@@ -78,6 +83,9 @@ const MAX_DIFF_BYTES = 16 << 20;
 const MAX_COMMENT_CHARACTERS = 4_000;
 /** 历史评论最多扫描的 Notes API 页数。 */
 const MAX_COMMENT_PAGES = 10;
+/** MR 标题和描述工具的输入上限。 */
+const MAX_MR_TITLE_CHARACTERS = 255;
+const MAX_MR_DESCRIPTION_CHARACTERS = 100_000;
 /** 幂等 GET 请求允许的总尝试次数，包含首次请求。 */
 const MAX_READ_ATTEMPTS = 3;
 /** 仅接受不超过此毫秒数的 Retry-After 延迟，避免请求等待过久。 */
@@ -326,6 +334,30 @@ export class GitLabClient {
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes`, form, signal);
   }
 
+  async updateMergeRequest(
+    projectId: number,
+    mrIid: number,
+    update: MergeRequestMetadataUpdate,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(mrIid) || mrIid <= 0) {
+      throw new Error("project ID and MR IID must be positive safe integers");
+    }
+    if (update.title === undefined && update.description === undefined) {
+      throw new Error("at least one merge request field must be provided");
+    }
+    if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
+      throw new Error(`merge request title must contain 1-${MAX_MR_TITLE_CHARACTERS} characters`);
+    }
+    if (update.description !== undefined && [...update.description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
+      throw new Error(`merge request description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
+    }
+    const form = new URLSearchParams();
+    if (update.title !== undefined) form.set("title", update.title);
+    if (update.description !== undefined) form.set("description", update.description);
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, form, signal, "PUT");
+  }
+
   async postDiscussion(
     projectId: number,
     mrIid: number,
@@ -367,10 +399,15 @@ export class GitLabClient {
     }
   }
 
-  private async write(path: string, form: URLSearchParams, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+  private async write(
+    path: string,
+    form: URLSearchParams,
+    signal?: AbortSignal,
+    method: "POST" | "PUT" = "POST",
+  ): Promise<GitLabWriteReceipt> {
     let response: Response;
     try {
-      response = await this.request(path, this.writeToken, "POST", signal, form);
+      response = await this.request(path, this.writeToken, method, signal, form);
     } catch (error) {
       throw new GitLabWriteError(`GitLab write outcome is unknown: ${String(error)}`, error);
     }
@@ -391,7 +428,7 @@ export class GitLabClient {
   private async request(
     path: string,
     token: string,
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT",
     signal?: AbortSignal,
     form?: URLSearchParams,
   ): Promise<Response> {

@@ -30,6 +30,45 @@ describe("GitLab write receipts", () => {
     }
   });
 
+  it("updates only the supplied merge request fields with PUT", async () => {
+    let requestMethod = "";
+    let requestPath = "";
+    let submittedFields = new URLSearchParams();
+    const server = createServer((request, response) => {
+      requestMethod = request.method ?? "";
+      requestPath = request.url ?? "";
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        submittedFields = new URLSearchParams(body);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: 42, title: "Retitled" }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      await expect(client.updateMergeRequest(5, 9, { title: "Retitled" })).resolves.toEqual({
+        status: 200,
+        resourceId: 42,
+      });
+      expect(requestMethod).toBe("PUT");
+      expect(requestPath).toBe("/api/v4/projects/5/merge_requests/9");
+      expect([...submittedFields.entries()]).toEqual([["title", "Retitled"]]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("rejects empty or invalid metadata updates before making a request", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write-token");
+    await expect(client.updateMergeRequest(5, 9, {})).rejects.toThrow("at least one");
+    await expect(client.updateMergeRequest(5, 9, { title: "   " })).rejects.toThrow("title must contain");
+    await expect(client.updateMergeRequest(5, 9, { title: "x".repeat(256) })).rejects.toThrow("title must contain");
+    await expect(client.updateMergeRequest(5, 9, { description: "x".repeat(100_001) })).rejects.toThrow("description must not exceed");
+    await expect(client.updateMergeRequest(Number.MAX_SAFE_INTEGER + 1, 9, { title: "Valid" })).rejects.toThrow("safe integers");
+  });
+
   it("marks a lost response as an unknown write outcome", async () => {
     const server = createServer((request) => request.socket.destroy());
     const port = await listen(server);
@@ -156,7 +195,7 @@ describe("GitLab read retries", () => {
     }
   });
 
-  it("does not retry POST requests after a transient server response", async () => {
+  it("does not retry POST or PUT requests after a transient server response", async () => {
     let attempts = 0;
     const server = createServer((_request, response) => {
       attempts++;
@@ -168,6 +207,8 @@ describe("GitLab read retries", () => {
       const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
       await expect(client.postNote(1, 2, "comment text")).rejects.toThrow("GitLab API returned 503");
       expect(attempts).toBe(1);
+      await expect(client.updateMergeRequest(1, 2, { title: "Retitled" })).rejects.toThrow("GitLab API returned 503");
+      expect(attempts).toBe(2);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
