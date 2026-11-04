@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
+    files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {
       globals: {
         console: "readonly",
@@ -13,18 +13,6 @@ export default tseslint.config(
         Buffer: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
-      },
-    },
-  },
-  {
-    files: ["src/app/ui/**/*.js"],
-    languageOptions: {
-      globals: {
-        document: "readonly",
-        fetch: "readonly",
-        location: "readonly",
-        URLSearchParams: "readonly",
-        window: "readonly",
       },
     },
   },

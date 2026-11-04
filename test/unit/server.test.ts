@@ -122,19 +122,23 @@ describe("CorvexServer", () => {
       ).toBe(405);
       const dashboard = await fetch(`${base}/ops`, { headers: { authorization } });
       expect(dashboard.status).toBe(200);
-      expect(await dashboard.text()).toContain('id="language"');
-      expect(
-        (await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status,
-      ).toBe(200);
-      expect(
-        (await fetch(`${base}/ops/i18n.js`, { headers: { authorization } })).status,
-      ).toBe(200);
-      expect(
-        (await fetch(`${base}/ops/trace.js`, { headers: { authorization } })).status,
-      ).toBe(200);
-      expect(
-        (await fetch(`${base}/ops/time.js`, { headers: { authorization } })).status,
-      ).toBe(200);
+      const markup = await dashboard.text();
+      expect(markup).toContain('id="root"');
+      // 控制台脚本带内容哈希，测试从页面标记中取出真实地址再校验可访问性。
+      const scriptPath = /src="([^"]+\.js)"/.exec(markup)?.[1];
+      expect(scriptPath).toBeTruthy();
+      const script = await fetch(`${base}${scriptPath}`, { headers: { authorization } });
+      expect(script.status).toBe(200);
+      expect(script.headers.get("content-type")).toContain("javascript");
+      expect(markup).toContain('name="robots"');
+      expect(dashboard.headers.get("x-robots-tag")).toContain("noindex");
+      expect((await fetch(`${base}/ops`, { method: "HEAD", headers: { authorization } })).status).toBe(200);
+      expect((await fetch(`${base}/ops`, { method: "POST", headers: { authorization } })).status).toBe(405);
+      const overview = await fetch(`${base}/api/ops/overview`, { headers: { authorization } });
+      expect(overview.status).toBe(200);
+      expect(overview.headers.get("x-content-type-options")).toBe("nosniff");
+      expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
+      expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
 
       const payload = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateOutputTokensPerSecond, reconstructLlmInput } from "../../src/app/ui/trace.js";
+import { calculateOutputTokensPerSecond, reconstructLlmInput } from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
   it("calculates output TPS weighted by model call duration", () => {

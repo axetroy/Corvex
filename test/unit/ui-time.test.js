@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateJobDurationSeconds } from "../../src/app/ui/time.js";
+import { calculateJobDurationSeconds } from "../../src/app/ui/time.ts";
 
 describe("operations UI task duration", () => {
   const createdAt = "2026-11-03T10:00:00.000Z";

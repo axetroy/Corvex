@@ -22,13 +22,14 @@ The agent runtime is `@earendil-works/pi-coding-agent` (Pi SDK). Pi runs the mod
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm run build` | `tsc -p tsconfig.json` into `dist/`, then copies the operations console (`src/app/ui`) into `dist/app/ui` |
-| `pnpm run typecheck` | Type-checks `src` (`tsconfig.json`) and `src` + `test` + `scripts` (`tsconfig.test.json`) |
+| `pnpm run build` | `tsc -p tsconfig.json` into `dist/`, then bundles the React operations console into `dist/app/ui` with Vite |
+| `pnpm run typecheck` | Type-checks `src` (`tsconfig.json`), `src` + `test` + `scripts` (`tsconfig.test.json`), and the console (`src/app/ui/tsconfig.json`) |
+| `pnpm run ui:build` / `ui:dev` | Build the console, or open the Vite dev server proxying `/api` to a local Server |
 | `pnpm run lint` | ESLint over `src`, `test`, `scripts` |
-| `pnpm test` | Vitest run: everything under `test/unit` and `test/integration` |
+| `pnpm test` | Builds the console, then runs Vitest over `test/unit` and `test/integration` |
 | `pnpm vitest run test/unit/command.test.ts` | Focused test file |
 | `pnpm vitest run -t "name"` | Focused test by name |
-| `pnpm dev` | `tsx watch src/cli.ts` (CLI defaults to `server` mode) |
+| `pnpm dev` | Builds the console, then `tsx watch src/cli.ts` (CLI defaults to `server` mode) |
 | `pnpm run docs:dev` / `docs:build` / `docs:preview` | VitePress site under `docs/` |
 
 CLI entry points (`node dist/cli.js ...`, or `pnpm start -- ...`):
@@ -48,7 +49,7 @@ Before finishing a change, run `pnpm run lint`, `pnpm run typecheck` and `pnpm t
 src/cli.ts          argument parsing and process wiring (init/backup/jobs/storage/server/worker)
 src/config/         YAML loading, role-based validation, defaults
 src/app/            HTTP server, worker loop, leases/retries, readiness, metrics, ops console
-src/app/ui/         vanilla HTML/CSS/JS operations console (copied into dist at build time)
+src/app/ui/         React operations console, bundled by Vite into dist/app/ui and served under /ops
 src/jobs/           SQLite schema + migrations, job store, state machine, trace/metrics persistence
 src/gitlab/         webhook verification/parsing, command parsing, REST client
 src/git/            mirror clones, detached worktrees, diffs, path and patch checks

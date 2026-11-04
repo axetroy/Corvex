@@ -51,11 +51,36 @@ function respondJson(response: ServerResponse, status: number, value: unknown): 
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("referrer-policy", "no-referrer");
   response.end(JSON.stringify(value));
 }
 
 function isJobStatus(value: string): value is JobStatus {
   return jobStatuses.some((status) => status === value);
+}
+
+/** 构建后的运维控制台目录；开发与生产都从包根目录的 dist/app/ui 读取。 */
+const operationsUiDirectory = new URL("../../dist/app/ui/", import.meta.url);
+
+/** 运维控制台允许提供的静态资源扩展名与对应响应类型。 */
+const operationsUiContentTypes: Record<string, string> = {
+  js: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  svg: "image/svg+xml",
+  png: "image/png",
+  ico: "image/x-icon",
+  woff2: "font/woff2",
+  json: "application/json; charset=utf-8",
+  map: "application/json; charset=utf-8",
+};
+
+/** 校验 `/ops/assets/<file>` 相对路径，拒绝目录穿越与非白名单扩展名。 */
+function operationsUiAsset(relativePath: string): { file: string; contentType: string } | undefined {
+  if (!/^assets\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(relativePath)) return undefined;
+  const extension = relativePath.slice(relativePath.lastIndexOf(".") + 1).toLowerCase();
+  const contentType = operationsUiContentTypes[extension];
+  return contentType ? { file: relativePath, contentType } : undefined;
 }
 
 function isJobType(value: string): value is JobType {
@@ -206,7 +231,7 @@ export class CorvexServer {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", "http://localhost");
     const path = url.pathname;
-    if (path === "/ops" || path === "/ops/" || path.startsWith("/ops/") || path.startsWith("/api/ops/")) {
+    if (path === "/ops" || path.startsWith("/ops/") || path.startsWith("/api/ops/")) {
       if (!this.config.operations.username || !this.config.operations.password) {
         respond(response, 404, "not found\n");
         return;
@@ -218,6 +243,10 @@ export class CorvexServer {
       }
       if (path.startsWith("/api/ops/")) {
         this.operationsApi(request, response, url);
+        return;
+      }
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        respond(response, 405, "method not allowed\n");
         return;
       }
       await this.operationsUi(response, path);
@@ -329,30 +358,30 @@ export class CorvexServer {
   }
 
   private async operationsUi(response: ServerResponse, path: string): Promise<void> {
-    const assets: Record<string, { file: string; contentType: string }> = {
-      "/ops/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
-      "/ops/i18n.js": { file: "i18n.js", contentType: "text/javascript; charset=utf-8" },
-      "/ops/trace.js": { file: "trace.js", contentType: "text/javascript; charset=utf-8" },
-      "/ops/time.js": { file: "time.js", contentType: "text/javascript; charset=utf-8" },
-      "/ops/styles.css": { file: "styles.css", contentType: "text/css; charset=utf-8" },
-    };
-    const file = path === "/ops" || path === "/ops/" ? "index.html" : assets[path]?.file;
-    if (!file) {
+    const target = path === "/ops" || path === "/ops/"
+      ? { file: "index.html", contentType: "text/html; charset=utf-8" }
+      : operationsUiAsset(path.slice("/ops/".length));
+    if (!target) {
       respond(response, 404, "not found\n");
       return;
     }
-    const contentType = path === "/ops" || path === "/ops/"
-      ? "text/html; charset=utf-8"
-      : assets[path]!.contentType;
-    const contents = await readFile(new URL(`./ui/${file}`, import.meta.url));
+    let contents: Buffer;
+    try {
+      contents = await readFile(new URL(target.file, operationsUiDirectory));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      respond(response, 503, "operations console assets are not built; run pnpm run ui:build\n");
+      return;
+    }
     response.statusCode = 200;
-    response.setHeader("content-type", contentType);
+    response.setHeader("content-type", target.contentType);
     response.setHeader("cache-control", "no-store");
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
+    response.setHeader("x-robots-tag", "noindex, nofollow");
     response.setHeader(
       "content-security-policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; form-action 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     );
     response.end(contents);
   }

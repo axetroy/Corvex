@@ -1,11 +1,16 @@
-function supportedLocale(value) {
+/** 运维台支持的界面语言。 */
+export type Locale = "en" | "zh-CN";
+
+/** 把任意语言标记归一化为受支持的界面语言；不支持时返回 undefined。 */
+function supportedLocale(value: string): Locale | undefined {
   const normalized = value.trim().replaceAll("_", "-").toLowerCase();
   if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
   if (normalized === "en" || normalized.startsWith("en-")) return "en";
   return undefined;
 }
 
-export function resolveLocale(savedLocale, browserLanguages) {
+/** 依次用已保存偏好和浏览器语言选择界面语言，全部不支持时回退英文。 */
+export function resolveLocale(savedLocale: string, browserLanguages: readonly string[]): Locale {
   const saved = supportedLocale(savedLocale);
   if (saved) return saved;
   for (const language of browserLanguages) {
@@ -13,6 +18,11 @@ export function resolveLocale(savedLocale, browserLanguages) {
     if (locale) return locale;
   }
   return "en";
+}
+
+/** 用界面文案表安全查表，缺少条目时回退为原始键名。 */
+export function translate(table: Record<string, string>, key: string): string {
+  return table[key] ?? key;
 }
 
 /** 运维台英文界面文案，按界面用途提供本地化字符串。 */
@@ -188,7 +198,6 @@ export const en = {
   traceToolInspectPathTemplate: "Inspect path {path}",
   traceToolFetchWebTemplate: "Read webpage {url}",
   traceToolGenericTemplate: "Call {name}",
-  traceToolCallTemplate: "Tool call: {action}",
   traceUnknownPath: "unknown path",
   traceSchema: "Schema",
   traceNoInput: "No input recorded",
@@ -198,10 +207,7 @@ export const en = {
   traceStatus: "Status",
   traceAttempt: "Attempt",
   traceName: "Activity",
-  traceModel: "Model",
   rawContent: "Original content",
-  viewRawContent: "Show original content",
-  viewTraceError: "Show tool error",
   noRawContent: "Not recorded",
   viewErrorDetails: "Show error details",
   traceDurationMsTemplate: "{value} ms",
@@ -210,11 +216,23 @@ export const en = {
   finished: "Finished",
   error: "Error",
   noAttempts: "No attempts recorded yet.",
+  renderErrorTitle: "The operations console failed to render",
+  renderErrorDescription: "Reload the page to try again. If it keeps failing, check the browser console and the Server logs.",
+  reloadPage: "Reload",
+  refreshing: "Refreshing…",
+  skipToContent: "Skip to content",
+  requestTimeoutTemplate: "Request timed out after {seconds}s",
   requestFailedTemplate: "Request failed ({status}): {message}",
 };
 
+/** 运维台界面文案结构，中英文共用同一套键。 */
+export type Copy = typeof en;
+
+/** `Copy` 中可直接作为界面文案使用的键（排除嵌套的分组表）。 */
+export type CopyTextKey = { [Key in keyof Copy]: Copy[Key] extends string ? Key : never }[keyof Copy];
+
 /** 运维台简体中文界面文案，与 en 使用相同的键结构。 */
-export const zhCN = {
+export const zhCN: Copy = {
   documentTitle: "Corvex 运维控制台",
   brandLabel: "Corvex 运维控制台首页",
   navLabel: "主导航",
@@ -386,7 +404,6 @@ export const zhCN = {
   traceToolInspectPathTemplate: "检查 {path} 路径",
   traceToolFetchWebTemplate: "读取网页 {url}",
   traceToolGenericTemplate: "调用 {name}",
-  traceToolCallTemplate: "调用工具：{action}",
   traceUnknownPath: "未知路径",
   traceSchema: "Schema",
   traceNoInput: "没有记录输入",
@@ -396,10 +413,7 @@ export const zhCN = {
   traceStatus: "状态",
   traceAttempt: "尝试次数",
   traceName: "活动",
-  traceModel: "模型",
   rawContent: "原始内容",
-  viewRawContent: "查看原始内容",
-  viewTraceError: "查看工具错误",
   noRawContent: "未记录",
   viewErrorDetails: "查看错误详情",
   traceDurationMsTemplate: "{value} 毫秒",
@@ -408,5 +422,11 @@ export const zhCN = {
   finished: "结束时间",
   error: "错误",
   noAttempts: "暂无尝试记录。",
+  renderErrorTitle: "运维控制台渲染失败",
+  renderErrorDescription: "请重新加载页面；如果仍然失败，请检查浏览器控制台与 Server 日志。",
+  reloadPage: "重新加载",
+  refreshing: "刷新中…",
+  skipToContent: "跳到主要内容",
+  requestTimeoutTemplate: "请求超时（{seconds} 秒）",
   requestFailedTemplate: "请求失败（{status}）：{message}",
 };

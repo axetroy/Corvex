@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { en, resolveLocale, zhCN } from "../../src/app/ui/i18n.js";
+import { en, resolveLocale, zhCN } from "../../src/app/ui/i18n.ts";
 
 describe("operations UI locale", () => {
   it("uses Simplified Chinese when it is the browser language", () => {

@@ -167,6 +167,10 @@ Webhook 密钥。示例配置和日志中不得包含密钥。
 - 数据保留策略、SQLite 在线备份/恢复流程，以及 dry-run 优先的 Git 存储清理。
 - 通过人工标注样例和显式在线运行的评审基准评估质量；基准运行不属于常规 CI。
 
+运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
+Server 只按 `/ops/assets/<file>` 白名单提供构建产物。React、React DOM 和 Vite 属于构建期
+依赖，不进入运行时依赖，也不改变 Basic Auth、只读和自动刷新的既有边界。
+
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。
 版本标签发布会在 CI 检查通过后构建多架构 GHCR 镜像并创建源码 Release。
