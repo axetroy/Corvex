@@ -1,19 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { calculateOutputTokensPerSecond, reconstructLlmInput } from "../../src/app/ui/trace.ts";
+import {
+  calculateAverageFirstTokenMs,
+  calculateGenerationTokensPerSecond,
+  reconstructLlmInput,
+} from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
-  it("calculates output TPS weighted by model call duration", () => {
-    expect(calculateOutputTokensPerSecond([
-      { outputTokens: 30, durationMs: 1000 },
-      { outputTokens: 20, durationMs: 3000 },
+  it("calculates generation TPS weighted by generation duration", () => {
+    expect(calculateGenerationTokensPerSecond([
+      { status: "succeeded", outputTokens: 30, firstTokenMs: 400, generationDurationMs: 1000 },
+      { status: "succeeded", outputTokens: 20, firstTokenMs: 800, generationDurationMs: 3000 },
     ])).toBe(12.5);
   });
 
-  it("ignores traces without valid output token counts or durations", () => {
-    expect(calculateOutputTokensPerSecond([
-      { outputTokens: 10, durationMs: 0 },
-      { outputTokens: null, durationMs: 1000 },
+  it("ignores failures and traces without valid token counts or generation durations", () => {
+    expect(calculateGenerationTokensPerSecond([
+      { status: "succeeded", outputTokens: 10, firstTokenMs: 10, generationDurationMs: 0 },
+      { status: "succeeded", outputTokens: null, firstTokenMs: 10, generationDurationMs: 1000 },
+      { status: "failed", outputTokens: 100, firstTokenMs: 10, generationDurationMs: 100 },
     ])).toBeNull();
+  });
+
+  it("calculates average time to first token from successful samples only", () => {
+    expect(calculateAverageFirstTokenMs([
+      { status: "succeeded", outputTokens: 30, firstTokenMs: 200, generationDurationMs: 500 },
+      { status: "succeeded", outputTokens: 20, firstTokenMs: 600, generationDurationMs: 500 },
+      { status: "failed", outputTokens: 10, firstTokenMs: 5000, generationDurationMs: 100 },
+    ])).toBe(400);
   });
 
   it("reconstructs the selected model turn from incremental entries and resets", () => {

@@ -86,6 +86,8 @@ export interface JobTraceEntry {
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
+  firstTokenMs: number | null;
+  generationDurationMs: number | null;
   model: string | null;
   inputTokens: number | null;
   outputTokens: number | null;

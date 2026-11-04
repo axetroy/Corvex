@@ -10,7 +10,7 @@ import {
 } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
-import { asTraceRecord, calculateOutputTokensPerSecond, parseTraceValue } from "../trace.js";
+import { asTraceRecord, calculateAverageFirstTokenMs, calculateGenerationTokensPerSecond, parseTraceValue } from "../trace.js";
 import type { JobTraceEntry } from "../types.js";
 import { Empty } from "./common.js";
 
@@ -99,7 +99,8 @@ export const TraceSession = memo(function TraceSession({
     .replace("{messages}", String(modelTraces.length))
     .replace("{tools}", String(toolTraces.length))
     .replace("{errors}", String(failures))
-    .replace("{tps}", formatOutputTps(calculateOutputTokensPerSecond(modelTraces), copy));
+    .replace("{ttft}", formatTraceDuration(calculateAverageFirstTokenMs(modelTraces), copy))
+    .replace("{tps}", formatOutputTps(calculateGenerationTokensPerSecond(modelTraces), copy));
 
   const visible = filter === "all" ? traces : filter === "tools" ? toolTraces : modelTraces;
   const hasVisibleTools = visible.some((entry) => entry.kind === "tool");
@@ -130,7 +131,14 @@ export const TraceSession = memo(function TraceSession({
           <span className="trace-session-model">{copy.traceSessionModelTemplate.replace("{model}", entry.model)}</span>
         ) : null}
         {entry.kind === "llm" ? (
-          <span className="trace-session-tps">{formatOutputTps(calculateOutputTokensPerSecond([entry]), copy)}</span>
+          <>
+            <span className="trace-session-ttft">
+              {copy.traceFirstToken}: {formatTraceDuration(entry.firstTokenMs, copy)}
+            </span>
+            <span className="trace-session-tps">
+              {formatOutputTps(calculateGenerationTokensPerSecond([entry]), copy)}
+            </span>
+          </>
         ) : null}
         <span className="trace-session-round">{roundLabel(entry, copy)}</span>
         <span className={`trace-session-status trace-session-status-${entry.status}`}>

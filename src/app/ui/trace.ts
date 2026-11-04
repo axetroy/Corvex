@@ -1,7 +1,9 @@
 /** 参与输出速度计算的轨迹条目；缺少有效 Token 或耗时的条目会被跳过。 */
 export interface TraceTokenSample {
+  status: "running" | "succeeded" | "failed";
   outputTokens: number | null;
-  durationMs: number | null;
+  firstTokenMs: number | null;
+  generationDurationMs: number | null;
 }
 
 /** 重建模型输入所需的轨迹条目子集，缺省字段按未记录处理。 */
@@ -29,19 +31,34 @@ export function asTraceRecord(value: unknown): Record<string, unknown> | undefin
     : undefined;
 }
 
-/** 按模型调用耗时加权计算输出速度（Token/秒）；没有有效样本时返回 null。 */
-export function calculateOutputTokensPerSecond(entries: readonly TraceTokenSample[]): number | null {
+/** 仅按成功调用的生成阶段耗时加权计算 TPS；没有有效样本时返回 null。 */
+export function calculateGenerationTokensPerSecond(entries: readonly TraceTokenSample[]): number | null {
   let outputTokens = 0;
-  let durationMs = 0;
+  let generationDurationMs = 0;
   for (const entry of entries) {
     const tokens = entry.outputTokens;
-    const duration = entry.durationMs;
+    const duration = entry.generationDurationMs;
+    if (entry.status !== "succeeded") continue;
     if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens < 0) continue;
     if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) continue;
     outputTokens += tokens;
-    durationMs += duration;
+    generationDurationMs += duration;
   }
-  return durationMs > 0 ? outputTokens * 1000 / durationMs : null;
+  return generationDurationMs > 0 ? outputTokens * 1000 / generationDurationMs : null;
+}
+
+/** 仅计算成功调用的平均首 token 延迟；旧轨迹或无增量样本不参与。 */
+export function calculateAverageFirstTokenMs(entries: readonly TraceTokenSample[]): number | null {
+  let totalMs = 0;
+  let count = 0;
+  for (const entry of entries) {
+    if (entry.status !== "succeeded") continue;
+    const firstTokenMs = entry.firstTokenMs;
+    if (typeof firstTokenMs !== "number" || !Number.isFinite(firstTokenMs) || firstTokenMs < 0) continue;
+    totalMs += firstTokenMs;
+    count++;
+  }
+  return count > 0 ? totalMs / count : null;
 }
 
 /**

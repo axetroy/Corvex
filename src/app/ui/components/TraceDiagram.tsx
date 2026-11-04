@@ -3,7 +3,11 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
-import { calculateOutputTokensPerSecond, reconstructLlmInput } from "../trace.js";
+import {
+  calculateAverageFirstTokenMs,
+  calculateGenerationTokensPerSecond,
+  reconstructLlmInput,
+} from "../trace.js";
 import type { JobTraceEntry, JobTraceKind } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
 
@@ -51,7 +55,18 @@ function InspectorContent({
           label={copy.traceStatus}
           value={`${selected.filter((entry) => entry.status === "succeeded").length} / ${selected.length}`}
         />
-        <DetailItem label={copy.traceTps} value={formatOutputTps(calculateOutputTokensPerSecond(selected), copy)} />
+        <DetailItem
+          label={copy.traceFirstToken}
+          value={formatTraceDuration(calculateAverageFirstTokenMs(selected), copy)}
+        />
+        <DetailItem
+          label={copy.traceGenerationDuration}
+          value={formatTraceDuration(
+            selected.reduce((sum, entry) => sum + (entry.generationDurationMs ?? 0), 0) || null,
+            copy,
+          )}
+        />
+        <DetailItem label={copy.traceTps} value={formatOutputTps(calculateGenerationTokensPerSecond(selected), copy)} />
       </dl>
     );
   }
@@ -75,9 +90,14 @@ function InspectorContent({
           <>
             <DetailItem label={copy.inputTokens} value={entry.inputTokens ?? copy.none} />
             <DetailItem label={copy.outputTokens} value={entry.outputTokens ?? copy.none} />
+            <DetailItem label={copy.traceFirstToken} value={formatTraceDuration(entry.firstTokenMs, copy)} />
+            <DetailItem
+              label={copy.traceGenerationDuration}
+              value={formatTraceDuration(entry.generationDurationMs, copy)}
+            />
             <DetailItem
               label={copy.traceTps}
-              value={formatOutputTps(calculateOutputTokensPerSecond([entry]), copy)}
+              value={formatOutputTps(calculateGenerationTokensPerSecond([entry]), copy)}
             />
           </>
         ) : null}
@@ -111,6 +131,15 @@ function InspectorContent({
       <DetailItem label={copy.started} value={formatDate(entry.startedAt, copy, locale)} />
       <DetailItem label={copy.finished} value={formatDate(entry.finishedAt, copy, locale)} />
       <DetailItem label={copy.traceDuration} value={formatTraceDuration(entry.durationMs, copy)} />
+      {entry.kind === "llm" ? (
+        <>
+          <DetailItem label={copy.traceFirstToken} value={formatTraceDuration(entry.firstTokenMs, copy)} />
+          <DetailItem
+            label={copy.traceGenerationDuration}
+            value={formatTraceDuration(entry.generationDurationMs, copy)}
+          />
+        </>
+      ) : null}
     </dl>
   );
 }

@@ -207,6 +207,8 @@ function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
     startedAt: stringColumn(row, "started_at"),
     finishedAt: nullableString("finished_at"),
     durationMs: nullableNumber("duration_ms"),
+    firstTokenMs: nullableNumber("first_token_ms"),
+    generationDurationMs: nullableNumber("generation_duration_ms"),
     model: nullableString("model"),
     inputTokens: nullableNumber("input_tokens"),
     outputTokens: nullableNumber("output_tokens"),
@@ -497,6 +499,8 @@ export class JobStore {
     outputTokens?: number,
     errorDetail?: string,
     output?: string,
+    firstTokenMs?: number,
+    generationDurationMs?: number,
   ): void {
     if (
       !Number.isSafeInteger(traceId) ||
@@ -505,14 +509,16 @@ export class JobStore {
       !Number.isFinite(durationMs) ||
       durationMs < 0 ||
       (inputTokens !== undefined && (!Number.isSafeInteger(inputTokens) || inputTokens < 0)) ||
-      (outputTokens !== undefined && (!Number.isSafeInteger(outputTokens) || outputTokens < 0))
+      (outputTokens !== undefined && (!Number.isSafeInteger(outputTokens) || outputTokens < 0)) ||
+      (firstTokenMs !== undefined && (!Number.isFinite(firstTokenMs) || firstTokenMs < 0)) ||
+      (generationDurationMs !== undefined && (!Number.isFinite(generationDurationMs) || generationDurationMs < 0))
     ) {
       throw new Error("job trace completion is invalid");
     }
     const result = this.db
       .prepare(
         `UPDATE job_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?,
-         trace_output=?
+         trace_output=?, first_token_ms=?, generation_duration_ms=?
          WHERE id=? AND status='running'`,
       )
       .run(
@@ -523,6 +529,8 @@ export class JobStore {
         outputTokens ?? null,
         errorDetail ?? null,
         output ?? null,
+        firstTokenMs === undefined ? null : Math.floor(firstTokenMs),
+        generationDurationMs === undefined ? null : Math.floor(generationDurationMs),
         traceId,
       );
     if (result.changes !== 1) throw new Error(`job trace "${traceId}" is not running`);
@@ -1537,6 +1545,8 @@ export class JobStore {
       trace_schema: "TEXT",
       raw_content: "TEXT",
       error_detail: "TEXT",
+      first_token_ms: "INTEGER",
+      generation_duration_ms: "INTEGER",
     };
     for (const [name, definition] of Object.entries(traceAdditions)) {
       if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE job_trace ADD COLUMN ${name} ${definition}`);

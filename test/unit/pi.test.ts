@@ -113,17 +113,20 @@ describe("PiAgent", () => {
               choices: [{ index: 0, delta: { role: "assistant", content: '{"summary":"ok","findings":[]}' }, finish_reason: null }],
             })}\n\n`,
           );
-          response.write(
-            `data: ${JSON.stringify({
-              id: "chatcmpl-test",
-              object: "chat.completion.chunk",
-              created: 1,
-              model: "test-model",
-              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-              usage: { prompt_tokens: 14, completion_tokens: 6, total_tokens: 20 },
-            })}\n\n`,
-          );
-          response.end("data: [DONE]\n\n");
+          setTimeout(() => {
+            if (response.destroyed) return;
+            response.write(
+              `data: ${JSON.stringify({
+                id: "chatcmpl-test",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test-model",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 14, completion_tokens: 6, total_tokens: 20 },
+              })}\n\n`,
+            );
+            response.end("data: [DONE]\n\n");
+          }, 40);
         };
         if (responseDelayMs > 0) {
           const timer = setTimeout(sendResponse, responseDelayMs);
@@ -260,10 +263,13 @@ describe("PiAgent", () => {
         status: "succeeded",
         inputTokens: 14,
         outputTokens: 6,
+        firstTokenMs: expect.any(Number),
+        generationDurationMs: expect.any(Number),
         input: expect.stringContaining("private repository content"),
         output: expect.stringContaining("summary"),
       },
     ]);
+    expect(llmTraces?.[1]?.generationDurationMs).toBeGreaterThan(0);
 
     responseDelayMs = 0;
     await agent.generate(

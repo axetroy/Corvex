@@ -232,7 +232,7 @@ describe("JobStore", () => {
       JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
       { round: 2, input: "review context" },
     );
-    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25, undefined, "assistant response");
+    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25, undefined, "assistant response", 40, 85);
     const toolCall = store.startJobTrace(
       job.id,
       job.attemptCount,
@@ -271,6 +271,8 @@ describe("JobStore", () => {
         status: "succeeded",
         model: "test/model",
         durationMs: 125,
+        firstTokenMs: 40,
+        generationDurationMs: 85,
         inputTokens: 70,
         outputTokens: 25,
         rawContent: JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
@@ -644,6 +646,10 @@ describe("JobStore", () => {
     store.finishJobTrace(traceId, "failed", 10, undefined, undefined, "legacy trace error");
     expect(store.getJobDetails("legacy-job")?.trajectory[0]?.rawContent).toBe("legacy prompt");
     expect(store.getJobDetails("legacy-job")?.trajectory[0]?.errorDetail).toBe("legacy trace error");
+    expect(store.getJobDetails("legacy-job")?.trajectory[0]).toMatchObject({
+      firstTokenMs: null,
+      generationDurationMs: null,
+    });
     expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
   });
 });

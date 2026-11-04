@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
@@ -89,6 +90,20 @@ export interface JobTraceContext {
     repositoryUrl?: string;
     expectedTargetSha?: string;
   };
+}
+
+function hasGeneratedOutput(event: AssistantMessageEvent): boolean {
+  if (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") {
+    return event.delta.length > 0;
+  }
+  if (event.type !== "text_start" && event.type !== "thinking_start" && event.type !== "toolcall_start") {
+    return false;
+  }
+  const content = event.partial.content[event.contentIndex];
+  if (content?.type === "text") return content.text.length > 0;
+  if (content?.type === "thinking") return content.thinking.length > 0;
+  if (content?.type === "toolCall") return content.name.length > 0 || Object.keys(content.arguments).length > 0;
+  return false;
 }
 
 export type ReadMergeRequestComments = (
@@ -376,7 +391,13 @@ export class PiAgent {
       noTools: "builtin",
     });
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
-    let activeModelCall: { traceId: number; startedAt: number; round: number } | undefined;
+    let activeModelCall: {
+      traceId: number;
+      startedAt: number;
+      round: number;
+      firstTokenAt?: number;
+      firstTokenMs?: number;
+    } | undefined;
     let modelCallCount = 0;
     let currentRound = 0;
     const recordedContextEntryIds = new Set<string>();
@@ -385,6 +406,7 @@ export class PiAgent {
       if (!trace) return;
       if (event.type === "message_start" && event.message.role === "assistant") {
         const round = ++currentRound;
+        const startedAt = performance.now();
         const contextEntries = session.sessionManager.buildContextEntries();
         const currentContextEntryIds = new Set(contextEntries.map((entry) => entry.id));
         const contextReset = !hasRecordedContext ||
@@ -410,19 +432,29 @@ export class PiAgent {
         );
         modelCallCount++;
         if (traceId !== undefined) {
-          activeModelCall = { traceId, startedAt: performance.now(), round };
+          activeModelCall = { traceId, startedAt, round };
           recordedContextEntryIds.clear();
           for (const entry of contextEntries) recordedContextEntryIds.add(entry.id);
           hasRecordedContext = true;
+        }
+      } else if (event.type === "message_update" && event.message.role === "assistant") {
+        if (activeModelCall && activeModelCall.firstTokenMs === undefined && hasGeneratedOutput(event.assistantMessageEvent)) {
+          activeModelCall.firstTokenAt = performance.now();
+          activeModelCall.firstTokenMs = activeModelCall.firstTokenAt - activeModelCall.startedAt;
         }
       } else if (event.type === "message_end" && event.message.role === "assistant") {
         if (!activeModelCall) return;
         const message = event.message;
         const failed = message.stopReason === "error" || message.stopReason === "aborted";
+        const endedAt = performance.now();
+        const durationMs = message.durationMs ?? endedAt - activeModelCall.startedAt;
+        const generationDurationMs = activeModelCall.firstTokenAt === undefined
+          ? undefined
+          : Math.max(0, endedAt - activeModelCall.firstTokenAt);
         this.finishTrace(
           activeModelCall.traceId,
           failed ? "failed" : "succeeded",
-          message.durationMs ?? performance.now() - activeModelCall.startedAt,
+          durationMs,
           message.usage.input,
           message.usage.output,
           failed ? message.errorMessage ?? `model request ${message.stopReason}` : undefined,
@@ -430,6 +462,8 @@ export class PiAgent {
             content: message.content.filter((part) => part.type === "text" || part.type === "toolCall"),
             stopReason: message.stopReason,
           }),
+          activeModelCall.firstTokenMs,
+          generationDurationMs,
         );
         activeModelCall = undefined;
       } else if (event.type === "tool_execution_start") {
@@ -479,13 +513,21 @@ export class PiAgent {
       };
     } catch (error) {
       if (activeModelCall) {
+        const endedAt = performance.now();
+        const durationMs = endedAt - activeModelCall.startedAt;
+        const generationDurationMs = activeModelCall.firstTokenAt === undefined
+          ? undefined
+          : Math.max(0, endedAt - activeModelCall.firstTokenAt);
         this.finishTrace(
           activeModelCall.traceId,
           "failed",
-          performance.now() - activeModelCall.startedAt,
+          durationMs,
           undefined,
           undefined,
           error instanceof Error ? error.message : String(error),
+          undefined,
+          activeModelCall.firstTokenMs,
+          generationDurationMs,
         );
         activeModelCall = undefined;
       }
@@ -494,13 +536,21 @@ export class PiAgent {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
       if (activeModelCall) {
+        const endedAt = performance.now();
+        const durationMs = endedAt - activeModelCall.startedAt;
+        const generationDurationMs = activeModelCall.firstTokenAt === undefined
+          ? undefined
+          : Math.max(0, endedAt - activeModelCall.firstTokenAt);
         this.finishTrace(
           activeModelCall.traceId,
           "failed",
-          performance.now() - activeModelCall.startedAt,
+          durationMs,
           undefined,
           undefined,
           "model request did not complete",
+          undefined,
+          activeModelCall.firstTokenMs,
+          generationDurationMs,
         );
       }
       for (const active of activeTools.values()) {
@@ -568,10 +618,22 @@ export class PiAgent {
     outputTokens?: number,
     errorDetail?: string,
     output?: string,
+    firstTokenMs?: number,
+    generationDurationMs?: number,
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishJobTrace(traceId, status, durationMs, inputTokens, outputTokens, errorDetail, output);
+      this.store.finishJobTrace(
+        traceId,
+        status,
+        durationMs,
+        inputTokens,
+        outputTokens,
+        errorDetail,
+        output,
+        firstTokenMs,
+        generationDurationMs,
+      );
     } catch (error) {
       console.warn("record job trajectory completion failed", {
         traceId,
