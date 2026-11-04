@@ -333,6 +333,7 @@ export class CorvexServer {
       "/ops/app.js": { file: "app.js", contentType: "text/javascript; charset=utf-8" },
       "/ops/i18n.js": { file: "i18n.js", contentType: "text/javascript; charset=utf-8" },
       "/ops/trace.js": { file: "trace.js", contentType: "text/javascript; charset=utf-8" },
+      "/ops/time.js": { file: "time.js", contentType: "text/javascript; charset=utf-8" },
       "/ops/styles.css": { file: "styles.css", contentType: "text/css; charset=utf-8" },
     };
     const file = path === "/ops" || path === "/ops/" ? "index.html" : assets[path]?.file;
