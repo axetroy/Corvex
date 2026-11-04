@@ -1,7 +1,42 @@
-import { describe, expect, it } from "vitest";
-import { parseImplementationResponse } from "../../src/implement/workflow.js";
+import { describe, expect, it, vi } from "vitest";
+import { getPromptTemplates } from "../../src/agent/prompts.js";
+import type { PiAgent } from "../../src/agent/pi.js";
+import { ImplementWorkflow, parseImplementationResponse } from "../../src/implement/workflow.js";
 
 describe("Issue implementation responses", () => {
+  it("keeps the system prompt stable across per-issue settings", async () => {
+    const generate = vi.fn<PiAgent["generate"]>(async () => ({
+      content: '{"action":"reply","reply":"Need more detail."}',
+      model: "test/model",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    }));
+    const workflow = new ImplementWorkflow({ generate } as unknown as PiAgent, 1024, 1024);
+    const baseContext = {
+      projectId: 1,
+      issueIid: 2,
+      title: "Update settings",
+      description: "",
+      baseSha: "a".repeat(40),
+      comments: [],
+    };
+
+    await workflow.implement({ ...baseContext, defaultBranch: "main", implementationEnabled: true }, "Please implement this", process.cwd());
+    await workflow.implement({ ...baseContext, defaultBranch: "trunk", implementationEnabled: false }, "Please analyze this", process.cwd());
+
+    const firstCall = generate.mock.calls[0]![0];
+    const secondCall = generate.mock.calls[1]![0];
+    expect(firstCall.systemPrompt).toBe(getPromptTemplates("en").implementSystem);
+    expect(secondCall.systemPrompt).toBe(firstCall.systemPrompt);
+    expect(JSON.parse(firstCall.userPrompt)).toMatchObject({
+      issue: { defaultBranch: "main" },
+      implementation_enabled: true,
+    });
+    expect(JSON.parse(secondCall.userPrompt)).toMatchObject({
+      issue: { defaultBranch: "trunk" },
+      implementation_enabled: false,
+    });
+  });
+
   it("accepts a bounded implementation response", () => {
     expect(parseImplementationResponse(JSON.stringify({
       action: "implement",

@@ -132,11 +132,7 @@ export class ImplementWorkflow {
     const response = await this.agent.generate(
       {
         taskType: "implement",
-        systemPrompt: getPromptTemplates(this.responseLanguage).implementSystem({
-          implementationEnabled,
-          defaultBranch: context.defaultBranch,
-          responseLanguage: this.responseLanguage,
-        }),
+        systemPrompt: getPromptTemplates(this.responseLanguage).implementSystem,
         userPrompt,
       },
       cwd,
