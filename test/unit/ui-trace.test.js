@@ -130,6 +130,58 @@ describe("operations UI trace reconstruction", () => {
     expect(markup).not.toContain("action");
   });
 
+  it("hides a failed model turn when a later turn in the same attempt succeeds", () => {
+    const failedTrace = {
+      id: 1,
+      attempt: 1,
+      round: 101,
+      kind: "llm",
+      name: "chat",
+      status: "failed",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:00:01.000Z",
+      durationMs: 1000,
+      firstTokenMs: null,
+      generationDurationMs: null,
+      model: "test-model",
+      inputTokens: null,
+      outputTokens: null,
+      input: null,
+      output: JSON.stringify({ content: [], stopReason: "error" }),
+      schema: null,
+      rawContent: null,
+      errorDetail: "Connection error.",
+    };
+    const recoveredTrace = {
+      ...failedTrace,
+      id: 2,
+      round: 102,
+      status: "succeeded",
+      startedAt: "2026-01-01T00:00:02.000Z",
+      finishedAt: "2026-01-01T00:00:03.000Z",
+      output: JSON.stringify({ content: [{ type: "text", text: "Recovered response." }] }),
+      errorDetail: null,
+    };
+    const markup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [failedTrace, recoveredTrace],
+      userRequest: "Please inspect this",
+      copy: en,
+      locale: "en",
+    }));
+
+    expect(markup).toContain("Recovered response.");
+    expect(markup).not.toContain("Connection error.");
+    expect(markup).toContain("Errors: 1");
+
+    const unrecoveredMarkup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [failedTrace],
+      userRequest: "",
+      copy: en,
+      locale: "en",
+    }));
+    expect(unrecoveredMarkup).toContain("Connection error.");
+  });
+
   it("calculates generation TPS weighted by generation duration", () => {
     expect(calculateGenerationTokensPerSecond([
       { status: "succeeded", outputTokens: 30, firstTokenMs: 400, generationDurationMs: 1000 },

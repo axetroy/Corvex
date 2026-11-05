@@ -114,6 +114,14 @@ export const TraceSession = memo(function TraceSession({
 
   const modelTraces = traces.filter((entry) => entry.kind === "llm");
   const toolTraces = traces.filter((entry) => entry.kind === "tool");
+  const lastSuccessfulRoundByAttempt = new Map<number, number>();
+  for (const entry of modelTraces) {
+    if (entry.status !== "succeeded" || entry.round === null) continue;
+    lastSuccessfulRoundByAttempt.set(
+      entry.attempt,
+      Math.max(lastSuccessfulRoundByAttempt.get(entry.attempt) ?? 0, entry.round),
+    );
+  }
   const failures = traces.filter((entry) => ["failed", "unknown", "interrupted"].includes(entry.status)).length;
   const summary = copy.traceSessionSummaryTemplate
     .replace("{messages}", String(modelTraces.length))
@@ -160,6 +168,8 @@ export const TraceSession = memo(function TraceSession({
     const assistantText = assistant.text || (assistant.toolCalls.length > 0
       ? copy.traceSessionToolCallsTemplate.replace("{count}", String(assistant.toolCalls.length))
       : "");
+    const recovered = entry.status === "failed" && entry.round !== null &&
+      (lastSuccessfulRoundByAttempt.get(entry.attempt) ?? 0) > entry.round;
     const metadata = (
       <>
         {entry.model ? <span>{copy.traceSessionModelTemplate.replace("{model}", entry.model)}</span> : null}
@@ -180,7 +190,7 @@ export const TraceSession = memo(function TraceSession({
             metadata={metadata}
           />
         ) : null}
-        {entry.errorDetail ? (
+        {entry.errorDetail && !recovered ? (
           <SessionMessage label={copy.error} value={entry.errorDetail} kind="error" />
         ) : null}
       </Fragment>
