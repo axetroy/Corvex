@@ -61,9 +61,14 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 /** 长文本折叠展示：摘要显示首行，展开后显示完整内容。 */
-export function ExpandableText({ label, value, className }: { label: string; value: string; className?: string }) {
+export function ExpandableText({ label, value, className, defaultOpen = false }: {
+  label: string;
+  value: string;
+  className?: string;
+  defaultOpen?: boolean;
+}) {
   return (
-    <details className={className}>
+    <details className={className} open={defaultOpen || undefined}>
       <summary>
         <span>{label}</span>
         <span className="details-preview">{value.split("\n", 1)[0]}</span>
@@ -94,8 +99,13 @@ export function DetailNode({ label, children }: { label: string; children: React
 }
 
 /** 轨迹负载字段：有值时折叠展示，无值时给出占位文案。 */
-export function TraceField({ label, value, emptyLabel }: { label: string; value: string | null; emptyLabel: string }) {
-  if (value) return <ExpandableText label={label} value={value} className="trace-payload" />;
+export function TraceField({ label, value, emptyLabel, defaultOpen = false }: {
+  label: string;
+  value: string | null;
+  emptyLabel: string;
+  defaultOpen?: boolean;
+}) {
+  if (value) return <ExpandableText label={label} value={value} className="trace-payload" defaultOpen={defaultOpen} />;
   return (
     <div className="trace-payload trace-payload-empty">
       <span>{label}</span>

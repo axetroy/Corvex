@@ -110,21 +110,22 @@ function InspectorContent({
         label={entry.kind === "llm" ? copy.traceInput : copy.traceArguments}
         value={entry.kind === "llm" ? reconstructLlmInput(traces, entry) : entry.input ?? entry.rawContent}
         emptyLabel={copy.traceNoInput}
+        defaultOpen
       />
     );
   }
   if (tab === "result") {
     return (
       <>
-        <TraceField label={copy.traceResult} value={entry.output} emptyLabel={copy.traceNoOutput} />
+        <TraceField label={copy.traceResult} value={entry.output} emptyLabel={copy.traceNoOutput} defaultOpen />
         {entry.errorDetail ? (
-          <TraceField label={copy.error} value={entry.errorDetail} emptyLabel={copy.traceNoOutput} />
+          <TraceField label={copy.error} value={entry.errorDetail} emptyLabel={copy.traceNoOutput} defaultOpen />
         ) : null}
       </>
     );
   }
   if (tab === "schema") {
-    return <TraceField label={copy.traceSchema} value={entry.schema} emptyLabel={copy.noRawContent} />;
+    return <TraceField label={copy.traceSchema} value={entry.schema} emptyLabel={copy.noRawContent} defaultOpen />;
   }
   return (
     <dl className="trace-inspector-grid">

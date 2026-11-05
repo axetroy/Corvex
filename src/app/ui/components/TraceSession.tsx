@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   describeSessionTool,
   formatOutputTps,
@@ -90,7 +90,20 @@ export const TraceSession = memo(function TraceSession({
   locale: Locale;
 }) {
   const [filter, setFilter] = useState<SessionFilter>("all");
-  const [openIds, setOpenIds] = useState<ReadonlySet<number>>(() => new Set());
+  const [openIds, setOpenIds] = useState<ReadonlySet<number>>(
+    () => new Set(traces.filter((entry) => entry.kind === "tool").map((entry) => entry.id)),
+  );
+
+  useEffect(() => {
+    const toolIds = new Set(traces.filter((entry) => entry.kind === "tool").map((entry) => entry.id));
+    setOpenIds((current) => {
+      const next = new Set([...current].filter((id) => toolIds.has(id)));
+      for (const id of toolIds) {
+        if (!current.has(id)) next.add(id);
+      }
+      return next.size === current.size && [...next].every((id) => current.has(id)) ? current : next;
+    });
+  }, [traces]);
 
   const modelTraces = traces.filter((entry) => entry.kind === "llm");
   const toolTraces = traces.filter((entry) => entry.kind === "tool");

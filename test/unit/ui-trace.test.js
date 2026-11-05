@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { en } from "../../src/app/ui/i18n.ts";
+import { TraceField } from "../../src/app/ui/components/common.tsx";
+import { TraceSession } from "../../src/app/ui/components/TraceSession.tsx";
 import {
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
@@ -6,6 +11,44 @@ import {
 } from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
+  it("opens tool details by default when the session panel mounts", () => {
+    const trace = {
+      id: 1,
+      attempt: 1,
+      round: 1,
+      kind: "tool",
+      name: "read_file",
+      status: "succeeded",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:00:00.030Z",
+      durationMs: 30,
+      model: null,
+      input: JSON.stringify({ path: "README.md" }),
+      output: JSON.stringify({ content: [{ type: "text", text: "Contents" }] }),
+      rawContent: null,
+      errorDetail: null,
+      schema: null,
+      inputTokens: null,
+      outputTokens: null,
+      firstTokenMs: null,
+      generationDurationMs: null,
+    };
+    const markup = renderToStaticMarkup(createElement(TraceSession, { traces: [trace], copy: en, locale: "en" }));
+
+    expect(markup).toContain('<details class="trace-session-tool-details" open="">');
+  });
+
+  it("opens trace payload fields when selected by the inspector", () => {
+    const markup = renderToStaticMarkup(createElement(TraceField, {
+      label: "Input",
+      value: "request payload",
+      emptyLabel: "None",
+      defaultOpen: true,
+    }));
+
+    expect(markup).toContain('<details class="trace-payload" open="">');
+  });
+
   it("calculates generation TPS weighted by generation duration", () => {
     expect(calculateGenerationTokensPerSecond([
       { status: "succeeded", outputTokens: 30, firstTokenMs: 400, generationDurationMs: 1000 },
