@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { Button, Input, Select, Space, Tag, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Button, Input, Popover, Segmented, Space, Spin, Tag, Typography } from "antd";
+import type { InputRef } from "antd";
 import { Bubble, Conversations, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType } from "@ant-design/x";
 import "./SessionsPage.css";
@@ -90,7 +91,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [project, setProject] = useState<ProjectOption>();
@@ -104,6 +105,17 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [targetsSearched, setTargetsSearched] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<TargetOption>();
   const [draftMessage, setDraftMessage] = useState("");
+  const [openPicker, setOpenPicker] = useState<"project" | "branch" | "target" | null>(null);
+  const projectSearchRequest = useRef(0);
+  const branchSearchRequest = useRef(0);
+  const targetSearchRequest = useRef(0);
+  const pickerInput = useRef<InputRef>(null);
+
+  useEffect(() => {
+    if (!openPicker) return;
+    const frame = window.requestAnimationFrame(() => pickerInput.current?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [openPicker]);
 
   useEffect(() => {
     let active = true;
@@ -154,65 +166,71 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     return () => window.clearInterval(timer);
   }, [hasActiveTurn]);
 
-  async function searchProjects() {
+  async function searchProjects(query = projectQuery) {
+    const requestId = ++projectSearchRequest.current;
     setBusy(true);
     setError("");
     try {
-      const params = new URLSearchParams({ search: projectQuery.trim(), page: "1" });
-      setProjects(await fetchJson<ProjectOption[]>(`/api/ops/projects?${params}`, copy));
-      setProject(undefined);
-      setBranches([]);
-      setTargets([]);
-      setSelectedBranch("");
-      setSelectedTarget(undefined);
+      const params = new URLSearchParams({ search: query.trim(), page: "1" });
+      const result = await fetchJson<ProjectOption[]>(`/api/ops/projects?${params}`, copy);
+      if (requestId === projectSearchRequest.current) setProjects(result);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (requestId === projectSearchRequest.current) setError(errorMessage(cause));
     } finally {
-      setBusy(false);
+      if (requestId === projectSearchRequest.current) setBusy(false);
     }
   }
 
   async function selectProject(value: ProjectOption) {
+    targetSearchRequest.current += 1;
     setProject(value);
     setSelectedBranch("");
+    setBranchQuery("");
     setSelectedTarget(undefined);
     setTargets([]);
     setBranches([]);
     setBranchesSearched(false);
     setTargetsSearched(false);
-    if (targetType !== "merge_request") await searchBranches(value, branchQuery, 1, false);
+    setOpenPicker(null);
+    if (targetType !== "merge_request") await searchBranches(value, "", 1, false);
   }
 
   async function searchBranches(value: ProjectOption, query: string, page: number, append: boolean) {
+    const requestId = ++branchSearchRequest.current;
     setBusy(true);
     setError("");
     try {
       const params = new URLSearchParams({ search: query.trim(), page: String(page) });
       const result = await fetchJson<BranchOption[]>(`/api/ops/projects/${value.id}/branches?${params}`, copy);
+      if (requestId !== branchSearchRequest.current) return;
       setBranches((current) => append ? [...current, ...result] : result);
       setBranchesSearched(true);
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (requestId === branchSearchRequest.current) setError(errorMessage(cause));
     } finally {
-      setBusy(false);
+      if (requestId === branchSearchRequest.current) setBusy(false);
     }
   }
 
-  async function searchTargets() {
+  async function searchTargets(query = targetQuery) {
     if (!project || targetType === "repository") return;
+    const requestId = ++targetSearchRequest.current;
     setBusy(true);
     setError("");
     setSelectedTarget(undefined);
     setTargetsSearched(false);
     try {
       const kind = targetType === "issue" ? "issues" : "merge-requests";
-      const params = new URLSearchParams({ search: targetQuery.trim(), page: "1" });
-      setTargets(await fetchJson<TargetOption[]>(`/api/ops/projects/${project.id}/${kind}?${params}`, copy));
-      setTargetsSearched(true);
+      const params = new URLSearchParams({ search: query.trim(), page: "1" });
+      const result = await fetchJson<TargetOption[]>(`/api/ops/projects/${project.id}/${kind}?${params}`, copy);
+      if (requestId === targetSearchRequest.current) {
+        setTargets(result);
+        setTargetsSearched(true);
+      }
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (requestId === targetSearchRequest.current) setError(errorMessage(cause));
     } finally {
-      setBusy(false);
+      if (requestId === targetSearchRequest.current) setBusy(false);
     }
   }
 
@@ -222,6 +240,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     if (!branch || (targetType !== "repository" && !selectedTarget)) return;
     setBusy(true);
     setError("");
+    setOpenPicker(null);
     try {
       const result = await fetch("/api/ops/sessions", {
         method: "POST",
@@ -301,6 +320,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     setTargets([]);
     setTargetsSearched(false);
     setSelectedTarget(undefined);
+    setOpenPicker(null);
     setDraftMessage("");
     setError("");
   }
@@ -383,122 +403,208 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
             ) : <Typography.Title level={4}>{copy.sessionPlaceholder}</Typography.Title>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
           </div>
-          {showCreate ? (
-            <div className="session-target-toolbar">
-              <div className="session-project-picker">
-                <Input.Search
-                  aria-label={copy.projectSearch}
-                  size="small"
-                  maxLength={100}
-                  value={projectQuery}
-                  placeholder={copy.projectSearchPlaceholder}
-                  enterButton={copy.searchTargets}
-                  loading={busy}
-                  onChange={(event) => setProjectQuery(event.target.value)}
-                  onSearch={() => void searchProjects()}
-                />
-                {projects.length ? (
-                  <Select
-                    aria-label={copy.chooseProject}
-                    size="small"
-                    value={project?.id}
-                    placeholder={copy.chooseProject}
-                    options={projects.map((value) => ({ value: value.id, label: value.path_with_namespace }))}
-                    onChange={(projectId) => {
-                      const value = projects.find((candidate) => candidate.id === projectId);
-                      if (value) void selectProject(value);
-                    }}
-                  />
-                ) : null}
-              </div>
-              <Select
-                aria-label={copy.targetKind}
-                className="session-target-kind"
-                size="small"
-                value={targetType}
-                options={[
-                  { value: "repository", label: copy.repositoryTarget },
-                  { value: "issue", label: copy.issueTarget },
-                  { value: "merge_request", label: copy.mergeRequestTarget },
-                ]}
-                onChange={(next: typeof targetType) => {
-                  setTargetType(next);
-                  setSelectedBranch("");
-                  setSelectedTarget(undefined);
-                  setTargets([]);
-                  setTargetsSearched(false);
-                  if (project && next !== "merge_request") void searchBranches(project, branchQuery, 1, false);
-                }}
-              />
-              {targetType === "repository" || targetType === "issue" ? (
-                <div className="session-target-choice">
-                  <Input.Search
-                    aria-label={copy.branch}
-                    size="small"
-                    maxLength={100}
-                    value={branchQuery}
-                    placeholder={copy.branch}
-                    enterButton={copy.searchTargets}
-                    loading={busy}
-                    disabled={!project}
-                    onChange={(event) => setBranchQuery(event.target.value)}
-                    onSearch={() => project && void searchBranches(project, branchQuery, 1, false)}
-                  />
-                  <Select
-                    aria-label={copy.branch}
-                    size="small"
-                    disabled={!project}
-                    value={selectedBranch || undefined}
-                    placeholder={copy.chooseTarget}
-                    options={branches.map((value) => ({ value: value.name, label: value.name }))}
-                    onChange={setSelectedBranch}
-                  />
-                  {branchesSearched && branches.length === 0 ? <span className="session-field-hint">{copy.noBranches}</span> : null}
-                  {project && branches.length >= 50 ? (
-                    <Button size="small" type="text" onClick={() => void searchBranches(project, branchQuery, Math.floor(branches.length / 50) + 1, true)}>
-                      {copy.loadMore}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="session-target-choice">
-                  <Input.Search
-                    aria-label={copy.target}
-                    size="small"
-                    maxLength={100}
-                    value={targetQuery}
-                    placeholder={copy.targetSearchPlaceholder}
-                    enterButton={copy.searchTargets}
-                    loading={busy}
-                    disabled={!project}
-                    onChange={(event) => setTargetQuery(event.target.value)}
-                    onSearch={() => void searchTargets()}
-                  />
-                  <Select
-                    aria-label={copy.target}
-                    size="small"
-                    disabled={!project || targets.length === 0}
-                    value={selectedTarget?.iid}
-                    placeholder={copy.chooseTarget}
-                    options={targets.map((value) => ({
-                      value: value.iid,
-                      label: `!${value.iid} ${value.title}${value.source_branch ? ` · ${value.source_branch}` : ""}`,
-                    }))}
-                    onChange={(iid) => setSelectedTarget(targets.find((value) => value.iid === iid))}
-                  />
-                  {targetsSearched && targets.length === 0 ? <span className="session-field-hint">{copy.noTargets}</span> : null}
-                </div>
-              )}
-            </div>
-          ) : session ? (
+          {!showCreate && session ? (
             <div className="session-target-summary">
               <Typography.Text strong>{session.projectName}</Typography.Text>
               <Tag>{targetLabel(session, copy)}</Tag>
             </div>
           ) : null}
           <div className="session-chat">
-            <div className="session-transcript-pane">
-              {!showCreate && bubbleItems.length ? (
+            <div className={`session-transcript-pane${showCreate ? " session-setup-pane" : ""}`}>
+              {showCreate ? (
+                <div className="session-start">
+                  <div className="session-start-heading">
+                    <Typography.Title level={4}>{copy.newSession}</Typography.Title>
+                    <Typography.Text type="secondary">{copy.initialMessagePlaceholder}</Typography.Text>
+                  </div>
+                  <Segmented
+                    className="session-target-kind"
+                    aria-label={copy.targetKind}
+                    size="small"
+                    value={targetType}
+                    options={[
+                      { value: "repository", label: copy.repositoryTarget },
+                      { value: "issue", label: copy.issueTarget },
+                      { value: "merge_request", label: copy.mergeRequestTarget },
+                    ]}
+                    onChange={(value) => {
+                      const next = value as typeof targetType;
+                      setTargetType(next);
+                      setSelectedBranch("");
+                      setSelectedTarget(undefined);
+                      setTargets([]);
+                      setTargetsSearched(false);
+                      targetSearchRequest.current += 1;
+                      setOpenPicker(null);
+                      if (project && next !== "merge_request") void searchBranches(project, branchQuery, 1, false);
+                    }}
+                  />
+                  <div className="session-picker-row">
+                    <Popover
+                      trigger="click"
+                      placement="bottomLeft"
+                      arrow={false}
+                      open={openPicker === "project"}
+                      onOpenChange={(open) => {
+                        setOpenPicker(open ? "project" : null);
+                        if (open && projects.length === 0) void searchProjects("");
+                      }}
+                      content={(
+                        <div className="session-picker-popover">
+                          <Input
+                            ref={pickerInput}
+                            aria-label={copy.projectSearch}
+                            maxLength={100}
+                            value={projectQuery}
+                            placeholder={copy.projectSearchPlaceholder}
+                            suffix={busy ? <Spin size="small" /> : null}
+                            onChange={(event) => {
+                              const query = event.target.value.slice(0, 100);
+                              setProjectQuery(query);
+                              void searchProjects(query);
+                            }}
+                          />
+                          <div className="session-picker-options" role="listbox" aria-label={copy.projectSearch}>
+                            {projects.length ? projects.map((value) => (
+                              <button
+                                className="session-picker-option"
+                                type="button"
+                                role="option"
+                                aria-selected={project?.id === value.id}
+                                key={value.id}
+                                onClick={() => {
+                                  setProjectQuery("");
+                                  void selectProject(value);
+                                }}
+                              >
+                                <span>{value.path_with_namespace}</span>
+                                <small>{value.name}</small>
+                              </button>
+                            )) : <div className="session-picker-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</div>}
+                          </div>
+                        </div>
+                      )}
+                    >
+                      <Button className="session-picker-trigger" size="middle" aria-expanded={openPicker === "project"}>
+                        <span className="session-picker-trigger-label">{project?.path_with_namespace ?? copy.projectSearchPlaceholder}</span>
+                      </Button>
+                    </Popover>
+                    {targetType !== "merge_request" ? (
+                      <Popover
+                        trigger="click"
+                        placement="bottomLeft"
+                        arrow={false}
+                        open={openPicker === "branch"}
+                        onOpenChange={(open) => {
+                          setOpenPicker(open ? "branch" : null);
+                          if (open && project && !branchesSearched) void searchBranches(project, branchQuery, 1, false);
+                        }}
+                        content={(
+                          <div className="session-picker-popover">
+                            <Input
+                              ref={pickerInput}
+                              aria-label={copy.branch}
+                              maxLength={100}
+                              value={branchQuery}
+                              placeholder={copy.branch}
+                              disabled={!project}
+                              suffix={busy ? <Spin size="small" /> : null}
+                              onChange={(event) => {
+                                const query = event.target.value.slice(0, 100);
+                                setBranchQuery(query);
+                                if (project) void searchBranches(project, query, 1, false);
+                              }}
+                            />
+                            <div className="session-picker-options" role="listbox" aria-label={copy.branch}>
+                              {branches.length ? branches.map((value) => (
+                                <button
+                                  className="session-picker-option"
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selectedBranch === value.name}
+                                  key={value.name}
+                                  onClick={() => {
+                                    setSelectedBranch(value.name);
+                                    setBranchQuery("");
+                                    setOpenPicker(null);
+                                  }}
+                                >{value.name}</button>
+                              )) : <div className="session-picker-empty">{branchesSearched ? copy.noBranches : copy.chooseProject}</div>}
+                            </div>
+                            {project && branches.length >= 50 ? (
+                              <Button className="session-picker-load-more" size="small" type="text" loading={busy} onClick={() => void searchBranches(project, branchQuery, Math.floor(branches.length / 50) + 1, true)}>
+                                {copy.loadMore}
+                              </Button>
+                            ) : null}
+                          </div>
+                        )}
+                      >
+                        <Button className="session-picker-trigger" size="middle" disabled={!project} aria-expanded={openPicker === "branch"}>
+                          <span className="session-picker-trigger-label">{selectedBranch || copy.branch}</span>
+                        </Button>
+                      </Popover>
+                    ) : null}
+                    {targetType !== "repository" ? (
+                      <Popover
+                        trigger="click"
+                        placement="bottomLeft"
+                        arrow={false}
+                        open={openPicker === "target"}
+                        onOpenChange={(open) => {
+                          setOpenPicker(open ? "target" : null);
+                          if (open && targets.length === 0 && project) void searchTargets(targetQuery);
+                        }}
+                        content={(
+                          <div className="session-picker-popover">
+                            <Input
+                              ref={pickerInput}
+                              aria-label={copy.target}
+                              maxLength={100}
+                              value={targetQuery}
+                              placeholder={copy.targetSearchPlaceholder}
+                              disabled={!project}
+                              suffix={busy ? <Spin size="small" /> : null}
+                              onChange={(event) => {
+                                const query = event.target.value.slice(0, 100);
+                                setTargetQuery(query);
+                                void searchTargets(query);
+                              }}
+                            />
+                            <div className="session-picker-options" role="listbox" aria-label={copy.target}>
+                              {targets.length ? targets.map((value) => {
+                                const prefix = targetType === "issue" ? "#" : "!";
+                                const branch = targetType === "merge_request" ? value.source_branch : value.target_branch;
+                                return (
+                                  <button
+                                    className="session-picker-option"
+                                    type="button"
+                                    role="option"
+                                    aria-selected={selectedTarget?.iid === value.iid}
+                                    key={value.iid}
+                                    onClick={() => {
+                                      setSelectedTarget(value);
+                                      setOpenPicker(null);
+                                    }}
+                                  >
+                                    <span>{prefix}{value.iid} {value.title}</span>
+                                    {branch ? <small>{branch}</small> : null}
+                                  </button>
+                                );
+                              }) : <div className="session-picker-empty">{targetsSearched ? copy.noTargets : copy.chooseProject}</div>}
+                            </div>
+                          </div>
+                        )}
+                      >
+                        <Button className="session-picker-trigger" size="middle" disabled={!project} aria-expanded={openPicker === "target"}>
+                          <span className="session-picker-trigger-label">
+                            {selectedTarget ? `${targetType === "issue" ? "#" : "!"}${selectedTarget.iid} ${selectedTarget.title}` : copy.target}
+                          </span>
+                        </Button>
+                      </Popover>
+                    ) : null}
+                  </div>
+                </div>
+              ) : bubbleItems.length ? (
                 <Bubble.List
                   className="session-transcript"
                   items={bubbleItems}
@@ -512,6 +618,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
             </div>
             <Sender
               className="session-composer"
+              aria-label={copy.initialMessage}
               value={draftMessage}
               placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
               disabled={busy || (showCreate ? !canCreateSession : hasActiveTurn || !session)}
