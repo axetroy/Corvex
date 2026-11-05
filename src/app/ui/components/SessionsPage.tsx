@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Input, Popover, Segmented, Space, Spin, Tag, Typography } from "antd";
+import { Button, Input, Popover, Space, Spin, Tag, Typography } from "antd";
 import type { InputRef } from "antd";
 import { Bubble, Conversations, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType } from "@ant-design/x";
@@ -7,7 +7,7 @@ import "./SessionsPage.css";
 import { errorMessage, fetchJson } from "../api.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
-import { Empty, ErrorBanner, PageHeading } from "./common.js";
+import { Empty, ErrorBanner } from "./common.js";
 
 interface ProjectOption {
   id: number;
@@ -91,7 +91,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(true);
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [project, setProject] = useState<ProjectOption>();
@@ -129,7 +129,10 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           return [...byId.values()];
         });
         setSessionTotal(page.total);
-        if (!selectedSessionId && page.items[0]) setSelectedSessionId(page.items[0].id);
+        if (!selectedSessionId && page.items[0]) {
+          setSelectedSessionId(page.items[0].id);
+          setShowCreate(false);
+        }
         onUpdated(new Date().toISOString());
       })
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
@@ -362,16 +365,14 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
 
   return (
     <>
-      <PageHeading
-        title={copy.sessionsTitle}
-        description={copy.sessionsDescription}
-      />
       {error ? <ErrorBanner message={error} /> : null}
-      <section className="sessions-layout">
+      <section className="sessions-layout" aria-label={copy.sessionsDescription}>
         <aside className="session-sidebar" aria-label={copy.sessionList}>
           <div className="session-sidebar-heading">
-            <Typography.Text strong>{copy.sessionList}</Typography.Text>
-            <Button size="small" type="primary" onClick={startNewSession}>{copy.newSession}</Button>
+            <Button className="session-new-button" type="primary" onClick={startNewSession}>
+              <span aria-hidden="true">+</span>
+              {copy.newSession}
+            </Button>
           </div>
           <div className="session-sidebar-list">
             {conversationItems.length ? (
@@ -394,51 +395,48 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         <section className="session-workspace">
           <div className="session-workspace-heading">
             {showCreate ? (
-              <Typography.Title level={4}>{copy.newSession}</Typography.Title>
+              <Typography.Text strong>{copy.newSession}</Typography.Text>
             ) : session ? (
               <div>
-                <Typography.Title level={4}>{session.projectName} · {targetLabel(session, copy)}</Typography.Title>
+                <Typography.Text strong>{session.projectName} · {targetLabel(session, copy)}</Typography.Text>
                 <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{session.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
               </div>
-            ) : <Typography.Title level={4}>{copy.sessionPlaceholder}</Typography.Title>}
+            ) : <Typography.Text strong>{copy.sessionsTitle}</Typography.Text>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
           </div>
-          {!showCreate && session ? (
-            <div className="session-target-summary">
-              <Typography.Text strong>{session.projectName}</Typography.Text>
-              <Tag>{targetLabel(session, copy)}</Tag>
-            </div>
-          ) : null}
           <div className="session-chat">
             <div className={`session-transcript-pane${showCreate ? " session-setup-pane" : ""}`}>
               {showCreate ? (
                 <div className="session-start">
                   <div className="session-start-heading">
-                    <Typography.Title level={4}>{copy.newSession}</Typography.Title>
+                    <Typography.Title level={2}>{copy.sessionWelcomeTitle}</Typography.Title>
                     <Typography.Text type="secondary">{copy.initialMessagePlaceholder}</Typography.Text>
                   </div>
-                  <Segmented
-                    className="session-target-kind"
-                    aria-label={copy.targetKind}
-                    size="small"
-                    value={targetType}
-                    options={[
-                      { value: "repository", label: copy.repositoryTarget },
-                      { value: "issue", label: copy.issueTarget },
-                      { value: "merge_request", label: copy.mergeRequestTarget },
-                    ]}
-                    onChange={(value) => {
-                      const next = value as typeof targetType;
-                      setTargetType(next);
-                      setSelectedBranch("");
-                      setSelectedTarget(undefined);
-                      setTargets([]);
-                      setTargetsSearched(false);
-                      targetSearchRequest.current += 1;
-                      setOpenPicker(null);
-                      if (project && next !== "merge_request") void searchBranches(project, branchQuery, 1, false);
-                    }}
-                  />
+                  <div className="session-shortcuts" role="group" aria-label={copy.targetKind}>
+                    {([
+                      ["repository", copy.repositoryTarget],
+                      ["issue", copy.issueTarget],
+                      ["merge_request", copy.mergeRequestTarget],
+                    ] as const).map(([value, label]) => (
+                      <Button
+                        className={`session-shortcut${targetType === value ? " is-active" : ""}`}
+                        key={value}
+                        aria-pressed={targetType === value}
+                        onClick={() => {
+                          setTargetType(value);
+                          setSelectedBranch("");
+                          setSelectedTarget(undefined);
+                          setTargets([]);
+                          setTargetsSearched(false);
+                          targetSearchRequest.current += 1;
+                          setOpenPicker(null);
+                          if (project && value !== "merge_request") void searchBranches(project, branchQuery, 1, false);
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
                   <div className="session-picker-row">
                     <Popover
                       trigger="click"
