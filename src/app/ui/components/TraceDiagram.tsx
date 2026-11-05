@@ -134,6 +134,14 @@ function InspectorContent({
       <DetailItem label={copy.traceDuration} value={formatTraceDuration(entry.durationMs, copy)} />
       {entry.kind === "llm" ? (
         <>
+          <DetailItem
+            label={copy.traceRequestStarted}
+            value={formatDate(entry.requestStartedAt, copy, locale)}
+          />
+          <DetailItem
+            label={copy.traceResponseHeaders}
+            value={formatTraceDuration(entry.responseHeadersMs, copy)}
+          />
           <DetailItem label={copy.traceFirstToken} value={formatTraceDuration(entry.firstTokenMs, copy)} />
           <DetailItem
             label={copy.traceGenerationDuration}

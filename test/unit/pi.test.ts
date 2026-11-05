@@ -237,6 +237,9 @@ describe("PiAgent", () => {
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
     expect(llmTraces).toHaveLength(2);
     expect(llmTraces?.map((entry) => entry.round)).toEqual([1, 2]);
+    expect(Number.isFinite(Date.parse(llmTraces?.[0]?.requestStartedAt ?? ""))).toBe(true);
+    expect(llmTraces?.[0]?.responseHeadersMs).toBeGreaterThanOrEqual(1000);
+    expect(llmTraces?.[0]?.firstTokenMs).toBeGreaterThanOrEqual(llmTraces?.[0]?.responseHeadersMs ?? Infinity);
     expect(JSON.parse(llmTraces?.[0]?.input ?? "{}")).toMatchObject({
       contextMode: "delta",
       contextReset: true,

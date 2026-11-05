@@ -207,6 +207,8 @@ function readJobTrace(row: Record<string, unknown>): JobTraceEntry {
     startedAt: stringColumn(row, "started_at"),
     finishedAt: nullableString("finished_at"),
     durationMs: nullableNumber("duration_ms"),
+    requestStartedAt: nullableString("request_started_at"),
+    responseHeadersMs: nullableNumber("response_headers_ms"),
     firstTokenMs: nullableNumber("first_token_ms"),
     generationDurationMs: nullableNumber("generation_duration_ms"),
     model: nullableString("model"),
@@ -501,6 +503,8 @@ export class JobStore {
     output?: string,
     firstTokenMs?: number,
     generationDurationMs?: number,
+    requestStartedAt?: string,
+    responseHeadersMs?: number,
   ): void {
     if (
       !Number.isSafeInteger(traceId) ||
@@ -510,6 +514,8 @@ export class JobStore {
       durationMs < 0 ||
       (inputTokens !== undefined && (!Number.isSafeInteger(inputTokens) || inputTokens < 0)) ||
       (outputTokens !== undefined && (!Number.isSafeInteger(outputTokens) || outputTokens < 0)) ||
+      (requestStartedAt !== undefined && !Number.isFinite(Date.parse(requestStartedAt))) ||
+      (responseHeadersMs !== undefined && (!Number.isFinite(responseHeadersMs) || responseHeadersMs < 0)) ||
       (firstTokenMs !== undefined && (!Number.isFinite(firstTokenMs) || firstTokenMs < 0)) ||
       (generationDurationMs !== undefined && (!Number.isFinite(generationDurationMs) || generationDurationMs < 0))
     ) {
@@ -518,7 +524,7 @@ export class JobStore {
     const result = this.db
       .prepare(
         `UPDATE job_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?,
-         trace_output=?, first_token_ms=?, generation_duration_ms=?
+         trace_output=?, first_token_ms=?, generation_duration_ms=?, request_started_at=?, response_headers_ms=?
          WHERE id=? AND status='running'`,
       )
       .run(
@@ -531,6 +537,8 @@ export class JobStore {
         output ?? null,
         firstTokenMs === undefined ? null : Math.floor(firstTokenMs),
         generationDurationMs === undefined ? null : Math.floor(generationDurationMs),
+        requestStartedAt ?? null,
+        responseHeadersMs === undefined ? null : Math.floor(responseHeadersMs),
         traceId,
       );
     if (result.changes !== 1) throw new Error(`job trace "${traceId}" is not running`);
@@ -1486,7 +1494,7 @@ export class JobStore {
         attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
         input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
-        raw_content TEXT, error_detail TEXT
+        raw_content TEXT, error_detail TEXT, request_started_at TEXT, response_headers_ms INTEGER
       );
       CREATE TABLE IF NOT EXISTS execution_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, event_id TEXT, job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE,
@@ -1547,6 +1555,8 @@ export class JobStore {
       error_detail: "TEXT",
       first_token_ms: "INTEGER",
       generation_duration_ms: "INTEGER",
+      request_started_at: "TEXT",
+      response_headers_ms: "INTEGER",
     };
     for (const [name, definition] of Object.entries(traceAdditions)) {
       if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE job_trace ADD COLUMN ${name} ${definition}`);

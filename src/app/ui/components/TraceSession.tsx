@@ -170,9 +170,15 @@ export const TraceSession = memo(function TraceSession({
       : "");
     const recovered = entry.status === "failed" && entry.round !== null &&
       (lastSuccessfulRoundByAttempt.get(entry.attempt) ?? 0) > entry.round;
+    const requestStarted = entry.requestStartedAt ? Date.parse(entry.requestStartedAt) : Number.NaN;
+    const requestTime = Number.isFinite(requestStarted)
+      ? new Date(requestStarted).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : copy.none;
     const metadata = (
       <>
         {entry.model ? <span>{copy.traceSessionModelTemplate.replace("{model}", entry.model)}</span> : null}
+        {entry.requestStartedAt ? <span>{copy.traceRequestStarted}: {requestTime}</span> : null}
+        <span>{copy.traceResponseHeaders}: {formatTraceDuration(entry.responseHeadersMs, copy)}</span>
         <span>{copy.traceFirstTokenShort}: {formatTraceDuration(entry.firstTokenMs, copy)}</span>
         <span>{formatOutputTps(calculateGenerationTokensPerSecond([entry]), copy)}</span>
         <span>{formatTraceDuration(entry.durationMs, copy)}</span>

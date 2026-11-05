@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, StreamOptions } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
@@ -212,14 +212,45 @@ export class PiAgent {
     const providerId = "corvex-openai-compatible";
     const completionsApi = openAICompletionsApi();
     const requestTimeout = this.config.agent.requestTimeout;
-    const requestOptions = <T extends { signal?: AbortSignal }>(options: T | undefined) => {
+    let activeModelCall: {
+      traceId: number;
+      startedAt: number;
+      round: number;
+      requestStartedAt?: string;
+      requestStartedAtMono?: number;
+      responseHeadersMs?: number;
+      firstTokenAt?: number;
+      firstTokenMs?: number;
+    } | undefined;
+    let pendingRequestTiming: {
+      requestStartedAt: string;
+      requestStartedAtMono: number;
+      responseHeadersMs?: number;
+    } | undefined;
+    const requestOptions = (options: StreamOptions | undefined) => {
       const timeoutSignal = AbortSignal.timeout(requestTimeout);
+      const requestStartedAtMono = performance.now();
+      const requestStartedAt = new Date().toISOString();
+      const requestTiming: {
+        requestStartedAt: string;
+        requestStartedAtMono: number;
+        responseHeadersMs: number | undefined;
+      } = { requestStartedAt, requestStartedAtMono, responseHeadersMs: undefined };
+      pendingRequestTiming = requestTiming;
       return {
         ...options,
         signal: options?.signal
           ? AbortSignal.any([options.signal, timeoutSignal])
           : timeoutSignal,
         timeoutMs: requestTimeout,
+        onResponse: async (response: Parameters<NonNullable<StreamOptions["onResponse"]>>[0], responseModel: Parameters<NonNullable<StreamOptions["onResponse"]>>[1]) => {
+          const responseHeadersMs = performance.now() - requestStartedAtMono;
+          requestTiming.responseHeadersMs ??= responseHeadersMs;
+          if (activeModelCall?.requestStartedAtMono === requestStartedAtMono) {
+            activeModelCall.responseHeadersMs ??= responseHeadersMs;
+          }
+          await options?.onResponse?.(response, responseModel);
+        },
       };
     };
     runtime.registerNativeProvider(createProvider({
@@ -391,13 +422,6 @@ export class PiAgent {
       noTools: "builtin",
     });
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
-    let activeModelCall: {
-      traceId: number;
-      startedAt: number;
-      round: number;
-      firstTokenAt?: number;
-      firstTokenMs?: number;
-    } | undefined;
     let modelCallCount = 0;
     let currentRound = 0;
     const recordedContextEntryIds = new Set<string>();
@@ -432,7 +456,9 @@ export class PiAgent {
         );
         modelCallCount++;
         if (traceId !== undefined) {
-          activeModelCall = { traceId, startedAt, round };
+          const requestTiming = pendingRequestTiming;
+          pendingRequestTiming = undefined;
+          activeModelCall = { traceId, startedAt, round, ...requestTiming };
           recordedContextEntryIds.clear();
           for (const entry of contextEntries) recordedContextEntryIds.add(entry.id);
           hasRecordedContext = true;
@@ -440,14 +466,17 @@ export class PiAgent {
       } else if (event.type === "message_update" && event.message.role === "assistant") {
         if (activeModelCall && activeModelCall.firstTokenMs === undefined && hasGeneratedOutput(event.assistantMessageEvent)) {
           activeModelCall.firstTokenAt = performance.now();
-          activeModelCall.firstTokenMs = activeModelCall.firstTokenAt - activeModelCall.startedAt;
+          activeModelCall.firstTokenMs = activeModelCall.firstTokenAt -
+            (activeModelCall.requestStartedAtMono ?? activeModelCall.startedAt);
         }
       } else if (event.type === "message_end" && event.message.role === "assistant") {
         if (!activeModelCall) return;
         const message = event.message;
         const failed = message.stopReason === "error" || message.stopReason === "aborted";
         const endedAt = performance.now();
-        const durationMs = message.durationMs ?? endedAt - activeModelCall.startedAt;
+        const durationMs = activeModelCall.requestStartedAtMono === undefined
+          ? message.durationMs ?? endedAt - activeModelCall.startedAt
+          : endedAt - activeModelCall.requestStartedAtMono;
         const generationDurationMs = activeModelCall.firstTokenAt === undefined
           ? undefined
           : Math.max(0, endedAt - activeModelCall.firstTokenAt);
@@ -464,6 +493,8 @@ export class PiAgent {
           }),
           activeModelCall.firstTokenMs,
           generationDurationMs,
+          activeModelCall.requestStartedAt,
+          activeModelCall.responseHeadersMs,
         );
         activeModelCall = undefined;
       } else if (event.type === "tool_execution_start") {
@@ -528,6 +559,8 @@ export class PiAgent {
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,
+          activeModelCall.requestStartedAt,
+          activeModelCall.responseHeadersMs,
         );
         activeModelCall = undefined;
       }
@@ -551,6 +584,8 @@ export class PiAgent {
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,
+          activeModelCall.requestStartedAt,
+          activeModelCall.responseHeadersMs,
         );
       }
       for (const active of activeTools.values()) {
@@ -620,6 +655,8 @@ export class PiAgent {
     output?: string,
     firstTokenMs?: number,
     generationDurationMs?: number,
+    requestStartedAt?: string,
+    responseHeadersMs?: number,
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
@@ -633,6 +670,8 @@ export class PiAgent {
         output,
         firstTokenMs,
         generationDurationMs,
+        requestStartedAt,
+        responseHeadersMs,
       );
     } catch (error) {
       console.warn("record job trajectory completion failed", {

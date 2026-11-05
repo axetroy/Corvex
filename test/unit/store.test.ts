@@ -232,7 +232,19 @@ describe("JobStore", () => {
       JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),
       { round: 2, input: "review context" },
     );
-    store.finishJobTrace(modelCall, "succeeded", 125, 70, 25, undefined, "assistant response", 40, 85);
+    store.finishJobTrace(
+      modelCall,
+      "succeeded",
+      125,
+      70,
+      25,
+      undefined,
+      "assistant response",
+      40,
+      85,
+      "2026-01-01T00:00:00.010Z",
+      12,
+    );
     const toolCall = store.startJobTrace(
       job.id,
       job.attemptCount,
@@ -273,6 +285,8 @@ describe("JobStore", () => {
         durationMs: 125,
         firstTokenMs: 40,
         generationDurationMs: 85,
+        requestStartedAt: "2026-01-01T00:00:00.010Z",
+        responseHeadersMs: 12,
         inputTokens: 70,
         outputTokens: 25,
         rawContent: JSON.stringify({ systemPrompt: "Review safely.", userPrompt: "Inspect the diff." }),

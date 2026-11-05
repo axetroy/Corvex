@@ -130,6 +130,42 @@ describe("operations UI trace reconstruction", () => {
     expect(markup).not.toContain("action");
   });
 
+  it("renders request start and response header timing for model turns", () => {
+    const markup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [{
+        id: 1,
+        attempt: 1,
+        round: 1,
+        kind: "llm",
+        name: "chat",
+        status: "succeeded",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:02.000Z",
+        durationMs: 2000,
+        requestStartedAt: "2026-01-01T00:00:00.010Z",
+        responseHeadersMs: 40,
+        firstTokenMs: 75,
+        generationDurationMs: 1925,
+        model: "test-model",
+        inputTokens: 10,
+        outputTokens: 20,
+        input: null,
+        output: JSON.stringify({ content: [{ type: "text", text: "Timed response." }] }),
+        schema: null,
+        rawContent: null,
+        errorDetail: null,
+      }],
+      userRequest: "",
+      copy: en,
+      locale: "en",
+    }));
+
+    expect(markup).toContain("Request started:");
+    expect(markup).toContain("Response headers: 40 ms");
+    expect(markup).toContain("TTFT: 75 ms");
+    expect(markup).toContain("Timed response.");
+  });
+
   it("hides a failed model turn when a later turn in the same attempt succeeds", () => {
     const failedTrace = {
       id: 1,
