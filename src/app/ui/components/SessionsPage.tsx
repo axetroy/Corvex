@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Input, Select, Space, Tag, Typography } from "antd";
+import { Button, Input, Select, Space, Tag, Typography } from "antd";
 import { Bubble, Conversations, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType } from "@ant-design/x";
+import "./SessionsPage.css";
 import { errorMessage, fetchJson } from "../api.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
@@ -102,8 +103,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [targets, setTargets] = useState<TargetOption[]>([]);
   const [targetsSearched, setTargetsSearched] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<TargetOption>();
-  const [initialMessage, setInitialMessage] = useState("");
-  const [reply, setReply] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -216,9 +216,8 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     }
   }
 
-  async function createSession(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!project) return;
+  async function createSession(message: string) {
+    if (!project || !message.trim()) return;
     const branch = targetType === "merge_request" ? selectedTarget?.source_branch : selectedBranch;
     if (!branch || (targetType !== "repository" && !selectedTarget)) return;
     setBusy(true);
@@ -232,7 +231,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           targetType,
           targetIid: selectedTarget?.iid ?? 0,
           targetBranch: branch,
-          message: initialMessage,
+          message,
         }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
@@ -244,7 +243,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
       const created = await result.json() as { sessionId: string };
-      setInitialMessage("");
+      setDraftMessage("");
       setSelectedSessionId(created.sessionId);
       setShowCreate(false);
       setSessionOffset(0);
@@ -276,7 +275,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      setReply("");
+      setDraftMessage("");
       setPollToken((value) => value + 1);
       onRefresh();
     } catch (cause) {
@@ -285,6 +284,36 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       setBusy(false);
     }
   }
+
+  function startNewSession() {
+    setSelectedSessionId("");
+    setSession(undefined);
+    setShowCreate(true);
+    setProjectQuery("");
+    setProjects([]);
+    setProject(undefined);
+    setTargetType("repository");
+    setBranchQuery("");
+    setBranches([]);
+    setBranchesSearched(false);
+    setSelectedBranch("");
+    setTargetQuery("");
+    setTargets([]);
+    setTargetsSearched(false);
+    setSelectedTarget(undefined);
+    setDraftMessage("");
+    setError("");
+  }
+
+  function submitMessage(message: string) {
+    if (showCreate) void createSession(message);
+    else void sendReply(message);
+  }
+
+  const targetBranch = targetType === "merge_request" ? selectedTarget?.source_branch : selectedBranch;
+  const canCreateSession = Boolean(
+    project && targetBranch && (targetType === "repository" || selectedTarget) && !busy,
+  );
 
   const conversationItems: ConversationItemType[] = sessions.map((item) => ({
     key: item.id,
@@ -316,16 +345,14 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       <PageHeading
         title={copy.sessionsTitle}
         description={copy.sessionsDescription}
-        actions={(
-          <Button type="primary" onClick={() => setShowCreate((value) => !value)}>
-            {copy.newSession}
-          </Button>
-        )}
       />
       {error ? <ErrorBanner message={error} /> : null}
       <section className="sessions-layout">
         <aside className="session-sidebar" aria-label={copy.sessionList}>
-          <div className="session-sidebar-heading"><Typography.Text strong>{copy.sessionList}</Typography.Text></div>
+          <div className="session-sidebar-heading">
+            <Typography.Text strong>{copy.sessionList}</Typography.Text>
+            <Button size="small" type="primary" onClick={startNewSession}>{copy.newSession}</Button>
+          </div>
           <div className="session-sidebar-list">
             {conversationItems.length ? (
               <Conversations
@@ -345,168 +372,156 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           </div>
         </aside>
         <section className="session-workspace">
+          <div className="session-workspace-heading">
+            {showCreate ? (
+              <Typography.Title level={4}>{copy.newSession}</Typography.Title>
+            ) : session ? (
+              <div>
+                <Typography.Title level={4}>{session.projectName} · {targetLabel(session, copy)}</Typography.Title>
+                <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{session.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
+              </div>
+            ) : <Typography.Title level={4}>{copy.sessionPlaceholder}</Typography.Title>}
+            {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
+          </div>
           {showCreate ? (
-            <>
-              <div className="session-workspace-heading"><Typography.Title level={4}>{copy.newSession}</Typography.Title></div>
-              <form className="session-create-form" onSubmit={createSession}>
-                <label className="field">
-                  <span>{copy.projectSearch}</span>
-                  <span className="session-search">
-                    <Input.Search
-                      maxLength={100}
-                      value={projectQuery}
-                      placeholder={copy.projectSearchPlaceholder}
-                      enterButton={copy.searchTargets}
-                      loading={busy}
-                      onChange={(event) => setProjectQuery(event.target.value)}
-                      onSearch={() => void searchProjects()}
-                    />
-                  </span>
-                </label>
+            <div className="session-target-toolbar">
+              <div className="session-project-picker">
+                <Input.Search
+                  aria-label={copy.projectSearch}
+                  size="small"
+                  maxLength={100}
+                  value={projectQuery}
+                  placeholder={copy.projectSearchPlaceholder}
+                  enterButton={copy.searchTargets}
+                  loading={busy}
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                  onSearch={() => void searchProjects()}
+                />
                 {projects.length ? (
-                  <label className="field">
-                    <span>{copy.projectSearch}</span>
-                    <Select
-                      value={project?.id}
-                      placeholder={copy.chooseProject}
-                      options={projects.map((value) => ({ value: value.id, label: value.path_with_namespace }))}
-                      onChange={(projectId) => {
+                  <Select
+                    aria-label={copy.chooseProject}
+                    size="small"
+                    value={project?.id}
+                    placeholder={copy.chooseProject}
+                    options={projects.map((value) => ({ value: value.id, label: value.path_with_namespace }))}
+                    onChange={(projectId) => {
                       const value = projects.find((candidate) => candidate.id === projectId);
                       if (value) void selectProject(value);
-                    }} />
-                  </label>
-                ) : null}
-                <div className="session-form-row">
-                  <label className="field">
-                    <span>{copy.targetKind}</span>
-                    <Select
-                      value={targetType}
-                      options={[
-                        { value: "repository", label: copy.repositoryTarget },
-                        { value: "issue", label: copy.issueTarget },
-                        { value: "merge_request", label: copy.mergeRequestTarget },
-                      ]}
-                      onChange={(next: typeof targetType) => {
-                      setTargetType(next);
-                      setSelectedBranch("");
-                      setSelectedTarget(undefined);
-                      setTargets([]);
-                      if (project && next !== "merge_request") void searchBranches(project, branchQuery, 1, false);
-                    }}>
-                    </Select>
-                  </label>
-                  {targetType === "repository" || targetType === "issue" ? (
-                    <label className="field">
-                      <span>{copy.branch}</span>
-                      <span className="session-search">
-                        <Input.Search
-                          maxLength={100}
-                          value={branchQuery}
-                          placeholder={copy.branch}
-                          enterButton={copy.searchTargets}
-                          loading={busy}
-                          disabled={!project}
-                          onChange={(event) => setBranchQuery(event.target.value)}
-                          onSearch={() => project && void searchBranches(project, branchQuery, 1, false)}
-                        />
-                      </span>
-                    </label>
-                  ) : null}
-                </div>
-                {project && (targetType === "repository" || targetType === "issue") ? (
-                  <label className="field">
-                    <span>{copy.branch}</span>
-                    <Select
-                      value={selectedBranch || undefined}
-                      placeholder={copy.chooseTarget}
-                      options={branches.map((value) => ({ value: value.name, label: value.name }))}
-                      onChange={setSelectedBranch}
-                    />
-                    {branchesSearched && branches.length === 0 ? <span className="field-hint">{copy.noBranches}</span> : null}
-                    {branches.length >= 50 ? <Button className="session-load-more" type="text" onClick={() => void searchBranches(project, branchQuery, Math.floor(branches.length / 50) + 1, true)}>{copy.loadMore}</Button> : null}
-                  </label>
-                ) : null}
-                {project && targetType !== "repository" ? (
-                  <>
-                    <label className="field">
-                      <span>{copy.target}</span>
-                      <span className="session-search">
-                        <Input.Search
-                          maxLength={100}
-                          value={targetQuery}
-                          placeholder={copy.targetSearchPlaceholder}
-                          enterButton={copy.searchTargets}
-                          loading={busy}
-                          onChange={(event) => setTargetQuery(event.target.value)}
-                          onSearch={() => void searchTargets()}
-                        />
-                      </span>
-                    </label>
-                    {targets.length ? (
-                      <label className="field">
-                        <span>{copy.target}</span>
-                        <Select
-                          value={selectedTarget?.iid}
-                          placeholder={copy.chooseTarget}
-                          options={targets.map((value) => ({
-                            value: value.iid,
-                            label: `${targetType === "issue" ? `#${value.iid}` : `!${value.iid}`} ${value.title}${value.source_branch ? ` · ${value.source_branch}` : ""}`,
-                          }))}
-                          onChange={(iid) => setSelectedTarget(targets.find((value) => value.iid === iid))}
-                        />
-                      </label>
-                    ) : targetsSearched ? <p className="field-hint">{copy.noTargets}</p> : null}
-                  </>
-                ) : null}
-                <label className="field">
-                  <span>{copy.initialMessage}</span>
-                  <Input.TextArea maxLength={20_000} required value={initialMessage} placeholder={copy.initialMessagePlaceholder}
-                    onChange={(event) => setInitialMessage(event.target.value)} />
-                </label>
-                <Button type="primary" htmlType="submit" disabled={busy || !project || !initialMessage.trim() ||
-                  !(targetType === "merge_request" ? selectedTarget?.source_branch : selectedBranch) ||
-                  (targetType !== "repository" && !selectedTarget)}>
-                  {copy.createSession}
-                </Button>
-              </form>
-            </>
-          ) : session ? (
-            <>
-              <div className="session-workspace-heading">
-                <div>
-                  <Typography.Title level={4}>{session.projectName} · {targetLabel(session, copy)}</Typography.Title>
-                  <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{session.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
-                </div>
-                {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
-              </div>
-              <Card className="session-chat" variant="borderless">
-                {bubbleItems.length ? (
-                  <Bubble.List
-                    className="session-transcript"
-                    items={bubbleItems}
-                    autoScroll
-                    role={{
-                      user: { placement: "end", variant: "filled" },
-                      ai: { placement: "start", variant: "outlined" },
                     }}
                   />
-                ) : <Welcome title={copy.sessionPlaceholder} />}
-                <Sender
-                  className="session-composer"
-                  value={reply}
-                  placeholder={copy.replyPlaceholder}
-                  disabled={hasActiveTurn || busy}
-                  onChange={(value) => setReply(value.slice(0, 20_000))}
-                  onSubmit={(message) => void sendReply(message)}
-                  suffix={(_node, { components: { SendButton } }) => (
-                    <SendButton aria-label={copy.sendMessage} />
-                  )}
+                ) : null}
+              </div>
+              <Select
+                aria-label={copy.targetKind}
+                className="session-target-kind"
+                size="small"
+                value={targetType}
+                options={[
+                  { value: "repository", label: copy.repositoryTarget },
+                  { value: "issue", label: copy.issueTarget },
+                  { value: "merge_request", label: copy.mergeRequestTarget },
+                ]}
+                onChange={(next: typeof targetType) => {
+                  setTargetType(next);
+                  setSelectedBranch("");
+                  setSelectedTarget(undefined);
+                  setTargets([]);
+                  setTargetsSearched(false);
+                  if (project && next !== "merge_request") void searchBranches(project, branchQuery, 1, false);
+                }}
+              />
+              {targetType === "repository" || targetType === "issue" ? (
+                <div className="session-target-choice">
+                  <Input.Search
+                    aria-label={copy.branch}
+                    size="small"
+                    maxLength={100}
+                    value={branchQuery}
+                    placeholder={copy.branch}
+                    enterButton={copy.searchTargets}
+                    loading={busy}
+                    disabled={!project}
+                    onChange={(event) => setBranchQuery(event.target.value)}
+                    onSearch={() => project && void searchBranches(project, branchQuery, 1, false)}
+                  />
+                  <Select
+                    aria-label={copy.branch}
+                    size="small"
+                    disabled={!project}
+                    value={selectedBranch || undefined}
+                    placeholder={copy.chooseTarget}
+                    options={branches.map((value) => ({ value: value.name, label: value.name }))}
+                    onChange={setSelectedBranch}
+                  />
+                  {branchesSearched && branches.length === 0 ? <span className="session-field-hint">{copy.noBranches}</span> : null}
+                  {project && branches.length >= 50 ? (
+                    <Button size="small" type="text" onClick={() => void searchBranches(project, branchQuery, Math.floor(branches.length / 50) + 1, true)}>
+                      {copy.loadMore}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="session-target-choice">
+                  <Input.Search
+                    aria-label={copy.target}
+                    size="small"
+                    maxLength={100}
+                    value={targetQuery}
+                    placeholder={copy.targetSearchPlaceholder}
+                    enterButton={copy.searchTargets}
+                    loading={busy}
+                    disabled={!project}
+                    onChange={(event) => setTargetQuery(event.target.value)}
+                    onSearch={() => void searchTargets()}
+                  />
+                  <Select
+                    aria-label={copy.target}
+                    size="small"
+                    disabled={!project || targets.length === 0}
+                    value={selectedTarget?.iid}
+                    placeholder={copy.chooseTarget}
+                    options={targets.map((value) => ({
+                      value: value.iid,
+                      label: `!${value.iid} ${value.title}${value.source_branch ? ` · ${value.source_branch}` : ""}`,
+                    }))}
+                    onChange={(iid) => setSelectedTarget(targets.find((value) => value.iid === iid))}
+                  />
+                  {targetsSearched && targets.length === 0 ? <span className="session-field-hint">{copy.noTargets}</span> : null}
+                </div>
+              )}
+            </div>
+          ) : session ? (
+            <div className="session-target-summary">
+              <Typography.Text strong>{session.projectName}</Typography.Text>
+              <Tag>{targetLabel(session, copy)}</Tag>
+            </div>
+          ) : null}
+          <div className="session-chat">
+            <div className="session-transcript-pane">
+              {!showCreate && bubbleItems.length ? (
+                <Bubble.List
+                  className="session-transcript"
+                  items={bubbleItems}
+                  autoScroll
+                  role={{
+                    user: { placement: "end", variant: "filled" },
+                    ai: { placement: "start", variant: "outlined" },
+                  }}
                 />
-              </Card>
-            </>
-          ) : (
-            <div className="session-empty">{copy.sessionPlaceholder}</div>
-          )}
+              ) : <Welcome title={copy.sessionPlaceholder} />}
+            </div>
+            <Sender
+              className="session-composer"
+              value={draftMessage}
+              placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
+              disabled={busy || (showCreate ? !canCreateSession : hasActiveTurn || !session)}
+              onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
+              onSubmit={submitMessage}
+              suffix={(_node, { components: { SendButton } }) => (
+                <SendButton aria-label={copy.sendMessage} />
+              )}
+            />
+          </div>
         </section>
       </section>
     </>

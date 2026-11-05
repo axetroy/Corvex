@@ -1,0 +1,192 @@
+.sessions-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  min-height: 560px;
+  border-top: 1px solid #dfe5e8;
+  border-bottom: 1px solid #dfe5e8;
+  background: #fff;
+}
+
+.session-sidebar {
+  min-width: 0;
+  border-right: 1px solid #e1e6eb;
+}
+
+.session-sidebar-heading,
+.session-workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e8ecef;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.session-sidebar-list {
+  max-height: 680px;
+  overflow: auto;
+}
+
+.session-conversation-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-conversation-label > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-sidebar-list .ant-conversations {
+  width: 100%;
+  padding: 0;
+}
+
+.session-sidebar-list .ant-conversations-item {
+  width: 100%;
+}
+
+.session-load-more {
+  width: 100%;
+}
+
+.session-workspace {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.session-workspace-heading {
+  align-items: flex-start;
+  gap: 8px;
+  padding: 13px 18px;
+}
+
+.session-workspace-heading .ant-typography {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-target-toolbar {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.15fr) minmax(140px, 0.6fr) minmax(220px, 1.35fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e8ecef;
+}
+
+.session-project-picker,
+.session-target-choice {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.session-project-picker > *,
+.session-target-choice > * {
+  min-width: 0;
+}
+
+.session-target-kind {
+  width: 100%;
+}
+
+.session-field-hint {
+  color: #71808e;
+  font-size: 12px;
+}
+
+.session-target-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #e8ecef;
+}
+
+.session-chat {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 12px 18px 18px;
+}
+
+.session-transcript-pane {
+  flex: 1;
+  min-height: 300px;
+  overflow: auto;
+}
+
+.session-transcript {
+  width: 100%;
+  min-height: 300px;
+  padding: 8px 0;
+}
+
+.session-composer {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.session-transcript .ant-bubble-content {
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .sessions-layout {
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  }
+
+  .session-target-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(130px, 0.7fr);
+  }
+
+  .session-target-choice {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .sessions-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-sidebar {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid #e1e6eb;
+  }
+
+  .session-sidebar-list {
+    max-height: 164px;
+  }
+
+  .session-sidebar-list .ant-conversations {
+    max-height: 164px;
+    overflow: auto;
+  }
+
+  .session-target-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .session-target-choice {
+    grid-column: auto;
+  }
+
+  .session-workspace-heading,
+  .session-target-summary,
+  .session-chat {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
