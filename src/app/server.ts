@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -6,22 +6,22 @@ import type { CorvexConfig } from "../config/config.js";
 import { JobStore } from "../jobs/store.js";
 import { jobStatuses, jobTypes, type JobStatus, type JobType } from "../jobs/model.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
-import { GitLabClient, GitLabWriteError } from "../gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError } from "../gitlab/client.js";
 import { decodeGitLabNoteEvent, isIssueNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
 import { traceExecutionStep } from "../jobs/execution.js";
 
 const maxReviewRequestCharacters = 2000;
 const webhookDeliveryLeaseMs = 60_000;
 
-function requestBody(request: IncomingMessage): Promise<Buffer> {
+function requestBody(request: IncomingMessage, maxBytes = MAX_WEBHOOK_BODY_BYTES): Promise<Buffer> {
   return new Promise((resolvePromise, rejectPromise) => {
     const chunks: Buffer[] = [];
     let size = 0;
     request.on("data", (chunk: Buffer) => {
-      if (size > MAX_WEBHOOK_BODY_BYTES) return;
+      if (size > maxBytes) return;
       size += chunk.length;
-      if (size > MAX_WEBHOOK_BODY_BYTES) {
-        rejectPromise(new Error("GitLab webhook payload exceeds 1 MiB"));
+      if (size > maxBytes) {
+        rejectPromise(new Error(`request payload exceeds ${maxBytes} bytes`));
         return;
       }
       chunks.push(chunk);
@@ -102,6 +102,10 @@ function optionalInteger(value: string | null, minimum: number, maximum: number)
   if (!/^(0|[1-9][0-9]*)$/.test(value)) return false;
   const number = Number(value);
   return Number.isSafeInteger(number) && number >= minimum && number <= maximum ? number : false;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function contains(values: number[], target: number): boolean {
@@ -242,7 +246,7 @@ export class CorvexServer {
         return;
       }
       if (path.startsWith("/api/ops/")) {
-        this.operationsApi(request, response, url);
+        await this.operationsApi(request, response, url);
         return;
       }
       if (request.method !== "GET" && request.method !== "HEAD") {
@@ -276,7 +280,171 @@ export class CorvexServer {
     respond(response, 404, "not found\n");
   }
 
-  private operationsApi(request: IncomingMessage, response: ServerResponse, url: URL): void {
+  private async operationsApi(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+    if (request.method === "GET" && url.pathname === "/api/ops/projects") {
+      const page = optionalInteger(url.searchParams.get("page"), 1, 10_000) ?? 1;
+      const search = url.searchParams.get("search") ?? "";
+      if (page === false || search.length > 100) {
+        respondJson(response, 400, { error: "invalid project search" });
+        return;
+      }
+      try {
+        respondJson(response, 200, await this.gitlab.listProjects(search, page));
+      } catch (error) {
+        this.respondGitLabReadError(response, error);
+      }
+      return;
+    }
+    const projectTargetMatch = /^\/api\/ops\/projects\/([0-9]+)\/(branches|issues|merge-requests)$/.exec(url.pathname);
+    if (request.method === "GET" && projectTargetMatch) {
+      const projectId = Number(projectTargetMatch[1]);
+      const page = optionalInteger(url.searchParams.get("page"), 1, 10_000) ?? 1;
+      const search = url.searchParams.get("search") ?? "";
+      if (!Number.isSafeInteger(projectId) || projectId < 1 || page === false || search.length > 100) {
+        respondJson(response, 400, { error: "invalid target search" });
+        return;
+      }
+      try {
+        const [kind] = projectTargetMatch.slice(2);
+        const values = kind === "branches"
+          ? await this.gitlab.listBranches(projectId, search, page)
+          : kind === "issues"
+            ? await this.gitlab.listIssues(projectId, search, page)
+            : await this.gitlab.listMergeRequests(projectId, search, page);
+        respondJson(response, 200, values);
+      } catch (error) {
+        this.respondGitLabReadError(response, error);
+      }
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/ops/sessions") {
+      const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 50;
+      const offset = optionalInteger(url.searchParams.get("offset"), 0, 1_000_000) ?? 0;
+      if (limit === false || offset === false) {
+        respondJson(response, 400, { error: "invalid session list filter" });
+        return;
+      }
+      respondJson(response, 200, this.store.listChatSessions(limit, offset));
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/ops/sessions") {
+      const body = await this.readOperationsBody(request, response);
+      if (!body) return;
+      const projectId = positiveInteger(body.projectId);
+      const targetType = body.targetType;
+      const targetIid = targetType === "repository" ? 0 : positiveInteger(body.targetIid);
+      const targetBranch = typeof body.targetBranch === "string" ? body.targetBranch.trim() : "";
+      const message = typeof body.message === "string" ? body.message : "";
+      if (
+        projectId === undefined ||
+        (targetType !== "repository" && targetType !== "issue" && targetType !== "merge_request") ||
+        targetIid === undefined || !targetBranch || targetBranch.length > 255 ||
+        !message.trim() || message.length > 20_000
+      ) {
+        respondJson(response, 400, { error: "invalid session request" });
+        return;
+      }
+      try {
+        const project = await this.gitlab.getProject(projectId);
+        let headSha: string;
+        let title = "";
+        let branch = targetBranch;
+        if (targetType === "merge_request") {
+          const mergeRequest = await this.gitlab.getMergeRequest(projectId, targetIid);
+          headSha = mergeRequest.diff_refs.head_sha;
+          branch = mergeRequest.source_branch;
+          title = mergeRequest.title;
+          if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headSha)) {
+            respondJson(response, 409, { error: "merge request has no valid head snapshot" });
+            return;
+          }
+        } else {
+          const branchInfo = await this.gitlab.getBranch(projectId, branch);
+          headSha = branchInfo.commit.id;
+          if (targetType === "issue") title = (await this.gitlab.getIssue(projectId, targetIid)).title;
+        }
+        const created = this.store.createChatSession({
+          projectId,
+          projectName: project.path_with_namespace ?? project.name ?? String(projectId),
+          targetType,
+          targetIid,
+          targetBranch: branch,
+          targetTitle: title,
+          headSha,
+          actorId: 0,
+          request: message,
+        });
+        respondJson(response, 202, created);
+      } catch (error) {
+        this.respondGitLabReadError(response, error);
+      }
+      return;
+    }
+    const sessionMatch = /^\/api\/ops\/sessions\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && sessionMatch) {
+      const sessionId = this.decodePathSegment(sessionMatch[1]!);
+      if (!sessionId) {
+        respondJson(response, 400, { error: "invalid session ID" });
+        return;
+      }
+      const session = this.store.getChatSession(sessionId);
+      if (!session) {
+        respondJson(response, 404, { error: "session not found" });
+        return;
+      }
+      respondJson(response, 200, session);
+      return;
+    }
+    const sessionMessageMatch = /^\/api\/ops\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
+    if (request.method === "POST" && sessionMessageMatch) {
+      const sessionId = this.decodePathSegment(sessionMessageMatch[1]!);
+      const body = await this.readOperationsBody(request, response);
+      if (!body) return;
+      const message = typeof body.message === "string" ? body.message : "";
+      const session = sessionId ? this.store.getChatSession(sessionId) : undefined;
+      if (!sessionId || !session) {
+        respondJson(response, sessionId ? 404 : 400, { error: sessionId ? "session not found" : "invalid session ID" });
+        return;
+      }
+      if (!message.trim() || message.length > 20_000) {
+        respondJson(response, 400, { error: "message must be between 1 and 20000 characters" });
+        return;
+      }
+      try {
+        let headSha: string;
+        if (session.targetType === "merge_request") {
+          const mergeRequest = await this.gitlab.getMergeRequest(session.projectId, session.targetIid);
+          if (mergeRequest.source_branch !== session.targetBranch) {
+            respondJson(response, 409, { error: "merge request source branch changed" });
+            return;
+          }
+          headSha = mergeRequest.diff_refs.head_sha;
+          if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headSha)) {
+            respondJson(response, 409, { error: "merge request has no valid head snapshot" });
+            return;
+          }
+        } else {
+          headSha = (await this.gitlab.getBranch(session.projectId, session.targetBranch)).commit.id;
+        }
+        const queued = this.store.addChatSessionMessage(session.id, {
+          projectId: session.projectId,
+          targetType: session.targetType,
+          targetIid: session.targetIid,
+          targetBranch: session.targetBranch,
+          headSha,
+          actorId: 0,
+          request: message,
+        });
+        respondJson(response, 202, { sessionId: session.id, jobId: queued.jobId });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("active message")) {
+          respondJson(response, 409, { error: error.message });
+        } else {
+          this.respondGitLabReadError(response, error);
+        }
+      }
+      return;
+    }
     if (request.method !== "GET") {
       respondJson(response, 405, { error: "method not allowed" });
       return;
@@ -357,6 +525,46 @@ export class CorvexServer {
     respondJson(response, 404, { error: "not found" });
   }
 
+  private async readOperationsBody(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+      respondJson(response, 415, { error: "application/json is required" });
+      return undefined;
+    }
+    try {
+      const body = await requestBody(request, 32 << 10);
+      const value: unknown = JSON.parse(body.toString("utf8"));
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        respondJson(response, 400, { error: "request body must be a JSON object" });
+        return undefined;
+      }
+      return value as Record<string, unknown>;
+    } catch (error) {
+      respondJson(response, 400, { error: errorMessage(error) });
+      return undefined;
+    }
+  }
+
+  private decodePathSegment(value: string): string | undefined {
+    try {
+      const decoded = decodeURIComponent(value);
+      return decoded && decoded.length <= 128 ? decoded : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private respondGitLabReadError(response: ServerResponse, error: unknown): void {
+    if (error instanceof GitLabApiError && [401, 403, 404].includes(error.status)) {
+      respondJson(response, 404, { error: "GitLab resource is not available to the configured token" });
+      return;
+    }
+    console.warn("operations GitLab read failed", { error: errorMessage(error) });
+    respondJson(response, 502, { error: "GitLab request failed" });
+  }
+
   private async operationsUi(response: ServerResponse, path: string): Promise<void> {
     const target = path === "/ops" || path === "/ops/"
       ? { file: "index.html", contentType: "text/html; charset=utf-8" }
@@ -379,11 +587,27 @@ export class CorvexServer {
     response.setHeader("x-content-type-options", "nosniff");
     response.setHeader("referrer-policy", "no-referrer");
     response.setHeader("x-robots-tag", "noindex, nofollow");
+    const nonce = target.file === "index.html" ? randomBytes(18).toString("base64url") : undefined;
     response.setHeader(
       "content-security-policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; form-action 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      [
+        "default-src 'self'",
+        "script-src 'self'",
+        `style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}`,
+        `style-src-elem 'self'${nonce ? ` 'nonce-${nonce}'` : ""}`,
+        "style-src-attr 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "form-action 'none'",
+        "frame-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+      ].join("; "),
     );
-    response.end(contents);
+    response.end(nonce
+      ? contents.toString("utf8").replaceAll("__CORVEX_CSP_NONCE__", nonce)
+      : contents);
   }
 
   private metrics(response: ServerResponse): void {
@@ -530,23 +754,6 @@ export class CorvexServer {
       });
       console.info("GitLab webhook ignored", { ...details, reason });
       this.respondTrackedWebhook(response, 202, "", deliveryId, id, { ...details, reason });
-      return;
-    }
-    if (!contains(this.config.gitlab.allowedProjectIds, event.project.id)) {
-      console.warn("GitLab webhook rejected", { ...details, reason: "project_not_allowed" });
-      this.store.recordExecutionEvent({
-        deliveryId,
-        eventId: id,
-        step: "webhook.filter",
-        status: "failed",
-        input: { projectId: event.project.id },
-        output: { allowed: false },
-        errorDetail: "project_not_allowed",
-      });
-      this.respondTrackedWebhook(response, 403, "project is not allowed\n", deliveryId, id, {
-        ...details,
-        reason: "project_not_allowed",
-      });
       return;
     }
     if (contains(this.config.gitlab.blockedUserIds, event.user.id)) {

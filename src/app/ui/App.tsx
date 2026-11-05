@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ConfigProvider, Menu, Select } from "antd";
+import enUSLocale from "antd/locale/en_US";
+import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { JobDetailPage } from "./components/JobDetailPage.js";
 import { JobsPage } from "./components/JobsPage.js";
 import { OverviewPage } from "./components/OverviewPage.js";
+import { SessionsPage } from "./components/SessionsPage.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
@@ -17,6 +21,8 @@ const browserLanguages = [...(window.navigator.languages ?? []), window.navigato
 const refreshIntervalMs = 15_000;
 /** 非任务列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
 const emptyParams = new URLSearchParams();
+/** Server 为当前 HTML 响应生成的 CSP nonce，供 Ant Design 样式标签使用。 */
+const cspNonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce;
 
 /** 读取已保存的语言偏好；localStorage 不可用时回退为空。 */
 function readSavedLocale(): string {
@@ -93,7 +99,12 @@ export function App() {
   const onJobs = page.kind === "jobs" || page.kind === "job";
 
   return (
-    <>
+    <ConfigProvider
+      locale={locale === "zh-CN" ? zhCNLocale : enUSLocale}
+      csp={cspNonce ? { nonce: cspNonce } : undefined}
+      theme={{ token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" } }}
+    >
+      <>
       <a
         className="skip-link"
         href="#app"
@@ -112,37 +123,30 @@ export function App() {
           </span>
         </a>
         <nav aria-label={copy.navLabel}>
-          <a
-            href="#overview"
-            data-nav="overview"
-            aria-current={page.kind === "overview" ? "page" : undefined}
-            className={page.kind === "overview" ? "active" : undefined}
-          >
-            {copy.navOverview}
-          </a>
-          <a
-            href={jobsHash(queue)}
-            data-nav="jobs"
-            aria-current={onJobs ? "page" : undefined}
-            className={onJobs ? "active" : undefined}
-          >
-            {copy.navJobs}
-          </a>
+          <Menu
+            className="primary-nav"
+            mode="horizontal"
+            selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "sessions"]}
+            onClick={({ key }) => { window.location.hash = key === "jobs" ? jobsHash(queue) : key; }}
+            items={[
+              { key: "overview", label: copy.navOverview },
+              { key: "jobs", label: copy.navJobs },
+              { key: "sessions", label: copy.navSessions },
+            ]}
+          />
         </nav>
-        <select
+        <Select
           id="language"
           className="language-select"
           aria-label={copy.languageLabel}
           value={locale}
-          onChange={(event) => {
-            const next = resolveLocale(event.target.value, browserLanguages);
+          options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]}
+          onChange={(value) => {
+            const next = resolveLocale(value, browserLanguages);
             saveLocale(next);
             setLocale(next);
           }}
-        >
-          <option value="en">English</option>
-          <option value="zh-CN">简体中文</option>
-        </select>
+        />
         <span id="updated" className="updated">
           {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
         </span>
@@ -180,9 +184,19 @@ export function App() {
               onRefresh={refresh}
             />
           ) : null}
+          {page.kind === "sessions" ? (
+            <SessionsPage
+              copy={copy}
+              locale={locale}
+              refreshToken={refreshToken}
+              onUpdated={handleUpdated}
+              onRefresh={refresh}
+            />
+          ) : null}
         </ErrorBoundary>
       </main>
       <footer>{copy.footer}</footer>
-    </>
+      </>
+    </ConfigProvider>
   );
 }

@@ -22,7 +22,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 ## Docker Compose
 
 1. Copy `.env.example` to `.env` and set the GitLab write token and webhook secret. The read token and model API key are needed only when running a Worker. Keep this file private and do not commit it.
-2. Copy `configs/config.example.yaml` to `configs/config.yaml`; set the GitLab URL and project allowlist. Add user IDs to `gitlab.blocked_user_ids` only to deny command access.
+2. Copy `configs/config.example.yaml` to `configs/config.yaml` and set the GitLab URL. Add user IDs to `gitlab.blocked_user_ids` only to deny command access. The operations console searches every project visible to `CORVEX_GITLAB_READ_TOKEN`.
 3. Start the Server:
 
    ```sh
@@ -59,10 +59,14 @@ The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` a
 | `GET /api/ops/overview` | Operations summary with job counts, oldest queued age, worker heartbeats, and model call metrics. |
 | `GET /api/ops/jobs` | Filtered and paginated job list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
 | `GET /api/ops/jobs/<id>` | Job details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output events for each execution step. |
+| `GET /api/ops/projects` | Search projects visible to the configured GitLab read token. |
+| `GET /api/ops/projects/<id>/branches`, `/issues`, `/merge-requests` | Search available repository targets and branches. |
+| `GET /api/ops/sessions` / `GET /api/ops/sessions/<id>` | List persistent chat sessions and their messages. |
+| `POST /api/ops/sessions` / `POST /api/ops/sessions/<id>/messages` | Create a pinned read-only session or enqueue its next turn. |
 
 The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include the requester username and ID, the triggering comment, the parsed request, and error text; protect operator credentials and use HTTPS. The triggering comment is sourced from the linked webhook execution event and follows its size limit and best-effort redaction. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
 
-The console has three read-only views: an overview of queue and worker status, a filterable job list, and a per-job detail/attempt history view. Job details show who initiated the task and the triggering comment separately from the parsed request, alongside a Session transcript and the original Trace timeline. It refreshes automatically every 15 seconds. It does not retry, cancel, or create tasks. The console is a React bundle built into `dist/app/ui`; use `pnpm run ui:build` to build it locally, or `pnpm run ui:dev` for interface work against a local Server. The `ui:dev` server proxies `/api` to `http://127.0.0.1:8080`; set `CORVEX_OPS_API` to use another Server origin. Job list filters (`status`, `type`, `search`) are kept in the URL, so a filtered view survives a reload and can be shared. `/ops` only answers `GET` and `HEAD`, and its responses carry a restrictive Content Security Policy and `X-Robots-Tag: noindex` so the console is not indexed or embedded.
+The console has overview, jobs, job detail, and persistent chat session views. Session creation searches all projects visible to the GitLab read token; each turn is pinned to a server-resolved branch or MR SHA, persisted in SQLite, and runs with read-only repository tools. It does not modify repositories or publish session replies to GitLab. The console refreshes queue views automatically; active session turns poll more frequently. Use a strong GitLab read token and strong Basic Auth credentials. It is a React bundle built into `dist/app/ui`; use `pnpm run ui:build` to build it locally, or `pnpm run ui:dev` for interface work against a local Server. The `ui:dev` server proxies `/api` to `http://127.0.0.1:8080`; set `CORVEX_OPS_API` to use another Server origin. Job list filters (`status`, `type`, `search`) are kept in the URL. `/ops` only answers `GET` and `HEAD`, and its responses carry a restrictive Content Security Policy and `X-Robots-Tag: noindex` so the console is not indexed or embedded.
 The interface supports English and Simplified Chinese. On first visit it selects the best supported browser language; a manual selection is saved in browser storage for later visits.
 
 ## Logs and troubleshooting
@@ -80,7 +84,7 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 |---|---|
 | Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |
 | Webhook returns `400` | The endpoint only accepts valid merge-request or Issue Note Hook payloads. Disable unsupported event types and ensure the request is a comment on a merge request or Issue. |
-| Webhook returns `403` | Confirm the webhook's project ID and comment author's user ID are in the configured allowlists. |
+| Webhook returns `403` | Check whether the commenter is in `gitlab.blocked_user_ids`, or whether the requested capability is disabled. |
 | Tasks stay queued | Confirm a Worker is running with `agent.enabled: true`, using the same database volume/config, and that model settings are valid. |
 | Worker cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the worker has Git installed. |
 | Task becomes stale | The MR was closed or its diff changed after the command was queued; submit a new command on the current revision. |

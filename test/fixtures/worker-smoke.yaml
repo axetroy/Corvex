@@ -5,8 +5,6 @@ server:
 
 gitlab:
   base_url: "https://gitlab.example.com"
-  allowed_project_ids:
-    - 1
   blocked_user_ids: []
   bot_username: "corvex-bot"
 

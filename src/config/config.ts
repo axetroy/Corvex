@@ -20,7 +20,6 @@ export interface CorvexConfig {
     readToken: string;
     writeToken: string;
     webhookSecret: string;
-    allowedProjectIds: number[];
     blockedUserIds: number[];
     botUsername: string;
   };
@@ -82,7 +81,6 @@ const defaults: CorvexConfig = {
     readToken: "",
     writeToken: "",
     webhookSecret: "",
-    allowedProjectIds: [],
     blockedUserIds: [],
     botUsername: "",
   },
@@ -209,7 +207,6 @@ function parseConfig(raw: unknown): CorvexConfig {
       readToken: process.env.CORVEX_GITLAB_READ_TOKEN ?? "",
       writeToken: process.env.CORVEX_GITLAB_TOKEN ?? "",
       webhookSecret: process.env.CORVEX_WEBHOOK_SECRET ?? "",
-      allowedProjectIds: numberArray(gitlab.allowed_project_ids, defaults.gitlab.allowedProjectIds),
       blockedUserIds: numberArray(gitlab.blocked_user_ids, defaults.gitlab.blockedUserIds),
       botUsername: string(gitlab.bot_username, defaults.gitlab.botUsername),
     },
@@ -330,7 +327,10 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
   // 按运行角色校验凭据，存储维护命令不应依赖 GitLab API 或模型密钥。
-  if (role !== "server" && role !== "storage" && !config.gitlab.readToken.trim()) {
+  if (
+    ((role !== "server" && role !== "storage") || (role === "server" && operationsUsername && operationsPassword)) &&
+    !config.gitlab.readToken.trim()
+  ) {
     problems.push("CORVEX_GITLAB_READ_TOKEN is required");
   }
   if (role !== "storage" && !config.gitlab.writeToken.trim()) {
@@ -338,9 +338,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (role !== "worker" && role !== "storage" && !config.gitlab.webhookSecret.trim()) {
     problems.push("CORVEX_WEBHOOK_SECRET is required");
-  }
-  if (config.gitlab.allowedProjectIds.length === 0) {
-    problems.push("gitlab.allowed_project_ids must not be empty");
   }
   if (!config.storage.root.trim()) problems.push("storage.root is required");
   if (!config.storage.database.trim()) problems.push("storage.database is required");

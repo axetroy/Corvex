@@ -4,9 +4,9 @@
 
 Corvex 将请求接入与模型、仓库处理分离：
 
-1. **Server** 提供 HTTP Webhook 和运维接口，验证 Note Hook 请求、执行白名单检查、将事件和任务写入 SQLite，并回复 GitLab 评论。
-2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、模型调用指标以及可选的每日 Token 预留。
-3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求快照和仓库并执行请求的工作流。启动 Worker 必须设置 `agent.enabled: true`。
+1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件和任务写入 SQLite，并回复 GitLab。会话工作台通过配置的 GitLab 只读 Token 发现项目和目标。
+2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、持久会话消息、模型调用指标以及可选的每日 Token 预留。
+3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求或会话目标快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
 5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现任务。
 
@@ -20,12 +20,16 @@ Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久�
 
 1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
 2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，接受合并请求和 Issue 评论，限制请求体为 1 MiB，并忽略系统评论。
-3. Server 检查项目 ID 白名单，并拒绝 `gitlab.blocked_user_ids` 中的用户。其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本。
+3. Server 拒绝 `gitlab.blocked_user_ids` 中的用户。配置了共享 Webhook Secret 的项目中的其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本；部署者应仅在需要接受指令的项目中注册 Webhook。
 4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步任务）任务。重复 Webhook 投递具有幂等性。
 5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
 6. Worker 按创建顺序领取排队的审查、解释、聊天、修复或实现任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
 
 MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。Issue 中的普通提及会进入助手任务，模型可基于 Issue 和近期非系统评论进行回复、追问或提出实现。代码写入由默认关闭的 `issue.implement_enabled` 单独控制；`/implement [request]` 仍可显式请求实现。用法请参阅[快速开始](./guide)。
+
+## 持久会话
+
+经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目、分支、Issue 和合并请求。会话绑定到服务端解析的目标及固定 SHA；每轮消息保存在 SQLite，并按会话串行执行。会话 Worker 只提供只读仓库工具，不会向 GitLab 发布内容。目标版本变化时，既有会话不会静默切换到新版本。
 
 ## 审查流程
 
@@ -44,11 +48,11 @@ MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/can
 
 **Explain** 从固定 MR Head SHA 的 worktree 中读取指定文件，而不是读取服务器上的任意路径。系统会限制文件路径在工作区内，并遵守配置的上下文大小限制。文件内容和 MR 元信息会发送给模型；只有 MR 快照仍有效时，解释结果才会作为 MR 评论发布。
 
-**Fix** 默认关闭，并与其他指令采用相同的项目白名单和可选 `gitlab.blocked_user_ids` 黑名单。Worker 将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，Worker 将补丁作为提案发布，供人工检查和应用。
+**Fix** 默认关闭，并遵循其他指令的可选 `gitlab.blocked_user_ids` 黑名单。Worker 将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，Worker 将补丁作为提案发布，供人工检查和应用。
 
 Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创建提交或推送到 GitLab。发布的补丁只是提案，并不代表已验证。
 
-**Issue 助手**遵循项目白名单和可选用户黑名单。任何普通机器人提及都会排队；模型会收到 Issue 及最多 `issue.history_comments` 条近期非系统评论（默认 20，范围 0–50，另有分页和字节上限），可直接回复或请求澄清而不发布代码。`issue.implement_enabled` 是独立且默认关闭的写入开关：启用后，明确的实现请求才可生成有界 unified diff。目标分支默认为项目默认分支；只有当前请求明确命名另一个已存在分支时才会改投该分支，评论不能授权分支选择。Worker 固定目标基线 SHA，校验补丁（仅普通文本文件；拒绝路径穿越、Git 元数据路径、符号链接父目录、二进制、重命名和模式变更），并在推送前再次验证 Issue 与目标 SHA。随后创建新的 `corvex/issue-*` 分支和 Draft MR。不会运行项目脚本/测试、自动合并或关闭 Issue。远端结果不确定时不会自动重试。
+**Issue 助手**遵循可选用户黑名单。配置了共享 Webhook Secret 的项目中，任何普通机器人提及都会排队；模型会收到 Issue 及最多 `issue.history_comments` 条近期非系统评论（默认 20，范围 0–50，另有分页和字节上限），可直接回复或请求澄清而不发布代码。`issue.implement_enabled` 是独立且默认关闭的写入开关：启用后，明确的实现请求才可生成有界 unified diff。目标分支默认为项目默认分支；只有当前请求明确命名另一个已存在分支时才会改投该分支，评论不能授权分支选择。Worker 固定目标基线 SHA，校验补丁（仅普通文本文件；拒绝路径穿越、Git 元数据路径、符号链接父目录、二进制、重命名和模式变更），并在推送前再次验证 Issue 与目标 SHA。随后创建新的 `corvex/issue-*` 分支和 Draft MR。不会运行项目脚本/测试、自动合并或关闭 Issue。远端结果不确定时不会自动重试。
 
 ## 任务状态、租约、重试和取消
 
@@ -71,7 +75,8 @@ SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库�
 
 ## 安全边界和限制
 
-- Webhook Secret 用于验证 GitLab 投递；项目白名单和可选用户黑名单限制可发起任务的来源。
+- Webhook Secret 用于验证 GitLab 投递；仅在需要接受指令的项目中注册 Webhook，并可通过用户黑名单限制发起任务的用户。
+- 会话工作台可发现只读 GitLab Token 有权访问的所有项目，不受静态项目白名单控制。
 - 使用只读令牌读取 API 和仓库，并使用独立写令牌发布 MR 评论。不要把注册 Webhook 时使用的管理员令牌提供给运行中的服务。
 - 仓库内容、评论、文件名和 Fix 指令都是不可信模型输入。模型输出会经过校验，但校验不能替代人工审阅。
 - 模型提示内容可能包含源代码和 MR 文本。启用模型前，应审查服务商的数据处理方式及组织政策。

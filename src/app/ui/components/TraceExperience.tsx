@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { Tabs } from "antd";
 import type { Copy, Locale } from "../i18n.js";
 import type { JobTraceEntry } from "../types.js";
 import { Empty } from "./common.js";
@@ -44,58 +44,33 @@ export const TraceExperience = memo(function TraceExperience({
 
   if (traces.length === 0) return <Empty>{copy.noTrajectory}</Empty>;
 
-  const handleTabKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    const next: TraceView | undefined = event.key === "ArrowLeft" || event.key === "Home"
-      ? "session"
-      : event.key === "ArrowRight" || event.key === "End"
-        ? "trace"
-        : undefined;
-    if (!next) return;
-    event.preventDefault();
-    setView(next);
-    document.getElementById(next === "session" ? "trace-session-tab" : "trace-diagram-tab")?.focus();
-  };
-
   return (
     <div className="trace-experience">
-      <div className="trace-view-tabs" role="tablist" aria-label={copy.traceDiagram} onKeyDown={handleTabKeys}>
-        <button
-          type="button"
-          role="tab"
-          id="trace-session-tab"
-          className="trace-view-tab"
-          aria-controls="trace-session-panel"
-          aria-selected={view === "session"}
-          tabIndex={view === "session" ? 0 : -1}
-          onClick={() => setView("session")}
-        >
-          {copy.traceTabSession}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="trace-diagram-tab"
-          className="trace-view-tab"
-          aria-controls="trace-diagram-panel"
-          aria-selected={view === "trace"}
-          tabIndex={view === "trace" ? 0 : -1}
-          onClick={() => setView("trace")}
-        >
-          {copy.traceTabTrace}
-        </button>
-      </div>
-      {/* 只渲染当前视图：隐藏面板仍会参与协调，切换标签会重置面板内的筛选与缩放。 */}
-      {view === "session" ? (
-        <TraceSession traces={traces} userRequest={userRequest} copy={copy} locale={locale} />
-      ) : (
-        <TraceDiagram
-          traces={traces}
-          copy={copy}
-          locale={locale}
-          selection={selection}
-          onSelectionChange={setSelection}
-        />
-      )}
+      <Tabs
+        activeKey={view}
+        onChange={(key) => setView(key as TraceView)}
+        destroyOnHidden
+        items={[
+          {
+            key: "session",
+            label: copy.traceTabSession,
+            children: <TraceSession traces={traces} userRequest={userRequest} copy={copy} locale={locale} />,
+          },
+          {
+            key: "trace",
+            label: copy.traceTabTrace,
+            children: (
+              <TraceDiagram
+                traces={traces}
+                copy={copy}
+                locale={locale}
+                selection={selection}
+                onSelectionChange={setSelection}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 });

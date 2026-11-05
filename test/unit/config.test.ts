@@ -18,7 +18,6 @@ function validConfig(): CorvexConfig {
       readToken: "read",
       writeToken: "write",
       webhookSecret: "secret",
-      allowedProjectIds: [1],
       blockedUserIds: [],
       botUsername: "corvex",
     },
@@ -64,7 +63,7 @@ describe("validateConfig", () => {
     const configPath = join(root, "config.yaml");
     try {
       const base = {
-        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        gitlab: { base_url: "https://gitlab.example.com" },
         storage: { root, database: join(root, "state.db") },
       };
       await writeFile(configPath, JSON.stringify(base));
@@ -86,7 +85,7 @@ describe("validateConfig", () => {
     try {
       await initializeConfig(configPath);
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
-      expect(contents).toContain("allowed_project_ids");
+      expect(contents).not.toContain("allowed_project_ids");
       expect(contents).toContain("blocked_user_ids");
       expect(contents).toMatch(/session_timeout: \d+m/u);
     } finally {
@@ -107,7 +106,6 @@ describe("validateConfig", () => {
         JSON.stringify({
           gitlab: {
             base_url: "https://gitlab.example.com",
-            allowed_project_ids: [1],
             blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
@@ -127,7 +125,7 @@ describe("validateConfig", () => {
     const configPath = join(root, "config.yaml");
     try {
       const base = {
-        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        gitlab: { base_url: "https://gitlab.example.com" },
         storage: { root, database: join(root, "state.db") },
       };
       await writeFile(configPath, JSON.stringify(base));
@@ -155,7 +153,7 @@ describe("validateConfig", () => {
     const configPath = join(root, "config.yaml");
     try {
       const base = {
-        gitlab: { base_url: "https://gitlab.example.com", allowed_project_ids: [1] },
+        gitlab: { base_url: "https://gitlab.example.com" },
         storage: { root, database: join(root, "state.db") },
       };
       await writeFile(configPath, JSON.stringify(base));
@@ -184,7 +182,6 @@ describe("validateConfig", () => {
       const base = {
         gitlab: {
           base_url: "https://gitlab.example.com",
-          allowed_project_ids: [1],
           blocked_user_ids: [],
         },
         storage: { root, database: join(root, "state.db") },
@@ -215,13 +212,21 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("requires a project allowlist but permits an empty user blocklist", () => {
+  it("accepts all projects while permitting an empty user blocklist", () => {
     const config = validConfig();
-    config.gitlab.allowedProjectIds = [];
-    expect(() => validateConfig(config)).toThrow("allowed_project_ids must not be empty");
-
-    config.gitlab.allowedProjectIds = [1];
     expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("requires a GitLab read token when the operations console is enabled", () => {
+    const config = validConfig();
+    config.operations.username = "operator";
+    config.operations.password = "password";
+    config.gitlab.readToken = "";
+    expect(() => validateConfig(config, "server")).toThrow("CORVEX_GITLAB_READ_TOKEN is required");
+
+    config.operations.username = "";
+    config.operations.password = "";
+    expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
   it("rejects credential-bearing model URLs when the agent is enabled", () => {
@@ -269,7 +274,7 @@ describe("validateConfig", () => {
       await writeFile(
         configPath,
         JSON.stringify({
-          gitlab: { allowed_project_ids: [1], blocked_user_ids: [] },
+          gitlab: { blocked_user_ids: [] },
           storage: { root, database: join(root, "state.db") },
         }),
       );
@@ -303,7 +308,6 @@ describe("validateConfig", () => {
         JSON.stringify({
           gitlab: {
             base_url: "https://gitlab.example.com",
-            allowed_project_ids: [1],
             blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },

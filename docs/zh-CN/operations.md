@@ -22,7 +22,7 @@ pnpm start -- --config configs/config.yaml worker
 ## Docker Compose
 
 1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。只有运行 Worker 时才需要读取令牌和模型 API 密钥。妥善保护此文件，不要提交到版本控制。
-2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`，填写 GitLab URL 和项目白名单；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。
+2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml` 并填写 GitLab URL；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。运维控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
 3. 启动 Server：
 
    ```sh
@@ -59,10 +59,14 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/overview` | 运维概览：任务状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
 | `GET /api/ops/jobs` | 筛选/分页任务列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
 | `GET /api/ops/jobs/<id>` | 任务详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出事件。 |
+| `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
+| `GET /api/ops/projects/<id>/branches`、`/issues`、`/merge-requests` | 搜索仓库目标和分支。 |
+| `GET /api/ops/sessions`、`GET /api/ops/sessions/<id>` | 列出持久会话及其消息。 |
+| `POST /api/ops/sessions`、`POST /api/ops/sessions/<id>/messages` | 创建固定版本的只读会话或排入下一轮对话。 |
 
 运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护运维凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 
-控制台包含三个只读视图：队列和 Worker 状态概览、可筛选任务列表、单个任务及尝试历史详情。任务详情会分别显示发起人、触发评论和解析后的请求，并提供“会话”记录和原有的“轨迹”时间线。页面每 15 秒自动刷新，不提供重试、取消或创建任务操作。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL，刷新页面或分享链接后仍能还原。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
+控制台包含概览、任务、任务详情和持久对话会话视图。新建会话时可搜索只读 GitLab Token 可访问的全部项目；每轮由服务端解析并固定到分支或 MR SHA，消息保存在 SQLite，并仅提供只读仓库工具。会话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃会话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
 界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
 
 ## 日志与故障排查
@@ -78,7 +82,7 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 |---|---|
 | Webhook 返回 `401` | 确认 GitLab Hook Secret 与 `CORVEX_WEBHOOK_SECRET` 完全相同。 |
 | Webhook 返回 `400` | 接口仅接受有效的合并请求或 Issue Note Hook；关闭不支持的事件，并确认请求来自合并请求或 Issue 评论。 |
-| Webhook 返回 `403` | 确认 Webhook 项目 ID 和评论作者用户 ID 均在配置白名单中。 |
+| Webhook 返回 `403` | 检查评论者是否在 `gitlab.blocked_user_ids` 中，或请求的能力是否已启用。 |
 | 任务一直排队 | 确认 Worker 已启动、配置 `agent.enabled: true`、使用相同数据库卷/配置，并且模型配置有效。 |
 | Worker 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Worker 上是否安装 Git。 |
 | 任务变为 stale | 命令入队后 MR 已关闭或 Diff 已改变；应针对当前版本重新提交命令。 |

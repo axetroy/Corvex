@@ -26,16 +26,16 @@ pnpm run build
 pnpm start -- init
 ```
 
-编辑 `configs/config.yaml`，填写 GitLab URL 和项目白名单。只有需要禁止某些用户调用指令时，才将其数字 ID 加入 `gitlab.blocked_user_ids`。为 Server 设置以下变量：
+编辑 `configs/config.yaml`，填写 GitLab URL。只有需要禁止某些用户调用指令时，才将其数字 ID 加入 `gitlab.blocked_user_ids`。为 Server 设置以下变量：
 
 ```sh
 export CORVEX_GITLAB_TOKEN='写入令牌'
 export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
 ```
 
-ID 使用 GitLab 数字 ID；两个白名单都必须非空，空白名单不表示“允许所有人”。不要把凭据写入 YAML 或提交到源代码仓库。所有配置及边界值请参阅[配置参考](./configuration)。
+ID 使用 GitLab 数字 ID。不要把凭据写入 YAML 或提交到源代码仓库。运维控制台会列出 `CORVEX_GITLAB_READ_TOKEN` 可访问的项目；仅在需要接受 Corvex 指令的项目中注册 Webhook。所有配置及边界值请参阅[配置参考](./configuration)。
 
-Server 只需要写令牌和 Webhook Secret。Worker 还需要 `CORVEX_GITLAB_READ_TOKEN`；启用 Agent 时，还需要 `CORVEX_MODEL_API_KEY`。只读令牌用于读取项目/MR API 和抓取仓库；请使用独立读写令牌并只授予所需权限。
+Server 需要写令牌和 Webhook Secret。启用运维控制台后，还需要 `CORVEX_GITLAB_READ_TOKEN` 用于发现项目和目标。Worker 需要只读令牌；启用 Agent 时还需要 `CORVEX_MODEL_API_KEY`。请使用独立读写令牌并只授予所需权限。
 
 ## 2. 启动 Server
 
@@ -86,7 +86,7 @@ CORVEX_WEBHOOK_SECRET=... \
 | `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
 | `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
 
-`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。MR 普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息、diff 和近期评论作为聊天上下文。默认注入最近 20 条评论，可通过 `chat.history_comments` 配置为 0–50 条；Chat 也可按需读取当前 MR 的更多近期评论。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。项目白名单中的任意评论者都可调用指令，除非其 ID 在 `gitlab.blocked_user_ids` 中。
+`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。MR 普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息、diff 和近期评论作为聊天上下文。默认注入最近 20 条评论，可通过 `chat.history_comments` 配置为 0–50 条；Chat 也可按需读取当前 MR 的更多近期评论。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。配置了共享 Webhook Secret 的项目中的评论者均可调用指令，`gitlab.blocked_user_ids` 中的用户除外。
 
 ### Issue 提及
 
@@ -98,7 +98,7 @@ Issue 中的普通提及会启动助手任务。Agent 会基于 Issue 和近期�
 | `@corvex-bot 添加所需校验` | 让 Agent 判断应回复还是提出实现；代码写入需要启用 Issue 实现。 |
 | `@corvex-bot /implement 添加所需校验` | 明确请求实现；代码写入仍要求启用 Issue 实现。 |
 
-项目白名单中的任意评论者都可 @ 机器人，除非其 ID 在 `gitlab.blocked_user_ids` 中。
+配置了共享 Webhook Secret 的项目中的评论者均可 @ 机器人，`gitlab.blocked_user_ids` 中的用户除外。
 
 ## 5. 启用模型任务
 
@@ -121,7 +121,11 @@ Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会�
 
 ## 谨慎启用修复提案
 
-Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent。项目白名单中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
+Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent。配置了共享 Webhook Secret 的项目中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
+
+## 持久对话会话
+
+启用受 Basic Auth 保护的运维控制台并打开“会话”页。搜索只读 GitLab Token 可访问的项目，然后将对话绑定到仓库分支、Issue 与分支或合并请求源分支。Corvex 在服务端查询并固定目标 SHA。会话及每轮消息都保存在 SQLite 中；同一会话一次只运行一轮。会话 Agent 只读，不会修改 worktree 或发布 GitLab 评论。目标版本变化时不会自动跟随；如需使用最新 SHA，请新建会话。
 
 Pi Session 不开放内建 shell 或任意命令执行。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户要求时，Chat 可通过 `update_mr_metadata` 修改当前 MR 标题和/或描述；未传入的字段保持不变。配置写令牌且 MR 源项目与目标项目相同时，Chat 还可使用 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert`，并固定绑定到当前隔离 worktree 和 MR 源分支。用户要求修改后无需额外确认；补丁仅修改已跟踪普通文件，提交仅接受未暂存的已跟踪文件修改。所有修改和可用验证完成后，Chat 创建最终提交，并在回复前将推送作为最后一次仓库操作；不会推送中间状态，也不会在推送后继续修改文件。推送只进行普通快进更新且永远不能强制推送；回滚只为最近的 Corvex 提交新增 revert commit。Fork MR 不提供 Git 写工具。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 

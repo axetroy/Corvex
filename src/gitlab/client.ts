@@ -17,8 +17,15 @@ export interface MergeRequest {
 
 export interface Project {
   id: number;
+  name?: string;
+  path_with_namespace?: string;
   http_url_to_repo: string;
   default_branch?: string;
+}
+
+export interface GitLabBranch {
+  name: string;
+  commit: { id: string };
 }
 
 export interface GitLabIssue {
@@ -26,6 +33,16 @@ export interface GitLabIssue {
   title: string;
   description: string;
   state: string;
+  web_url?: string;
+}
+
+export interface GitLabMergeRequestSummary {
+  iid: number;
+  title: string;
+  description: string;
+  state: string;
+  source_branch: string;
+  target_branch: string;
   web_url?: string;
 }
 
@@ -249,6 +266,121 @@ export class GitLabClient {
       throw new Error("GitLab returned incomplete or mismatched project metadata");
     }
     return result as unknown as Project;
+  }
+
+  async listProjects(search: string, page: number, signal?: AbortSignal): Promise<Project[]> {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("GitLab project page must be between 1 and 10000");
+    }
+    const query = new URLSearchParams({
+      simple: "true",
+      per_page: "50",
+      page: String(page),
+      order_by: "name",
+      sort: "asc",
+    });
+    const normalizedSearch = search.trim();
+    if (normalizedSearch) {
+      if ([...normalizedSearch].length > 100) throw new Error("GitLab project search must be at most 100 characters");
+      query.set("search", normalizedSearch);
+    }
+    const result = await this.getJson(`/projects?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab project list is not an array");
+    return result.map((value) => {
+      if (
+        !isRecord(value) ||
+        !Number.isSafeInteger(value.id) ||
+        typeof value.name !== "string" ||
+        typeof value.path_with_namespace !== "string" ||
+        typeof value.http_url_to_repo !== "string" ||
+        !value.http_url_to_repo ||
+        (value.default_branch !== undefined && typeof value.default_branch !== "string")
+      ) {
+        throw new Error("GitLab returned an incomplete project list entry");
+      }
+      return value as unknown as Project;
+    });
+  }
+
+  async getBranch(projectId: number, branchName: string, signal?: AbortSignal): Promise<GitLabBranch> {
+    if (projectId <= 0 || !branchName.trim() || [...branchName].length > 255) {
+      throw new Error("project ID and branch name are required");
+    }
+    const result = await this.getJson(
+      `/projects/${projectId}/repository/branches/${encodeURIComponent(branchName)}`,
+      signal,
+    );
+    if (
+      !isRecord(result) ||
+      result.name !== branchName ||
+      !isRecord(result.commit) ||
+      typeof result.commit.id !== "string" ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(result.commit.id)
+    ) {
+      throw new Error("GitLab returned an invalid branch or commit SHA");
+    }
+    return result as unknown as GitLabBranch;
+  }
+
+  async listBranches(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabBranch[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const query = this.targetListQuery(search, page);
+    const result = await this.getJson(`/projects/${projectId}/repository/branches?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab branch list is not an array");
+    return result.map((value) => {
+      if (
+        !isRecord(value) || typeof value.name !== "string" || !isRecord(value.commit) ||
+        typeof value.commit.id !== "string" || !fullSha(value.commit.id)
+      ) throw new Error("GitLab returned an invalid branch list entry");
+      return value as unknown as GitLabBranch;
+    });
+  }
+
+  async listIssues(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabIssue[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const query = this.targetListQuery(search, page, { scope: "all" });
+    const result = await this.getJson(`/projects/${projectId}/issues?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab Issue list is not an array");
+    return result.map((value) => {
+      if (
+        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
+        typeof value.description !== "string" || typeof value.state !== "string"
+      ) throw new Error("GitLab returned an incomplete Issue list entry");
+      return value as unknown as GitLabIssue;
+    });
+  }
+
+  async listMergeRequests(
+    projectId: number,
+    search: string,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<GitLabMergeRequestSummary[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const query = this.targetListQuery(search, page, { state: "all" });
+    const result = await this.getJson(`/projects/${projectId}/merge_requests?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab merge request list is not an array");
+    return result.map((value) => {
+      if (
+        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
+        typeof value.description !== "string" || typeof value.state !== "string" ||
+        typeof value.source_branch !== "string" || typeof value.target_branch !== "string"
+      ) throw new Error("GitLab returned an incomplete merge request list entry");
+      return value as unknown as GitLabMergeRequestSummary;
+    });
+  }
+
+  private targetListQuery(search: string, page: number, extra: Record<string, string> = {}): URLSearchParams {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("GitLab target page must be between 1 and 10000");
+    }
+    const query = new URLSearchParams({ per_page: "50", page: String(page), order_by: "updated_at", sort: "desc", ...extra });
+    const normalizedSearch = search.trim();
+    if (normalizedSearch) {
+      if ([...normalizedSearch].length > 100) throw new Error("GitLab target search must be at most 100 characters");
+      query.set("search", normalizedSearch);
+    }
+    return query;
   }
 
   async getMergeRequestDiff(

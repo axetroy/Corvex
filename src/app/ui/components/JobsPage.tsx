@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button, Input, Select } from "antd";
 import { errorMessage, fetchJson } from "../api.js";
 import { formatDate, formatDuration, formatJobTarget } from "../format.js";
 import { translate } from "../i18n.js";
@@ -78,9 +79,9 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
         title={copy.jobsTitle}
         description={copy.jobsDescription}
         actions={(
-          <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
+          <Button disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
             {refreshing ? copy.refreshing : copy.refresh}
-          </button>
+          </Button>
         )}
       />
       <section className="panel">
@@ -93,25 +94,29 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
         >
           <label className="field">
             <span>{copy.statusFilter}</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="">{copy.allStatuses}</option>
-              {statuses.map((value) => (
-                <option key={value} value={value}>{translate(copy.statuses, value)}</option>
-              ))}
-            </select>
+            <Select
+              value={status}
+              onChange={setStatus}
+              options={[{ value: "", label: copy.allStatuses }, ...statuses.map((value) => ({
+                value,
+                label: translate(copy.statuses, value),
+              }))]}
+            />
           </label>
           <label className="field">
             <span>{copy.typeFilter}</span>
-            <select value={type} onChange={(event) => setType(event.target.value)}>
-              <option value="">{copy.allTypes}</option>
-              {jobTypes.map((value) => (
-                <option key={value} value={value}>{translate(copy.types, value)}</option>
-              ))}
-            </select>
+            <Select
+              value={type}
+              onChange={setType}
+              options={[{ value: "", label: copy.allTypes }, ...jobTypes.map((value) => ({
+                value,
+                label: translate(copy.types, value),
+              }))]}
+            />
           </label>
           <label className="field">
             <span>{copy.searchLabel}</span>
-            <input
+            <Input
               type="search"
               maxLength={100}
               value={search}
@@ -119,7 +124,7 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
-          <button type="submit" className="primary">{copy.applyFilters}</button>
+          <Button type="primary" htmlType="submit">{copy.applyFilters}</Button>
         </form>
         {page.items.length === 0 ? (
           <Empty>{copy.noMatchingJobs}</Empty>
@@ -158,20 +163,18 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
               .replace("{total}", String(page.total))}
           </span>
           <div>
-            <button
-              type="button"
+            <Button
               disabled={queue.offset === 0}
               onClick={() => onQueueChange({ ...queue, offset: Math.max(0, queue.offset - pageSize) })}
             >
               {copy.previous}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
               disabled={queue.offset + page.items.length >= page.total}
               onClick={() => onQueueChange({ ...queue, offset: queue.offset + pageSize })}
             >
               {copy.next}
-            </button>
+            </Button>
           </div>
         </div>
       </section>

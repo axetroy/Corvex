@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { Alert, Button, Typography } from "antd";
 import type { Copy } from "../i18n.js";
 
 interface Props {
@@ -26,14 +27,23 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.message === undefined) return this.props.children;
     return (
-      <div className="error" role="alert">
-        <strong>{this.props.copy.renderErrorTitle}</strong>
-        <p>{this.props.copy.renderErrorDescription}</p>
-        <pre className="details-content">{this.state.message}</pre>
-        <button type="button" className="primary" onClick={() => window.location.reload()}>
+      <Alert
+        className="error"
+        type="error"
+        showIcon
+        title={this.props.copy.renderErrorTitle}
+        description={(
+          <>
+            <Typography.Paragraph>{this.props.copy.renderErrorDescription}</Typography.Paragraph>
+            <pre className="details-content">{this.state.message}</pre>
+          </>
+        )}
+        action={(
+          <Button type="primary" onClick={() => window.location.reload()}>
           {this.props.copy.reloadPage}
-        </button>
-      </div>
+          </Button>
+        )}
+      />
     );
   }
 }

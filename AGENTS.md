@@ -6,10 +6,10 @@ Guidance for coding agents working in this repository. Read `design.md` before m
 
 Corvex is a self-hosted GitLab code review and repair agent. It is a single TypeScript application with two process modes that share one SQLite database and one Git storage root:
 
-- `server`: receives GitLab Note Hooks, verifies them, applies allowlists, parses commands and creates idempotent jobs.
+- `server`: receives GitLab Note Hooks, verifies them, applies the optional user blocklist, parses commands and creates idempotent jobs; the authenticated ops console discovers projects visible to its read token.
 - `worker`: claims a job lease, pins the merge-request head SHA, prepares a detached Git worktree, runs one Pi SDK session for that job, validates the output, optionally checks a patch, and publishes notes back to GitLab.
 
-The agent runtime is `@earendil-works/pi-coding-agent` (Pi SDK). Pi runs the model loop, tools and skills; Corvex owns authorization, job state, validation and publishing. Supported jobs: `review`, `chat`, `explain`, `fix` (proposal only, never committed or pushed), and `implement` (Issue assistant; may open a Draft MR, never merges).
+The agent runtime is `@earendil-works/pi-coding-agent` (Pi SDK). Pi runs the model loop, tools and skills; Corvex owns authorization, job state, validation and publishing. Supported jobs: `review`, `chat`, `explain`, `fix` (proposal only, never committed or pushed), `implement` (Issue assistant; may open a Draft MR, never merges), and persistent read-only `session` turns initiated in the ops console.
 
 ## Environment
 
@@ -75,9 +75,10 @@ test/fixtures/      config fixtures used by CI docker smoke
 
 These are deliberate constraints, not incidental behavior. Do not weaken them to make a change simpler.
 
-- Authorization lives in Corvex code: constant-time webhook secret comparison, request body limits, empty allowlist means invalid (never "allow all"), bot/system notes ignored, webhook events idempotent. `fix` additionally requires `fix.enabled` (which requires `agent.enabled`); `implement` requires `issue.implement_enabled` (also gated on `agent.enabled`).
+- Authorization lives in Corvex code: constant-time webhook secret comparison, request body limits, optional blocked-user checks, bot/system notes ignored, webhook events idempotent. Register webhooks only on projects where commands are intended; the ops session project scope is controlled by the GitLab read token, not a static allowlist. `fix` additionally requires `fix.enabled` (which requires `agent.enabled`); `implement` requires `issue.implement_enabled` (also gated on `agent.enabled`).
 - Every job records the MR head SHA and re-verifies that snapshot when fetching the diff, preparing the worktree and publishing. A stale snapshot ends in `stale`, not a partial publication.
 - The Pi session gets only the tools the job needs. No built-in `bash`, `edit` or `write` for review or fix jobs; custom tools confine paths to the task worktree and enforce byte limits themselves. Skills are instructions, never access control.
+- Session jobs pin their GitLab target SHA and expose read-only repository tools; they must not publish to GitLab or write to the worktree.
 - Agent output is untrusted: findings must resolve to added diff lines; patches are limited to changed paths, size-capped, and checked with `git apply --check` and `git diff --check`. The agent never publishes directly — Corvex re-checks authorization, cancellation and revision before writing to GitLab.
 - Never execute repository code, scripts or tests. There is no shell executor by design; adding one requires a separate sandbox and authorization design.
 - Job state transitions are enforced in `JobStore` (`queued -> preparing -> analyzing -> [fixing -> verifying] -> publishing -> completed`, plus `failed`, `stale`, `cancelled`). Leases are renewed while a job runs; publishing failures are not retried automatically because the GitLab outcome may be uncertain.

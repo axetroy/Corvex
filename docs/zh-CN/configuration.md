@@ -26,15 +26,14 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | YAML 键 | 示例 | 必填 / 限制 | 说明 |
 |---|---|---|---|
 | `gitlab.base_url` | `https://gitlab.example.com` | 有效 HTTP(S) URL | GitLab 实例根地址，不含凭据、查询参数或片段。`CORVEX_GITLAB_BASE_URL` 可覆盖。 |
-| `gitlab.allowed_project_ids` | `[101]` | 不能为空 | 允许使用 Corvex 的 GitLab 数字项目 ID。 |
-| `gitlab.blocked_user_ids` | `[]` | 可选 | 不允许调用指令的 GitLab 数字用户 ID。默认情况下，项目白名单内的任意评论者都可以调用。 |
+| `gitlab.blocked_user_ids` | `[]` | 可选 | 不允许调用指令的 GitLab 数字用户 ID。配置了 Webhook 密钥的项目中的评论者均可调用，阻止列表中的用户除外。 |
 | `gitlab.bot_username` | `corvex-bot` | 可选 | 调用指令时需要 @ 的账号名（例如 `@corvex-bot /review`）。 |
 
 以下凭据为必填环境变量：
 
 | 变量 | 用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | 必填。读取 GitLab API 及通过 Git 抓取仓库。 |
+| `CORVEX_GITLAB_READ_TOKEN` | Worker 模式必填；Server 模式启用运维控制台时必填。用于读取 GitLab API、发现项目/目标及通过 Git 抓取仓库。 |
 | `CORVEX_GITLAB_TOKEN` | GitLab 写操作必填。发布评论和行级讨论；Chat 可提交/推送同项目 MR 分支；启用 Issue 实现后会推送新分支并创建 Draft MR。应使用权限最小化的独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
@@ -105,7 +104,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
 | `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | Fix 或 Issue 实现模型补丁大小上限。 |
 
-Fix 请求与其他指令采用相同的项目白名单和可选用户黑名单规则。
+Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；会话工作台可以发现只读令牌可访问的全部项目。
 
 ## Issue 实现
 
@@ -120,7 +119,7 @@ Issue 任务默认使用项目默认分支；只有当前请求明确命名另�
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式必填 |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式及启用运维控制台的 Server 模式必填 |
 | `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 和 Worker 模式必填 |
 | `CORVEX_WEBHOOK_SECRET` | Webhook Secret，Server 模式必填 |
 | `CORVEX_MODEL_API_KEY` | Agent API 密钥，Worker 模式启用 Agent 时必填 |

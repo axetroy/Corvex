@@ -29,6 +29,51 @@ describe("CorvexServer", () => {
     });
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const fakeGitLab = createServer(async (request, response) => {
+      if (request.method === "GET") {
+        const path = new URL(request.url ?? "/", "http://localhost").pathname;
+        const replies: Record<string, unknown> = {
+          "/api/v4/projects": [{
+            id: 2,
+            name: "Project",
+            path_with_namespace: "group/project",
+            http_url_to_repo: "https://gitlab.example.com/group/project.git",
+            default_branch: "main",
+          }],
+          "/api/v4/projects/2": {
+            id: 2,
+            name: "Project",
+            path_with_namespace: "group/project",
+            http_url_to_repo: "https://gitlab.example.com/group/project.git",
+            default_branch: "main",
+          },
+          "/api/v4/projects/2/repository/branches": [{ name: "main", commit: { id: "b".repeat(40) } }],
+          "/api/v4/projects/2/repository/branches/main": { name: "main", commit: { id: "b".repeat(40) } },
+          "/api/v4/projects/2/issues": [{ iid: 4, title: "Issue", description: "", state: "opened" }],
+          "/api/v4/projects/2/merge_requests": [{
+            iid: 5,
+            title: "Merge request",
+            description: "",
+            state: "opened",
+            source_branch: "feature/session",
+            target_branch: "main",
+          }],
+          "/api/v4/projects/2/merge_requests/5": {
+            iid: 5,
+            state: "opened",
+            title: "Merge request",
+            description: "",
+            source_branch: "feature/session",
+            target_branch: "main",
+            sha: "c".repeat(40),
+            diff_refs: { base_sha: "a".repeat(40), start_sha: "a".repeat(40), head_sha: "c".repeat(40) },
+          },
+          "/api/v4/projects/2/issues/4": { iid: 4, title: "Issue", description: "", state: "opened" },
+        };
+        const value = replies[path];
+        response.writeHead(value === undefined ? 404 : 200, { "content-type": "application/json" });
+        response.end(JSON.stringify(value ?? { message: "not found" }));
+        return;
+      }
       if (request.method === "POST" && request.url?.endsWith("/notes")) {
         postedNotes++;
         if (pausePostNotes) {
@@ -52,7 +97,6 @@ describe("CorvexServer", () => {
         readToken: "read",
         writeToken: "write",
         webhookSecret: "secret",
-        allowedProjectIds: [1],
         blockedUserIds: [3],
         botUsername: "corvex-bot",
       },
@@ -87,7 +131,7 @@ describe("CorvexServer", () => {
     const application = new CorvexServer(
       config,
       store,
-      new GitLabClient(config.gitlab.baseUrl, "", "write"),
+      new GitLabClient(config.gitlab.baseUrl, "read", "write"),
     );
     const running = application.run(controller.signal);
     try {
@@ -124,6 +168,16 @@ describe("CorvexServer", () => {
       expect(dashboard.status).toBe(200);
       const markup = await dashboard.text();
       expect(markup).toContain('id="root"');
+      const nonce = /property="csp-nonce" nonce="([A-Za-z0-9_-]+)"/.exec(markup)?.[1];
+      const policy = dashboard.headers.get("content-security-policy") ?? "";
+      expect(nonce).toBeTruthy();
+      expect(policy).toContain(`style-src 'self' 'nonce-${nonce}'`);
+      expect(policy).toContain(`style-src-elem 'self' 'nonce-${nonce}'`);
+      expect(policy).toContain("style-src-attr 'unsafe-inline'");
+      expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
+      const refreshedDashboard = await fetch(`${base}/ops`, { headers: { authorization } });
+      const refreshedMarkup = await refreshedDashboard.text();
+      expect(/property="csp-nonce" nonce="([A-Za-z0-9_-]+)"/.exec(refreshedMarkup)?.[1]).not.toBe(nonce);
       // 控制台脚本带内容哈希，测试从页面标记中取出真实地址再校验可访问性。
       const scriptPath = /src="([^"]+\.js)"/.exec(markup)?.[1];
       expect(scriptPath).toBeTruthy();
@@ -137,6 +191,61 @@ describe("CorvexServer", () => {
       const overview = await fetch(`${base}/api/ops/overview`, { headers: { authorization } });
       expect(overview.status).toBe(200);
       expect(overview.headers.get("x-content-type-options")).toBe("nosniff");
+      const projectsResponse = await fetch(`${base}/api/ops/projects?search=project`, { headers: { authorization } });
+      expect(projectsResponse.status).toBe(200);
+      expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);
+      const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
+      expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
+      const issuesResponse = await fetch(`${base}/api/ops/projects/2/issues`, { headers: { authorization } });
+      expect(await issuesResponse.json()).toMatchObject([{ iid: 4, title: "Issue" }]);
+      const mergeRequestsResponse = await fetch(`${base}/api/ops/projects/2/merge-requests`, { headers: { authorization } });
+      expect(await mergeRequestsResponse.json()).toMatchObject([{ iid: 5, source_branch: "feature/session" }]);
+      const createdSessionResponse = await fetch(`${base}/api/ops/sessions`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: 2,
+          targetType: "repository",
+          targetIid: 0,
+          targetBranch: "main",
+          message: "Explain this repository",
+        }),
+      });
+      expect(createdSessionResponse.status).toBe(202);
+      const createdSession = await createdSessionResponse.json() as { sessionId: string; jobId: string };
+      expect(store.getJob(createdSession.jobId)).toMatchObject({
+        type: "session",
+        projectId: 2,
+        targetType: "repository",
+        targetBranch: "main",
+        headSha: "b".repeat(40),
+      });
+      const concurrentReplyResponse = await fetch(`${base}/api/ops/sessions/${createdSession.sessionId}/messages`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ message: "A concurrent follow-up" }),
+      });
+      expect(concurrentReplyResponse.status).toBe(409);
+      const mergeRequestSessionResponse = await fetch(`${base}/api/ops/sessions`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: 2,
+          targetType: "merge_request",
+          targetIid: 5,
+          targetBranch: "client-supplied-branch-is-ignored",
+          message: "Summarize this merge request",
+        }),
+      });
+      expect(mergeRequestSessionResponse.status).toBe(202);
+      const mergeRequestSession = await mergeRequestSessionResponse.json() as { jobId: string };
+      expect(store.getJob(mergeRequestSession.jobId)).toMatchObject({
+        targetType: "merge_request",
+        targetIid: 5,
+        targetBranch: "feature/session",
+        headSha: "c".repeat(40),
+      });
+      const queuedSessions = store.jobCounts().queued;
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
@@ -171,7 +280,7 @@ describe("CorvexServer", () => {
       expect((await activeDelivery).status).toBe(202);
       pausePostNotes = false;
       expect((await send()).status).toBe(202);
-      expect(store.jobCounts().queued).toBe(1);
+      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
       expect(postedNotes).toBe(1);
       expect(info).toHaveBeenCalledWith(
         "GitLab webhook received",
@@ -235,7 +344,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(ignoredResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(1);
+      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
       expect(info).toHaveBeenCalledWith(
         "GitLab webhook ignored",
         expect.objectContaining({ eventId: "1:101", reason: "not_corvex_command" }),
@@ -259,7 +368,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(unauthorizedBotResponse.status).toBe(403);
-      expect(store.jobCounts().queued).toBe(1);
+      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
 
       config.fix.enabled = true;
       const fixPayload = {
@@ -281,7 +390,7 @@ describe("CorvexServer", () => {
         body: JSON.stringify(fixPayload),
       });
       expect(fixResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(2);
+      expect(store.jobCounts().queued).toBe(queuedSessions + 2);
       expect(postedNotes).toBe(2);
 
       const chatRequest = "总结这个 PR\n\n再建议一个标题";
@@ -302,7 +411,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(chatResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(3);
+      expect(store.jobCounts().queued).toBe(queuedSessions + 3);
       expect(postedNotes).toBe(3);
       expect(store.listJobs("queued", 10).find((job) => job.type === "chat")?.request).toBe(chatRequest);
 
@@ -356,7 +465,7 @@ describe("CorvexServer", () => {
       });
       expect(jobsResponse.status).toBe(200);
       const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
-      expect(jobs.total).toBe(5);
+      expect(jobs.total).toBe(queuedSessions + 5);
       expect(jobs.items).toHaveLength(1);
       store.startJobTrace(jobs.items[0]!.id, 1, "llm", "review", "test/model", "review prompt");
       const failedTrace = store.startJobTrace(

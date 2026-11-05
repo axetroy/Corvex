@@ -277,7 +277,6 @@ describe("review task loop", () => {
         readToken: "read-token",
         writeToken: "write-token",
         webhookSecret: "webhook-secret",
-        allowedProjectIds: [1],
         blockedUserIds: [],
         botUsername: "corvex-bot",
       },

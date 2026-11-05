@@ -26,15 +26,14 @@ The optional operations console uses HTTP Basic Auth credentials supplied only t
 | YAML key | Example | Required / limits | Description |
 |---|---|---|---|
 | `gitlab.base_url` | `https://gitlab.example.com` | Valid HTTP(S) URL | GitLab instance root, without credentials, query, or fragment. `CORVEX_GITLAB_BASE_URL` overrides it. |
-| `gitlab.allowed_project_ids` | `[101]` | Must not be empty | GitLab numeric project IDs allowed to invoke Corvex. |
-| `gitlab.blocked_user_ids` | `[]` | Optional | GitLab numeric user IDs that cannot invoke commands. By default, any commenter in an allowed project may invoke them. |
+| `gitlab.blocked_user_ids` | `[]` | Optional | GitLab numeric user IDs that cannot invoke commands. Any commenter whose webhook has the configured secret may invoke commands unless their ID is blocked. |
 | `gitlab.bot_username` | `corvex-bot` | Optional | Username to mention when invoking commands (for example, `@corvex-bot /review`). |
 
 Credentials are mandatory environment variables:
 
 | Variable | Use |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Required. GitLab API reads and authenticated Git repository fetches. |
+| `CORVEX_GITLAB_READ_TOKEN` | Required in worker mode and when the operations console is enabled in server mode. Used for GitLab API reads, project/target discovery, and authenticated Git repository fetches. |
 | `CORVEX_GITLAB_TOKEN` | Required for GitLab writes. Posts notes and inline discussions; Chat may commit/push to same-project MR branches, and enabled Issue implementation pushes a new branch and creates a Draft MR. Use a separate write token with only the required permissions. |
 | `CORVEX_WEBHOOK_SECRET` | Required. Must match the project webhook's secret token. |
 
@@ -103,7 +102,7 @@ The job lease is currently fixed at 30 seconds and renewed during execution; it 
 | `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
 | `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed Fix or Issue implementation patch size. |
 
-Fix requests follow the same project allowlist and optional user blocklist as other commands.
+Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the sessions console can discover every project visible to its read token.
 
 ## Issue implementation
 
@@ -118,7 +117,7 @@ Issue tasks use the project default branch unless the current request explicitly
 
 | Variable | YAML setting or purpose |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode and in server mode when the operations console is enabled |
 | `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server and worker modes |
 | `CORVEX_WEBHOOK_SECRET` | Webhook secret; required in server mode |
 | `CORVEX_OPS_USERNAME` | Optional operator username; set together with `CORVEX_OPS_PASSWORD` |

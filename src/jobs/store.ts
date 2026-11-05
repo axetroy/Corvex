@@ -6,6 +6,11 @@ import {
   jobStatuses,
   jobTypes,
   type EventResult,
+  type ChatSession,
+  type ChatSessionMessage,
+  type ChatSessionPage,
+  type ChatSessionSummary,
+  type CreateChatSessionInput,
   type ExecutionEvent,
   type ExecutionEventStatus,
   type Job,
@@ -45,7 +50,10 @@ interface JobRow {
   mr_iid: number;
   target_type: JobTargetType;
   target_iid: number;
+  target_branch: string;
   head_sha: string;
+  session_id: string | null;
+  session_response_id: string | null;
   actor_id: number;
   request: string;
   created_at: string;
@@ -134,7 +142,7 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
   const status = stringColumn(row, "status");
   if (!isJobStatus(status)) throw new Error(`SQLite job status "${status}" is invalid`);
   const targetType = stringColumn(row, "target_type");
-  if (targetType !== "merge_request" && targetType !== "issue") {
+  if (targetType !== "merge_request" && targetType !== "issue" && targetType !== "repository") {
     throw new Error(`SQLite job target type "${targetType}" is invalid`);
   }
   const failureStage = stringColumn(row, "failure_stage");
@@ -149,7 +157,10 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
     mr_iid: numberColumn(row, "mr_iid"),
     target_type: targetType,
     target_iid: numberColumn(row, "target_iid"),
+    target_branch: stringColumn(row, "target_branch"),
     head_sha: stringColumn(row, "head_sha"),
+    session_id: row.session_id === null ? null : stringColumn(row, "session_id"),
+    session_response_id: row.session_response_id === null ? null : stringColumn(row, "session_response_id"),
     actor_id: numberColumn(row, "actor_id"),
     request: stringColumn(row, "request"),
     created_at: stringColumn(row, "created_at"),
@@ -282,7 +293,10 @@ function mapJob(row: JobRow): Job {
     mrIid: row.mr_iid,
     targetType: row.target_type,
     targetIid: row.target_iid,
+    targetBranch: row.target_branch,
     headSha: row.head_sha,
+    sessionId: row.session_id,
+    sessionResponseId: row.session_response_id,
     actorId: row.actor_id,
     request: row.request,
     createdAt: row.created_at,
@@ -304,7 +318,10 @@ function mapJobSummary(row: JobRow): JobSummary {
     mrIid: job.mrIid,
     targetType: job.targetType,
     targetIid: job.targetIid,
+    targetBranch: job.targetBranch,
     headSha: job.headSha,
+    sessionId: job.sessionId,
+    sessionResponseId: job.sessionResponseId,
     actorId: job.actorId,
     request: job.request,
     createdAt: job.createdAt,
@@ -963,7 +980,7 @@ export class JobStore {
       this.recoverExpiredLeases();
       const row = readJobRow(this.db
         .prepare(
-          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat','implement') ORDER BY created_at LIMIT 1",
+          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat','implement','session') ORDER BY created_at LIMIT 1",
         )
         .get(Date.now()));
       if (!row) return undefined;
@@ -979,6 +996,11 @@ export class JobStore {
       this.db
         .prepare("INSERT INTO job_attempts(job_id,attempt,started_at) VALUES (?,?,?)")
         .run(row.id, row.attempt_count + 1, now.toISOString());
+      if (row.type === "session" && row.session_response_id) {
+        this.db.prepare(
+          "UPDATE chat_session_messages SET status='running',updated_at=? WHERE id=? AND status='queued'",
+        ).run(now.toISOString(), row.session_response_id);
+      }
       this.insertAudit(row.actor_id, "job_status", row.id, "queued->preparing");
       const claimed = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(row.id));
       if (!claimed) throw new Error(`claimed job "${row.id}" disappeared`);
@@ -1009,6 +1031,14 @@ export class JobStore {
         this.db
           .prepare("UPDATE job_attempts SET finished_at=?, error=? WHERE job_id=? AND finished_at IS NULL")
           .run(now, failure, jobId);
+        const sessionJob = this.db
+          .prepare("SELECT session_response_id FROM jobs WHERE id=? AND type='session'")
+          .get(jobId) as { session_response_id: string | null } | undefined;
+        if (sessionJob?.session_response_id) {
+          this.db.prepare(
+            "UPDATE chat_session_messages SET status=?,updated_at=? WHERE id=? AND status IN ('queued','running')",
+          ).run(to === "completed" ? "completed" : "failed", now, sessionJob.session_response_id);
+        }
       }
       this.insertAudit(row.actor_id, "job_status", jobId, `${from}->${to}`);
     });
@@ -1049,6 +1079,14 @@ export class JobStore {
       this.db
         .prepare("UPDATE job_attempts SET finished_at=?, error=? WHERE job_id=? AND finished_at IS NULL")
         .run(finishedAt, failure, jobId);
+      const sessionJob = this.db
+        .prepare("SELECT session_response_id FROM jobs WHERE id=? AND type='session'")
+        .get(jobId) as { session_response_id: string | null } | undefined;
+      if (sessionJob?.session_response_id) {
+        this.db.prepare(
+          "UPDATE chat_session_messages SET status='queued',updated_at=? WHERE id=? AND status='running'",
+        ).run(finishedAt, sessionJob.session_response_id);
+      }
       this.insertAudit(row.actor_id, "job_status", jobId, `${from}->queued`);
       this.insertAudit(row.actor_id, "automatic_retry", jobId, `available_at:${availableAt}`);
       return true;
@@ -1065,6 +1103,185 @@ export class JobStore {
       )
       .run(now.valueOf() + leaseMs, now.toISOString(), jobId, leaseToken, ...active);
     if (result.changes !== 1) throw new Error(`job "${jobId}" lease is no longer owned`);
+  }
+
+  createChatSession(input: CreateChatSessionInput): { sessionId: string; jobId: string } {
+    this.validateChatSessionInput(input);
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+    return this.transaction(() => {
+      this.db.prepare(
+        `INSERT INTO chat_sessions
+         (id,project_id,project_name,target_type,target_iid,target_branch,target_title,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        sessionId,
+        input.projectId,
+        input.projectName,
+        input.targetType,
+        input.targetIid,
+        input.targetBranch,
+        input.targetTitle,
+        now,
+        now,
+      );
+      return this.enqueueChatSessionMessage(sessionId, input, now);
+    });
+  }
+
+  listChatSessions(limit = 50, offset = 0): ChatSessionPage {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("chat session list limit must be between 1 and 100");
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
+      throw new Error("chat session list offset must be between 0 and 1000000");
+    }
+    const count = this.db.prepare("SELECT COUNT(*) AS count FROM chat_sessions").get() as Record<string, unknown>;
+    const rows = this.db.prepare(
+      "SELECT * FROM chat_sessions ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?",
+    ).all(limit, offset);
+    return { items: rows.map((row) => this.readChatSessionSummary(row as Record<string, unknown>)), total: numberColumn(count, "count") };
+  }
+
+  getChatSession(sessionId: string): ChatSession | undefined {
+    const row = this.db.prepare("SELECT * FROM chat_sessions WHERE id=?").get(sessionId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const messages = this.db.prepare(
+      "SELECT * FROM chat_session_messages WHERE session_id=? ORDER BY created_at,rowid",
+    ).all(sessionId).map((value) => this.readChatSessionMessage(value as Record<string, unknown>));
+    return { ...this.readChatSessionSummary(row), messages };
+  }
+
+  addChatSessionMessage(sessionId: string, input: Omit<CreateChatSessionInput, "projectName" | "targetTitle">): { jobId: string } {
+    this.validateChatSessionInput({ ...input, projectName: "", targetTitle: "" });
+    const result = this.db.prepare("SELECT 1 FROM chat_sessions WHERE id=?").get(sessionId);
+    if (!result) throw new Error(`chat session "${sessionId}" not found`);
+    return this.transaction(() => {
+      const activeResponse = this.db.prepare(
+        "SELECT 1 FROM chat_session_messages WHERE session_id=? AND role='assistant' AND status IN ('queued','running') LIMIT 1",
+      ).get(sessionId);
+      if (activeResponse) throw new Error("chat session already has an active message");
+      return this.enqueueChatSessionMessage(sessionId, input, new Date().toISOString());
+    });
+  }
+
+  finishChatSessionResponse(
+    jobId: string,
+    status: "completed" | "failed" | "cancelled" | "stale",
+    content: string,
+  ): void {
+    const job = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=? AND type='session'").get(jobId));
+    if (!job?.session_response_id || !job.session_id) throw new Error(`session job "${jobId}" not found`);
+    const messageStatus = status === "completed" ? "completed" : "failed";
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      `UPDATE chat_session_messages SET content=?,status=?,updated_at=?
+       WHERE id=? AND session_id=? AND role='assistant' AND job_id=?`,
+    ).run(content, messageStatus, now, job.session_response_id, job.session_id, jobId);
+    if (result.changes !== 1) throw new Error(`session response "${job.session_response_id}" not found`);
+    this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, job.session_id);
+  }
+
+  private validateChatSessionInput(input: CreateChatSessionInput): void {
+    if (!Number.isSafeInteger(input.projectId) || input.projectId < 1) throw new Error("project ID must be positive");
+    if (!(input.targetType === "repository" || input.targetType === "issue" || input.targetType === "merge_request")) {
+      throw new Error("chat session target type is invalid");
+    }
+    if (input.targetType === "repository" ? input.targetIid !== 0 : !Number.isSafeInteger(input.targetIid) || input.targetIid < 1) {
+      throw new Error("chat session target IID is invalid");
+    }
+    if (!input.targetBranch.trim() || input.targetBranch.length > 255) throw new Error("target branch is invalid");
+    if (!/^[a-f0-9]{40,64}$/i.test(input.headSha)) throw new Error("chat session head SHA is invalid");
+    if (!Number.isSafeInteger(input.actorId) || input.actorId < 0) throw new Error("actor ID is invalid");
+    if (input.projectName.length > 255 || input.targetTitle.length > 500) throw new Error("chat session labels are too long");
+    if (!input.request.trim() || input.request.length > 20_000) throw new Error("chat session message must be between 1 and 20000 characters");
+  }
+
+  private enqueueChatSessionMessage(
+    sessionId: string,
+    input: Omit<CreateChatSessionInput, "projectName" | "targetTitle">,
+    now: string,
+  ): { sessionId: string; jobId: string } {
+    const jobId = randomUUID();
+    const userMessageId = randomUUID();
+    const responseId = randomUUID();
+    const request = input.request.trim();
+    this.db.prepare(
+      `INSERT INTO jobs
+         (id,idempotency_key,event_id,type,status,project_id,mr_iid,target_type,target_iid,target_branch,head_sha,
+          actor_id,request,created_at,updated_at,session_id,session_response_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      jobId,
+      `session:${sessionId}:${jobId}`,
+      `session:${jobId}`,
+      "session",
+      "queued",
+      input.projectId,
+      input.targetType === "merge_request" ? input.targetIid : 0,
+      input.targetType,
+      input.targetIid,
+      input.targetBranch,
+      input.headSha,
+      input.actorId,
+      request,
+      now,
+      now,
+      sessionId,
+      responseId,
+    );
+    this.db.prepare(
+      `INSERT INTO chat_session_messages
+         (id,session_id,role,content,status,job_id,head_sha,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(userMessageId, sessionId, "user", request, "completed", null, input.headSha, now, now);
+    this.db.prepare(
+      `INSERT INTO chat_session_messages
+         (id,session_id,role,content,status,job_id,head_sha,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(responseId, sessionId, "assistant", "", "queued", jobId, input.headSha, now, now);
+    this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, sessionId);
+    this.insertAudit(input.actorId, "session_message", sessionId, `queued:${jobId}`);
+    return { sessionId, jobId };
+  }
+
+  private readChatSessionSummary(row: Record<string, unknown>): ChatSessionSummary {
+    const targetType = stringColumn(row, "target_type");
+    if (targetType !== "repository" && targetType !== "issue" && targetType !== "merge_request") {
+      throw new Error(`SQLite chat session target type "${targetType}" is invalid`);
+    }
+    return {
+      id: stringColumn(row, "id"),
+      projectId: numberColumn(row, "project_id"),
+      projectName: stringColumn(row, "project_name"),
+      targetType,
+      targetIid: numberColumn(row, "target_iid"),
+      targetBranch: stringColumn(row, "target_branch"),
+      targetTitle: stringColumn(row, "target_title"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
+  }
+
+  private readChatSessionMessage(row: Record<string, unknown>): ChatSessionMessage {
+    const role = stringColumn(row, "role");
+    const status = stringColumn(row, "status");
+    if (role !== "user" && role !== "assistant") throw new Error(`SQLite chat message role "${role}" is invalid`);
+    if (!( ["queued", "running", "completed", "failed"] as string[]).includes(status)) {
+      throw new Error(`SQLite chat message status "${status}" is invalid`);
+    }
+    const jobId = row.job_id;
+    if (jobId !== null && typeof jobId !== "string") throw new Error('SQLite column "job_id" is not text or null');
+    return {
+      id: stringColumn(row, "id"),
+      role,
+      content: stringColumn(row, "content"),
+      status: status as ChatSessionMessage["status"],
+      jobId,
+      headSha: stringColumn(row, "head_sha"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
   }
 
   cancellationRequested(jobId: string, leaseToken: string): boolean {
@@ -1298,7 +1515,10 @@ export class JobStore {
         mrIid: summary.mrIid,
         targetType: summary.targetType,
         targetIid: summary.targetIid,
+        targetBranch: summary.targetBranch,
         headSha: summary.headSha,
+        sessionId: summary.sessionId,
+        sessionResponseId: summary.sessionResponseId,
         actorId: summary.actorId,
         request: summary.request,
         createdAt: summary.createdAt,
@@ -1393,6 +1613,11 @@ export class JobStore {
       this.db
         .prepare("UPDATE job_attempts SET finished_at=?,error=? WHERE job_id=? AND finished_at IS NULL")
         .run(now.toISOString(), error, row.id);
+      this.db.prepare(
+        `UPDATE chat_session_messages SET status=?,updated_at=?
+         WHERE id=(SELECT session_response_id FROM jobs WHERE id=? AND type='session')
+         AND status IN ('queued','running')`,
+      ).run(status === "queued" ? "queued" : "failed", now.toISOString(), row.id);
       const runningEvents = this.db
         .prepare("SELECT id,started_at FROM execution_events WHERE job_id=? AND attempt=? AND status='running'")
         .all(row.id, row.attempt_count) as { id: number; started_at: string }[];
@@ -1412,7 +1637,7 @@ export class JobStore {
   private validTransition(from: JobStatus, to: JobStatus): boolean {
     const transitions: Partial<Record<JobStatus, JobStatus[]>> = {
       preparing: ["analyzing", "stale", "failed", "cancelled"],
-      analyzing: ["fixing", "verifying", "publishing", "stale", "failed", "cancelled"],
+      analyzing: ["fixing", "verifying", "publishing", "completed", "stale", "failed", "cancelled"],
       fixing: ["verifying", "stale", "failed", "cancelled"],
       verifying: ["publishing", "stale", "failed", "cancelled"],
       publishing: ["completed", "failed"],
@@ -1471,12 +1696,25 @@ export class JobStore {
         id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
         target_type TEXT NOT NULL DEFAULT 'merge_request', target_iid INTEGER NOT NULL DEFAULT 0,
-        head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
+        target_branch TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
+        session_id TEXT, session_response_id TEXT,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
         available_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_mr_created_idx ON jobs(project_id,mr_iid,created_at DESC);
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
+        target_type TEXT NOT NULL, target_iid INTEGER NOT NULL, target_branch TEXT NOT NULL,
+        target_title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS chat_sessions_updated_idx ON chat_sessions(updated_at DESC,id DESC);
+      CREATE TABLE IF NOT EXISTS chat_session_messages (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, job_id TEXT,
+        head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS chat_session_messages_order_idx ON chat_session_messages(session_id,created_at,id);
       CREATE TABLE IF NOT EXISTS webhook_events (
         event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL
@@ -1538,6 +1776,9 @@ export class JobStore {
       available_at: "INTEGER NOT NULL DEFAULT 0",
       target_type: "TEXT NOT NULL DEFAULT 'merge_request'",
       target_iid: "INTEGER NOT NULL DEFAULT 0",
+      target_branch: "TEXT NOT NULL DEFAULT ''",
+      session_id: "TEXT",
+      session_response_id: "TEXT",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);

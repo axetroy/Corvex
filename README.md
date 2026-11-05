@@ -6,7 +6,7 @@ Corvex is a self-hosted GitLab code review and repair agent built as a single Ty
 
 Corvex receives GitLab Note Hooks, queues work in SQLite, and processes model tasks in a separate worker. It supports merge-request review, chat, explanation and fix proposals, plus Issue assistance that can answer or propose implementation.
 
-- Access is restricted by project allowlists and optional user blocklists.
+- The operations console can discover every repository visible to its GitLab read token; webhook commands can be restricted with an optional user blocklist.
 - Reviews use pinned merge-request revisions and publish validated findings as line discussions.
 - Fix proposals are for manual application. Issue replies do not write code; implementation is separately disabled by default with `issue.implement_enabled`.
 - Issue implementation targets the project default branch unless the current request explicitly names another existing branch. It creates a Draft MR and never auto-merges.
@@ -25,7 +25,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-Set the GitLab URL and project allowlist in the generated YAML, and provide secrets through environment variables. Follow the [getting started guide](https://axetroy.github.io/Corvex/guide) to register the Note Hook and start the server and optional worker. For Docker Compose, backups, retention, TLS, and operations-console setup, see the [operations guide](https://axetroy.github.io/Corvex/operations).
+Set the GitLab URL in the generated YAML, provide secrets through environment variables, and configure a read token for repository discovery in the operations console. Follow the [getting started guide](https://axetroy.github.io/Corvex/guide) to register the Note Hook and start the server and optional worker. For Docker Compose, backups, retention, TLS, and persistent chat sessions, see the [operations guide](https://axetroy.github.io/Corvex/operations).
 
 ## Deployment
 

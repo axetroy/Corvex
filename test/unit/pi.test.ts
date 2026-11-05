@@ -151,7 +151,6 @@ describe("PiAgent", () => {
         readToken: "read",
         writeToken: "write",
         webhookSecret: "secret",
-        allowedProjectIds: [1],
         blockedUserIds: [],
         botUsername: "",
       },

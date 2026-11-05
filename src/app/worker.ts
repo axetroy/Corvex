@@ -11,6 +11,7 @@ import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } fro
 import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../jobs/execution.js";
+import { getSessionSystemPrompt } from "../agent/prompts.js";
 
 /** Worker 任务租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
@@ -240,6 +241,9 @@ export class Worker {
           "cancelled",
           `Cancellation requested by task owner: ${errorDetails(processingError)}`,
         );
+        if (job.type === "session") {
+          this.store.finishChatSessionResponse(job.id, "cancelled", "This turn was cancelled before it could finish.");
+        }
         return;
       }
     } catch (leaseError) {
@@ -283,6 +287,9 @@ export class Worker {
     if (stage !== "publishing") {
       try {
         this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
+        if (job.type === "session") {
+          this.store.finishChatSessionResponse(job.id, "failed", `This turn failed: ${message(processingError)}`);
+        }
       } catch (statusError) {
         console.error("could not mark job failed", {
           jobId: job.id,
@@ -346,6 +353,10 @@ export class Worker {
       taskType: job.type,
     };
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    if (job.type === "session") {
+      await this.executeChatSession(job, signal, transition);
+      return;
+    }
     if (!["review", "fix", "explain", "chat", "implement"].includes(job.type)) {
       throw new Error(`unsupported task type "${job.type}"`);
     }
@@ -669,6 +680,145 @@ export class Worker {
       transition("completed");
     } finally {
       await cleanup();
+    }
+  }
+
+  private async executeChatSession(
+    job: Job,
+    signal: AbortSignal,
+    transition: (status: JobStatus) => void,
+  ): Promise<void> {
+    if (!job.sessionId || !job.sessionResponseId) throw new Error("session job is missing its message association");
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
+      transition("stale");
+      this.store.finishChatSessionResponse(job.id, "stale", "The target did not have a valid commit snapshot.");
+      return;
+    }
+    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const session = this.store.getChatSession(job.sessionId);
+    if (!session) throw new Error(`chat session "${job.sessionId}" not found`);
+    if (session.projectId !== job.projectId || session.targetType !== job.targetType || session.targetIid !== job.targetIid) {
+      throw new Error("session job target does not match its stored session");
+    }
+
+    let remoteHeadSha: string;
+    if (job.targetType === "merge_request") {
+      const mergeRequest = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "gitlab.get_session_merge_request",
+        { projectId: job.projectId, mrIid: job.targetIid },
+        () => this.gitlab.getMergeRequest(job.projectId, job.targetIid, signal),
+        (value) => ({ iid: value.iid, state: value.state, sourceBranch: value.source_branch, headSha: value.diff_refs.head_sha }),
+      );
+      if (mergeRequest.source_branch !== job.targetBranch) {
+        transition("stale");
+        this.store.finishChatSessionResponse(job.id, "stale", "The merge request source branch changed; refresh the session before continuing.");
+        return;
+      }
+      remoteHeadSha = mergeRequest.diff_refs.head_sha;
+    } else {
+      if (job.targetType === "issue") {
+        await traceExecutionStep(
+          this.store,
+          stepContext,
+          "gitlab.get_session_issue",
+          { projectId: job.projectId, issueIid: job.targetIid },
+          () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
+          (value) => ({ iid: value.iid, state: value.state, title: value.title }),
+        );
+      }
+      const branch = await traceExecutionStep(
+        this.store,
+        stepContext,
+        "gitlab.get_session_branch",
+        { projectId: job.projectId, branch: job.targetBranch },
+        () => this.gitlab.getBranch(job.projectId, job.targetBranch, signal),
+        (value) => ({ name: value.name, headSha: value.commit.id }),
+      );
+      remoteHeadSha = branch.commit.id;
+    }
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(remoteHeadSha) || remoteHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
+      transition("stale");
+      this.store.finishChatSessionResponse(job.id, "stale", "The target changed after this turn was queued; send a new message to use the current snapshot.");
+      return;
+    }
+    const project = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "gitlab.get_session_project",
+      { projectId: job.projectId },
+      () => this.gitlab.getProject(job.projectId, signal),
+      (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
+    );
+    const workspace = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "git.prepare_session_workspace",
+      { projectId: job.projectId, jobId: job.id, expectedHeadSha: job.headSha },
+      () => this.repo.prepareWorkspace(job.projectId, job.id, project.http_url_to_repo, job.headSha, signal),
+      (value) => ({ projectId: value.projectId, jobId: value.jobId, headSha: value.headSha }),
+    );
+    const trace: JobTraceContext = {
+      jobId: job.id,
+      attempt: job.attemptCount,
+      taskType: job.type,
+      workspace,
+    };
+    try {
+      transition("analyzing");
+      let lastUserIndex = -1;
+      for (let index = 0; index < session.messages.length; index++) {
+        if (session.messages[index]?.role === "user") lastUserIndex = index;
+      }
+      const history = session.messages
+        .slice(0, lastUserIndex)
+        .filter((item) => item.status === "completed")
+        .slice(-30)
+        .map(({ role, content }) => ({ role, content }));
+      const userPrompt = JSON.stringify({
+        target: {
+          project: session.projectName,
+          type: session.targetType,
+          iid: session.targetIid || null,
+          title: session.targetTitle,
+          branch: job.targetBranch,
+          headSha: job.headSha,
+        },
+        conversation: history,
+        currentRequest: job.request,
+      });
+      const started = Date.now();
+      try {
+        const answer = await traceExecutionStep(
+          this.store,
+          stepContext,
+          "workflow.read_only_session",
+          { projectId: job.projectId, targetType: job.targetType, headSha: job.headSha, requestCharacters: [...job.request].length },
+          () => this.agent.generate(
+            { taskType: "session", systemPrompt: getSessionSystemPrompt(this.config.agent.responseLanguage), userPrompt },
+            workspace.path,
+            signal,
+            trace,
+          ),
+          (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.content) }),
+        );
+        this.store.recordModelCall("session", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
+        transition("completed");
+        this.store.finishChatSessionResponse(job.id, "completed", answer.content);
+      } catch (error) {
+        this.store.recordModelCall("session", "failure", Date.now() - started, 0, 0);
+        throw error;
+      }
+    } finally {
+      await traceExecutionStep(
+        this.store,
+        stepContext,
+        "git.cleanup_session_workspace",
+        { projectId: workspace.projectId, jobId: workspace.jobId },
+        () => this.repo.cleanupWorkspace(workspace),
+        () => ({ cleaned: true }),
+      );
     }
   }
 

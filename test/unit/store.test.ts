@@ -89,6 +89,92 @@ describe("JobStore", () => {
     });
   });
 
+  it("creates a repository session and its first pinned message job atomically", async () => {
+    store = await JobStore.open(":memory:");
+    const result = store.createChatSession({
+      projectId: 7,
+      projectName: "group/project",
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      targetTitle: "",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Explain the routing module",
+    });
+
+    const session = store.getChatSession(result.sessionId);
+    expect(session).toMatchObject({
+      id: result.sessionId,
+      projectId: 7,
+      projectName: "group/project",
+      targetType: "repository",
+      targetBranch: "main",
+      messages: [
+        { role: "user", content: "Explain the routing module", status: "completed" },
+        { role: "assistant", content: "", status: "queued", jobId: result.jobId, headSha: "a".repeat(40) },
+      ],
+    });
+    expect(store.claimNextWithLease(30_000)).toMatchObject({
+      id: result.jobId,
+      type: "session",
+      targetType: "repository",
+      targetBranch: "main",
+      sessionId: result.sessionId,
+      sessionResponseId: session?.messages[1]?.id,
+      headSha: "a".repeat(40),
+    });
+  });
+
+  it("serializes session turns and reflects retry and cancellation states", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createChatSession({
+      projectId: 7,
+      projectName: "group/project",
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      targetTitle: "",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    expect(() => store.addChatSessionMessage(created.sessionId, {
+      projectId: 7,
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Overlapping turn",
+    })).toThrow("chat session already has an active message");
+
+    const firstAttempt = store.claimNextWithLease(30_000);
+    if (!firstAttempt) throw new Error("expected initial session turn to be claimed");
+    expect(store.retryLeasedJob(firstAttempt.id, firstAttempt.leaseToken, "preparing", Date.now() - 1, "temporary failure"))
+      .toBe(true);
+    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({ status: "queued" });
+
+    const retry = store.claimNextWithLease(30_000);
+    if (!retry) throw new Error("expected retried session turn to be claimed");
+    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({ status: "running" });
+    store.updateLeasedStatus(retry.id, retry.leaseToken, "preparing", "cancelled", "cancelled by test");
+    store.finishChatSessionResponse(retry.id, "cancelled", "This turn was cancelled.");
+    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({
+      status: "failed",
+      content: "This turn was cancelled.",
+    });
+    expect(store.addChatSessionMessage(created.sessionId, {
+      projectId: 7,
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Try again after cancellation",
+    }).jobId).toBeTruthy();
+  });
+
   it("queues Issue assistant jobs with a distinct issue target", async () => {
     store = await JobStore.open(":memory:");
     const result = store.createIssueImplementation("issue-event", "project:issue:17:note:9", {

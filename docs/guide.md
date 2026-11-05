@@ -26,16 +26,16 @@ pnpm run build
 pnpm start -- init
 ```
 
-Edit `configs/config.yaml` to set the GitLab URL and project allowlist. Add numeric user IDs to `gitlab.blocked_user_ids` only when you want to prevent them from invoking commands. Set these variables for the Server:
+Edit `configs/config.yaml` to set the GitLab URL. Add numeric user IDs to `gitlab.blocked_user_ids` only when you want to prevent them from invoking commands. Set these variables for the Server:
 
 ```sh
 export CORVEX_GITLAB_TOKEN='your-write-token'
 export CORVEX_WEBHOOK_SECRET='a-long-random-secret'
 ```
 
-The IDs are numeric GitLab IDs. Both allowlists must be non-empty; empty lists do not mean “allow everyone.” Keep credentials out of the YAML file and source control. Refer to the [configuration reference](./configuration) for every setting and its limits.
+The IDs are numeric GitLab IDs. Keep credentials out of the YAML file and source control. The operations console lists projects visible to `CORVEX_GITLAB_READ_TOKEN`; only register webhooks on projects where Corvex should accept commands. Refer to the [configuration reference](./configuration) for every setting and its limits.
 
-The Server only needs the write token and webhook secret. The Worker additionally needs `CORVEX_GITLAB_READ_TOKEN` and, when the agent is enabled, `CORVEX_MODEL_API_KEY`. The read token is used for project/MR API reads and repository fetches; use separate read/write tokens with only the required permissions.
+The Server needs the write token and webhook secret. When the operations console is enabled, it also needs `CORVEX_GITLAB_READ_TOKEN` for project and target discovery. The Worker needs the read token and, when the agent is enabled, `CORVEX_MODEL_API_KEY`. Use separate read/write tokens with only the required permissions.
 
 ## 2. Start the server
 
@@ -86,7 +86,7 @@ Use these commands in a merge request comment:
 | `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
 | `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
 
-`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text MR mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter in a project listed in `gitlab.allowed_project_ids` can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
+`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text MR mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter on a project configured with the shared webhook secret can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
 
 ### Issue mentions
 
@@ -98,7 +98,7 @@ Plain-text mentions in an Issue start an assistant task. The agent can answer, a
 | `@corvex-bot Add the requested validation` | Let the agent decide whether to reply or propose implementation. Code writes require Issue implementation to be enabled. |
 | `@corvex-bot /implement Add the requested validation` | Explicitly request implementation; code writes still require Issue implementation to be enabled. |
 
-Any commenter in an allowed project can mention the bot unless their ID is in `gitlab.blocked_user_ids`.
+Any commenter on a project configured with the shared webhook secret can mention the bot unless their ID is in `gitlab.blocked_user_ids`.
 
 ## 5. Enable model tasks
 
@@ -121,7 +121,11 @@ When the agent is disabled, the server can still accept events and persist tasks
 
 ## Enable fix proposals carefully
 
-Fix mode is disabled by default. To enable it, set `fix.enabled: true` and enable the agent. Any non-blocked commenter in an allowed project can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
+Fix mode is disabled by default. To enable it, set `fix.enabled: true` and enable the agent. Any non-blocked commenter on a project configured with the shared webhook secret can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
+
+## Persistent chat sessions
+
+Enable the Basic Auth-protected operations console and open **Sessions**. Search projects visible to the GitLab read token, then bind a conversation to a repository branch, Issue and branch, or merge request source branch. Corvex resolves and pins the target SHA on the server. Sessions and each turn are stored in SQLite; one turn per session can run at a time. The session agent is read-only: it does not edit the worktree or publish GitLab notes. A changed target revision is not silently followed; start a new session to use the latest SHA.
 
 The Pi session exposes no built-in shell or arbitrary command execution. Its repository tools include bounded `read_file` and `git_grep`, plus chat-only `git_log` and `git_show` for commits reachable from the pinned MR HEAD. Chat provides `update_mr_metadata` to change only the current MR's title and/or description when requested; omitted fields stay unchanged. With a write token and a same-project MR, Chat also provides `git_status`, `git_apply_patch`, `git_commit`, `git_push`, and `git_revert`, all bound to the current isolated worktree and MR source branch. Writes require no extra confirmation after the user requested them. Patches modify existing tracked regular files only; commits accept unstaged tracked modifications only; after all requested edits and available checks, Chat creates one final commit and pushes as the last repository operation before replying. It does not push intermediate work or modify files after pushing. Pushes are ordinary fast-forward updates and force-push is never possible; rollback adds a revert commit for the latest Corvex commit. Fork MRs do not receive Git write tools. Literal `search_text` remains available for bounded searches in the worktree and trusted skill roots; it is limited to 1,000 files, 16 MiB, and 50 matches per call. `web_fetch` is available only to review and explain tasks when enabled; private/reserved addresses are always blocked, `agent.web_blocked_hosts` adds optional host blocks, and at most 10 pages can be fetched per session. Redirects are revalidated and page text is untrusted input. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP tools only for review tasks from the service's Pi agent directory. MCP server processes run with the worker's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
 

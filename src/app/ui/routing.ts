@@ -5,6 +5,7 @@ import type { JobQueue } from "./types.js";
 export type Route =
   | { kind: "overview" }
   | { kind: "jobs" }
+  | { kind: "sessions" }
   | { kind: "job"; id: string }
   | { kind: "unknown" };
 
@@ -28,6 +29,7 @@ export function decodeJobId(value: string): string | undefined {
 function parsePath(route: string): Route {
   if (route === "" || route === "overview") return { kind: "overview" };
   if (route === "jobs") return { kind: "jobs" };
+  if (route === "sessions") return { kind: "sessions" };
   if (route.startsWith("jobs/")) {
     const id = decodeJobId(route.slice("jobs/".length));
     return id ? { kind: "job", id } : { kind: "unknown" };

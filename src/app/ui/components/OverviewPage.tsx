@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "antd";
 import { errorMessage, fetchJson } from "../api.js";
 import { formatDate, formatDuration } from "../format.js";
 import { translate } from "../i18n.js";
@@ -50,9 +51,9 @@ export function OverviewPage({ copy, locale, refreshToken, onUpdated, onRefresh 
 
   const active = activeStatuses.reduce((sum, status) => sum + data.counts[status], 0);
   const refresh = (
-    <button type="button" className="primary" disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
+    <Button type="primary" disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
       {refreshing ? copy.refreshing : copy.refresh}
-    </button>
+    </Button>
   );
 
   return (

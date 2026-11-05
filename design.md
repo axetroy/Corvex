@@ -7,8 +7,9 @@
 
 Corvex 是一个可自行部署的 GitLab 合并请求（MR）审查与修复建议助手。用户在
 GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`fix`、
-`status` 或 `cancel` 命令。系统会验证请求身份和权限，将请求持久化，针对确切的
-MR 版本进行分析，校验分析结果，并将结果发布回 GitLab。
+`status` 或 `cancel` 命令。运维控制台还提供绑定到 GitLab 项目、分支、Issue 或 MR
+固定 SHA 的持久只读对话会话。系统会验证请求身份和权限，将请求持久化，针对确切的
+目标版本进行分析，并按对应工作流校验或保存结果。
 
 ## 目标与非目标
 
@@ -24,6 +25,8 @@ MR 版本进行分析，校验分析结果，并将结果发布回 GitLab。
   执行。
 - 将权限控制、结果校验、补丁范围检查和发布决策保留在可信的 Corvex 代码中，不交由
   Agent 决定。
+- 通过运维控制台创建持久会话，发现范围由 GitLab 只读 Token 的可见项目决定；会话轮次
+  固定到服务端解析的目标 SHA，且仅提供只读仓库能力。
 - 将仓库代码、GitLab 凭证、模型凭证和 Agent 工具限制在已配置的自托管部署边界内。
 
 ### 非目标
@@ -43,19 +46,19 @@ GitLab 评论 Webhook
 TypeScript 服务端
   - 验证 Webhook 令牌和事件
   - 过滤机器人及系统评论
-  - 校验项目和用户白名单
+  - 检查可选用户阻止列表
   - 解析命令并创建幂等任务
-  - 提供健康检查、就绪检查、指标和数据保留
+  - 提供运维 API 和持久会话工作台
        |
        v
-SQLite 任务存储 <----- TypeScript Worker
+SQLite 任务/会话存储 <----- TypeScript Worker
                          - 领取租约、心跳、处理取消和重试
-                         - 获取当前 MR 信息和固定版本的差异
+                         - 获取当前 MR 或会话目标及固定版本
                          - 准备隔离的 detached worktree
                          - 使用任务专属工具调用 Pi SDK
                          - 校验输出并重新确认 MR 版本
-                         - 在授权后应用并检查受限补丁
-                         - 通过 GitLab API 发布发现和摘要
+                         - 只读会话不提供仓库写入或 GitLab 发布
+                         - 其他授权工作流按策略校验和发布结果
 ```
 
 服务端和 Worker 是同一个 TypeScript 入口的两种运行模式，而非两个独立服务。为加强
@@ -66,8 +69,8 @@ SQLite 任务存储 <----- TypeScript Worker
 
 | 领域 | 负责方 |
 |---|---|
-| Webhook 验证、命令解析、白名单和修复授权 | Corvex 策略代码 |
-| 持久化任务、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与 Worker |
+| Webhook 验证、命令解析、用户阻止列表和能力授权 | Corvex 策略代码 |
+| 持久化任务/会话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与 Worker |
 | GitLab API 访问和评论发布 | Corvex GitLab 客户端 |
 | 镜像、固定 SHA 的 worktree、受限差异和安全文件访问 | Corvex Git 引擎 |
 | Agent 循环、模型提供方、会话和上下文生命周期 | Pi SDK |
@@ -75,8 +78,8 @@ SQLite 任务存储 <----- TypeScript Worker
 | 发现项/补丁校验、版本复核和发布决策 | Corvex 策略代码 |
 
 Pi 是执行依赖，不是业务状态的权威来源。Pi 会话用于 Agent 上下文和诊断；任务状态、
-重试、审计、取消和发布状态均以 SQLite 任务记录为准。除非产品明确需要恢复会话，
-否则优先为每项任务创建一次性会话。
+持久聊天轮次、重试、审计、取消和发布状态均以 SQLite 记录为准。独立任务使用一次性
+Pi 会话；持久工作台会话的消息另存于 Corvex SQLite，不依赖 Pi 进程生命周期。
 
 ## Pi 集成与能力
 
@@ -102,7 +105,9 @@ Pi 工具和扩展以 Worker 的操作系统权限运行。Worker 应使用专�
 ## 安全不变量
 
 1. 以恒定时间比较 Webhook 密钥，并限制请求体大小。
-2. 项目或用户白名单为空时配置无效，绝不表示允许所有对象。
+2. Webhook Secret 用于认证投递；只在需要接受指令的项目中注册 Webhook。会话工作台的
+  项目发现范围由 GitLab 只读 Token 决定，不使用静态项目白名单；可选用户阻止列表
+  由 Corvex 强制执行。
 3. 机器人和系统评论不得创建任务；重复的 Webhook 事件必须保持幂等。
 4. `fix` 请求必须同时满足独立的修复白名单和修复模式已启用。
 5. 任务记录完整的 MR Head SHA；获取差异、准备 worktree 和发布时均须验证预期快照。
@@ -154,8 +159,8 @@ HTTP、信号、进程管理和文件系统操作优先使用 Node.js 内置能�
 
 保留 YAML 配置和现有环境变量名称，涵盖 GitLab Token、Webhook 密钥、模型密钥/基础
 URL/名称、监听地址、数据库路径和存储根目录。通过 `init` 生成配置模板，并在启动
-Server/Worker 前按进程角色校验配置。Server 不需要读取令牌或模型密钥；Worker 不需要
-Webhook 密钥。示例配置和日志中不得包含密钥。
+Server/Worker 前按进程角色校验配置。Server 通常不需要读取令牌或模型密钥；启用运维
+控制台时需要读取令牌用于项目和目标发现。Worker 不需要 Webhook 密钥。示例配置和日志中不得包含密钥。
 
 必须保留以下能力：
 
@@ -168,8 +173,9 @@ Webhook 密钥。示例配置和日志中不得包含密钥。
 - 通过人工标注样例和显式在线运行的评审基准评估质量；基准运行不属于常规 CI。
 
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
-Server 只按 `/ops/assets/<file>` 白名单提供构建产物。React、React DOM 和 Vite 属于构建期
-依赖，不进入运行时依赖，也不改变 Basic Auth、只读和自动刷新的既有边界。
+Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
+只读 Token 发现目标、固定 SHA 并保存每轮消息；Agent 不得修改 worktree 或发布 GitLab
+评论。React、React DOM 和 Vite 属于构建期依赖，不进入运行时依赖。
 
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。

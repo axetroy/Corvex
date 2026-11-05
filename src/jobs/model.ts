@@ -1,7 +1,8 @@
 /** 系统可入队并由 Worker 处理的任务类型集合。 */
-export const jobTypes = ["review", "fix", "explain", "chat", "implement"] as const;
+export const jobTypes = ["review", "fix", "explain", "chat", "implement", "session"] as const;
 export type JobType = (typeof jobTypes)[number];
-export type JobTargetType = "merge_request" | "issue";
+export type JobTargetType = "merge_request" | "issue" | "repository";
+export type ChatSessionMessageStatus = "queued" | "running" | "completed" | "failed";
 
 /** SQLite、Worker 和运维界面共同使用的任务生命周期状态集合。 */
 export const jobStatuses = [
@@ -26,7 +27,10 @@ export interface Job {
   mrIid: number;
   targetType: JobTargetType;
   targetIid: number;
+  targetBranch: string;
   headSha: string;
+  sessionId: string | null;
+  sessionResponseId: string | null;
   actorId: number;
   request: string;
   createdAt: string;
@@ -54,6 +58,50 @@ export interface JobListQuery {
 export interface JobPage {
   items: JobOperationsSummary[];
   total: number;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  projectId: number;
+  projectName: string;
+  targetType: JobTargetType;
+  targetIid: number;
+  targetBranch: string;
+  targetTitle: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatSessionMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  status: ChatSessionMessageStatus;
+  jobId: string | null;
+  headSha: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatSession extends ChatSessionSummary {
+  messages: ChatSessionMessage[];
+}
+
+export interface ChatSessionPage {
+  items: ChatSessionSummary[];
+  total: number;
+}
+
+export interface CreateChatSessionInput {
+  projectId: number;
+  projectName: string;
+  targetType: JobTargetType;
+  targetIid: number;
+  targetBranch: string;
+  targetTitle: string;
+  headSha: string;
+  actorId: number;
+  request: string;
 }
 
 export interface JobOperationsSummary extends JobSummary {

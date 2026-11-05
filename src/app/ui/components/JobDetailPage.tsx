@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button, Space } from "antd";
 import { errorMessage, fetchJson } from "../api.js";
 import { formatDate, formatJobTarget } from "../format.js";
 import { translate } from "../i18n.js";
@@ -75,9 +76,9 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
 
   const timeline = [{ from: "created", to: "queued", at: job.createdAt }, ...job.timeline];
   const refresh = (
-    <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
+    <Button disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
       {refreshing ? copy.refreshing : copy.refresh}
-    </button>
+    </Button>
   );
 
   return (
@@ -88,10 +89,10 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
         title={copy.jobDetailTitleTemplate.replace("{id}", job.id)}
         description={copy.jobDetailDescription}
         actions={(
-          <div className="page-heading-actions">
+          <Space className="page-heading-actions">
             <StatusBadge status={job.status} label={translate(copy.statuses, job.status)} />
             {refresh}
-          </div>
+          </Space>
         )}
       />
       <Panel title={copy.taskDetails}>

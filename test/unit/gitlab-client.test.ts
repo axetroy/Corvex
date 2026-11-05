@@ -13,6 +13,91 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 }
 
 describe("GitLab write receipts", () => {
+  it("lists accessible projects with a bounded page and optional search", async () => {
+    let requestUrl = "";
+    const server = createServer((request, response) => {
+      requestUrl = request.url ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([{
+        id: 5,
+        name: "Corvex",
+        path_with_namespace: "axetroy/Corvex",
+        http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
+        default_branch: "main",
+      }]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await expect(client.listProjects("Corvex", 2)).resolves.toEqual([{
+        id: 5,
+        name: "Corvex",
+        path_with_namespace: "axetroy/Corvex",
+        http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
+        default_branch: "main",
+      }]);
+      expect(requestUrl).toBe("/api/v4/projects?simple=true&per_page=50&page=2&order_by=name&sort=asc&search=Corvex");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("resolves a branch name to a verified full commit SHA", async () => {
+    let requestUrl = "";
+    const server = createServer((request, response) => {
+      requestUrl = request.url ?? "";
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        name: "feature/topic",
+        commit: { id: "a".repeat(40) },
+      }));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await expect(client.getBranch(5, "feature/topic")).resolves.toEqual({
+        name: "feature/topic",
+        commit: { id: "a".repeat(40) },
+      });
+      expect(requestUrl).toBe("/api/v4/projects/5/repository/branches/feature%2Ftopic");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("lists branches, Issues, and merge requests with bounded search queries", async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      const path = new URL(request.url ?? "", "http://localhost").pathname;
+      response.end(JSON.stringify(path.endsWith("/branches")
+        ? [{ name: "main", commit: { id: "b".repeat(40) } }]
+        : [{ iid: 9, title: "Improve routing", description: "Details", state: "opened", source_branch: "feature", target_branch: "main" }]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await expect(client.listBranches(5, "ma", 2)).resolves.toEqual([
+        { name: "main", commit: { id: "b".repeat(40) } },
+      ]);
+      await expect(client.listIssues(5, "routing", 2)).resolves.toMatchObject([
+        { iid: 9, title: "Improve routing", state: "opened" },
+      ]);
+      await expect(client.listMergeRequests(5, "routing", 2)).resolves.toMatchObject([
+        { iid: 9, title: "Improve routing", state: "opened", source_branch: "feature", target_branch: "main" },
+      ]);
+      expect(requests.map((url) => new URL(url, "http://localhost").pathname)).toEqual([
+        "/api/v4/projects/5/repository/branches",
+        "/api/v4/projects/5/issues",
+        "/api/v4/projects/5/merge_requests",
+      ]);
+      expect(requests.every((url) => url.includes("per_page=50") && url.includes("page=2"))).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("paginates Issue notes, filters system notes, and keeps the newest comments", async () => {
     const requests: string[] = [];
     const server = createServer((request, response) => {

@@ -1,4 +1,5 @@
 import { formatDate, formatExecutionPayload, formatTraceDuration } from "../format.js";
+import { Collapse } from "antd";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ExecutionEvent } from "../types.js";
@@ -7,24 +8,33 @@ import { DataTable, DetailItem, Empty, ExpandableText } from "./common.js";
 /** 执行事件的输入、输出与标识折叠区。 */
 function ExecutionEventDetails({ event, copy }: { event: ExecutionEvent; copy: Copy }) {
   return (
-    <details className="execution-event-details">
-      <summary>{copy.executionDetails}</summary>
-      {event.deliveryId || event.eventId ? (
-        <dl className="execution-event-identifiers">
-          {event.deliveryId ? <DetailItem label={copy.executionDeliveryId} value={event.deliveryId} /> : null}
-          {event.eventId ? <DetailItem label={copy.executionEventId} value={event.eventId} /> : null}
-        </dl>
-      ) : null}
-      {event.input ? (
-        <ExpandableText label={copy.traceInput} value={formatExecutionPayload(event.input)} className="trace-payload" />
-      ) : null}
-      {event.output ? (
-        <ExpandableText label={copy.traceOutput} value={formatExecutionPayload(event.output)} className="trace-payload" />
-      ) : null}
-      {event.errorDetail ? (
-        <ExpandableText label={copy.error} value={formatExecutionPayload(event.errorDetail)} className="trace-payload" />
-      ) : null}
-    </details>
+    <Collapse
+      className="execution-event-details"
+      size="small"
+      items={[{
+        key: "details",
+        label: copy.executionDetails,
+        children: (
+          <>
+            {event.deliveryId || event.eventId ? (
+              <dl className="execution-event-identifiers">
+                {event.deliveryId ? <DetailItem label={copy.executionDeliveryId} value={event.deliveryId} /> : null}
+                {event.eventId ? <DetailItem label={copy.executionEventId} value={event.eventId} /> : null}
+              </dl>
+            ) : null}
+            {event.input ? (
+              <ExpandableText label={copy.traceInput} value={formatExecutionPayload(event.input)} className="trace-payload" />
+            ) : null}
+            {event.output ? (
+              <ExpandableText label={copy.traceOutput} value={formatExecutionPayload(event.output)} className="trace-payload" />
+            ) : null}
+            {event.errorDetail ? (
+              <ExpandableText label={copy.error} value={formatExecutionPayload(event.errorDetail)} className="trace-payload" />
+            ) : null}
+          </>
+        ),
+      }]}
+    />
   );
 }
 
