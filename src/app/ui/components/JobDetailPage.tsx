@@ -148,7 +148,7 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
         <ExecutionEvents events={job.events} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.traceDiagram}>
-        <TraceExperience entries={job.trajectory} copy={copy} locale={locale} />
+        <TraceExperience entries={job.trajectory} userRequest={job.request} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.attemptHistory}>
         {job.attempts.length === 0 ? (

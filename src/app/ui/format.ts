@@ -115,11 +115,13 @@ export function readAssistantOutput(value: string | null, copy: Copy): { text: s
   const content = parsed && Array.isArray(parsed.content) ? parsed.content : undefined;
   if (!content) return { text: formatTraceJson(value), toolCalls: [] };
   const parts = content.map(asTraceRecord);
+  const text = parts
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => String(part?.text))
+    .join("\n\n");
+  const reply = asTraceRecord(parseTraceValue(text));
   return {
-    text: parts
-      .filter((part) => part?.type === "text" && typeof part.text === "string")
-      .map((part) => String(part?.text))
-      .join("\n\n"),
+    text: reply?.action === "reply" && typeof reply.reply === "string" ? reply.reply : text,
     toolCalls: parts
       .filter((part) => part?.type === "toolCall")
       .map((part) => describeSessionTool(String(part?.name ?? ""), part?.arguments, null, copy)),

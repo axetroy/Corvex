@@ -11,9 +11,9 @@ import {
 } from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
-  it("opens tool details by default when the session panel mounts", () => {
-    const trace = {
-      id: 1,
+  it("renders a conversation with compact tool call tips and no activity filters", () => {
+    const toolTrace = {
+      id: 2,
       attempt: 1,
       round: 1,
       kind: "tool",
@@ -33,9 +33,55 @@ describe("operations UI trace reconstruction", () => {
       firstTokenMs: null,
       generationDurationMs: null,
     };
-    const markup = renderToStaticMarkup(createElement(TraceSession, { traces: [trace], copy: en, locale: "en" }));
+    const assistantTrace = {
+      ...toolTrace,
+      id: 1,
+      kind: "llm",
+      name: "implement",
+      model: "test-model",
+      input: JSON.stringify({
+        contextMode: "delta",
+        systemPrompt: "System instructions for the assistant",
+        messages: [{
+          id: "user-1",
+          type: "message",
+          message: { role: "user", content: "#attachment:Pasted text #1 {\"merge_request\":{\"title\":\"private detail\"}}" },
+        }],
+      }),
+      output: JSON.stringify({ content: [
+        { type: "toolCall", name: "read_file", arguments: { path: "README.md" } },
+      ] }),
+      rawContent: JSON.stringify({ systemPrompt: "System instructions for the assistant" }),
+    };
+    const finalAssistantTrace = {
+      ...assistantTrace,
+      id: 3,
+      round: 2,
+      startedAt: "2026-01-01T00:01:00.000Z",
+      finishedAt: "2026-01-01T00:01:00.030Z",
+      output: JSON.stringify({ content: [{ type: "text", text: "I found one issue." }] }),
+      rawContent: null,
+    };
+    const markup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [assistantTrace, toolTrace, finalAssistantTrace],
+      userRequest: "Please inspect this",
+      copy: en,
+      locale: "en",
+    }));
 
-    expect(markup).toContain('<details class="trace-session-tool-details" open="">');
+    expect(markup).toContain("Please inspect this");
+    expect(markup).toContain("System Prompt");
+    expect(markup).toContain("System instructions for the assistant");
+    expect(markup.match(/class="trace-session-system-prompt"/g)).toHaveLength(1);
+    expect(markup).not.toContain("#attachment:Pasted text #1");
+    expect(markup).not.toContain("private detail");
+    expect(markup).toContain("Requested 1 tool call(s)");
+    expect(markup).toContain("I found one issue.");
+    expect(markup).toContain("Read file README.md (lines 1-200)");
+    expect(markup).toContain('<details class="trace-session-tool-details" aria-label="View call details">');
+    expect(markup.match(/Read file README\.md \(lines 1-200\)/g)).toHaveLength(1);
+    expect(markup).not.toContain("All activity");
+    expect(markup).not.toContain("Conversation</button>");
   });
 
   it("opens trace payload fields when selected by the inspector", () => {
@@ -47,6 +93,41 @@ describe("operations UI trace reconstruction", () => {
     }));
 
     expect(markup).toContain('<details class="trace-payload" open="">');
+  });
+
+  it("renders an Issue reply envelope as the assistant's readable reply", () => {
+    const reply = "你好！请确认“客户端直接打开浏览器”的具体场景。";
+    const markup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [{
+        id: 1,
+        attempt: 1,
+        round: 1,
+        kind: "llm",
+        name: "implement",
+        status: "succeeded",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:01.000Z",
+        durationMs: 1000,
+        firstTokenMs: null,
+        generationDurationMs: null,
+        model: "test-model",
+        inputTokens: 10,
+        outputTokens: 20,
+        input: null,
+        output: JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify({ action: "reply", reply }) }],
+        }),
+        schema: null,
+        rawContent: null,
+        errorDetail: null,
+      }],
+      userRequest: "",
+      copy: en,
+      locale: "en",
+    }));
+
+    expect(markup).toContain(reply);
+    expect(markup).not.toContain("action");
   });
 
   it("calculates generation TPS weighted by generation duration", () => {

@@ -11,10 +11,12 @@ type TraceView = "session" | "trace";
 /** 执行轨迹：会话视图与时间线视图共享同一份排序结果和选中状态。 */
 export const TraceExperience = memo(function TraceExperience({
   entries,
+  userRequest,
   copy,
   locale,
 }: {
   entries: readonly JobTraceEntry[];
+  userRequest: string;
   copy: Copy;
   locale: Locale;
 }) {
@@ -84,7 +86,7 @@ export const TraceExperience = memo(function TraceExperience({
       </div>
       {/* 只渲染当前视图：隐藏面板仍会参与协调，切换标签会重置面板内的筛选与缩放。 */}
       {view === "session" ? (
-        <TraceSession traces={traces} copy={copy} locale={locale} />
+        <TraceSession traces={traces} userRequest={userRequest} copy={copy} locale={locale} />
       ) : (
         <TraceDiagram
           traces={traces}

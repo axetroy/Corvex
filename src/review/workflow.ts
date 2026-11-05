@@ -53,6 +53,9 @@ const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 /** 单个模型请求最多审查的变更文件数；上下文字节限制仍会进一步缩小批次。 */
 const reviewBatchFileLimit = 10;
 
+const MIN_RESPONSE_LENGTH = 1
+const MAX_RESPONSE_LENGTH = 8 << 12;
+
 class ReviewJsonDecodeError extends Error {
   constructor(cause: unknown) {
     super(`decode review JSON: ${String(cause)}`, { cause });
@@ -683,7 +686,7 @@ export class ReviewWorkflow {
       trace,
     );
     const explanation = response.content.trim();
-    if (!validText(explanation, 1, 8000)) {
+    if (!validText(explanation, MIN_RESPONSE_LENGTH, MAX_RESPONSE_LENGTH)) {
       throw new Error("model returned an empty, invalid, or oversized explanation");
     }
     return { text: explanation, model: response.model, usage: response.usage };
@@ -721,7 +724,7 @@ export class ReviewWorkflow {
       trace,
     );
     const text = response.content.trim();
-    if (!validText(text, 1, 8000)) {
+    if (!validText(text, MIN_RESPONSE_LENGTH, MAX_RESPONSE_LENGTH)) {
       throw new Error("model returned an empty, invalid, or oversized chat response");
     }
     return { text, model: response.model, usage: response.usage };

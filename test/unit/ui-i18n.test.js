@@ -26,13 +26,9 @@ describe("operations UI locale", () => {
     expect(zhCN.traceGenerationDuration).toBe("Generation duration");
     expect(zhCN.traceTps).toBe("Generation TPS");
     expect(zhCN.traceTpsTemplate).toBe("{value} tokens/s");
+    expect(zhCN.traceFirstTokenShort).toBe("TTFT");
     expect(zhCN.traceSessionSummaryTemplate).toContain("Avg. TTFT: {ttft}");
     expect(zhCN.traceSessionSummaryTemplate).toContain("Generation TPS: {tps}");
-    expect(zhCN.traceSessionFilterConversation).toBe("对话");
-    expect(zhCN.traceSessionFilterTools).toBe("工具");
-    expect(zhCN.traceSessionModelCall).toBe("模型回复");
-    expect(zhCN.traceSessionNoTools).toBe("没有记录工具调用。");
-    expect(zhCN.traceExpandAll).toBe("展开全部详情");
     expect(zhCN.executionEvents).toBe("执行步骤");
     expect(en.requester).toBe("Requester");
     expect(zhCN.requester).toBe("发起人");
