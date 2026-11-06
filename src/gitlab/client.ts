@@ -324,7 +324,7 @@ export class GitLabClient {
 
   async listBranches(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabBranch[]> {
     if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.targetListQuery(search, page);
+    const query = this.pagedSearchQuery(search, page);
     const result = await this.getJson(`/projects/${projectId}/repository/branches?${query}`, signal);
     if (!Array.isArray(result)) throw new Error("GitLab branch list is not an array");
     return result.map((value) => {
@@ -371,10 +371,18 @@ export class GitLabClient {
   }
 
   private targetListQuery(search: string, page: number, extra: Record<string, string> = {}): URLSearchParams {
+    const query = this.pagedSearchQuery(search, page);
+    query.set("order_by", "updated_at");
+    query.set("sort", "desc");
+    for (const [key, value] of Object.entries(extra)) query.set(key, value);
+    return query;
+  }
+
+  private pagedSearchQuery(search: string, page: number): URLSearchParams {
     if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
       throw new Error("GitLab target page must be between 1 and 10000");
     }
-    const query = new URLSearchParams({ per_page: "50", page: String(page), order_by: "updated_at", sort: "desc", ...extra });
+    const query = new URLSearchParams({ per_page: "50", page: String(page) });
     const normalizedSearch = search.trim();
     if (normalizedSearch) {
       if ([...normalizedSearch].length > 100) throw new Error("GitLab target search must be at most 100 characters");

@@ -92,6 +92,10 @@ describe("GitLab write receipts", () => {
         "/api/v4/projects/5/issues",
         "/api/v4/projects/5/merge_requests",
       ]);
+      const branchQuery = new URL(requests[0]!, "http://localhost").searchParams;
+      expect(branchQuery.get("search")).toBe("ma");
+      expect(branchQuery.has("order_by")).toBe(false);
+      expect(branchQuery.has("sort")).toBe(false);
       expect(requests.every((url) => url.includes("per_page=50") && url.includes("page=2"))).toBe(true);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
