@@ -455,7 +455,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                             maxLength={100}
                             value={projectQuery}
                             placeholder={copy.projectSearchPlaceholder}
-                            suffix={busy ? <Spin size="small" /> : null}
+                            suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
                             onChange={(event) => {
                               const query = event.target.value.slice(0, 100);
                               setProjectQuery(query);
@@ -506,7 +506,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                               value={branchQuery}
                               placeholder={copy.branch}
                               disabled={!project}
-                              suffix={busy ? <Spin size="small" /> : null}
+                              suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
                               onChange={(event) => {
                                 const query = event.target.value.slice(0, 100);
                                 setBranchQuery(query);
@@ -561,7 +561,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                               value={targetQuery}
                               placeholder={copy.targetSearchPlaceholder}
                               disabled={!project}
-                              suffix={busy ? <Spin size="small" /> : null}
+                              suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
                               onChange={(event) => {
                                 const query = event.target.value.slice(0, 100);
                                 setTargetQuery(query);
