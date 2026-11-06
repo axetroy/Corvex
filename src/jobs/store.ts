@@ -442,7 +442,7 @@ export class JobStore {
     inputTokens: number,
     outputTokens: number,
   ): void {
-    if (!["review", "explain", "fix", "chat", "implement"].includes(taskType)) {
+    if (!["review", "explain", "fix", "chat", "implement", "session"].includes(taskType)) {
       throw new Error(`unsupported model call task type "${taskType}"`);
     }
     if (!["success", "failure"].includes(outcome)) {

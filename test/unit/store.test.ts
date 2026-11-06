@@ -637,6 +637,7 @@ describe("JobStore", () => {
     expect(() => store.reserveModelTokens(100, 1)).toThrow("budget");
     store.settleModelTokens(day, 100, 25);
     store.recordModelCall("review", "success", 1250, 70, 25);
+    store.recordModelCall("session", "success", 800, 40, 20);
     expect(store.modelCallMetrics()).toEqual([
       {
         taskType: "review",
@@ -645,6 +646,14 @@ describe("JobStore", () => {
         durationMs: 1250,
         inputTokens: 70,
         outputTokens: 25,
+      },
+      {
+        taskType: "session",
+        outcome: "success",
+        calls: 1,
+        durationMs: 800,
+        inputTokens: 40,
+        outputTokens: 20,
       },
     ]);
   });
