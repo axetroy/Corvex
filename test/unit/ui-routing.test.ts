@@ -7,6 +7,7 @@ import {
   jobsBackHash,
   jobsHash,
   parseHash,
+  sessionsHash,
 } from "../../src/app/ui/routing.ts";
 
 describe("operations UI routing", () => {
@@ -21,6 +22,13 @@ describe("operations UI routing", () => {
     expect(parseHash("#jobs/job-1?status=failed").page).toEqual({ kind: "job", id: "job-1" });
     expect(parseHash("#jobs/job-1?status=failed").params.get("status")).toBe("failed");
     expect(parseHash("jobs/a%20b").page).toEqual({ kind: "job", id: "a b" });
+  });
+
+  it("parses and serializes a selected session ID", () => {
+    expect(parseHash("#sessions/session-1").page).toEqual({ kind: "sessions", id: "session-1" });
+    expect(parseHash("#sessions/%E0%A4%A").page).toEqual({ kind: "unknown" });
+    expect(sessionsHash("session 1")).toBe("#sessions/session%201");
+    expect(sessionsHash()).toBe("#sessions");
   });
 
   it("rejects a job route without a usable ID instead of rendering a blank page", () => {

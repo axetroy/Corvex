@@ -5,7 +5,7 @@ import type { JobQueue } from "./types.js";
 export type Route =
   | { kind: "overview" }
   | { kind: "jobs" }
-  | { kind: "sessions" }
+  | { kind: "sessions"; id?: string }
   | { kind: "job"; id: string }
   | { kind: "unknown" };
 
@@ -30,6 +30,10 @@ function parsePath(route: string): Route {
   if (route === "" || route === "overview") return { kind: "overview" };
   if (route === "jobs") return { kind: "jobs" };
   if (route === "sessions") return { kind: "sessions" };
+  if (route.startsWith("sessions/")) {
+    const id = decodeJobId(route.slice("sessions/".length));
+    return id ? { kind: "sessions", id } : { kind: "unknown" };
+  }
   if (route.startsWith("jobs/")) {
     const id = decodeJobId(route.slice("jobs/".length));
     return id ? { kind: "job", id } : { kind: "unknown" };
@@ -74,6 +78,11 @@ export function jobQueueQuery(queue: JobQueue): string {
 /** 任务列表的 hash，导航与筛选更新共用。 */
 export function jobsHash(queue: JobQueue): string {
   return `#jobs${jobQueueQuery(queue)}`;
+}
+
+/** 会话页 hash；有 ID 时指向该会话，无 ID 时进入新会话视图。 */
+export function sessionsHash(id = ""): string {
+  return id ? `#sessions/${encodeURIComponent(id)}` : "#sessions";
 }
 
 /** 任务详情 hash，携带列表筛选条件以便返回时恢复。 */

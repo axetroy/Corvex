@@ -10,7 +10,7 @@ import { SessionsPage } from "./components/SessionsPage.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash } from "./routing.js";
+import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, sessionsHash } from "./routing.js";
 import type { JobQueue } from "./types.js";
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
@@ -95,6 +95,10 @@ export function App() {
     }
     window.location.hash = target;
   }, []);
+  const updateSessionRoute = useCallback((sessionId: string) => {
+    const target = sessionsHash(sessionId);
+    if (window.location.hash !== target) window.location.hash = target;
+  }, []);
 
   const onJobs = page.kind === "jobs" || page.kind === "job";
 
@@ -127,7 +131,13 @@ export function App() {
             className="primary-nav"
             mode="horizontal"
             selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "sessions"]}
-            onClick={({ key }) => { window.location.hash = key === "jobs" ? jobsHash(queue) : key; }}
+            onClick={({ key }) => {
+              window.location.hash = key === "jobs"
+                ? jobsHash(queue)
+                : key === "sessions" && page.kind === "sessions"
+                  ? sessionsHash(page.id)
+                  : key;
+            }}
             items={[
               { key: "overview", label: copy.navOverview },
               { key: "jobs", label: copy.navJobs },
@@ -152,7 +162,7 @@ export function App() {
         </span>
       </header>
       <main id="app" className="content" ref={mainRef} tabIndex={-1}>
-        <ErrorBoundary key={route} copy={copy}>
+        <ErrorBoundary key={page.kind === "sessions" ? "sessions" : route} copy={copy}>
           {page.kind === "overview" ? (
             <OverviewPage
               copy={copy}
@@ -186,11 +196,13 @@ export function App() {
           ) : null}
           {page.kind === "sessions" ? (
             <SessionsPage
+              sessionId={page.id ?? ""}
               copy={copy}
               locale={locale}
               refreshToken={refreshToken}
               onUpdated={handleUpdated}
               onRefresh={refresh}
+              onSessionChange={updateSessionRoute}
             />
           ) : null}
         </ErrorBoundary>

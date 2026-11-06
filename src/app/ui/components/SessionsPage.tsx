@@ -59,11 +59,13 @@ interface SessionPage {
 }
 
 interface Props {
+  sessionId: string;
   copy: Copy;
   locale: Locale;
   refreshToken: number;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
+  onSessionChange: (sessionId: string) => void;
 }
 
 const sessionPageSize = 50;
@@ -82,16 +84,16 @@ function messageStatus(message: SessionMessage, copy: Copy): string {
   return "";
 }
 
-export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
+export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated, onRefresh, onSessionChange }: Props) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionOffset, setSessionOffset] = useState(0);
   const [sessionTotal, setSessionTotal] = useState(0);
-  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [selectedSessionId, setSelectedSessionId] = useState(sessionId);
   const [session, setSession] = useState<SessionDetail>();
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(true);
+  const [showCreate, setShowCreate] = useState(!sessionId);
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [project, setProject] = useState<ProjectOption>();
@@ -118,6 +120,11 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   }, [openPicker]);
 
   useEffect(() => {
+    setSelectedSessionId(sessionId);
+    setShowCreate(!sessionId);
+  }, [sessionId]);
+
+  useEffect(() => {
     let active = true;
     fetchJson<SessionPage>(`/api/ops/sessions?limit=${sessionPageSize}&offset=${sessionOffset}`, copy)
       .then((page) => {
@@ -131,6 +138,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         setSessionTotal(page.total);
         if (!selectedSessionId && page.items[0]) {
           setSelectedSessionId(page.items[0].id);
+          onSessionChange(page.items[0].id);
           setShowCreate(false);
         }
         onUpdated(new Date().toISOString());
@@ -267,6 +275,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       const created = await result.json() as { sessionId: string };
       setDraftMessage("");
       setSelectedSessionId(created.sessionId);
+      onSessionChange(created.sessionId);
       setShowCreate(false);
       setSessionOffset(0);
       setPollToken((value) => value + 1);
@@ -309,6 +318,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
 
   function startNewSession() {
     setSelectedSessionId("");
+    onSessionChange("");
     setSession(undefined);
     setShowCreate(true);
     setProjectQuery("");
@@ -381,6 +391,7 @@ export function SessionsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                 activeKey={selectedSessionId || undefined}
                 onActiveChange={(key) => {
                   setSelectedSessionId(key);
+                  onSessionChange(key);
                   setShowCreate(false);
                 }}
               />
