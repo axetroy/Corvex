@@ -22,6 +22,8 @@ describe("operations UI locale", () => {
     expect(zhCN.traceTabTrace).toBe("轨迹");
     expect(zhCN.traceSessionUser).toBe("用户");
     expect(zhCN.traceSessionAssistant).toBe("助手");
+    expect(en.sessionTurnActive).toBe("A response is already in progress for this session.");
+    expect(zhCN.sessionTurnActive).toBe("该会话已有回复正在处理中。");
     expect(zhCN.traceFirstToken).toBe("Time to First Token (TTFT)");
     expect(zhCN.traceGenerationDuration).toBe("Generation duration");
     expect(zhCN.traceTps).toBe("Generation TPS");

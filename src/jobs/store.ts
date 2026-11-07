@@ -1503,6 +1503,19 @@ export class JobStore {
         )
         .run(now, jobId);
       if (result.changes !== 1) throw new Error(`job "${jobId}" changed before it could be retried`);
+      if (job.type === "session") {
+        if (!job.sessionId || !job.sessionResponseId) {
+          throw new Error(`session job "${jobId}" is missing its response`);
+        }
+        const response = this.db.prepare(
+          `UPDATE chat_session_messages SET status='queued',updated_at=?
+           WHERE id=? AND session_id=? AND role='assistant' AND status='failed'`,
+        ).run(now, job.sessionResponseId, job.sessionId);
+        if (response.changes !== 1) {
+          throw new Error(`session response "${job.sessionResponseId}" is not failed`);
+        }
+        this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, job.sessionId);
+      }
       this.insertAudit(0, "operator_retry", jobId, "failed->queued");
       const updated = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId));
       if (!updated) throw new Error(`retried job "${jobId}" disappeared`);

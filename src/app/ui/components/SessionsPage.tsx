@@ -45,6 +45,7 @@ interface SessionMessage {
   role: "user" | "assistant";
   content: string;
   status: "queued" | "running" | "completed" | "failed";
+  jobId: string | null;
   headSha: string;
   createdAt: string;
 }
@@ -89,7 +90,10 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   const [sessionOffset, setSessionOffset] = useState(0);
   const [sessionTotal, setSessionTotal] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState(sessionId);
+  const selectedSessionIdRef = useRef(sessionId);
   const [session, setSession] = useState<SessionDetail>();
+  const pendingReplyJobs = useRef(new Map<string, string>());
+  const [pendingReplySessions, setPendingReplySessions] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,6 +115,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   const projectSearchRequest = useRef(0);
   const branchSearchRequest = useRef(0);
   const targetSearchRequest = useRef(0);
+  const replySubmitting = useRef(false);
   const pickerInput = useRef<InputRef>(null);
 
   useEffect(() => {
@@ -120,8 +125,12 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   }, [openPicker]);
 
   useEffect(() => {
+    selectedSessionIdRef.current = sessionId;
     setSelectedSessionId(sessionId);
+    setSession(undefined);
     setShowCreate(!sessionId);
+    setDraftMessage("");
+    setError("");
   }, [sessionId]);
 
   useEffect(() => {
@@ -154,6 +163,15 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
       .then((value) => {
         if (!active) return;
         setSession(value);
+        const pendingJobId = pendingReplyJobs.current.get(value.id);
+        if (pendingJobId && value.messages.some((message) => message.jobId === pendingJobId)) {
+          pendingReplyJobs.current.delete(value.id);
+          setPendingReplySessions((current) => {
+            const next = new Set(current);
+            next.delete(value.id);
+            return next;
+          });
+        }
         setError("");
         onUpdated(new Date().toISOString());
       })
@@ -163,14 +181,15 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     };
   }, [copy, selectedSessionId, refreshToken, pollToken, onUpdated]);
 
-  const hasActiveTurn = session?.messages.some((message) => message.role === "assistant" &&
+  const currentSession = session?.id === selectedSessionId && selectedSessionId === sessionId ? session : undefined;
+  const hasActiveTurn = currentSession?.messages.some((message) => message.role === "assistant" &&
     (message.status === "queued" || message.status === "running")) ?? false;
 
   useEffect(() => {
-    if (!hasActiveTurn) return;
+    if (!hasActiveTurn && !pendingReplySessions.has(selectedSessionId)) return;
     const timer = window.setInterval(() => setPollToken((value) => value + 1), 2_500);
     return () => window.clearInterval(timer);
-  }, [hasActiveTurn]);
+  }, [hasActiveTurn, pendingReplySessions, selectedSessionId]);
 
   async function searchProjects(query = projectQuery) {
     const requestId = ++projectSearchRequest.current;
@@ -270,6 +289,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
       const created = await result.json() as { sessionId: string };
       setDraftMessage("");
       setSelectedSessionId(created.sessionId);
+      selectedSessionIdRef.current = created.sessionId;
       onSessionChange(created.sessionId);
       setShowCreate(false);
       setSessionOffset(0);
@@ -284,11 +304,13 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   }
 
   async function sendReply(message: string) {
-    if (!session || !message.trim() || hasActiveTurn) return;
+    if (!currentSession || !message.trim() || hasActiveTurn || busy || replySubmitting.current || pendingReplySessions.has(currentSession.id)) return;
+    const replySessionId = currentSession.id;
+    replySubmitting.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await fetch(`/api/ops/sessions/${encodeURIComponent(session.id)}/messages`, {
+      const result = await fetch(`/api/ops/sessions/${encodeURIComponent(replySessionId)}/messages`, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify({ message }),
@@ -296,23 +318,34 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
         signal: AbortSignal.timeout(20_000),
       });
       if (!result.ok) {
-        if (result.status === 409) throw new Error(copy.targetChanged);
+        if (result.status === 409) {
+          const body = await result.json() as { error?: unknown };
+          if (body.error === "chat session already has an active message") {
+            throw new Error(copy.sessionTurnActive);
+          }
+          throw new Error(copy.targetChanged);
+        }
         throw new Error(copy.requestFailedTemplate
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      setDraftMessage("");
+      const queued = await result.json() as { jobId: string };
+      pendingReplyJobs.current.set(replySessionId, queued.jobId);
+      setPendingReplySessions((current) => new Set(current).add(replySessionId));
+      if (selectedSessionIdRef.current === replySessionId) setDraftMessage("");
       setPollToken((value) => value + 1);
       onRefresh();
     } catch (cause) {
-      setError(errorMessage(cause));
+      if (selectedSessionIdRef.current === replySessionId) setError(errorMessage(cause));
     } finally {
+      replySubmitting.current = false;
       setBusy(false);
     }
   }
 
   function startNewSession() {
     setSelectedSessionId("");
+    selectedSessionIdRef.current = "";
     onSessionChange("");
     setSession(undefined);
     setShowCreate(true);
@@ -353,7 +386,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
       </div>
     ),
   }));
-  const bubbleItems: BubbleItemType[] = (session?.messages ?? []).map((message) => ({
+  const bubbleItems: BubbleItemType[] = (currentSession?.messages ?? []).map((message) => ({
     key: message.id,
     role: message.role === "user" ? "user" : "ai",
     header: (
@@ -386,6 +419,10 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                 activeKey={selectedSessionId || undefined}
                 onActiveChange={(key) => {
                   setSelectedSessionId(key);
+                  selectedSessionIdRef.current = key;
+                  setSession(undefined);
+                  setDraftMessage("");
+                  setError("");
                   onSessionChange(key);
                   setShowCreate(false);
                 }}
@@ -402,10 +439,10 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
           <div className="session-workspace-heading">
             {showCreate ? (
               <Typography.Text strong>{copy.newSession}</Typography.Text>
-            ) : session ? (
+            ) : currentSession ? (
               <div>
-                <Typography.Text strong>{session.projectName} · {targetLabel(session, copy)}</Typography.Text>
-                <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{session.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
+                <Typography.Text strong>{currentSession.projectName} · {targetLabel(currentSession, copy)}</Typography.Text>
+                <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{currentSession.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
               </div>
             ) : <Typography.Text strong>{copy.sessionsTitle}</Typography.Text>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
@@ -608,7 +645,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                     ) : null}
                   </div>
                 </div>
-              ) : bubbleItems.length ? (
+              ) : currentSession && bubbleItems.length ? (
                 <Bubble.List
                   className="session-transcript"
                   items={bubbleItems}
@@ -625,7 +662,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
               aria-label={copy.initialMessage}
               value={draftMessage}
               placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
-              disabled={busy || (showCreate ? !canCreateSession : hasActiveTurn || !session)}
+              disabled={busy || (showCreate ? !canCreateSession : hasActiveTurn || !currentSession || pendingReplySessions.has(selectedSessionId))}
               onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
               onSubmit={submitMessage}
               suffix={(_node, { components: { SendButton } }) => (

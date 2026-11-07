@@ -175,6 +175,42 @@ describe("JobStore", () => {
     }).jobId).toBeTruthy();
   });
 
+  it("requeues the assistant response when retrying a failed session job", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createChatSession({
+      projectId: 7,
+      projectName: "group/project",
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      targetTitle: "",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Retry this session turn",
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a session job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "failed", "temporary failure");
+    expect(store.getChatSession(created.sessionId)?.messages[1]?.status).toBe("failed");
+
+    store.retryFailedJob(job.id);
+
+    expect(store.getJob(job.id).status).toBe("queued");
+    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({
+      status: "queued",
+      jobId: job.id,
+    });
+    expect(() => store.addChatSessionMessage(created.sessionId, {
+      projectId: 7,
+      targetType: "repository",
+      targetIid: 0,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Do not overlap the retry",
+    })).toThrow("chat session already has an active message");
+  });
+
   it("queues Issue assistant jobs with a distinct issue target", async () => {
     store = await JobStore.open(":memory:");
     const result = store.createIssueImplementation("issue-event", "project:issue:17:note:9", {
