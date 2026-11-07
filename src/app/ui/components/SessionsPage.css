@@ -109,6 +109,7 @@
 .session-workspace {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -141,6 +142,7 @@
   flex: 1;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
   background: var(--session-canvas);
 }
 
@@ -162,7 +164,7 @@
   min-height: 0;
   flex-direction: column;
   overflow: auto;
-  padding: 24px 24px 140px;
+  padding: 24px;
 }
 
 .session-setup-pane {
@@ -304,19 +306,15 @@
 }
 
 .session-composer {
-  position: absolute;
+  position: relative;
   z-index: 2;
-  right: 24px;
-  bottom: 20px;
-  left: 24px;
-  width: 100%;
-  max-width: 768px;
-  margin: 0 auto;
+  flex: 0 0 auto;
+  width: min(768px, calc(100% - 48px));
+  margin: 0 auto 20px;
   border: 1px solid #d1d5db;
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 4px 10px rgb(0 0 0 / 5%);
-  transform: translateX(0);
 }
 
 .session-transcript .ant-bubble-content {
@@ -369,7 +367,7 @@
   }
 
   .session-transcript-pane {
-    padding: 18px 12px 124px;
+    padding: 18px 12px 24px;
   }
 
   .session-start {
@@ -390,9 +388,7 @@
   }
 
   .session-composer {
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    width: auto;
+    width: calc(100% - 24px);
+    margin-bottom: 12px;
   }
 }

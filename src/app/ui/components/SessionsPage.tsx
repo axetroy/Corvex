@@ -136,11 +136,6 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
           return [...byId.values()];
         });
         setSessionTotal(page.total);
-        if (!selectedSessionId && page.items[0]) {
-          setSelectedSessionId(page.items[0].id);
-          onSessionChange(page.items[0].id);
-          setShowCreate(false);
-        }
         onUpdated(new Date().toISOString());
       })
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
