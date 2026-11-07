@@ -144,7 +144,13 @@ function addedLines(patch: string): Map<number, string> {
       current = Number(header[1]);
       continue;
     }
-    if (!line || line.startsWith("+++") || line.startsWith("---") || line.startsWith("\\ No newline")) {
+    // 文件头行（--- a/... / +++ b/...）和空行跳过；hunk 体内容（以 + 或 空格开头）不参与跳过
+    if (
+      !line ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ") ||
+      line.startsWith("\\ No newline")
+    ) {
       continue;
     }
     if (line.startsWith("+")) {

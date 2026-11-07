@@ -370,8 +370,15 @@ export class Worker {
       }
       if (job.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
+      this.store.recordExecutionEvent({
+        ...stepContext,
+        step: "worker.validate_head_sha",
+        status: "ignored",
+        input: { expectedHeadSha: job.headSha, actualHeadSha: job.headSha },
+        output: { accepted: false, reason: "invalid_head_sha" },
+      });
       transition("stale");
-      throw new Error("The review task did not include a full MR Head SHA.");
+      return;
     }
     const mergeRequest = await traceExecutionStep(
       this.store,

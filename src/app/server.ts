@@ -181,7 +181,11 @@ export class CorvexServer {
     } finally {
       signal.removeEventListener("abort", stopRetention);
       retention.abort();
-      await retentionTask;
+      try {
+        await retentionTask;
+      } catch (error) {
+        console.error("retention task ended unexpectedly", { error: errorMessage(error) });
+      }
     }
   }
 

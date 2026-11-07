@@ -1001,7 +1001,7 @@ export class JobStore {
           "UPDATE chat_session_messages SET status='running',updated_at=? WHERE id=? AND status='queued'",
         ).run(now.toISOString(), row.session_response_id);
       }
-      this.insertAudit(row.actor_id, "job_status", row.id, "queued->preparing");
+      this.insertAudit(row.actor_id, "job_status", row.id, "queued->preparing", now.toISOString());
       const claimed = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(row.id));
       if (!claimed) throw new Error(`claimed job "${row.id}" disappeared`);
       return mapJob(claimed);
@@ -1040,7 +1040,7 @@ export class JobStore {
           ).run(to === "completed" ? "completed" : "failed", now, sessionJob.session_response_id);
         }
       }
-      this.insertAudit(row.actor_id, "job_status", jobId, `${from}->${to}`);
+      this.insertAudit(row.actor_id, "job_status", jobId, `${from}->${to}`, now);
     });
   }
 
@@ -1087,8 +1087,8 @@ export class JobStore {
           "UPDATE chat_session_messages SET status='queued',updated_at=? WHERE id=? AND status='running'",
         ).run(finishedAt, sessionJob.session_response_id);
       }
-      this.insertAudit(row.actor_id, "job_status", jobId, `${from}->queued`);
-      this.insertAudit(row.actor_id, "automatic_retry", jobId, `available_at:${availableAt}`);
+      this.insertAudit(row.actor_id, "job_status", jobId, `${from}->queued`, finishedAt);
+      this.insertAudit(row.actor_id, "automatic_retry", jobId, `available_at:${availableAt}`, finishedAt);
       return true;
     });
   }
@@ -1358,7 +1358,7 @@ export class JobStore {
       parameters.push(query.mrIid);
     }
     if (search) {
-      clauses.push("(instr(lower(id), lower(?)) > 0 OR instr(CAST(project_id AS TEXT) || ':' || CAST(mr_iid AS TEXT), ?) > 0)");
+      clauses.push("(instr(lower(id), lower(?)) > 0 OR instr(CAST(project_id AS TEXT) || ':' || CAST(CASE WHEN target_type='merge_request' THEN mr_iid ELSE target_iid END AS TEXT), ?) > 0)");
       parameters.push(search, search);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -1516,7 +1516,7 @@ export class JobStore {
         }
         this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, job.session_id);
       }
-      this.insertAudit(0, "operator_retry", jobId, "failed->queued");
+      this.insertAudit(0, "operator_retry", jobId, "failed->queued", now);
       const updated = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId));
       if (!updated) throw new Error(`retried job "${jobId}" disappeared`);
       const summary = mapJob(updated);
@@ -1643,7 +1643,7 @@ export class JobStore {
           )
           .run(now.toISOString(), elapsed, error, event.id);
       }
-      this.insertAudit(row.actor_id, "job_status", row.id, `${row.status}->${status}`);
+      this.insertAudit(row.actor_id, "job_status", row.id, `${row.status}->${status}`, now.toISOString());
     }
   }
 
@@ -1671,10 +1671,10 @@ export class JobStore {
       .run(eventId, response, new Date().toISOString());
   }
 
-  private insertAudit(actorId: number, action: string, resource: string, result: string): void {
+  private insertAudit(actorId: number, action: string, resource: string, result: string, at?: string): void {
     this.db
       .prepare("INSERT INTO audit_events(actor_id,action,resource,result,created_at) VALUES (?,?,?,?,?)")
-      .run(actorId, action, resource, result, new Date().toISOString());
+      .run(actorId, action, resource, result, at ?? new Date().toISOString());
   }
 
   private linkExecutionEvents(eventId: string, jobId: string): void {
