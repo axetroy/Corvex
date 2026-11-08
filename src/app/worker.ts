@@ -232,6 +232,16 @@ export class Worker {
       });
       return;
     }
+    // 任务已到达终态（stale / cancelled / failed / completed）时，
+    // 状态转换在 execute() 内已完成，无需再尝试标记失败，避免无效转换。
+    if (stage === "stale" || stage === "cancelled" || stage === "failed" || stage === "completed") {
+      console.info("worker job already in terminal state after error; no further recovery needed", {
+        jobId: job.id,
+        stage,
+        error: message(processingError),
+      });
+      return;
+    }
     try {
       if (this.store.cancellationRequested(job.id, job.leaseToken)) {
         this.store.updateLeasedStatus(
@@ -1219,9 +1229,11 @@ export class Worker {
       () => this.gitlab.getMergeRequest(job.projectId, job.mrIid, signal),
       (value) => ({ state: value.state, sha: value.sha, diffRefs: value.diff_refs }),
     );
+    // GitLab 重算 MR diff refs 有延迟：diff_refs.head_sha 可能尚未更新为刚推送的
+    // commit，而 mr.sha 已指向新 head。任一字段与推送的 SHA 匹配即视为快照有效。
     const current =
       latest.state === "opened" &&
-      sameSha(headSha(latest), pushedSha) &&
+      (sameSha(latest.diff_refs.head_sha, pushedSha) || sameSha(latest.sha, pushedSha)) &&
       sameSha(original.diff_refs.base_sha, latest.diff_refs.base_sha) &&
       sameSha(original.diff_refs.start_sha, latest.diff_refs.start_sha);
     this.store.recordExecutionEvent({
