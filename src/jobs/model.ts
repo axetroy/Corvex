@@ -1,6 +1,12 @@
 /** 系统可入队并由 Worker 处理的任务类型集合。 */
 export const jobTypes = ["review", "fix", "explain", "chat", "implement", "session"] as const;
 export type JobType = (typeof jobTypes)[number];
+
+/** 在边界处校验外部字符串是否为已知任务类型。 */
+export function isJobType(value: string): value is JobType {
+  return jobTypes.some((type) => type === value);
+}
+
 export type JobTargetType = "merge_request" | "issue" | "repository";
 export type ChatSessionMessageStatus = "queued" | "running" | "completed" | "failed";
 
@@ -18,6 +24,11 @@ export const jobStatuses = [
   "cancelled",
 ] as const;
 export type JobStatus = (typeof jobStatuses)[number];
+
+/** 在边界处校验外部字符串是否为已知任务状态。 */
+export function isJobStatus(value: string): value is JobStatus {
+  return jobStatuses.some((status) => status === value);
+}
 
 export interface Job {
   id: string;

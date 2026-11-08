@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { getPromptTemplates } from "../agent/prompts.js";
 import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
+import { errorMessage } from "../errors.js";
+import { isRecord } from "../guards.js";
 import type { Change, DiffResult } from "../git/types.js";
 import type { MergeRequestComment } from "../gitlab/client.js";
 import type { JobTraceEntry } from "../jobs/model.js";
@@ -63,10 +65,6 @@ class ReviewJsonDecodeError extends Error {
 }
 
 class ReviewJsonValidationError extends Error {}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function validText(value: unknown, min: number, max: number): value is string {
   return (
@@ -378,22 +376,22 @@ export class ReviewWorkflow {
     let batch: Change[] = [];
     let omittedFiles = policyOmittedFiles;
     let blockingOmittedFiles = policyBlockingOmittedFiles;
-    for (const change of selectedInput.changes) {
-      const candidate = [...batch, change];
-      const exceedsContext = Buffer.byteLength(JSON.stringify({
+    const contextBytes = (changes: Change[]): number =>
+      Buffer.byteLength(JSON.stringify({
         merge_request: context,
-        changes: candidate,
+        changes,
         ...(reviewRequest ? { review_request: reviewRequest } : {}),
-      })) > this.maxContextBytes;
-      if (batch.length > 0 && (candidate.length > reviewBatchFileLimit || exceedsContext)) {
+      }));
+    for (const change of selectedInput.changes) {
+      let candidate = [...batch, change];
+      let candidateBytes = contextBytes(candidate);
+      if (batch.length > 0 && (candidate.length > reviewBatchFileLimit || candidateBytes > this.maxContextBytes)) {
         batches.push(batch);
         batch = [];
+        candidate = [change];
+        candidateBytes = contextBytes(candidate);
       }
-      if (Buffer.byteLength(JSON.stringify({
-        merge_request: context,
-        changes: [...batch, change],
-        ...(reviewRequest ? { review_request: reviewRequest } : {}),
-      })) > this.maxContextBytes) {
+      if (candidateBytes > this.maxContextBytes) {
         omittedFiles++;
         blockingOmittedFiles++;
         continue;
@@ -521,7 +519,7 @@ export class ReviewWorkflow {
         model: response.model,
         responseBytes: Buffer.byteLength(response.content),
         responseContent: response.content,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: errorMessage(error),
       });
     };
     const parseResponse = (response: Awaited<ReturnType<PiAgent["generate"]>>) => {

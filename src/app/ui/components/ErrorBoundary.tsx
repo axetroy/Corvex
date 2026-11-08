@@ -1,6 +1,7 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { Alert, Button, Typography } from "antd";
+import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 
 interface Props {
@@ -17,7 +18,7 @@ export class ErrorBoundary extends Component<Props, State> {
   state: State = {};
 
   static getDerivedStateFromError(error: unknown): State {
-    return { message: error instanceof Error ? error.message : String(error) };
+    return { message: errorMessage(error) };
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {

@@ -1,6 +1,7 @@
 import { getPromptTemplates } from "../agent/prompts.js";
 import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
+import { isRecord } from "../guards.js";
 import type { DiffResult } from "../git/types.js";
 import type { ReviewContext } from "../review/workflow.js";
 
@@ -14,10 +15,6 @@ export interface FixOutcome {
 interface FixModelResult {
   summary: string;
   patch: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function parseFixResponse(raw: string, maxPatchBytes: number): FixModelResult {

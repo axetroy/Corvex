@@ -30,8 +30,3 @@ export async function fetchJson<T>(path: string, copy: Copy): Promise<T> {
   }
   return await response.json() as T;
 }
-
-/** 把未知的抛出值转换为可展示的错误文本。 */
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -12,6 +12,7 @@ import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { AssistantMessageEvent, StreamOptions } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
+import { errorMessage } from "../errors.js";
 import type { JobTraceEntry, JobType } from "../jobs/model.js";
 import type { JobStore } from "../jobs/store.js";
 import { traceExecutionStep } from "../jobs/execution.js";
@@ -180,7 +181,7 @@ export class PiAgent {
           );
         }
       }
-      throw new Error(`Pi agent run failed: ${error instanceof Error ? error.message : String(error)}`, {
+      throw new Error(`Pi agent run failed: ${errorMessage(error)}`, {
         cause: error,
       });
     }
@@ -555,7 +556,7 @@ export class PiAgent {
           durationMs,
           undefined,
           undefined,
-          error instanceof Error ? error.message : String(error),
+          errorMessage(error),
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,
@@ -639,7 +640,7 @@ export class PiAgent {
         jobId: trace.jobId,
         kind,
         name: name.slice(0, 128),
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
       return undefined;
     }
@@ -677,7 +678,7 @@ export class PiAgent {
       console.warn("record job trajectory completion failed", {
         traceId,
         status,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
     }
   }

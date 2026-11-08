@@ -1,5 +1,6 @@
 import type { JobStore } from "./store.js";
 import type { ExecutionEventStatus } from "./model.js";
+import { errorMessage } from "../errors.js";
 
 /**
  * 用于把 webhook 投递或 Worker 尝试关联到执行事件；至少提供一个关联 ID。
@@ -37,7 +38,7 @@ export async function traceExecutionStep<T>(
       failureStatus(error),
       performance.now() - startedAt,
       undefined,
-      error instanceof Error ? error.message : String(error),
+      errorMessage(error),
     );
     throw error;
   }
