@@ -15,6 +15,19 @@ export default defineConfig({
     assetsDir: "assets",
     target: "es2022",
     sourcemap: false,
+    // antd 作为单一 vendor chunk 必然超过默认 500 kB 阈值，其余业务代码已按路由拆分。
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        // 把体积稳定的第三方库拆成独立 chunk，页面按需加载时只增量下载业务代码。
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/\/(?:react|react-dom|scheduler)\//.test(id)) return "react";
+          if (/\/(?:antd|@ant-design|rc-[^/]+|@rc-component)\//.test(id)) return "antd";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     proxy: {

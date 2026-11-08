@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
+import { errorMessage } from "../errors.js";
 import { FixWorkflow } from "../fix/workflow.js";
 import { ImplementWorkflow } from "../implement/workflow.js";
 import { GitManager, GitPushError } from "../git/manager.js";
@@ -36,6 +37,8 @@ const retryableNetworkCodes = new Set([
 ]);
 /** Git CLI 在远端网络故障时可能返回文本而非系统错误码。 */
 const retryableNetworkMessage = /network error|connection (?:reset|refused|timed out)|could not resolve host|failed to connect|remote end hung up unexpectedly|tls connection.*(?:timeout|terminated)/i;
+/** 单次会话请求注入模型上下文的历史消息条数上限，按最近优先截断。 */
+const sessionHistoryMessages = 30;
 
 function isRetryableJobFailure(error: unknown): boolean {
   const pending: unknown[] = [error];
@@ -70,10 +73,6 @@ function isRetryableJobFailure(error: unknown): boolean {
 
 function automaticRetryDelay(attemptCount: number): number {
   return Math.min(automaticRetryMaxDelayMs, automaticRetryBaseDelayMs * 2 ** Math.max(0, attemptCount - 1));
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function errorDetails(error: unknown): string {
@@ -149,13 +148,13 @@ export class Worker {
       try {
         this.store.heartbeatWorker(this.workerId);
       } catch (error) {
-        console.error("update worker heartbeat failed", { error: message(error) });
+        console.error("update worker heartbeat failed", { error: errorMessage(error) });
       }
       let job: Job | undefined;
       try {
         job = this.store.claimNextWithLease(leaseMs);
       } catch (error) {
-        console.error("claim worker job failed", { error: message(error) });
+        console.error("claim worker job failed", { error: errorMessage(error) });
       }
       if (job) {
         console.info("Corvex worker claimed job", {
@@ -228,7 +227,7 @@ export class Worker {
     if (shutdownSignal.aborted) {
       console.warn("worker stopped during job; lease will recover it", {
         jobId: job.id,
-        error: message(processingError),
+        error: errorMessage(processingError),
       });
       return;
     }
@@ -238,7 +237,7 @@ export class Worker {
       console.info("worker job already in terminal state after error; no further recovery needed", {
         jobId: job.id,
         stage,
-        error: message(processingError),
+        error: errorMessage(processingError),
       });
       return;
     }
@@ -257,10 +256,10 @@ export class Worker {
         return;
       }
     } catch (leaseError) {
-      if (message(leaseError) !== message(processingError)) {
+      if (errorMessage(leaseError) !== errorMessage(processingError)) {
         console.error("could not check cancellation after job failure", {
           jobId: job.id,
-          error: message(leaseError),
+          error: errorMessage(leaseError),
         });
       }
     }
@@ -282,42 +281,39 @@ export class Worker {
             jobId: job.id,
             attempt: job.attemptCount,
             retryAt: new Date(availableAt).toISOString(),
-            error: message(processingError),
+            error: errorMessage(processingError),
           });
           return;
         }
       } catch (retryError) {
         console.error("could not schedule automatic worker retry", {
           jobId: job.id,
-          error: message(retryError),
+          error: errorMessage(retryError),
         });
       }
     }
     // 发布请求可能已在 GitLab 生效，自动重试可能产生重复评论。
-    if (stage !== "publishing") {
-      try {
-        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
-        if (job.type === "session") {
-          this.store.finishChatSessionResponse(job.id, "failed", `This turn failed: ${message(processingError)}`);
-        }
-      } catch (statusError) {
-        console.error("could not mark job failed", {
-          jobId: job.id,
-          error: message(statusError),
-          processingError: message(processingError),
-        });
+    const publishingStage = stage === "publishing";
+    try {
+      this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
+      if (!publishingStage && job.type === "session") {
+        this.store.finishChatSessionResponse(job.id, "failed", `This turn failed: ${errorMessage(processingError)}`);
       }
-    } else {
-      try {
-        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
-      } catch (statusError) {
+    } catch (statusError) {
+      if (publishingStage) {
         console.error("publishing outcome is uncertain; no automatic retry will be attempted", {
           jobId: job.id,
-          error: message(statusError),
+          error: errorMessage(statusError),
+        });
+      } else {
+        console.error("could not mark job failed", {
+          jobId: job.id,
+          error: errorMessage(statusError),
+          processingError: errorMessage(processingError),
         });
       }
     }
-    console.error("process worker job failed", { jobId: job.id, error: message(processingError) });
+    console.error("process worker job failed", { jobId: job.id, error: errorMessage(processingError) });
   }
 
   private async maintainLease(
@@ -346,7 +342,7 @@ export class Worker {
           elapsed = 0;
         }
       } catch (error) {
-        controller.abort(new Error(`maintain job lease: ${message(error)}`, { cause: error }));
+        controller.abort(new Error(`maintain job lease: ${errorMessage(error)}`, { cause: error }));
         return;
       }
     }
@@ -373,12 +369,12 @@ export class Worker {
     if (job.type === "fix" && !this.config.fix.enabled) {
       throw new Error("fix task cannot run because fix mode is disabled");
     }
-      if (job.type === "implement") {
-        if (job.targetType !== "issue") throw new Error("Issue task has an invalid target type");
-        await this.executeIssueImplementation(job, signal, transition);
-        return;
-      }
-      if (job.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
+    if (job.type === "implement") {
+      if (job.targetType !== "issue") throw new Error("Issue task has an invalid target type");
+      await this.executeIssueImplementation(job, signal, transition);
+      return;
+    }
+    if (job.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
       this.store.recordExecutionEvent({
         ...stepContext,
@@ -680,7 +676,7 @@ export class Worker {
             jobId: job.id,
             path: finding.filePath,
             line: finding.line,
-            error: message(error),
+            error: errorMessage(error),
           });
         }
       }
@@ -791,7 +787,7 @@ export class Worker {
       const history = session.messages
         .slice(0, lastUserIndex)
         .filter((item) => item.status === "completed")
-        .slice(-30)
+        .slice(-sessionHistoryMessages)
         .map(({ role, content }) => ({ role, content }));
       const userPrompt = JSON.stringify({
         target: {
@@ -1080,7 +1076,7 @@ export class Worker {
           (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
         );
       } catch (error) {
-        console.warn("Issue result note failed after draft merge request creation", { jobId: job.id, mergeRequestIid: mr.iid, error: message(error) });
+        console.warn("Issue result note failed after draft merge request creation", { jobId: job.id, mergeRequestIid: mr.iid, error: errorMessage(error) });
       }
       transition("completed");
     } finally {
