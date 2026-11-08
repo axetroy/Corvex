@@ -4,7 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { JobStore } from "../jobs/store.js";
-import { jobStatuses, jobTypes, type JobStatus, type JobType } from "../jobs/model.js";
+import { isJobStatus, isJobType } from "../jobs/model.js";
+import { errorMessage } from "../errors.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
 import { GitLabApiError, GitLabClient, GitLabWriteError } from "../gitlab/client.js";
 import { decodeGitLabNoteEvent, isIssueNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
@@ -56,10 +57,6 @@ function respondJson(response: ServerResponse, status: number, value: unknown): 
   response.end(JSON.stringify(value));
 }
 
-function isJobStatus(value: string): value is JobStatus {
-  return jobStatuses.some((status) => status === value);
-}
-
 /** 构建后的运维控制台目录；开发与生产都从包根目录的 dist/app/ui 读取。 */
 const operationsUiDirectory = new URL("../../dist/app/ui/", import.meta.url);
 
@@ -83,10 +80,6 @@ function operationsUiAsset(relativePath: string): { file: string; contentType: s
   return contentType ? { file: relativePath, contentType } : undefined;
 }
 
-function isJobType(value: string): value is JobType {
-  return jobTypes.some((type) => type === value);
-}
-
 function basicCredentialsMatch(request: IncomingMessage, username: string, password: string): boolean {
   const authorization = request.headers.authorization;
   const match = authorization?.match(/^Basic ([A-Za-z0-9+/]+={0,2})$/i);
@@ -106,10 +99,6 @@ function optionalInteger(value: string | null, minimum: number, maximum: number)
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-}
-
-function contains(values: number[], target: number): boolean {
-  return values.includes(target);
 }
 
 function eventId(event: ReturnType<typeof decodeGitLabNoteEvent>): string {
@@ -760,7 +749,7 @@ export class CorvexServer {
       this.respondTrackedWebhook(response, 202, "", deliveryId, id, { ...details, reason });
       return;
     }
-    if (contains(this.config.gitlab.blockedUserIds, event.user.id)) {
+    if (this.config.gitlab.blockedUserIds.includes(event.user.id)) {
       console.warn("GitLab webhook rejected", { ...details, reason: "user_blocked" });
       this.store.recordExecutionEvent({
         deliveryId,
@@ -1138,8 +1127,4 @@ export class CorvexServer {
 function header(request: IncomingMessage, name: string): string {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

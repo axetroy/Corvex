@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "antd";
-import { errorMessage, fetchJson } from "../api.js";
+import { fetchJson } from "../api.js";
+import { errorMessage } from "../../../errors.js";
 import { formatDate, formatDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";

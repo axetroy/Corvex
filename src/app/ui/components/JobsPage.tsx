@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Input, Select } from "antd";
-import { errorMessage, fetchJson } from "../api.js";
+import { fetchJson } from "../api.js";
+import { errorMessage } from "../../../errors.js";
 import { formatDate, formatDuration, formatJobTarget } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";

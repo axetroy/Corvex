@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { isRecord } from "../guards.js";
 
 export interface MergeRequest {
   iid: number;
@@ -53,17 +54,6 @@ export interface CreatedMergeRequest {
   targetBranch: string;
 }
 
-export interface MergeRequestDiff {
-  old_path: string;
-  new_path: string;
-  diff: string;
-  new_file: boolean;
-  renamed_file: boolean;
-  deleted_file: boolean;
-  too_large: boolean;
-  collapsed: boolean;
-}
-
 export interface MergeRequestComment {
   id: number | string;
   author: string;
@@ -116,12 +106,10 @@ export class GitLabApiError extends Error {
 
 /** GitLab 单个 API 响应正文的最大读取字节数。 */
 const MAX_RESPONSE_BYTES = 20 << 20;
-/** 分页合并请求 Diff 累计允许读取的最大字节数。 */
-const MAX_DIFF_BYTES = 16 << 20;
 /** 单条历史评论最多保留的字符数，避免超大评论占满模型上下文。 */
 const MAX_COMMENT_CHARACTERS = 4_000;
 /** Issue 历史评论的总模型上下文预算。 */
-const MAX_ISSUE_COMMENT_CONTEXT_BYTES = 24 << 10;
+const ISSUE_COMMENT_CONTEXT_BUDGET_BYTES = 24 << 10;
 /** 历史评论最多扫描的 Notes API 页数。 */
 const MAX_COMMENT_PAGES = 10;
 /** MR 标题和描述工具的输入上限。 */
@@ -179,10 +167,6 @@ async function readBounded(response: Response, maxBytes: number): Promise<Uint8A
     offset += chunk.byteLength;
   }
   return result;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function fullSha(value: string): boolean {
@@ -391,52 +375,6 @@ export class GitLabClient {
     return query;
   }
 
-  async getMergeRequestDiff(
-    projectId: number,
-    mrIid: number,
-    signal?: AbortSignal,
-  ): Promise<MergeRequestDiff[]> {
-    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
-    const all: MergeRequestDiff[] = [];
-    let totalBytes = 0;
-    // 同时限制页数、文件数和累计字节数，避免超大 MR diff 无界占用内存。
-    for (let page = 1; page <= 20; page++) {
-      const query = new URLSearchParams({ per_page: "100", page: String(page) });
-      const response = await this.request(
-        `/projects/${projectId}/merge_requests/${mrIid}/diffs?${query}`,
-        this.readToken,
-        "GET",
-        signal,
-      );
-      const body = await this.successBody(response);
-      let pageDiffs: unknown;
-      try {
-        pageDiffs = JSON.parse(new TextDecoder().decode(body));
-      } catch (error) {
-        throw new Error(`decode GitLab API response: ${String(error)}`, { cause: error });
-      }
-      if (!Array.isArray(pageDiffs)) throw new Error("GitLab diff response is not an array");
-      if (all.length + pageDiffs.length > 2000) {
-        throw new Error("merge request diff exceeds the 2000-file safety limit");
-      }
-      for (const item of pageDiffs) {
-        if (!isRecord(item)) throw new Error("GitLab returned an invalid diff entry");
-        const diff = item as unknown as MergeRequestDiff;
-        totalBytes += diff.old_path.length + diff.new_path.length + diff.diff.length;
-        if (totalBytes > MAX_DIFF_BYTES) {
-          throw new Error(`merge request diff exceeds the ${MAX_DIFF_BYTES}-byte safety limit`);
-        }
-        all.push(diff);
-      }
-      const next = response.headers.get("x-next-page") ?? "";
-      if (!next && pageDiffs.length < 100) return all;
-      if (next && Number(next) !== page + 1) {
-        throw new Error(`GitLab returned invalid pagination cursor "${next}"`);
-      }
-    }
-    throw new Error("merge request diff exceeds the 20-page safety limit");
-  }
-
   async getMergeRequestComments(
     projectId: number,
     mrIid: number,
@@ -555,7 +493,7 @@ export class GitLabClient {
         let characters = 0;
         let commentBytes = 0;
         let truncated = false;
-        const availableBytes = MAX_ISSUE_COMMENT_CONTEXT_BYTES - totalBytes;
+        const availableBytes = ISSUE_COMMENT_CONTEXT_BUDGET_BYTES - totalBytes;
         for (const character of note.body) {
           const bytes = Buffer.byteLength(character);
           if (characters >= MAX_COMMENT_CHARACTERS || commentBytes + bytes > availableBytes) {
@@ -574,7 +512,7 @@ export class GitLabClient {
           truncated,
         });
         totalBytes += commentBytes;
-        if (comments.length >= limit || totalBytes >= MAX_ISSUE_COMMENT_CONTEXT_BYTES) return comments;
+        if (comments.length >= limit || totalBytes >= ISSUE_COMMENT_CONTEXT_BUDGET_BYTES) return comments;
       }
       const next = response.headers.get("x-next-page") ?? "";
       if (!next && pageNotes.length < 100) return comments;

@@ -667,6 +667,32 @@ describe("JobStore", () => {
     expect(store.jobCounts().failed ?? 0).toBe(0);
   });
 
+  it("prunes idle chat sessions with their messages but keeps sessions with an active reply", async () => {
+    store = await JobStore.open(":memory:");
+    const base = {
+      projectId: 7,
+      projectName: "group/project",
+      targetType: "repository" as const,
+      targetIid: 0,
+      targetBranch: "main",
+      targetTitle: "",
+      headSha: "a".repeat(40),
+      actorId: 0,
+    };
+    const idle = store.createChatSession({ ...base, request: "Summarize the repository layout" });
+    const active = store.createChatSession({ ...base, request: "Explain the worker loop" });
+    const activeResponseId = store.getChatSession(active.sessionId)?.messages[1]?.id;
+    if (!activeResponseId) throw new Error("expected a queued session response");
+    store.finishChatSessionResponse(idle.jobId, "completed", "The repository has a src and test tree.");
+
+    store.pruneHistory(new Date(Date.now() + 86_400_000), new Date(Date.now() + 86_400_000));
+
+    expect(store.getChatSession(idle.sessionId)).toBeUndefined();
+    const kept = store.getChatSession(active.sessionId);
+    expect(kept?.messages).toHaveLength(2);
+    expect(kept?.messages[1]).toMatchObject({ id: activeResponseId, status: "queued" });
+  });
+
   it("checks token reservations and records model call metrics", async () => {
     store = await JobStore.open(":memory:");
     const day = store.reserveModelTokens(1000, 100);

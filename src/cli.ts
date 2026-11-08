@@ -2,7 +2,8 @@ import { initializeConfig, loadConfig, type ConfigRole } from "./config/config.j
 import { CorvexServer } from "./app/server.js";
 import { Worker } from "./app/worker.js";
 import { JobStore } from "./jobs/store.js";
-import { jobStatuses, type JobStatus } from "./jobs/model.js";
+import { errorMessage } from "./errors.js";
+import { isJobStatus, type JobStatus } from "./jobs/model.js";
 import { GitLabClient } from "./gitlab/client.js";
 import { GitManager } from "./git/manager.js";
 
@@ -10,10 +11,6 @@ interface CliOptions {
   configPath: string;
   mode: "server" | "worker" | "check-config";
   configRole: ConfigRole;
-}
-
-function isJobStatus(value: string): value is JobStatus {
-  return jobStatuses.some((status) => status === value);
 }
 
 function parseArgs(args: string[]): CliOptions {
@@ -225,7 +222,7 @@ async function run(): Promise<void> {
 
 run().catch((error: unknown) => {
   console.error("Corvex stopped", {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage(error),
   });
   process.exitCode = 1;
 });

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { isRecord } from "../guards.js";
 
 /** 单个 GitLab Webhook 请求体允许的最大字节数。 */
 export const MAX_WEBHOOK_BODY_BYTES = 1 << 20;
@@ -32,10 +33,6 @@ export function isIssueNoteEvent(event: NoteEvent | IssueNoteEvent): event is Is
   return "issue" in event;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function positiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
 }
@@ -47,7 +44,7 @@ export function validateWebhookToken(expected: string, actual: string): boolean 
   return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
 }
 
-export function decodeNoteEvent(body: Uint8Array): NoteEvent {
+function parseNoteEventBody(body: Uint8Array): Record<string, unknown> {
   if (body.byteLength > MAX_WEBHOOK_BODY_BYTES) {
     throw new Error("GitLab webhook payload exceeds 1 MiB");
   }
@@ -58,6 +55,10 @@ export function decodeNoteEvent(body: Uint8Array): NoteEvent {
     throw new Error(`decode GitLab note event: ${String(error)}`, { cause: error });
   }
   if (!isRecord(event)) throw new Error("incomplete or unsupported GitLab note event");
+  return event;
+}
+
+function asNoteEvent(event: Record<string, unknown>): NoteEvent {
   const user = event.user;
   const project = event.project;
   const attributes = event.object_attributes;
@@ -82,17 +83,7 @@ export function decodeNoteEvent(body: Uint8Array): NoteEvent {
   return event as unknown as NoteEvent;
 }
 
-export function decodeIssueNoteEvent(body: Uint8Array): IssueNoteEvent {
-  if (body.byteLength > MAX_WEBHOOK_BODY_BYTES) {
-    throw new Error("GitLab webhook payload exceeds 1 MiB");
-  }
-  let event: unknown;
-  try {
-    event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-  } catch (error) {
-    throw new Error(`decode GitLab note event: ${String(error)}`, { cause: error });
-  }
-  if (!isRecord(event)) throw new Error("incomplete or unsupported GitLab note event");
+function asIssueNoteEvent(event: Record<string, unknown>): IssueNoteEvent {
   const user = event.user;
   const project = event.project;
   const attributes = event.object_attributes;
@@ -117,19 +108,17 @@ export function decodeIssueNoteEvent(body: Uint8Array): IssueNoteEvent {
   return event as unknown as IssueNoteEvent;
 }
 
+export function decodeNoteEvent(body: Uint8Array): NoteEvent {
+  return asNoteEvent(parseNoteEventBody(body));
+}
+
+export function decodeIssueNoteEvent(body: Uint8Array): IssueNoteEvent {
+  return asIssueNoteEvent(parseNoteEventBody(body));
+}
+
 export function decodeGitLabNoteEvent(body: Uint8Array): NoteEvent | IssueNoteEvent {
-  let event: unknown;
-  try {
-    event = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-  } catch {
-    return decodeNoteEvent(body);
-  }
-  if (
-    isRecord(event) &&
-    isRecord(event.object_attributes) &&
-    event.object_attributes.noteable_type === "Issue"
-  ) {
-    return decodeIssueNoteEvent(body);
-  }
-  return decodeNoteEvent(body);
+  const event = parseNoteEventBody(body);
+  const attributes = event.object_attributes;
+  if (isRecord(attributes) && attributes.noteable_type === "Issue") return asIssueNoteEvent(event);
+  return asNoteEvent(event);
 }

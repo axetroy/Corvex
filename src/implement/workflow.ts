@@ -1,6 +1,7 @@
 import { getPromptTemplates } from "../agent/prompts.js";
 import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
+import { isRecord } from "../guards.js";
 import type { IssueComment } from "../gitlab/client.js";
 
 export interface IssueImplementationContext {
@@ -39,10 +40,6 @@ interface IssueModelOutput {
   summary?: unknown;
   patch?: unknown;
   target_branch?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function parseImplementationResponse(

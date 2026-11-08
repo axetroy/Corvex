@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfigProvider, Menu, Select } from "antd";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
-import { JobDetailPage } from "./components/JobDetailPage.js";
-import { JobsPage } from "./components/JobsPage.js";
-import { OverviewPage } from "./components/OverviewPage.js";
-import { SessionsPage } from "./components/SessionsPage.js";
+import { Loading } from "./components/common.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
 import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, sessionsHash } from "./routing.js";
 import type { JobQueue } from "./types.js";
+
+// 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
+const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((module) => ({ default: module.OverviewPage })));
+const JobsPage = lazy(() => import("./components/JobsPage.js").then((module) => ({ default: module.JobsPage })));
+const JobDetailPage = lazy(() => import("./components/JobDetailPage.js").then((module) => ({ default: module.JobDetailPage })));
+const SessionsPage = lazy(() => import("./components/SessionsPage.js").then((module) => ({ default: module.SessionsPage })));
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -163,6 +166,7 @@ export function App() {
       </header>
       <main id="app" className="content" ref={mainRef} tabIndex={-1}>
         <ErrorBoundary key={page.kind === "sessions" ? "sessions" : route} copy={copy}>
+          <Suspense fallback={<Loading>{copy.loading}</Loading>}>
           {page.kind === "overview" ? (
             <OverviewPage
               copy={copy}
@@ -205,6 +209,7 @@ export function App() {
               onSessionChange={updateSessionRoute}
             />
           ) : null}
+          </Suspense>
         </ErrorBoundary>
       </main>
       <footer>{copy.footer}</footer>

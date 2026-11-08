@@ -109,7 +109,7 @@ Pi 工具和扩展以 Worker 的操作系统权限运行。Worker 应使用专�
   项目发现范围由 GitLab 只读 Token 决定，不使用静态项目白名单；可选用户阻止列表
   由 Corvex 强制执行。
 3. 机器人和系统评论不得创建任务；重复的 Webhook 事件必须保持幂等。
-4. `fix` 请求必须同时满足独立的修复白名单和修复模式已启用。
+4. `fix` 请求必须满足修复模式已启用（`fix.enabled`，且要求 `agent.enabled`）。
 5. 任务记录完整的 MR Head SHA；获取差异、准备 worktree 和发布时均须验证预期快照。
 6. 仓库路径必须规范化并限制在任务 worktree 内；在适用场景下拒绝符号链接、超大文件、
    二进制文件和范围外路径。
@@ -144,8 +144,7 @@ src/
   agent/               # Pi 会话工厂、事件和结构化结果解析
   review/
   fix/
-  policy/
-  observability/
+  implement/           # Issue 助手 / Draft MR 工作流
 test/
   unit/
   integration/
