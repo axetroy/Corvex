@@ -3,8 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { backup as sqliteBackup, DatabaseSync } from "node:sqlite";
 import {
-  jobStatuses,
-  jobTypes,
+  isJobStatus,
+  isJobType,
   type EventResult,
   type ChatSession,
   type ChatSessionMessage,
@@ -125,14 +125,6 @@ function serializeTraceValue(value: unknown): string | null {
     });
   }
   return truncated;
-}
-
-function isJobType(value: string): value is JobType {
-  return jobTypes.some((type) => type === value);
-}
-
-function isJobStatus(value: string): value is JobStatus {
-  return jobStatuses.some((status) => status === value);
 }
 
 function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefined {
@@ -676,6 +668,13 @@ export class JobStore {
         .prepare(`DELETE FROM jobs WHERE status IN (${statusParams}) AND updated_at < ?`)
         .run(...terminalStatuses, history);
       this.db.prepare("DELETE FROM execution_events WHERE job_id IS NULL AND started_at < ?").run(history);
+      // 会话消息通过外键级联删除；保留仍有排队或运行中回复的会话，避免删除活跃对话。
+      this.db
+        .prepare(
+          `DELETE FROM chat_sessions WHERE updated_at < ?
+           AND id NOT IN (SELECT session_id FROM chat_session_messages WHERE status IN ('queued','running'))`,
+        )
+        .run(history);
       this.db.prepare("DELETE FROM webhook_events WHERE received_at < ?").run(history);
       this.db
         .prepare("DELETE FROM model_token_usage WHERE day < ?")
@@ -1798,6 +1797,10 @@ export class JobStore {
     }
     this.db.exec("UPDATE jobs SET target_iid=mr_iid WHERE target_iid=0 AND target_type='merge_request'");
     this.db.exec("CREATE INDEX IF NOT EXISTS jobs_queue_available_idx ON jobs(status,available_at,created_at)");
+    // 过期租约回收按 lease_until 过滤，仅对已持有租约的行建部分索引，避免全表扫描。
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS jobs_lease_until_idx ON jobs(lease_until) WHERE lease_token != ''",
+    );
     const traceColumns = this.db.prepare("PRAGMA table_info(job_trace)").all() as { name: string }[];
     const existingTraceColumns = new Set(traceColumns.map((column) => column.name));
     const traceAdditions: Record<string, string> = {
