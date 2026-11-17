@@ -9,8 +9,11 @@
   --conversation-brand-soft: #eaf2fa;
 
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
-  height: min(820px, max(560px, calc(100vh - 180px)));
+  grid-template-columns: 288px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--conversation-border);
   border-radius: 14px;
@@ -385,75 +388,117 @@
   color: var(--conversation-muted);
 }
 
-.conversation-turn-button.ant-btn {
-  height: auto;
-  padding: 0 2px;
-  font-size: 12px;
-  line-height: 1.4;
+.conversation-tabs {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
 }
 
-.conversation-turn-drawer .ant-drawer-body {
-  background: var(--conversation-canvas, #f7f9fb);
+.conversation-tabs > .ant-tabs-nav {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 26px;
+  background: rgb(255 255 255 / 90%);
+  border-bottom: 1px solid var(--conversation-border);
+  backdrop-filter: blur(8px);
 }
 
-.conversation-turn-body {
+.conversation-tabs > .ant-tabs-body-holder {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.conversation-tabs > .ant-tabs-body-holder > .ant-tabs-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-tabs .ant-tabs-content,
+.conversation-tabs .ant-tabs-tabpane {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-tab-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 26px 32px;
+  background: var(--conversation-canvas);
+}
+
+.conversation-tab-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conversation-tab-heading .ant-typography {
+  margin: 0;
+}
+
+.conversation-trace {
+  display: flex;
   width: 100%;
+  flex-direction: column;
+  gap: 18px;
 }
 
-.conversation-turn-meta.ant-descriptions .ant-descriptions-item-label {
-  color: var(--conversation-muted, #71808e);
+.conversation-trace-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
 }
 
-.conversation-turn-meta code {
+.conversation-turn-select {
+  min-width: 240px;
+}
+
+.conversation-trace-hint {
+  font-size: 12px;
+}
+
+.conversation-turn-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conversation-turn-meta .ant-tag {
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  word-break: break-all;
-}
-
-.conversation-turn-request {
-  display: block;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .conversation-turn-error {
-  display: block;
+  margin: 0;
   color: #b42318;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.conversation-turn-tabs .ant-tabs-content-holder {
-  min-width: 0;
-}
-
-.conversation-turn-timeline {
+.conversation-stats {
   display: flex;
+  width: 100%;
   flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  gap: 18px;
 }
 
-.conversation-turn-timeline li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--conversation-muted, #71808e);
-  font-size: 13px;
-}
-
-.conversation-turn-timeline .ant-tag {
-  margin: 0;
-}
-
-.conversation-turn-live {
-  margin: 0;
-  color: var(--conversation-muted, #71808e);
-  font-size: 12px;
+.conversation-stats-request {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-composer {
@@ -476,20 +521,23 @@
 @media (max-width: 900px) {
   .conversations-layout {
     grid-template-columns: 224px minmax(0, 1fr);
-    height: min(820px, max(560px, calc(100vh - 168px)));
   }
 
   .conversation-workspace-heading {
     padding: 0 18px;
+  }
+
+  .conversation-tabs > .ant-tabs-nav,
+  .conversation-tab-pane {
+    padding-inline: 18px;
   }
 }
 
 @media (max-width: 640px) {
   .conversations-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(520px, 1fr);
-    height: auto;
-    min-height: 700px;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
   }
 
   .conversation-sidebar {
@@ -512,12 +560,13 @@
     padding: 0 14px;
   }
 
-  .conversation-chat {
-    min-height: 520px;
-  }
-
   .conversation-transcript-pane {
     padding: 18px 12px 24px;
+  }
+
+  .conversation-tabs > .ant-tabs-nav,
+  .conversation-tab-pane {
+    padding-inline: 14px;
   }
 
   .conversation-start {

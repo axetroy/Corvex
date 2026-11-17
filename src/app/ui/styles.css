@@ -88,6 +88,25 @@ a:hover {
   padding: 34px 0 56px;
 }
 
+/* 对话页是主要功能：铺满视口，去掉常规页面的内边距与最大宽度限制。 */
+.content.content-full {
+  display: flex;
+  width: min(1600px, calc(100% - 32px));
+  height: calc(100vh - 116px);
+  min-height: 0;
+  flex-direction: column;
+  padding: 14px 0;
+}
+
+.content.content-full > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.content.content-full .error {
+  flex: 0 0 auto;
+}
+
 h1 {
   margin: 0;
   font-size: 27px;
@@ -589,6 +608,11 @@ footer {
   .content {
     width: calc(100% - 32px);
     padding-top: 25px;
+  }
+
+  .content.content-full {
+    width: calc(100% - 16px);
+    padding: 10px 0;
   }
 
   .cards {

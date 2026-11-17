@@ -249,6 +249,28 @@ describe("CorvexServer", () => {
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/missing-job`,
         { headers: { authorization } },
       )).status).toBe(404);
+      // 统计端点汇总整段对话的用量与逐轮明细，未知对话返回 404。
+      const conversationStatsResponse = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/stats`,
+        { headers: { authorization } },
+      );
+      expect(conversationStatsResponse.status).toBe(200);
+      expect(await conversationStatsResponse.json()).toMatchObject({
+        conversationId: createdConversation.conversationId,
+        turnCount: 1,
+        completedTurns: 0,
+        failedTurns: 0,
+        activeTurns: 1,
+        modelCalls: 0,
+        toolCalls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        turns: [{ jobId: createdConversation.jobId, status: "queued", durationMs: null, request: "Explain this repository" }],
+      });
+      expect((await fetch(
+        `${base}/api/ops/conversations/missing-conversation/stats`,
+        { headers: { authorization } },
+      )).status).toBe(404);
       const concurrentReplyResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },

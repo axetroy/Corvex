@@ -270,6 +270,57 @@ describe("JobStore", () => {
     expect(store.listConversations(10, 0).items[0]).toMatchObject({ turnCount: 1, lastTurnStatus: "completed" });
   });
 
+  it("summarizes conversation usage and per-turn timings", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    const first = store.claimNextWithLease(30_000);
+    if (!first) throw new Error("expected the first conversation turn to be claimed");
+    store.updateLeasedStatus(first.id, first.leaseToken, "preparing", "analyzing");
+    const llmTrace = store.startJobTrace(first.id, first.attemptCount, "llm", "conversation", "test/model", "{}", { round: 1 });
+    store.finishJobTrace(llmTrace, "succeeded", 120, 30, 12);
+    const toolTrace = store.startJobTrace(first.id, first.attemptCount, "tool", "read_file", "test/model", "{}");
+    store.finishJobTrace(toolTrace, "succeeded", 40, 0, 0);
+    store.updateLeasedStatus(first.id, first.leaseToken, "analyzing", "completed");
+    store.finishConversationResponse(first.id, "completed", "First answer");
+
+    // 未开始的轮次耗时不确定，统计里计为进行中且不计耗时。
+    store.addConversationMessage(created.conversationId, {
+      projectId: 7,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Second turn",
+    });
+
+    const stats = store.getConversationStats(created.conversationId);
+    expect(stats).toMatchObject({
+      conversationId: created.conversationId,
+      turnCount: 2,
+      completedTurns: 1,
+      failedTurns: 0,
+      activeTurns: 1,
+      measuredTurns: 1,
+      modelCalls: 1,
+      toolCalls: 1,
+      inputTokens: 30,
+      outputTokens: 12,
+    });
+    expect(stats?.totalDurationMs).toBeGreaterThanOrEqual(0);
+    expect(stats?.turns).toHaveLength(2);
+    expect(stats?.turns[0]).toMatchObject({ status: "completed", modelCalls: 1, toolCalls: 1, inputTokens: 30, outputTokens: 12 });
+    expect(stats?.turns[0]?.durationMs).not.toBeNull();
+    expect(stats?.turns[1]).toMatchObject({ status: "queued", durationMs: null, modelCalls: 0, toolCalls: 0 });
+    // 未知对话返回 undefined，由服务端转成 404。
+    expect(store.getConversationStats("missing-conversation")).toBeUndefined();
+  });
+
   it("queues Issue assistant jobs with a distinct issue target", async () => {
     store = await JobStore.open(":memory:");
     const result = store.createIssueImplementation("issue-event", "project:issue:17:note:9", {

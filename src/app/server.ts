@@ -361,7 +361,7 @@ export class CorvexServer {
       return;
     }
     // 单轮对话记录：把该轮任务的状态、生命周期、轨迹与执行步骤一并返回，
-    // 让运维台在对话内直接查看轨迹，无需跳到任务详情页。
+    // 供对话页「轨迹」标签查看某一轮的完整记录，无需跳到任务详情页。
     const conversationTurnMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(url.pathname);
     if (request.method === "GET" && conversationTurnMatch) {
       const conversationId = this.decodePathSegment(conversationTurnMatch[1]!);
@@ -376,6 +376,22 @@ export class CorvexServer {
         return;
       }
       respondJson(response, 200, turn);
+      return;
+    }
+    // 对话统计：把整个对话的用量与耗时汇总，以及逐轮明细，返回给「统计」标签。
+    const conversationStatsMatch = /^\/api\/ops\/conversations\/([^/]+)\/stats$/.exec(url.pathname);
+    if (request.method === "GET" && conversationStatsMatch) {
+      const conversationId = this.decodePathSegment(conversationStatsMatch[1]!);
+      if (!conversationId) {
+        respondJson(response, 400, { error: "invalid conversation ID" });
+        return;
+      }
+      const stats = this.store.getConversationStats(conversationId);
+      if (!stats) {
+        respondJson(response, 404, { error: "conversation not found" });
+        return;
+      }
+      respondJson(response, 200, stats);
       return;
     }
     const conversationMessageMatch = /^\/api\/ops\/conversations\/([^/]+)\/messages$/.exec(url.pathname);

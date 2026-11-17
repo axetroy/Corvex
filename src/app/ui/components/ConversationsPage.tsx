@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { UIEvent } from "react";
-import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Select, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -10,7 +10,8 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
-import { ConversationTurnDrawer } from "./ConversationTurnDrawer.js";
+import { ConversationStatsTab } from "./ConversationStatsTab.js";
+import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { Empty, ErrorBanner } from "./common.js";
 
 interface ProjectOption {
@@ -46,6 +47,9 @@ interface Props {
   onRefresh: () => void;
   onConversationChange: (conversationId: string) => void;
 }
+
+/** 对话详情右侧的标签：对话流、轮次轨迹与用量统计。 */
+type ConversationDetailTab = "chat" | "trace" | "stats";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
@@ -129,7 +133,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [selectedBranch, setSelectedBranch] = useState("");
   const [branchQuery, setBranchQuery] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
-  const [turnJobId, setTurnJobId] = useState("");
+  const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const projectSearchRequest = useRef(0);
   const branchSearchRequest = useRef(0);
   const replySubmitting = useRef(false);
@@ -140,6 +144,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setConversation(undefined);
     setShowCreate(!conversationId);
     setDraftMessage("");
+    setDetailTab("chat");
     setError("");
   }, [conversationId]);
 
@@ -398,35 +403,20 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       </div>
     ),
   }));
-  const bubbleItems: BubbleItemType[] = (currentConversation?.messages ?? []).map((message) => {
-    const showTurn = message.role === "assistant" && Boolean(message.jobId) && (message.traceCount > 0 || message.eventCount > 0);
-    return {
-      key: message.id,
-      role: message.role === "user" ? "user" : "ai",
-      header: (
-        <Space size={8} wrap>
-          <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
-          <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
-          {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
-          {showTurn ? (
-            <Tooltip title={copy.conversationTurnTooltip}>
-              <Button
-                className="conversation-turn-button"
-                type="link"
-                size="small"
-                onClick={() => setTurnJobId(message.jobId ?? "")}
-              >
-                {copy.conversationTurnButton}
-              </Button>
-            </Tooltip>
-          ) : null}
-        </Space>
-      ),
-      content: <MessageContent message={message} copy={copy} />,
-      loading: message.role === "assistant" && !message.content && (message.status === "queued" || message.status === "running"),
-      status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
-    };
-  });
+  const bubbleItems: BubbleItemType[] = (currentConversation?.messages ?? []).map((message) => ({
+    key: message.id,
+    role: message.role === "user" ? "user" : "ai",
+    header: (
+      <Space size={8} wrap>
+        <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
+        <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
+        {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
+      </Space>
+    ),
+    content: <MessageContent message={message} copy={copy} />,
+    loading: message.role === "assistant" && !message.content && (message.status === "queued" || message.status === "running"),
+    status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
+  }));
 
   return (
     <>
@@ -472,122 +462,158 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             ) : <Typography.Text strong className="conversation-workspace-title">{copy.conversationsTitle}</Typography.Text>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
           </div>
-          <div className="conversation-chat">
-            <div className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}>
-              {showCreate ? (
-                <div className="conversation-start">
-                  <Welcome
-                    className="conversation-welcome"
-                    variant="borderless"
-                    icon={<span className="conversation-welcome-icon" aria-hidden="true">C</span>}
-                    title={copy.conversationWelcomeTitle}
-                    description={copy.conversationWelcomeDescription}
-                  />
-                  <div className="conversation-picker-row">
-                    <Select<number, ProjectSelectOption>
-                      className="conversation-select"
-                      aria-label={copy.projectSearch}
-                      showSearch
-                      filterOption={false}
-                      placeholder={copy.projectSearchPlaceholder}
-                      value={project?.id}
-                      loading={projectLoading}
-                      options={projectOptions}
-                      notFoundContent={<span className="conversation-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
-                      optionRender={(option) => (
-                        <div className="conversation-option">
-                          <span className="conversation-option-label">{option.data.label}</span>
-                          {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
+          <Tabs
+            className="conversation-tabs"
+            activeKey={detailTab}
+            onChange={(key) => setDetailTab(key as ConversationDetailTab)}
+            destroyOnHidden
+            items={[
+              {
+                key: "chat",
+                label: copy.conversationTabChat,
+                children: (
+                  <div className="conversation-chat">
+                    <div className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}>
+                      {showCreate ? (
+                        <div className="conversation-start">
+                          <Welcome
+                            className="conversation-welcome"
+                            variant="borderless"
+                            icon={<span className="conversation-welcome-icon" aria-hidden="true">C</span>}
+                            title={copy.conversationWelcomeTitle}
+                            description={copy.conversationWelcomeDescription}
+                          />
+                          <div className="conversation-picker-row">
+                            <Select<number, ProjectSelectOption>
+                              className="conversation-select"
+                              aria-label={copy.projectSearch}
+                              showSearch
+                              filterOption={false}
+                              placeholder={copy.projectSearchPlaceholder}
+                              value={project?.id}
+                              loading={projectLoading}
+                              options={projectOptions}
+                              notFoundContent={<span className="conversation-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
+                              optionRender={(option) => (
+                                <div className="conversation-option">
+                                  <span className="conversation-option-label">{option.data.label}</span>
+                                  {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
+                                </div>
+                              )}
+                              onOpenChange={(open) => {
+                                if (open && projects.length === 0) void loadProjects("", 1, false);
+                              }}
+                              onSearch={(value) => {
+                                setProjectQuery(value);
+                                void loadProjects(value, 1, false);
+                              }}
+                              onPopupScroll={(event) => {
+                                if (!projectHasMore || projectLoading || !atListBottom(event)) return;
+                                void loadProjects(projectQuery, projectPage + 1, true);
+                              }}
+                              onChange={(value) => selectProject(value)}
+                            />
+                            <Select<string, BranchSelectOption>
+                              className="conversation-select"
+                              aria-label={copy.branch}
+                              showSearch
+                              filterOption={false}
+                              placeholder={copy.branchSearchPlaceholder}
+                              value={selectedBranch || undefined}
+                              disabled={!project}
+                              loading={branchLoading}
+                              options={branchOptions}
+                              notFoundContent={<span className="conversation-select-empty">{copy.noBranches}</span>}
+                              optionRender={(option) => (
+                                <div className="conversation-option">
+                                  <span className="conversation-option-label">{option.data.label}</span>
+                                  {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
+                                </div>
+                              )}
+                              onOpenChange={(open) => {
+                                if (open && project && branches.length === 0) void loadBranches(project, "", 1, false);
+                              }}
+                              onSearch={(value) => {
+                                setBranchQuery(value);
+                                if (project) void loadBranches(project, value, 1, false);
+                              }}
+                              onPopupScroll={(event) => {
+                                if (!project || !branchHasMore || branchLoading || !atListBottom(event)) return;
+                                void loadBranches(project, branchQuery, branchPage + 1, true);
+                              }}
+                              onChange={(value) => setSelectedBranch(value)}
+                            />
+                          </div>
+                          <Prompts
+                            className="conversation-prompts"
+                            title={copy.conversationSuggestions}
+                            items={suggestionItems}
+                            wrap
+                            onItemClick={({ data }) => setDraftMessage(String(data.label ?? ""))}
+                          />
                         </div>
+                      ) : currentConversation && bubbleItems.length ? (
+                        <Bubble.List
+                          className="conversation-transcript"
+                          items={bubbleItems}
+                          autoScroll
+                          role={{
+                            user: { placement: "end", variant: "filled" },
+                            ai: { placement: "start", variant: "outlined" },
+                          }}
+                        />
+                      ) : <Welcome className="conversation-welcome conversation-welcome-empty" title={copy.conversationPlaceholder} />}
+                    </div>
+                    <Sender
+                      className="conversation-composer"
+                      aria-label={copy.initialMessage}
+                      value={draftMessage}
+                      placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
+                      disabled={busy || (showCreate ? !project : !canReply)}
+                      onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
+                      onSubmit={submitMessage}
+                      suffix={(_node, { components: { SendButton } }) => (
+                        <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
                       )}
-                      onOpenChange={(open) => {
-                        if (open && projects.length === 0) void loadProjects("", 1, false);
-                      }}
-                      onSearch={(value) => {
-                        setProjectQuery(value);
-                        void loadProjects(value, 1, false);
-                      }}
-                      onPopupScroll={(event) => {
-                        if (!projectHasMore || projectLoading || !atListBottom(event)) return;
-                        void loadProjects(projectQuery, projectPage + 1, true);
-                      }}
-                      onChange={(value) => selectProject(value)}
-                    />
-                    <Select<string, BranchSelectOption>
-                      className="conversation-select"
-                      aria-label={copy.branch}
-                      showSearch
-                      filterOption={false}
-                      placeholder={copy.branchSearchPlaceholder}
-                      value={selectedBranch || undefined}
-                      disabled={!project}
-                      loading={branchLoading}
-                      options={branchOptions}
-                      notFoundContent={<span className="conversation-select-empty">{copy.noBranches}</span>}
-                      optionRender={(option) => (
-                        <div className="conversation-option">
-                          <span className="conversation-option-label">{option.data.label}</span>
-                          {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
-                        </div>
-                      )}
-                      onOpenChange={(open) => {
-                        if (open && project && branches.length === 0) void loadBranches(project, "", 1, false);
-                      }}
-                      onSearch={(value) => {
-                        setBranchQuery(value);
-                        if (project) void loadBranches(project, value, 1, false);
-                      }}
-                      onPopupScroll={(event) => {
-                        if (!project || !branchHasMore || branchLoading || !atListBottom(event)) return;
-                        void loadBranches(project, branchQuery, branchPage + 1, true);
-                      }}
-                      onChange={(value) => setSelectedBranch(value)}
                     />
                   </div>
-                  <Prompts
-                    className="conversation-prompts"
-                    title={copy.conversationSuggestions}
-                    items={suggestionItems}
-                    wrap
-                    onItemClick={({ data }) => setDraftMessage(String(data.label ?? ""))}
-                  />
-                </div>
-              ) : currentConversation && bubbleItems.length ? (
-                <Bubble.List
-                  className="conversation-transcript"
-                  items={bubbleItems}
-                  autoScroll
-                  role={{
-                    user: { placement: "end", variant: "filled" },
-                    ai: { placement: "start", variant: "outlined" },
-                  }}
-                />
-              ) : <Welcome className="conversation-welcome conversation-welcome-empty" title={copy.conversationPlaceholder} />}
-            </div>
-            <Sender
-              className="conversation-composer"
-              aria-label={copy.initialMessage}
-              value={draftMessage}
-              placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
-              disabled={busy || (!showCreate && !canReply)}
-              onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
-              onSubmit={submitMessage}
-              suffix={(_node, { components: { SendButton } }) => (
-                <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
-              )}
-            />
-          </div>
+                ),
+              },
+              {
+                key: "trace",
+                label: copy.conversationTabTrace,
+                children: (
+                  <div className="conversation-tab-pane">
+                    <ConversationTraceTab
+                      conversationId={selectedConversationId}
+                      messages={currentConversation?.messages ?? []}
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={onUpdated}
+                    />
+                  </div>
+                ),
+              },
+              {
+                key: "stats",
+                label: copy.conversationTabStats,
+                children: (
+                  <div className="conversation-tab-pane">
+                    <ConversationStatsTab
+                      conversationId={selectedConversationId}
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={onUpdated}
+                    />
+                  </div>
+                ),
+              },
+            ]}
+          />
         </section>
       </section>
-      <ConversationTurnDrawer
-        conversationId={selectedConversationId}
-        jobId={turnJobId}
-        copy={copy}
-        locale={locale}
-        refreshToken={refreshToken}
-        onClose={() => setTurnJobId("")}
-        onUpdated={onUpdated}
-      />
     </>
   );
 }

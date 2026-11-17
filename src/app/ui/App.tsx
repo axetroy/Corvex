@@ -164,7 +164,7 @@ export function App() {
           {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
         </span>
       </header>
-      <main id="app" className="content" ref={mainRef} tabIndex={-1}>
+      <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
         <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
           <Suspense fallback={<Loading>{copy.loading}</Loading>}>
           {page.kind === "overview" ? (

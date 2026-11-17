@@ -11,6 +11,8 @@ import {
   type ConversationPage,
   type ConversationSummary,
   type ConversationTurn,
+  type ConversationStats,
+  type ConversationTurnStats,
   type CreateConversationInput,
   type ExecutionEvent,
   type ExecutionEventStatus,
@@ -78,6 +80,18 @@ function numberColumn(row: Record<string, unknown>, name: string): number {
     throw new Error(`SQLite column "${name}" is not a safe integer`);
   }
   return value;
+}
+
+/**
+ * 任务从创建到最近更新的耗时（毫秒）。仅终态任务的耗时已确定；
+ * 时间缺失或倒序（时钟回拨）时返回 null，避免统计出现负值。
+ */
+function turnDurationMs(createdAt: string, updatedAt: string, isTerminal: boolean): number | null {
+  if (!isTerminal) return null;
+  const start = Date.parse(createdAt);
+  const end = Date.parse(updatedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
 }
 
 function redactTraceText(value: string): string {
@@ -1198,6 +1212,70 @@ export class JobStore {
       attempts: this.readJobAttempts(jobId),
       trajectory: this.readJobTrajectory(jobId),
       events: this.readJobEvents(jobId),
+    };
+  }
+
+  /**
+   * 汇总整个对话的用量与耗时：逐轮统计模型/工具调用、Token 用量与耗时，
+   * 再累加成对话级总计。数据来自该轮任务的轨迹记录，缺失字段按 0 处理。
+   */
+  getConversationStats(conversationId: string): ConversationStats | undefined {
+    if (!this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId)) return undefined;
+    const rows = this.db.prepare(
+      `SELECT conversation_messages.id AS message_id, conversation_messages.created_at AS message_created_at,
+         jobs.id AS job_id, jobs.status AS job_status, jobs.request AS job_request,
+         jobs.created_at AS job_created_at, jobs.updated_at AS job_updated_at,
+         COALESCE((SELECT SUM(CASE WHEN kind='llm' THEN 1 ELSE 0 END) FROM job_trace WHERE job_id=jobs.id), 0) AS model_calls,
+         COALESCE((SELECT SUM(CASE WHEN kind='tool' THEN 1 ELSE 0 END) FROM job_trace WHERE job_id=jobs.id), 0) AS tool_calls,
+         COALESCE((SELECT SUM(COALESCE(input_tokens, 0)) FROM job_trace WHERE job_id=jobs.id), 0) AS input_tokens,
+         COALESCE((SELECT SUM(COALESCE(output_tokens, 0)) FROM job_trace WHERE job_id=jobs.id), 0) AS output_tokens
+       FROM conversation_messages
+       LEFT JOIN jobs ON jobs.id=conversation_messages.job_id
+       WHERE conversation_messages.conversation_id=? AND conversation_messages.role='assistant'
+       ORDER BY conversation_messages.created_at,conversation_messages.rowid`,
+    ).all(conversationId);
+
+    const turns: ConversationTurnStats[] = rows.map((value) => {
+      const row = value as Record<string, unknown>;
+      const jobId = row.job_id;
+      if (jobId === null || typeof jobId !== "string") {
+        throw new Error(`conversation message "${stringColumn(row, "message_id")}" is missing its job`);
+      }
+      const jobStatus = stringColumn(row, "job_status");
+      if (!isJobStatus(jobStatus)) {
+        throw new Error(`SQLite conversation job status "${jobStatus}" is invalid`);
+      }
+      const created = stringColumn(row, "job_created_at");
+      const updated = stringColumn(row, "job_updated_at");
+      return {
+        messageId: stringColumn(row, "message_id"),
+        jobId,
+        status: jobStatus,
+        request: stringColumn(row, "job_request"),
+        createdAt: created,
+        updatedAt: updated,
+        durationMs: turnDurationMs(created, updated, terminal.has(jobStatus)),
+        modelCalls: numberColumn(row, "model_calls"),
+        toolCalls: numberColumn(row, "tool_calls"),
+        inputTokens: numberColumn(row, "input_tokens"),
+        outputTokens: numberColumn(row, "output_tokens"),
+      };
+    });
+
+    const measured = turns.filter((turn) => turn.durationMs !== null);
+    return {
+      conversationId,
+      turnCount: turns.length,
+      completedTurns: turns.filter((turn) => turn.status === "completed").length,
+      failedTurns: turns.filter((turn) => turn.status === "failed").length,
+      activeTurns: turns.filter((turn) => !terminal.has(turn.status)).length,
+      totalDurationMs: measured.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0),
+      measuredTurns: measured.length,
+      modelCalls: turns.reduce((sum, turn) => sum + turn.modelCalls, 0),
+      toolCalls: turns.reduce((sum, turn) => sum + turn.toolCalls, 0),
+      inputTokens: turns.reduce((sum, turn) => sum + turn.inputTokens, 0),
+      outputTokens: turns.reduce((sum, turn) => sum + turn.outputTokens, 0),
+      turns,
     };
   }
 

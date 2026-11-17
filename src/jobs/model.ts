@@ -134,6 +134,49 @@ export interface ConversationPage {
   total: number;
 }
 
+/**
+ * 单轮对话的用量与耗时汇总，供对话页「统计」标签展示。
+ * 时间与用量来自该轮任务的轨迹记录；缺失字段按未记录处理。
+ */
+export interface ConversationTurnStats {
+  /** 该轮助手回复的消息 ID。 */
+  messageId: string;
+  jobId: string;
+  status: JobStatus;
+  /** 该轮用户提问原文，用于统计表定位。 */
+  request: string;
+  createdAt: string;
+  updatedAt: string;
+  durationMs: number | null;
+  /** 该轮记录的模型调用次数（`job_trace` 中 `kind='llm'`）。 */
+  modelCalls: number;
+  /** 该轮记录的工具调用次数（`job_trace` 中 `kind='tool'`）。 */
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** 整个对话的用量与耗时汇总，以及逐轮明细。 */
+export interface ConversationStats {
+  conversationId: string;
+  /** 助手回复轮次总数。 */
+  turnCount: number;
+  /** 各终态轮次数量。 */
+  completedTurns: number;
+  failedTurns: number;
+  /** 仍在排队或执行的轮次数量。 */
+  activeTurns: number;
+  /** 已完成轮次的耗时之和（毫秒）。 */
+  totalDurationMs: number;
+  /** 已记录耗时的轮次数量，用于计算平均值。 */
+  measuredTurns: number;
+  modelCalls: number;
+  toolCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: ConversationTurnStats[];
+}
+
 export interface CreateConversationInput {
   projectId: number;
   projectName: string;
