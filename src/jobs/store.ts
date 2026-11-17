@@ -1111,16 +1111,13 @@ export class JobStore {
     return this.transaction(() => {
       this.db.prepare(
         `INSERT INTO chat_sessions
-         (id,project_id,project_name,target_type,target_iid,target_branch,target_title,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+         (id,project_id,project_name,target_branch,created_at,updated_at)
+         VALUES (?,?,?,?,?,?)`,
       ).run(
         sessionId,
         input.projectId,
         input.projectName,
-        input.targetType,
-        input.targetIid,
         input.targetBranch,
-        input.targetTitle,
         now,
         now,
       );
@@ -1151,8 +1148,8 @@ export class JobStore {
     return { ...this.readChatSessionSummary(row), messages };
   }
 
-  addChatSessionMessage(sessionId: string, input: Omit<CreateChatSessionInput, "projectName" | "targetTitle">): { jobId: string } {
-    this.validateChatSessionInput({ ...input, projectName: "", targetTitle: "" });
+  addChatSessionMessage(sessionId: string, input: Omit<CreateChatSessionInput, "projectName">): { jobId: string } {
+    this.validateChatSessionInput({ ...input, projectName: "" });
     const result = this.db.prepare("SELECT 1 FROM chat_sessions WHERE id=?").get(sessionId);
     if (!result) throw new Error(`chat session "${sessionId}" not found`);
     return this.transaction(() => {
@@ -1183,22 +1180,16 @@ export class JobStore {
 
   private validateChatSessionInput(input: CreateChatSessionInput): void {
     if (!Number.isSafeInteger(input.projectId) || input.projectId < 1) throw new Error("project ID must be positive");
-    if (!(input.targetType === "repository" || input.targetType === "issue" || input.targetType === "merge_request")) {
-      throw new Error("chat session target type is invalid");
-    }
-    if (input.targetType === "repository" ? input.targetIid !== 0 : !Number.isSafeInteger(input.targetIid) || input.targetIid < 1) {
-      throw new Error("chat session target IID is invalid");
-    }
     if (!input.targetBranch.trim() || input.targetBranch.length > 255) throw new Error("target branch is invalid");
     if (!/^[a-f0-9]{40,64}$/i.test(input.headSha)) throw new Error("chat session head SHA is invalid");
     if (!Number.isSafeInteger(input.actorId) || input.actorId < 0) throw new Error("actor ID is invalid");
-    if (input.projectName.length > 255 || input.targetTitle.length > 500) throw new Error("chat session labels are too long");
+    if (input.projectName.length > 255) throw new Error("chat session labels are too long");
     if (!input.request.trim() || input.request.length > 20_000) throw new Error("chat session message must be between 1 and 20000 characters");
   }
 
   private enqueueChatSessionMessage(
     sessionId: string,
-    input: Omit<CreateChatSessionInput, "projectName" | "targetTitle">,
+    input: Omit<CreateChatSessionInput, "projectName">,
     now: string,
   ): { sessionId: string; jobId: string } {
     const jobId = randomUUID();
@@ -1217,9 +1208,9 @@ export class JobStore {
       "session",
       "queued",
       input.projectId,
-      input.targetType === "merge_request" ? input.targetIid : 0,
-      input.targetType,
-      input.targetIid,
+      0,
+      "repository",
+      0,
       input.targetBranch,
       input.headSha,
       input.actorId,
@@ -1245,18 +1236,11 @@ export class JobStore {
   }
 
   private readChatSessionSummary(row: Record<string, unknown>): ChatSessionSummary {
-    const targetType = stringColumn(row, "target_type");
-    if (targetType !== "repository" && targetType !== "issue" && targetType !== "merge_request") {
-      throw new Error(`SQLite chat session target type "${targetType}" is invalid`);
-    }
     return {
       id: stringColumn(row, "id"),
       projectId: numberColumn(row, "project_id"),
       projectName: stringColumn(row, "project_name"),
-      targetType,
-      targetIid: numberColumn(row, "target_iid"),
       targetBranch: stringColumn(row, "target_branch"),
-      targetTitle: stringColumn(row, "target_title"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
     };
@@ -1717,8 +1701,7 @@ export class JobStore {
       CREATE INDEX IF NOT EXISTS jobs_mr_created_idx ON jobs(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS chat_sessions (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
-        target_type TEXT NOT NULL, target_iid INTEGER NOT NULL, target_branch TEXT NOT NULL,
-        target_title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS chat_sessions_updated_idx ON chat_sessions(updated_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS chat_session_messages (
@@ -1817,6 +1800,12 @@ export class JobStore {
     };
     for (const [name, definition] of Object.entries(traceAdditions)) {
       if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE job_trace ADD COLUMN ${name} ${definition}`);
+    }
+    // 会话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
+    const sessionColumns = this.db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
+    const legacySessionColumns = new Set(sessionColumns.map((column) => column.name));
+    for (const name of ["target_type", "target_iid", "target_title"]) {
+      if (legacySessionColumns.has(name)) this.db.exec(`ALTER TABLE chat_sessions DROP COLUMN ${name}`);
     }
   }
 }

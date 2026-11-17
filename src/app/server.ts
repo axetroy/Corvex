@@ -288,23 +288,17 @@ export class CorvexServer {
       }
       return;
     }
-    const projectTargetMatch = /^\/api\/ops\/projects\/([0-9]+)\/(branches|issues|merge-requests)$/.exec(url.pathname);
-    if (request.method === "GET" && projectTargetMatch) {
-      const projectId = Number(projectTargetMatch[1]);
+    const branchSearchMatch = /^\/api\/ops\/projects\/([0-9]+)\/branches$/.exec(url.pathname);
+    if (request.method === "GET" && branchSearchMatch) {
+      const projectId = Number(branchSearchMatch[1]);
       const page = optionalInteger(url.searchParams.get("page"), 1, 10_000) ?? 1;
       const search = url.searchParams.get("search") ?? "";
       if (!Number.isSafeInteger(projectId) || projectId < 1 || page === false || search.length > 100) {
-        respondJson(response, 400, { error: "invalid target search" });
+        respondJson(response, 400, { error: "invalid branch search" });
         return;
       }
       try {
-        const [kind] = projectTargetMatch.slice(2);
-        const values = kind === "branches"
-          ? await this.gitlab.listBranches(projectId, search, page)
-          : kind === "issues"
-            ? await this.gitlab.listIssues(projectId, search, page)
-            : await this.gitlab.listMergeRequests(projectId, search, page);
-        respondJson(response, 200, values);
+        respondJson(response, 200, await this.gitlab.listBranches(projectId, search, page));
       } catch (error) {
         this.respondGitLabReadError(response, error);
       }
@@ -324,14 +318,11 @@ export class CorvexServer {
       const body = await this.readOperationsBody(request, response);
       if (!body) return;
       const projectId = positiveInteger(body.projectId);
-      const targetType = body.targetType;
-      const targetIid = targetType === "repository" ? 0 : positiveInteger(body.targetIid);
       const targetBranch = typeof body.targetBranch === "string" ? body.targetBranch.trim() : "";
       const message = typeof body.message === "string" ? body.message : "";
       if (
         projectId === undefined ||
-        (targetType !== "repository" && targetType !== "issue" && targetType !== "merge_request") ||
-        targetIid === undefined || !targetBranch || targetBranch.length > 255 ||
+        !targetBranch || targetBranch.length > 255 ||
         !message.trim() || message.length > 20_000
       ) {
         respondJson(response, 400, { error: "invalid session request" });
@@ -339,30 +330,11 @@ export class CorvexServer {
       }
       try {
         const project = await this.gitlab.getProject(projectId);
-        let headSha: string;
-        let title = "";
-        let branch = targetBranch;
-        if (targetType === "merge_request") {
-          const mergeRequest = await this.gitlab.getMergeRequest(projectId, targetIid);
-          headSha = mergeRequest.diff_refs.head_sha;
-          branch = mergeRequest.source_branch;
-          title = mergeRequest.title;
-          if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headSha)) {
-            respondJson(response, 409, { error: "merge request has no valid head snapshot" });
-            return;
-          }
-        } else {
-          const branchInfo = await this.gitlab.getBranch(projectId, branch);
-          headSha = branchInfo.commit.id;
-          if (targetType === "issue") title = (await this.gitlab.getIssue(projectId, targetIid)).title;
-        }
+        const headSha = (await this.gitlab.getBranch(projectId, targetBranch)).commit.id;
         const created = this.store.createChatSession({
           projectId,
           projectName: project.path_with_namespace ?? project.name ?? String(projectId),
-          targetType,
-          targetIid,
-          targetBranch: branch,
-          targetTitle: title,
+          targetBranch,
           headSha,
           actorId: 0,
           request: message,
@@ -404,25 +376,9 @@ export class CorvexServer {
         return;
       }
       try {
-        let headSha: string;
-        if (session.targetType === "merge_request") {
-          const mergeRequest = await this.gitlab.getMergeRequest(session.projectId, session.targetIid);
-          if (mergeRequest.source_branch !== session.targetBranch) {
-            respondJson(response, 409, { error: "merge request source branch changed" });
-            return;
-          }
-          headSha = mergeRequest.diff_refs.head_sha;
-          if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headSha)) {
-            respondJson(response, 409, { error: "merge request has no valid head snapshot" });
-            return;
-          }
-        } else {
-          headSha = (await this.gitlab.getBranch(session.projectId, session.targetBranch)).commit.id;
-        }
+        const headSha = (await this.gitlab.getBranch(session.projectId, session.targetBranch)).commit.id;
         const queued = this.store.addChatSessionMessage(session.id, {
           projectId: session.projectId,
-          targetType: session.targetType,
-          targetIid: session.targetIid,
           targetBranch: session.targetBranch,
           headSha,
           actorId: 0,

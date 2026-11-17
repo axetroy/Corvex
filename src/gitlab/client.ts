@@ -37,16 +37,6 @@ export interface GitLabIssue {
   web_url?: string;
 }
 
-export interface GitLabMergeRequestSummary {
-  iid: number;
-  title: string;
-  description: string;
-  state: string;
-  source_branch: string;
-  target_branch: string;
-  web_url?: string;
-}
-
 export interface CreatedMergeRequest {
   iid: number;
   webUrl: string;
@@ -318,48 +308,6 @@ export class GitLabClient {
       ) throw new Error("GitLab returned an invalid branch list entry");
       return value as unknown as GitLabBranch;
     });
-  }
-
-  async listIssues(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabIssue[]> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.targetListQuery(search, page, { scope: "all" });
-    const result = await this.getJson(`/projects/${projectId}/issues?${query}`, signal);
-    if (!Array.isArray(result)) throw new Error("GitLab Issue list is not an array");
-    return result.map((value) => {
-      if (
-        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
-        typeof value.description !== "string" || typeof value.state !== "string"
-      ) throw new Error("GitLab returned an incomplete Issue list entry");
-      return value as unknown as GitLabIssue;
-    });
-  }
-
-  async listMergeRequests(
-    projectId: number,
-    search: string,
-    page: number,
-    signal?: AbortSignal,
-  ): Promise<GitLabMergeRequestSummary[]> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.targetListQuery(search, page, { state: "all" });
-    const result = await this.getJson(`/projects/${projectId}/merge_requests?${query}`, signal);
-    if (!Array.isArray(result)) throw new Error("GitLab merge request list is not an array");
-    return result.map((value) => {
-      if (
-        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
-        typeof value.description !== "string" || typeof value.state !== "string" ||
-        typeof value.source_branch !== "string" || typeof value.target_branch !== "string"
-      ) throw new Error("GitLab returned an incomplete merge request list entry");
-      return value as unknown as GitLabMergeRequestSummary;
-    });
-  }
-
-  private targetListQuery(search: string, page: number, extra: Record<string, string> = {}): URLSearchParams {
-    const query = this.pagedSearchQuery(search, page);
-    query.set("order_by", "updated_at");
-    query.set("sort", "desc");
-    for (const [key, value] of Object.entries(extra)) query.set(key, value);
-    return query;
   }
 
   private pagedSearchQuery(search: string, page: number): URLSearchParams {

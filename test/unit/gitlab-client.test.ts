@@ -65,15 +65,12 @@ describe("GitLab write receipts", () => {
     }
   });
 
-  it("lists branches, Issues, and merge requests with bounded search queries", async () => {
+  it("lists branches with bounded search queries", async () => {
     const requests: string[] = [];
     const server = createServer((request, response) => {
       requests.push(request.url ?? "");
       response.writeHead(200, { "content-type": "application/json" });
-      const path = new URL(request.url ?? "", "http://localhost").pathname;
-      response.end(JSON.stringify(path.endsWith("/branches")
-        ? [{ name: "main", commit: { id: "b".repeat(40) } }]
-        : [{ iid: 9, title: "Improve routing", description: "Details", state: "opened", source_branch: "feature", target_branch: "main" }]));
+      response.end(JSON.stringify([{ name: "main", commit: { id: "b".repeat(40) } }]));
     });
     const port = await listen(server);
     try {
@@ -81,16 +78,8 @@ describe("GitLab write receipts", () => {
       await expect(client.listBranches(5, "ma", 2)).resolves.toEqual([
         { name: "main", commit: { id: "b".repeat(40) } },
       ]);
-      await expect(client.listIssues(5, "routing", 2)).resolves.toMatchObject([
-        { iid: 9, title: "Improve routing", state: "opened" },
-      ]);
-      await expect(client.listMergeRequests(5, "routing", 2)).resolves.toMatchObject([
-        { iid: 9, title: "Improve routing", state: "opened", source_branch: "feature", target_branch: "main" },
-      ]);
       expect(requests.map((url) => new URL(url, "http://localhost").pathname)).toEqual([
         "/api/v4/projects/5/repository/branches",
-        "/api/v4/projects/5/issues",
-        "/api/v4/projects/5/merge_requests",
       ]);
       const branchQuery = new URL(requests[0]!, "http://localhost").searchParams;
       expect(branchQuery.get("search")).toBe("ma");

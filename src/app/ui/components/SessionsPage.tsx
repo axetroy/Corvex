@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Input, Popover, Space, Spin, Tag, Typography } from "antd";
-import type { InputRef } from "antd";
-import { Bubble, Conversations, Sender, Welcome } from "@ant-design/x";
-import type { BubbleItemType, ConversationItemType } from "@ant-design/x";
+import type { UIEvent } from "react";
+import { Button, Select, Space, Tag, Typography } from "antd";
+import { Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
+import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import "./SessionsPage.css";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -12,8 +12,8 @@ import { Empty, ErrorBanner } from "./common.js";
 
 interface ProjectOption {
   id: number;
-  name: string;
-  path_with_namespace: string;
+  name?: string;
+  path_with_namespace?: string;
   default_branch?: string;
 }
 
@@ -22,22 +22,23 @@ interface BranchOption {
   commit: { id: string };
 }
 
-interface TargetOption {
-  iid: number;
-  title: string;
-  source_branch?: string;
-  target_branch?: string;
-  state?: string;
+interface ProjectSelectOption {
+  value: number;
+  label: string;
+  meta?: string;
+}
+
+interface BranchSelectOption {
+  value: string;
+  label: string;
+  meta?: string;
 }
 
 interface SessionSummary {
   id: string;
   projectId: number;
   projectName: string;
-  targetType: "repository" | "issue" | "merge_request";
-  targetIid: number;
   targetBranch: string;
-  targetTitle: string;
   updatedAt: string;
 }
 
@@ -70,15 +71,18 @@ interface Props {
   onSessionChange: (sessionId: string) => void;
 }
 
+/** 会话列表每页条数。 */
 const sessionPageSize = 50;
+/** GitLab 项目/分支搜索每页条数，与服务端 `per_page` 保持一致。 */
+const listPageSize = 50;
 
-function targetLabel(session: SessionSummary, copy: Copy): string {
-  if (session.targetType === "repository") return `${copy.repositoryTarget} · ${session.targetBranch}`;
-  const kind = session.targetType === "issue" ? copy.issueTarget : copy.mergeRequestTarget;
-  const prefix = session.targetType === "issue" ? "#" : "!";
-  return `${kind} ${prefix}${session.targetIid} · ${session.targetTitle || session.targetBranch}`;
+/** 判断下拉列表是否已滚动到底部，用于追加下一页。 */
+function atListBottom(event: UIEvent<HTMLDivElement>): boolean {
+  const target = event.currentTarget;
+  return target.scrollTop + target.offsetHeight >= target.scrollHeight - 8;
 }
 
+/** 消息处理状态对应的界面文案；完成状态不展示徽标。 */
 function messageStatus(message: SessionMessage, copy: Copy): string {
   if (message.status === "queued") return copy.statuses.queued;
   if (message.status === "running") return copy.statuses.analyzing;
@@ -101,29 +105,20 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   const [showCreate, setShowCreate] = useState(!sessionId);
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [projectPage, setProjectPage] = useState(0);
+  const [projectHasMore, setProjectHasMore] = useState(false);
+  const [projectLoading, setProjectLoading] = useState(false);
   const [project, setProject] = useState<ProjectOption>();
-  const [targetType, setTargetType] = useState<"repository" | "issue" | "merge_request">("repository");
-  const [branchQuery, setBranchQuery] = useState("");
   const [branches, setBranches] = useState<BranchOption[]>([]);
-  const [branchesSearched, setBranchesSearched] = useState(false);
+  const [branchPage, setBranchPage] = useState(0);
+  const [branchHasMore, setBranchHasMore] = useState(false);
+  const [branchLoading, setBranchLoading] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState("");
-  const [targetQuery, setTargetQuery] = useState("");
-  const [targets, setTargets] = useState<TargetOption[]>([]);
-  const [targetsSearched, setTargetsSearched] = useState(false);
-  const [selectedTarget, setSelectedTarget] = useState<TargetOption>();
+  const [branchQuery, setBranchQuery] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
-  const [openPicker, setOpenPicker] = useState<"project" | "branch" | "target" | null>(null);
   const projectSearchRequest = useRef(0);
   const branchSearchRequest = useRef(0);
-  const targetSearchRequest = useRef(0);
   const replySubmitting = useRef(false);
-  const pickerInput = useRef<InputRef>(null);
-
-  useEffect(() => {
-    if (!openPicker) return;
-    const frame = window.requestAnimationFrame(() => pickerInput.current?.focus({ preventScroll: true }));
-    return () => window.cancelAnimationFrame(frame);
-  }, [openPicker]);
 
   useEffect(() => {
     selectedSessionIdRef.current = sessionId;
@@ -192,97 +187,72 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplySessions, selectedSessionId]);
 
-  async function searchProjects(query = projectQuery) {
+  async function loadProjects(query: string, page: number, append: boolean) {
     const requestId = ++projectSearchRequest.current;
-    setBusy(true);
+    setProjectLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ search: query.trim(), page: "1" });
+      const params = new URLSearchParams({ search: query.trim(), page: String(page) });
       const result = await fetchJson<ProjectOption[]>(`/api/ops/projects?${params}`, copy);
-      if (requestId === projectSearchRequest.current) setProjects(result);
+      if (requestId !== projectSearchRequest.current) return;
+      setProjects((current) => (append ? [...current, ...result] : result));
+      setProjectPage(page);
+      setProjectHasMore(result.length >= listPageSize);
     } catch (cause) {
       if (requestId === projectSearchRequest.current) setError(errorMessage(cause));
     } finally {
-      if (requestId === projectSearchRequest.current) setBusy(false);
+      if (requestId === projectSearchRequest.current) setProjectLoading(false);
     }
   }
 
-  async function selectProject(value: ProjectOption) {
-    targetSearchRequest.current += 1;
-    setProject(value);
-    setSelectedBranch("");
-    setBranchQuery("");
-    setSelectedTarget(undefined);
-    setTargets([]);
-    setBranches([]);
-    setBranchesSearched(false);
-    setTargetsSearched(false);
-    setOpenPicker(null);
-    if (targetType !== "merge_request") await searchBranches(value, "", 1, false);
-  }
-
-  async function searchBranches(value: ProjectOption, query: string, page: number, append: boolean) {
+  async function loadBranches(value: ProjectOption, query: string, page: number, append: boolean) {
     const requestId = ++branchSearchRequest.current;
-    setBusy(true);
+    setBranchLoading(true);
     setError("");
     try {
       const params = new URLSearchParams({ search: query.trim(), page: String(page) });
       const result = await fetchJson<BranchOption[]>(`/api/ops/projects/${value.id}/branches?${params}`, copy);
       if (requestId !== branchSearchRequest.current) return;
-      setBranches((current) => append ? [...current, ...result] : result);
-      setBranchesSearched(true);
+      setBranches((current) => (append ? [...current, ...result] : result));
+      setBranchPage(page);
+      setBranchHasMore(result.length >= listPageSize);
     } catch (cause) {
       if (requestId === branchSearchRequest.current) setError(errorMessage(cause));
     } finally {
-      if (requestId === branchSearchRequest.current) setBusy(false);
+      if (requestId === branchSearchRequest.current) setBranchLoading(false);
     }
   }
 
-  async function searchTargets(query = targetQuery) {
-    if (!project || targetType === "repository") return;
-    const requestId = ++targetSearchRequest.current;
-    setBusy(true);
+  function selectProject(id: number) {
+    const value = projects.find((item) => item.id === id);
+    if (!value) return;
+    setProject(value);
+    setSelectedBranch(value.default_branch ?? "");
+    setBranches([]);
+    setBranchQuery("");
+    setBranchPage(0);
+    setBranchHasMore(false);
     setError("");
-    setSelectedTarget(undefined);
-    setTargetsSearched(false);
-    try {
-      const kind = targetType === "issue" ? "issues" : "merge-requests";
-      const params = new URLSearchParams({ search: query.trim(), page: "1" });
-      const result = await fetchJson<TargetOption[]>(`/api/ops/projects/${project.id}/${kind}?${params}`, copy);
-      if (requestId === targetSearchRequest.current) {
-        setTargets(result);
-        setTargetsSearched(true);
-      }
-    } catch (cause) {
-      if (requestId === targetSearchRequest.current) setError(errorMessage(cause));
-    } finally {
-      if (requestId === targetSearchRequest.current) setBusy(false);
-    }
+    void loadBranches(value, "", 1, false);
   }
 
   async function createSession(message: string) {
-    if (!project || !message.trim()) return;
-    const branch = targetType === "merge_request" ? selectedTarget?.source_branch : selectedBranch;
-    if (!branch || (targetType !== "repository" && !selectedTarget)) return;
+    if (!message.trim()) return;
+    if (!project || !selectedBranch) {
+      setError(copy.chooseProject);
+      return;
+    }
     setBusy(true);
     setError("");
-    setOpenPicker(null);
     try {
       const result = await fetch("/api/ops/sessions", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({
-          projectId: project.id,
-          targetType,
-          targetIid: selectedTarget?.iid ?? 0,
-          targetBranch: branch,
-          message,
-        }),
+        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
       if (!result.ok) {
-        if (result.status === 409) throw new Error(copy.targetChanged);
         throw new Error(copy.requestFailedTemplate
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
@@ -352,19 +322,26 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     setShowCreate(true);
     setProjectQuery("");
     setProjects([]);
+    setProjectPage(0);
+    setProjectHasMore(false);
     setProject(undefined);
-    setTargetType("repository");
-    setBranchQuery("");
     setBranches([]);
-    setBranchesSearched(false);
+    setBranchPage(0);
+    setBranchHasMore(false);
     setSelectedBranch("");
-    setTargetQuery("");
-    setTargets([]);
-    setTargetsSearched(false);
-    setSelectedTarget(undefined);
-    setOpenPicker(null);
+    setBranchQuery("");
     setDraftMessage("");
     setError("");
+  }
+
+  function openSession(key: string) {
+    setSelectedSessionId(key);
+    selectedSessionIdRef.current = key;
+    setSession(undefined);
+    setDraftMessage("");
+    setError("");
+    onSessionChange(key);
+    setShowCreate(false);
   }
 
   function submitMessage(message: string) {
@@ -372,18 +349,33 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     else void sendReply(message);
   }
 
-  const targetBranch = targetType === "merge_request" ? selectedTarget?.source_branch : selectedBranch;
-  const canCreateSession = Boolean(
-    project && targetBranch && (targetType === "repository" || selectedTarget) && !busy,
-  );
+  const projectOptions: ProjectSelectOption[] = projects.map((item) => ({
+    value: item.id,
+    label: item.path_with_namespace ?? item.name ?? String(item.id),
+    meta: item.name && item.name !== item.path_with_namespace ? item.name : undefined,
+  }));
+  const branchOptions: BranchSelectOption[] = branches.map((item) => ({
+    value: item.name,
+    label: item.name,
+    meta: item.commit.id.slice(0, 12),
+  }));
+  const suggestionItems: PromptsItemType[] = [
+    { key: "explain", label: copy.sessionPromptExplain },
+    { key: "locate", label: copy.sessionPromptLocate },
+    { key: "improve", label: copy.sessionPromptImprove },
+    { key: "onboard", label: copy.sessionPromptOnboard },
+  ];
+  const canReply = Boolean(currentSession && !hasActiveTurn && !pendingReplySessions.has(selectedSessionId));
 
   const conversationItems: ConversationItemType[] = sessions.map((item) => ({
     key: item.id,
     label: (
       <div className="session-conversation-label">
         <Typography.Text strong ellipsis>{item.projectName}</Typography.Text>
-        <Typography.Text type="secondary" ellipsis>{targetLabel(item, copy)}</Typography.Text>
-        <Typography.Text type="secondary">{formatDate(item.updatedAt, copy, locale)}</Typography.Text>
+        <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
+        <Typography.Text type="secondary" className="session-conversation-time">
+          {formatDate(item.updatedAt, copy, locale)}
+        </Typography.Text>
       </div>
     ),
   }));
@@ -408,6 +400,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
       <section className="sessions-layout" aria-label={copy.sessionsDescription}>
         <aside className="session-sidebar" aria-label={copy.sessionList}>
           <div className="session-sidebar-heading">
+            <Typography.Text strong className="session-sidebar-title">{copy.sessionsTitle}</Typography.Text>
             <Button className="session-new-button" type="primary" onClick={startNewSession}>
               <span aria-hidden="true">+</span>
               {copy.newSession}
@@ -418,15 +411,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
               <Conversations
                 items={conversationItems}
                 activeKey={selectedSessionId || undefined}
-                onActiveChange={(key) => {
-                  setSelectedSessionId(key);
-                  selectedSessionIdRef.current = key;
-                  setSession(undefined);
-                  setDraftMessage("");
-                  setError("");
-                  onSessionChange(key);
-                  setShowCreate(false);
-                }}
+                onActiveChange={(key) => openSession(key)}
               />
             ) : <Empty>{copy.noSessions}</Empty>}
             {sessions.length < sessionTotal ? (
@@ -439,212 +424,99 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
         <section className="session-workspace">
           <div className="session-workspace-heading">
             {showCreate ? (
-              <Typography.Text strong>{copy.newSession}</Typography.Text>
+              <Typography.Text strong className="session-workspace-title">{copy.newSession}</Typography.Text>
             ) : currentSession ? (
-              <div>
-                <Typography.Text strong>{currentSession.projectName} · {targetLabel(currentSession, copy)}</Typography.Text>
-                <Typography.Text type="secondary">{copy.pinnedRevision}: <code>{currentSession.messages.at(-1)?.headSha ?? copy.none}</code></Typography.Text>
+              <div className="session-workspace-title">
+                <Space size={8} wrap>
+                  <Typography.Text strong>{currentSession.projectName}</Typography.Text>
+                  <Tag className="session-branch-tag">{currentSession.targetBranch}</Tag>
+                </Space>
+                <Typography.Text type="secondary" className="session-pinned">
+                  {copy.pinnedRevision}: <code>{currentSession.messages.at(-1)?.headSha ?? copy.none}</code>
+                </Typography.Text>
               </div>
-            ) : <Typography.Text strong>{copy.sessionsTitle}</Typography.Text>}
+            ) : <Typography.Text strong className="session-workspace-title">{copy.sessionsTitle}</Typography.Text>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
           </div>
           <div className="session-chat">
             <div className={`session-transcript-pane${showCreate ? " session-setup-pane" : ""}`}>
               {showCreate ? (
                 <div className="session-start">
-                  <div className="session-start-heading">
-                    <Typography.Title level={2}>{copy.sessionWelcomeTitle}</Typography.Title>
-                    <Typography.Text type="secondary">{copy.initialMessagePlaceholder}</Typography.Text>
-                  </div>
-                  <div className="session-shortcuts" role="group" aria-label={copy.targetKind}>
-                    {([
-                      ["repository", copy.repositoryTarget],
-                      ["issue", copy.issueTarget],
-                      ["merge_request", copy.mergeRequestTarget],
-                    ] as const).map(([value, label]) => (
-                      <Button
-                        className={`session-shortcut${targetType === value ? " is-active" : ""}`}
-                        key={value}
-                        aria-pressed={targetType === value}
-                        onClick={() => {
-                          setTargetType(value);
-                          setSelectedBranch("");
-                          setSelectedTarget(undefined);
-                          setTargets([]);
-                          setTargetsSearched(false);
-                          targetSearchRequest.current += 1;
-                          setOpenPicker(null);
-                          if (project && value !== "merge_request") void searchBranches(project, branchQuery, 1, false);
-                        }}
-                      >
-                        {label}
-                      </Button>
-                    ))}
-                  </div>
+                  <Welcome
+                    className="session-welcome"
+                    variant="borderless"
+                    icon={<span className="session-welcome-icon" aria-hidden="true">C</span>}
+                    title={copy.sessionWelcomeTitle}
+                    description={copy.sessionWelcomeDescription}
+                  />
                   <div className="session-picker-row">
-                    <Popover
-                      trigger="click"
-                      placement="bottomLeft"
-                      arrow={false}
-                      open={openPicker === "project"}
-                      onOpenChange={(open) => {
-                        setOpenPicker(open ? "project" : null);
-                        if (open && projects.length === 0) void searchProjects("");
-                      }}
-                      content={(
-                        <div className="session-picker-popover">
-                          <Input
-                            ref={pickerInput}
-                            aria-label={copy.projectSearch}
-                            maxLength={100}
-                            value={projectQuery}
-                            placeholder={copy.projectSearchPlaceholder}
-                            suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
-                            onChange={(event) => {
-                              const query = event.target.value.slice(0, 100);
-                              setProjectQuery(query);
-                              void searchProjects(query);
-                            }}
-                          />
-                          <div className="session-picker-options" role="listbox" aria-label={copy.projectSearch}>
-                            {projects.length ? projects.map((value) => (
-                              <button
-                                className="session-picker-option"
-                                type="button"
-                                role="option"
-                                aria-selected={project?.id === value.id}
-                                key={value.id}
-                                onClick={() => {
-                                  setProjectQuery("");
-                                  void selectProject(value);
-                                }}
-                              >
-                                <span>{value.path_with_namespace}</span>
-                                <small>{value.name}</small>
-                              </button>
-                            )) : <div className="session-picker-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</div>}
-                          </div>
+                    <Select<number, ProjectSelectOption>
+                      className="session-select"
+                      aria-label={copy.projectSearch}
+                      showSearch
+                      filterOption={false}
+                      placeholder={copy.projectSearchPlaceholder}
+                      value={project?.id}
+                      loading={projectLoading}
+                      options={projectOptions}
+                      notFoundContent={<span className="session-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
+                      optionRender={(option) => (
+                        <div className="session-option">
+                          <span className="session-option-label">{option.data.label}</span>
+                          {option.data.meta ? <span className="session-option-meta">{option.data.meta}</span> : null}
                         </div>
                       )}
-                    >
-                      <Button className="session-picker-trigger" size="middle" aria-expanded={openPicker === "project"}>
-                        <span className="session-picker-trigger-label">{project?.path_with_namespace ?? copy.projectSearchPlaceholder}</span>
-                      </Button>
-                    </Popover>
-                    {targetType !== "merge_request" ? (
-                      <Popover
-                        trigger="click"
-                        placement="bottomLeft"
-                        arrow={false}
-                        open={openPicker === "branch"}
-                        onOpenChange={(open) => {
-                          setOpenPicker(open ? "branch" : null);
-                          if (open && project && !branchesSearched) void searchBranches(project, branchQuery, 1, false);
-                        }}
-                        content={(
-                          <div className="session-picker-popover">
-                            <Input
-                              ref={pickerInput}
-                              aria-label={copy.branch}
-                              maxLength={100}
-                              value={branchQuery}
-                              placeholder={copy.branch}
-                              disabled={!project}
-                              suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
-                              onChange={(event) => {
-                                const query = event.target.value.slice(0, 100);
-                                setBranchQuery(query);
-                                if (project) void searchBranches(project, query, 1, false);
-                              }}
-                            />
-                            <div className="session-picker-options" role="listbox" aria-label={copy.branch}>
-                              {branches.length ? branches.map((value) => (
-                                <button
-                                  className="session-picker-option"
-                                  type="button"
-                                  role="option"
-                                  aria-selected={selectedBranch === value.name}
-                                  key={value.name}
-                                  onClick={() => {
-                                    setSelectedBranch(value.name);
-                                    setBranchQuery("");
-                                    setOpenPicker(null);
-                                  }}
-                                >{value.name}</button>
-                              )) : <div className="session-picker-empty">{branchesSearched ? copy.noBranches : copy.chooseProject}</div>}
-                            </div>
-                            {project && branches.length >= 50 ? (
-                              <Button className="session-picker-load-more" size="small" type="text" loading={busy} onClick={() => void searchBranches(project, branchQuery, Math.floor(branches.length / 50) + 1, true)}>
-                                {copy.loadMore}
-                              </Button>
-                            ) : null}
-                          </div>
-                        )}
-                      >
-                        <Button className="session-picker-trigger" size="middle" disabled={!project} aria-expanded={openPicker === "branch"}>
-                          <span className="session-picker-trigger-label">{selectedBranch || copy.branch}</span>
-                        </Button>
-                      </Popover>
-                    ) : null}
-                    {targetType !== "repository" ? (
-                      <Popover
-                        trigger="click"
-                        placement="bottomLeft"
-                        arrow={false}
-                        open={openPicker === "target"}
-                        onOpenChange={(open) => {
-                          setOpenPicker(open ? "target" : null);
-                          if (open && targets.length === 0 && project) void searchTargets(targetQuery);
-                        }}
-                        content={(
-                          <div className="session-picker-popover">
-                            <Input
-                              ref={pickerInput}
-                              aria-label={copy.target}
-                              maxLength={100}
-                              value={targetQuery}
-                              placeholder={copy.targetSearchPlaceholder}
-                              disabled={!project}
-                              suffix={<span>{busy ? <Spin size="small" /> : null}</span>}
-                              onChange={(event) => {
-                                const query = event.target.value.slice(0, 100);
-                                setTargetQuery(query);
-                                void searchTargets(query);
-                              }}
-                            />
-                            <div className="session-picker-options" role="listbox" aria-label={copy.target}>
-                              {targets.length ? targets.map((value) => {
-                                const prefix = targetType === "issue" ? "#" : "!";
-                                const branch = targetType === "merge_request" ? value.source_branch : value.target_branch;
-                                return (
-                                  <button
-                                    className="session-picker-option"
-                                    type="button"
-                                    role="option"
-                                    aria-selected={selectedTarget?.iid === value.iid}
-                                    key={value.iid}
-                                    onClick={() => {
-                                      setSelectedTarget(value);
-                                      setOpenPicker(null);
-                                    }}
-                                  >
-                                    <span>{prefix}{value.iid} {value.title}</span>
-                                    {branch ? <small>{branch}</small> : null}
-                                  </button>
-                                );
-                              }) : <div className="session-picker-empty">{targetsSearched ? copy.noTargets : copy.chooseProject}</div>}
-                            </div>
-                          </div>
-                        )}
-                      >
-                        <Button className="session-picker-trigger" size="middle" disabled={!project} aria-expanded={openPicker === "target"}>
-                          <span className="session-picker-trigger-label">
-                            {selectedTarget ? `${targetType === "issue" ? "#" : "!"}${selectedTarget.iid} ${selectedTarget.title}` : copy.target}
-                          </span>
-                        </Button>
-                      </Popover>
-                    ) : null}
+                      onOpenChange={(open) => {
+                        if (open && projects.length === 0) void loadProjects("", 1, false);
+                      }}
+                      onSearch={(value) => {
+                        setProjectQuery(value);
+                        void loadProjects(value, 1, false);
+                      }}
+                      onPopupScroll={(event) => {
+                        if (!projectHasMore || projectLoading || !atListBottom(event)) return;
+                        void loadProjects(projectQuery, projectPage + 1, true);
+                      }}
+                      onChange={(value) => selectProject(value)}
+                    />
+                    <Select<string, BranchSelectOption>
+                      className="session-select"
+                      aria-label={copy.branch}
+                      showSearch
+                      filterOption={false}
+                      placeholder={copy.branchSearchPlaceholder}
+                      value={selectedBranch || undefined}
+                      disabled={!project}
+                      loading={branchLoading}
+                      options={branchOptions}
+                      notFoundContent={<span className="session-select-empty">{copy.noBranches}</span>}
+                      optionRender={(option) => (
+                        <div className="session-option">
+                          <span className="session-option-label">{option.data.label}</span>
+                          {option.data.meta ? <span className="session-option-meta">{option.data.meta}</span> : null}
+                        </div>
+                      )}
+                      onOpenChange={(open) => {
+                        if (open && project && branches.length === 0) void loadBranches(project, "", 1, false);
+                      }}
+                      onSearch={(value) => {
+                        setBranchQuery(value);
+                        if (project) void loadBranches(project, value, 1, false);
+                      }}
+                      onPopupScroll={(event) => {
+                        if (!project || !branchHasMore || branchLoading || !atListBottom(event)) return;
+                        void loadBranches(project, branchQuery, branchPage + 1, true);
+                      }}
+                      onChange={(value) => setSelectedBranch(value)}
+                    />
                   </div>
+                  <Prompts
+                    className="session-prompts"
+                    title={copy.sessionSuggestions}
+                    items={suggestionItems}
+                    wrap
+                    onItemClick={({ data }) => setDraftMessage(String(data.label ?? ""))}
+                  />
                 </div>
               ) : currentSession && bubbleItems.length ? (
                 <Bubble.List
@@ -656,18 +528,18 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                     ai: { placement: "start", variant: "outlined" },
                   }}
                 />
-              ) : <Welcome title={copy.sessionPlaceholder} />}
+              ) : <Welcome className="session-welcome session-welcome-empty" title={copy.sessionPlaceholder} />}
             </div>
             <Sender
               className="session-composer"
               aria-label={copy.initialMessage}
               value={draftMessage}
               placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
-              disabled={busy || (showCreate ? !canCreateSession : hasActiveTurn || !currentSession || pendingReplySessions.has(selectedSessionId))}
+              disabled={busy || (!showCreate && !canReply)}
               onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
               onSubmit={submitMessage}
               suffix={(_node, { components: { SendButton } }) => (
-                <SendButton aria-label={copy.sendMessage} />
+                <SendButton aria-label={showCreate ? copy.createSession : copy.sendMessage} />
               )}
             />
           </div>

@@ -704,56 +704,28 @@ export class Worker {
     if (!job.sessionId || !job.sessionResponseId) throw new Error("session job is missing its message association");
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
       transition("stale");
-      this.store.finishChatSessionResponse(job.id, "stale", "The target did not have a valid commit snapshot.");
+      this.store.finishChatSessionResponse(job.id, "stale", "The branch did not have a valid commit snapshot.");
       return;
     }
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
     const session = this.store.getChatSession(job.sessionId);
     if (!session) throw new Error(`chat session "${job.sessionId}" not found`);
-    if (session.projectId !== job.projectId || session.targetType !== job.targetType || session.targetIid !== job.targetIid) {
-      throw new Error("session job target does not match its stored session");
+    if (session.projectId !== job.projectId || session.targetBranch !== job.targetBranch) {
+      throw new Error("session job branch does not match its stored session");
     }
 
-    let remoteHeadSha: string;
-    if (job.targetType === "merge_request") {
-      const mergeRequest = await traceExecutionStep(
-        this.store,
-        stepContext,
-        "gitlab.get_session_merge_request",
-        { projectId: job.projectId, mrIid: job.targetIid },
-        () => this.gitlab.getMergeRequest(job.projectId, job.targetIid, signal),
-        (value) => ({ iid: value.iid, state: value.state, sourceBranch: value.source_branch, headSha: value.diff_refs.head_sha }),
-      );
-      if (mergeRequest.source_branch !== job.targetBranch) {
-        transition("stale");
-        this.store.finishChatSessionResponse(job.id, "stale", "The merge request source branch changed; refresh the session before continuing.");
-        return;
-      }
-      remoteHeadSha = mergeRequest.diff_refs.head_sha;
-    } else {
-      if (job.targetType === "issue") {
-        await traceExecutionStep(
-          this.store,
-          stepContext,
-          "gitlab.get_session_issue",
-          { projectId: job.projectId, issueIid: job.targetIid },
-          () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
-          (value) => ({ iid: value.iid, state: value.state, title: value.title }),
-        );
-      }
-      const branch = await traceExecutionStep(
-        this.store,
-        stepContext,
-        "gitlab.get_session_branch",
-        { projectId: job.projectId, branch: job.targetBranch },
-        () => this.gitlab.getBranch(job.projectId, job.targetBranch, signal),
-        (value) => ({ name: value.name, headSha: value.commit.id }),
-      );
-      remoteHeadSha = branch.commit.id;
-    }
+    const branch = await traceExecutionStep(
+      this.store,
+      stepContext,
+      "gitlab.get_session_branch",
+      { projectId: job.projectId, branch: job.targetBranch },
+      () => this.gitlab.getBranch(job.projectId, job.targetBranch, signal),
+      (value) => ({ name: value.name, headSha: value.commit.id }),
+    );
+    const remoteHeadSha = branch.commit.id;
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(remoteHeadSha) || remoteHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
       transition("stale");
-      this.store.finishChatSessionResponse(job.id, "stale", "The target changed after this turn was queued; send a new message to use the current snapshot.");
+      this.store.finishChatSessionResponse(job.id, "stale", "The branch changed after this turn was queued; send a new message to use the current snapshot.");
       return;
     }
     const project = await traceExecutionStep(
@@ -790,11 +762,8 @@ export class Worker {
         .slice(-sessionHistoryMessages)
         .map(({ role, content }) => ({ role, content }));
       const userPrompt = JSON.stringify({
-        target: {
+        repository: {
           project: session.projectName,
-          type: session.targetType,
-          iid: session.targetIid || null,
-          title: session.targetTitle,
           branch: job.targetBranch,
           headSha: job.headSha,
         },
@@ -807,7 +776,7 @@ export class Worker {
           this.store,
           stepContext,
           "workflow.read_only_session",
-          { projectId: job.projectId, targetType: job.targetType, headSha: job.headSha, requestCharacters: [...job.request].length },
+          { projectId: job.projectId, branch: job.targetBranch, headSha: job.headSha, requestCharacters: [...job.request].length },
           () => this.agent.generate(
             { taskType: "session", systemPrompt: getSessionSystemPrompt(this.config.agent.responseLanguage), userPrompt },
             workspace.path,

@@ -196,17 +196,11 @@ describe("CorvexServer", () => {
       expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);
       const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
       expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
-      const issuesResponse = await fetch(`${base}/api/ops/projects/2/issues`, { headers: { authorization } });
-      expect(await issuesResponse.json()).toMatchObject([{ iid: 4, title: "Issue" }]);
-      const mergeRequestsResponse = await fetch(`${base}/api/ops/projects/2/merge-requests`, { headers: { authorization } });
-      expect(await mergeRequestsResponse.json()).toMatchObject([{ iid: 5, source_branch: "feature/session" }]);
       const createdSessionResponse = await fetch(`${base}/api/ops/sessions`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({
           projectId: 2,
-          targetType: "repository",
-          targetIid: 0,
           targetBranch: "main",
           message: "Explain this repository",
         }),
@@ -220,30 +214,33 @@ describe("CorvexServer", () => {
         targetBranch: "main",
         headSha: "b".repeat(40),
       });
+      const sessionDetailResponse = await fetch(`${base}/api/ops/sessions/${createdSession.sessionId}`, { headers: { authorization } });
+      expect(await sessionDetailResponse.json()).toMatchObject({
+        id: createdSession.sessionId,
+        projectName: "group/project",
+        targetBranch: "main",
+      });
       const concurrentReplyResponse = await fetch(`${base}/api/ops/sessions/${createdSession.sessionId}/messages`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({ message: "A concurrent follow-up" }),
       });
       expect(concurrentReplyResponse.status).toBe(409);
-      const mergeRequestSessionResponse = await fetch(`${base}/api/ops/sessions`, {
+      const secondSessionResponse = await fetch(`${base}/api/ops/sessions`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({
           projectId: 2,
-          targetType: "merge_request",
-          targetIid: 5,
-          targetBranch: "client-supplied-branch-is-ignored",
-          message: "Summarize this merge request",
+          targetBranch: "main",
+          message: "Summarize the request flow",
         }),
       });
-      expect(mergeRequestSessionResponse.status).toBe(202);
-      const mergeRequestSession = await mergeRequestSessionResponse.json() as { jobId: string };
-      expect(store.getJob(mergeRequestSession.jobId)).toMatchObject({
-        targetType: "merge_request",
-        targetIid: 5,
-        targetBranch: "feature/session",
-        headSha: "c".repeat(40),
+      expect(secondSessionResponse.status).toBe(202);
+      const secondSession = await secondSessionResponse.json() as { jobId: string };
+      expect(store.getJob(secondSession.jobId)).toMatchObject({
+        type: "session",
+        targetBranch: "main",
+        headSha: "b".repeat(40),
       });
       const queuedSessions = store.jobCounts().queued;
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);

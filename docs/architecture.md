@@ -4,9 +4,9 @@
 
 Corvex separates the request path from model and repository work:
 
-1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events and jobs in SQLite, and replies to GitLab. The sessions console discovers projects and targets through the configured GitLab read token.
+1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events and jobs in SQLite, and replies to GitLab. The sessions console discovers projects and branches through the configured GitLab read token.
 2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, persistent session messages, model call metrics, and optional daily token reservations.
-3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request or session target snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
+3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request head or session branch snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks.
 
@@ -29,7 +29,7 @@ The currently supported commands are `/review`, `/explain <path>`, `/fix [reques
 
 ## Persistent sessions
 
-The authenticated operations console uses the GitLab read token to search all visible projects, branches, Issues, and merge requests. A session is bound to a server-resolved target and pinned SHA; turns and assistant replies are persisted in SQLite and serialized per session. The session worker uses read-only repository tools and does not publish to GitLab. A target revision change does not silently retarget an existing session.
+The authenticated operations console uses the GitLab read token to search all visible projects and their branches. A session is a general chat bound to one repository branch; the server resolves and pins the branch head SHA when a turn is queued, and turns and assistant replies are persisted in SQLite and serialized per session. The session worker uses read-only repository tools and does not publish to GitLab. If the branch moves before a queued turn starts, that turn ends as `stale` instead of answering from a mismatched snapshot.
 
 ## Review workflow
 

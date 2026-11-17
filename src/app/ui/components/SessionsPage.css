@@ -1,16 +1,21 @@
 .sessions-layout {
   --session-border: #e1e6eb;
+  --session-border-strong: #d5dce3;
   --session-muted: #71808e;
+  --session-ink: #17212b;
   --session-surface: #fff;
-  --session-canvas: #f9fafb;
+  --session-canvas: #f7f9fb;
+  --session-brand: #1769aa;
+  --session-brand-soft: #eaf2fa;
 
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  height: min(760px, max(500px, calc(100vh - 190px)));
+  grid-template-columns: 272px minmax(0, 1fr);
+  height: min(820px, max(560px, calc(100vh - 180px)));
   overflow: hidden;
   border: 1px solid var(--session-border);
-  border-radius: 8px;
+  border-radius: 14px;
   background: var(--session-surface);
+  box-shadow: 0 12px 32px rgb(23 33 43 / 6%);
 }
 
 .session-sidebar {
@@ -18,7 +23,7 @@
   min-width: 0;
   flex-direction: column;
   border-right: 1px solid var(--session-border);
-  background: #fbfcfd;
+  background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fa 100%);
 }
 
 .session-sidebar-heading,
@@ -31,24 +36,33 @@
 }
 
 .session-sidebar-heading {
-  min-height: 78px;
-  padding: 16px 18px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 18px 16px 16px;
+}
+
+.session-sidebar-title {
+  color: var(--session-muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .session-new-button.ant-btn {
   display: flex;
   width: 100%;
-  height: 42px;
+  height: 40px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 8px;
-  box-shadow: 0 2px 5px rgb(37 99 235 / 16%);
+  border-radius: 9px;
+  box-shadow: 0 4px 12px rgb(23 105 170 / 22%);
   font-weight: 550;
 }
 
 .session-new-button > span[aria-hidden="true"] {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 400;
   line-height: 1;
 }
@@ -68,7 +82,7 @@
 
 .session-conversation-label {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -78,32 +92,35 @@
   white-space: nowrap;
 }
 
+.session-conversation-time {
+  font-size: 11px;
+}
+
 .session-sidebar-list .ant-conversations {
   width: 100%;
-  padding: 8px;
+  padding: 10px;
 }
 
 .session-sidebar-list .ant-conversations-item {
   width: 100%;
-  min-height: 68px;
-  border-radius: 6px;
+  min-height: 66px;
+  margin-bottom: 2px;
+  border-radius: 9px;
 }
 
 .session-sidebar-list .ant-conversations-item:hover {
-  background: #f1f5f8;
+  background: #eef3f8;
 }
 
-.session-sidebar-list .ant-conversations-item-active {
-  background: #eaf2f8;
-}
-
+.session-sidebar-list .ant-conversations-item-active,
 .session-sidebar-list .ant-conversations-item-active:hover {
-  background: #e5eff7;
+  background: var(--session-brand-soft);
+  box-shadow: inset 2px 0 0 var(--session-brand);
 }
 
 .session-load-more {
-  width: 100%;
-  margin-top: auto;
+  width: calc(100% - 20px);
+  margin: 6px 10px 10px;
 }
 
 .session-workspace {
@@ -116,23 +133,41 @@
 .session-workspace-heading {
   position: relative;
   z-index: 3;
-  min-height: 60px;
-  align-items: center;
-  padding: 0 24px;
-  background: rgb(255 255 255 / 88%);
+  min-height: 64px;
+  padding: 0 26px;
+  background: rgb(255 255 255 / 90%);
   backdrop-filter: blur(8px);
 }
 
-.session-workspace-heading .ant-typography {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: #374151;
+.session-workspace-title {
+  min-width: 0;
+  color: var(--session-ink);
 }
 
-.session-workspace-heading .ant-typography-secondary {
+.session-workspace-title .ant-typography {
+  margin: 0;
+}
+
+.session-branch-tag.ant-tag {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-color: var(--session-border-strong);
+  background: #f2f6fa;
+  color: #3b4a58;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.session-pinned {
   display: block;
   margin-top: 3px;
   color: var(--session-muted);
+  font-size: 12px;
+}
+
+.session-pinned code {
+  color: #4a5866;
   font-size: 12px;
 }
 
@@ -146,25 +181,13 @@
   background: var(--session-canvas);
 }
 
-.session-chat::after {
-  position: absolute;
-  z-index: 1;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 132px;
-  background: linear-gradient(to top, var(--session-canvas) 68%, transparent);
-  content: "";
-  pointer-events: none;
-}
-
 .session-transcript-pane {
   display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
   overflow: auto;
-  padding: 24px;
+  padding: 26px;
 }
 
 .session-setup-pane {
@@ -173,192 +196,191 @@
 
 .session-start {
   width: 100%;
-  max-width: 768px;
+  max-width: 680px;
   margin: auto;
-  padding: 24px 12px 48px;
+  padding: 20px 8px 40px;
+}
+
+.session-welcome.ant-welcome {
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0 28px;
   text-align: center;
 }
 
-.session-start-heading {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 28px;
-}
-
-.session-start-heading .ant-typography {
+.session-welcome .ant-welcome-title,
+.session-welcome .ant-welcome-description {
   margin: 0;
 }
 
-.session-start-heading h2.ant-typography {
-  color: #111827;
-  font-size: 32px;
+.session-welcome .ant-welcome-title {
+  color: var(--session-ink);
+  font-size: 30px;
   line-height: 1.25;
 }
 
-.session-start-heading .ant-typography-secondary {
+.session-welcome .ant-welcome-description {
+  margin-top: 10px;
   color: #6b7280;
   font-size: 15px;
 }
 
-.session-shortcuts {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 24px;
+.session-welcome-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #1d7fc9, var(--session-brand));
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgb(23 105 170 / 28%);
+  font-size: 24px;
+  font-weight: 700;
 }
 
-.session-shortcut.ant-btn {
-  height: 40px;
-  padding: 0 18px;
-  border-color: #e5e7eb;
-  border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
-  color: #374151;
-}
-
-.session-shortcut.ant-btn:hover,
-.session-shortcut.ant-btn.is-active {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #2563eb;
+.session-welcome-empty.ant-welcome {
+  margin: auto;
 }
 
 .session-picker-row {
   display: flex;
-  justify-content: center;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.session-picker-trigger.ant-btn {
-  max-width: 240px;
-  height: 38px;
-  padding: 0 14px;
-  border-color: #e5e7eb;
-  border-radius: 8px;
+.session-select {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.session-select .ant-select-selector {
+  height: 42px;
+  border-color: var(--session-border-strong);
+  border-radius: 10px;
   background: #fff;
-  color: #6b7280;
+  box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
 }
 
-.session-picker-trigger.ant-btn:not(:disabled):hover {
-  border-color: #93c5fd;
-  color: #2563eb;
+.session-select .ant-select-selection-item,
+.session-select .ant-select-selection-placeholder {
+  line-height: 40px;
 }
 
-.session-picker-trigger-label {
-  display: block;
+.session-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-option-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-picker-popover {
-  width: min(320px, calc(100vw - 56px));
-}
-
-.session-picker-options {
-  max-height: 260px;
-  margin-top: 8px;
-  overflow: auto;
-}
-
-.session-picker-option {
-  display: grid;
-  width: 100%;
-  gap: 3px;
-  padding: 9px 10px;
-  color: #17212b;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.session-picker-option:hover,
-.session-picker-option[aria-selected="true"] {
-  background: #f0f4f7;
-}
-
-.session-picker-option small,
-.session-picker-empty {
+.session-option-meta {
+  flex: 0 0 auto;
   color: var(--session-muted);
   font-size: 12px;
 }
 
-.session-picker-empty {
-  padding: 12px 10px;
+.session-select-empty {
+  display: block;
+  padding: 8px 0;
+  color: var(--session-muted);
   text-align: center;
 }
 
-.session-picker-load-more {
-  width: 100%;
-  margin-top: 6px;
-  border-top: 1px solid var(--session-border);
+.session-prompts.ant-prompts {
+  margin-top: 20px;
+}
+
+.session-prompts .ant-prompts-title {
+  color: var(--session-muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session-prompts .ant-prompts-item {
+  border: 1px solid var(--session-border);
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.session-prompts .ant-prompts-item:hover {
+  border-color: var(--session-brand);
+  box-shadow: 0 4px 12px rgb(23 105 170 / 10%);
+  color: var(--session-brand);
 }
 
 .session-transcript {
   width: 100%;
-  min-height: 300px;
-  padding: 8px 0;
+  min-height: 320px;
+  padding: 6px 0;
+}
+
+.session-transcript .ant-bubble-content {
+  white-space: pre-wrap;
+  line-height: 1.7;
 }
 
 .session-composer {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  width: min(768px, calc(100% - 48px));
-  margin: 0 auto 20px;
-  border: 1px solid #d1d5db;
+  width: min(768px, calc(100% - 52px));
+  margin: 0 auto 22px;
+  border: 1px solid var(--session-border-strong);
   border-radius: 16px;
   background: #fff;
-  box-shadow: 0 4px 10px rgb(0 0 0 / 5%);
+  box-shadow: 0 8px 24px rgb(23 33 43 / 8%);
 }
 
-.session-transcript .ant-bubble-content {
-  white-space: pre-wrap;
-  line-height: 1.65;
+.session-composer:focus-within {
+  border-color: var(--session-brand);
+  box-shadow: 0 8px 24px rgb(23 105 170 / 16%);
 }
 
 @media (max-width: 900px) {
   .sessions-layout {
-    grid-template-columns: 220px minmax(0, 1fr);
-    height: min(760px, max(500px, calc(100vh - 170px)));
+    grid-template-columns: 224px minmax(0, 1fr);
+    height: min(820px, max(560px, calc(100vh - 168px)));
+  }
+
+  .session-workspace-heading {
+    padding: 0 18px;
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .sessions-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 168px minmax(520px, 1fr);
+    grid-template-rows: auto minmax(520px, 1fr);
     height: auto;
-    min-height: 690px;
+    min-height: 700px;
   }
 
   .session-sidebar {
     min-height: 0;
     border-right: 0;
-    border-bottom: 1px solid #e1e6eb;
+    border-bottom: 1px solid var(--session-border);
   }
 
   .session-sidebar-heading {
-    min-height: 68px;
-    padding: 12px;
-  }
-
-  .session-sidebar-list {
-    min-height: 0;
+    padding: 14px;
   }
 
   .session-sidebar-list .ant-conversations {
-    max-height: 98px;
+    max-height: 108px;
     overflow: auto;
   }
 
   .session-workspace-heading {
-    min-height: 54px;
+    min-height: 56px;
     padding: 0 14px;
   }
 
@@ -371,20 +393,15 @@
   }
 
   .session-start {
-    padding: 20px 4px 36px;
+    padding: 12px 4px 28px;
   }
 
-  .session-start-heading h2.ant-typography {
-    font-size: 28px;
+  .session-welcome .ant-welcome-title {
+    font-size: 26px;
   }
 
-  .session-shortcut.ant-btn {
-    height: 38px;
-    padding: 0 14px;
-  }
-
-  .session-picker-trigger.ant-btn {
-    max-width: min(240px, calc(100vw - 56px));
+  .session-select {
+    flex-basis: 100%;
   }
 
   .session-composer {

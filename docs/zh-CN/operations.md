@@ -60,13 +60,13 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/jobs` | 筛选/分页任务列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
 | `GET /api/ops/jobs/<id>` | 任务详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出事件。 |
 | `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
-| `GET /api/ops/projects/<id>/branches`、`/issues`、`/merge-requests` | 搜索仓库目标和分支。 |
+| `GET /api/ops/projects/<id>/branches` | 搜索项目的分支。 |
 | `GET /api/ops/sessions`、`GET /api/ops/sessions/<id>` | 列出持久会话及其消息。 |
 | `POST /api/ops/sessions`、`POST /api/ops/sessions/<id>/messages` | 创建固定版本的只读会话或排入下一轮对话。 |
 
 运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护运维凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 
-控制台包含概览、任务、任务详情和持久对话会话视图。新建会话时可搜索只读 GitLab Token 可访问的全部项目；每轮由服务端解析并固定到分支或 MR SHA，消息保存在 SQLite，并仅提供只读仓库工具。会话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃会话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
+控制台包含概览、任务、任务详情和持久对话会话视图。新建会话时可搜索只读 GitLab Token 可访问的全部项目及分支；每轮由服务端解析并固定到分支头 SHA，消息保存在 SQLite，并仅提供只读仓库工具。会话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃会话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
 界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
 
 ## 日志与故障排查

@@ -4,9 +4,9 @@
 
 Corvex 将请求接入与模型、仓库处理分离：
 
-1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件和任务写入 SQLite，并回复 GitLab。会话工作台通过配置的 GitLab 只读 Token 发现项目和目标。
+1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件和任务写入 SQLite，并回复 GitLab。会话工作台通过配置的 GitLab 只读 Token 发现项目和分支。
 2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、持久会话消息、模型调用指标以及可选的每日 Token 预留。
-3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求或会话目标快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。
+3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求或会话分支快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
 5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现任务。
 
@@ -29,7 +29,7 @@ MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/can
 
 ## 持久会话
 
-经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目、分支、Issue 和合并请求。会话绑定到服务端解析的目标及固定 SHA；每轮消息保存在 SQLite，并按会话串行执行。会话 Worker 只提供只读仓库工具，不会向 GitLab 发布内容。目标版本变化时，既有会话不会静默切换到新版本。
+经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。会话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按会话串行执行。会话 Worker 只提供只读仓库工具，不会向 GitLab 发布内容。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
 
 ## 审查流程
 

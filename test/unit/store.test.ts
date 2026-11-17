@@ -94,10 +94,7 @@ describe("JobStore", () => {
     const result = store.createChatSession({
       projectId: 7,
       projectName: "group/project",
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
-      targetTitle: "",
       headSha: "a".repeat(40),
       actorId: 0,
       request: "Explain the routing module",
@@ -108,7 +105,6 @@ describe("JobStore", () => {
       id: result.sessionId,
       projectId: 7,
       projectName: "group/project",
-      targetType: "repository",
       targetBranch: "main",
       messages: [
         { role: "user", content: "Explain the routing module", status: "completed" },
@@ -118,7 +114,6 @@ describe("JobStore", () => {
     expect(store.claimNextWithLease(30_000)).toMatchObject({
       id: result.jobId,
       type: "session",
-      targetType: "repository",
       targetBranch: "main",
       sessionId: result.sessionId,
       sessionResponseId: session?.messages[1]?.id,
@@ -131,18 +126,13 @@ describe("JobStore", () => {
     const created = store.createChatSession({
       projectId: 7,
       projectName: "group/project",
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
-      targetTitle: "",
       headSha: "a".repeat(40),
       actorId: 0,
       request: "First turn",
     });
     expect(() => store.addChatSessionMessage(created.sessionId, {
       projectId: 7,
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
@@ -166,8 +156,6 @@ describe("JobStore", () => {
     });
     expect(store.addChatSessionMessage(created.sessionId, {
       projectId: 7,
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
@@ -180,10 +168,7 @@ describe("JobStore", () => {
     const created = store.createChatSession({
       projectId: 7,
       projectName: "group/project",
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
-      targetTitle: "",
       headSha: "a".repeat(40),
       actorId: 0,
       request: "Retry this session turn",
@@ -202,8 +187,6 @@ describe("JobStore", () => {
     });
     expect(() => store.addChatSessionMessage(created.sessionId, {
       projectId: 7,
-      targetType: "repository",
-      targetIid: 0,
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
@@ -672,10 +655,7 @@ describe("JobStore", () => {
     const base = {
       projectId: 7,
       projectName: "group/project",
-      targetType: "repository" as const,
-      targetIid: 0,
       targetBranch: "main",
-      targetTitle: "",
       headSha: "a".repeat(40),
       actorId: 0,
     };
@@ -822,5 +802,54 @@ describe("JobStore", () => {
       generationDurationMs: null,
     });
     expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
+  });
+
+  it("drops legacy session target columns while keeping existing sessions readable", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-legacy-session-"));
+    const databasePath = join(directory, "state.db");
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
+        head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE chat_sessions (
+        id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
+        target_type TEXT NOT NULL, target_iid INTEGER NOT NULL, target_branch TEXT NOT NULL,
+        target_title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE chat_session_messages (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, job_id TEXT,
+        head_sha TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO chat_sessions
+        (id,project_id,project_name,target_type,target_iid,target_branch,target_title,created_at,updated_at)
+      VALUES
+        ('legacy-session',7,'group/project','merge_request',5,'feature/session','Old MR title','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+    `);
+    legacy.close();
+
+    store = await JobStore.open(databasePath);
+    expect(store.listChatSessions(10, 0)).toEqual({
+      items: [{
+        id: "legacy-session",
+        projectId: 7,
+        projectName: "group/project",
+        targetBranch: "feature/session",
+        createdAt: "2025-01-01T00:00:00.000Z",
+        updatedAt: "2025-01-01T00:00:00.000Z",
+      }],
+      total: 1,
+    });
+    const inspector = new DatabaseSync(databasePath);
+    const columns = inspector.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
+    inspector.close();
+    expect(columns.map((column) => column.name)).not.toContain("target_type");
+    expect(columns.map((column) => column.name)).not.toContain("target_iid");
+    expect(columns.map((column) => column.name)).not.toContain("target_title");
   });
 });

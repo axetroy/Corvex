@@ -75,10 +75,7 @@ export interface ChatSessionSummary {
   id: string;
   projectId: number;
   projectName: string;
-  targetType: JobTargetType;
-  targetIid: number;
   targetBranch: string;
-  targetTitle: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,10 +103,7 @@ export interface ChatSessionPage {
 export interface CreateChatSessionInput {
   projectId: number;
   projectName: string;
-  targetType: JobTargetType;
-  targetIid: number;
   targetBranch: string;
-  targetTitle: string;
   headSha: string;
   actorId: number;
   request: string;
