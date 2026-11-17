@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { en } from "../../src/app/ui/i18n.ts";
 import { TraceField } from "../../src/app/ui/components/common.tsx";
+import { ConversationToolCalls } from "../../src/app/ui/components/ConversationToolCalls.tsx";
 import { TraceSession } from "../../src/app/ui/components/TraceSession.tsx";
 import {
   calculateAverageFirstTokenMs,
@@ -82,6 +83,31 @@ describe("operations UI trace reconstruction", () => {
     expect(markup.match(/Read file README\.md \(lines 1-200\)/g)).toHaveLength(1);
     expect(markup).not.toContain("All activity");
     expect(markup).not.toContain("Conversation</button>");
+  });
+
+  it("renders tool calls in the chat transcript with readable descriptions", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, {
+      copy: en,
+      calls: [
+        { name: "read_file", status: "succeeded", input: JSON.stringify({ path: "src/app/ui/App.tsx" }), durationMs: 42 },
+        { name: "git_grep", status: "failed", input: JSON.stringify({ query: "createHash", path: "src" }), durationMs: 7 },
+        { name: "web_fetch", status: "running", input: null, durationMs: null },
+      ],
+    }));
+
+    expect(markup).toContain("3 tool call(s)");
+    expect(markup).toContain("Read file src/app/ui/App.tsx (lines 1-200)");
+    expect(markup).toContain("Search &quot;createHash&quot; in src");
+    expect(markup).toContain("Read webpage unknown path");
+    expect(markup).toContain("Succeeded");
+    expect(markup).toContain("Failed");
+    expect(markup).toContain("42 ms");
+    expect(markup).toContain("7 ms");
+  });
+
+  it("renders nothing when a turn recorded no tool calls", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, { copy: en, calls: [] }));
+    expect(markup).toBe("");
   });
 
   it("opens trace payload fields when selected by the inspector", () => {

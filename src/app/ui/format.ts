@@ -120,6 +120,25 @@ export function describeSessionTool(
       return copy.traceToolReadDirectoryTemplate.replace("{path}", path);
     case "stat":
       return copy.traceToolInspectPathTemplate.replace("{path}", path);
+    case "search_text":
+    case "git_grep": {
+      const query = typeof record?.query === "string" && record.query ? record.query : copy.traceUnknownQuery;
+      return copy.traceToolSearchTemplate
+        .replace("{query}", query)
+        .replace("{path}", path);
+    }
+    case "git_diff":
+      return copy.traceToolGitDiffTemplate.replace("{path}", path);
+    case "git_log": {
+      const limit = typeof record?.limit === "number" && Number.isSafeInteger(record.limit) ? record.limit : 10;
+      return copy.traceToolGitLogTemplate
+        .replace("{count}", String(limit))
+        .replace("{path}", path);
+    }
+    case "git_show": {
+      const sha = typeof record?.sha === "string" && record.sha ? record.sha.slice(0, 12) : copy.traceUnknownPath;
+      return copy.traceToolGitShowTemplate.replace("{sha}", sha);
+    }
     case "web_fetch":
       return copy.traceToolFetchWebTemplate.replace(
         "{url}",

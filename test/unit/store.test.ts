@@ -266,8 +266,58 @@ describe("JobStore", () => {
       jobStatus: "completed",
       traceCount: 0,
       eventCount: 0,
+      toolCalls: [],
     });
     expect(store.listConversations(10, 0).items[0]).toMatchObject({ turnCount: 1, lastTurnStatus: "completed" });
+  });
+
+  it("surfaces each assistant turn's tool calls in the conversation listing", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Where is routing implemented?",
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a conversation job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    const readTrace = store.startJobTrace(
+      job.id,
+      job.attemptCount,
+      "tool",
+      "read_file",
+      "",
+      null,
+      { round: 1, input: JSON.stringify({ path: "src/routing.ts" }) },
+    );
+    store.finishJobTrace(readTrace, "succeeded", 42);
+    const grepTrace = store.startJobTrace(
+      job.id,
+      job.attemptCount,
+      "tool",
+      "git_grep",
+      "",
+      null,
+      { round: 1, input: JSON.stringify({ query: "createHash", path: "src" }) },
+    );
+    store.finishJobTrace(grepTrace, "failed", 7, undefined, undefined, "boom");
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "completed");
+    store.finishConversationResponse(job.id, "completed", "Routing lives in routing.ts.");
+
+    const assistant = store.getConversation(created.conversationId)?.messages[1];
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      traceCount: 2,
+      toolCalls: [
+        { name: "read_file", status: "succeeded", durationMs: 42 },
+        { name: "git_grep", status: "failed", durationMs: 7 },
+      ],
+    });
+    // 用户消息不携带工具调用，避免把助手的活动挂到提问上。
+    expect(store.getConversation(created.conversationId)?.messages[0]?.toolCalls).toEqual([]);
   });
 
   it("summarizes conversation usage and per-turn timings", async () => {

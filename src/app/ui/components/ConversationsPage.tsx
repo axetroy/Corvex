@@ -11,6 +11,7 @@ import type { Copy, Locale } from "../i18n.js";
 import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
+import { ConversationToolCalls } from "./ConversationToolCalls.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import type { ProjectOption } from "../projectPicker.js";
@@ -58,7 +59,8 @@ function MessageContent({ message, copy }: { message: ConversationMessage; copy:
   return (
     <div className="conversation-message-markdown">
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
-      <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab />
+      {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
+      <ConversationToolCalls calls={message.toolCalls} copy={copy} />
       {settled ? (
         <div className="conversation-message-actions">
           <Actions
@@ -312,7 +314,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       </Space>
     ),
     content: <MessageContent message={message} copy={copy} />,
-    loading: message.role === "assistant" && !message.content && (message.status === "queued" || message.status === "running"),
+    // 有工具调用记录后改为展示调用列表，避免 loading 覆盖掉正在进行的读取过程。
+    loading: message.role === "assistant" && !message.content && message.toolCalls.length === 0 &&
+      (message.status === "queued" || message.status === "running"),
     status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
   }));
 

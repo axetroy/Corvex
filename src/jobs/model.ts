@@ -84,6 +84,18 @@ export interface ConversationSummary {
   lastTurnStatus: ConversationMessageStatus | null;
 }
 
+/**
+ * 助手回复期间的一次工具调用摘要，供对话列表直接展示该轮读过哪些文件、
+ * 调用是否成功以及耗时，无需再跳到轨迹标签。参数沿用轨迹的脱敏与限长结果。
+ */
+export interface ConversationToolCall {
+  name: string;
+  status: JobTraceStatus;
+  /** 工具调用参数（脱敏后的 JSON 文本）；未记录时为空。 */
+  input: string | null;
+  durationMs: number | null;
+}
+
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -99,6 +111,8 @@ export interface ConversationMessage {
   traceCount: number;
   /** 助手回复对应任务已记录的执行步骤数。 */
   eventCount: number;
+  /** 助手回复已记录的工具调用摘要，按调用时间排序；用户消息为空数组。 */
+  toolCalls: ConversationToolCall[];
 }
 
 export interface Conversation extends ConversationSummary {

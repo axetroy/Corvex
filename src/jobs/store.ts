@@ -10,6 +10,7 @@ import {
   type ConversationMessage,
   type ConversationPage,
   type ConversationSummary,
+  type ConversationToolCall,
   type ConversationTurn,
   type ConversationStats,
   type ConversationTurnStats,
@@ -44,6 +45,10 @@ const active = ["preparing", "analyzing", "fixing", "verifying", "publishing"];
 const maxExecutionPayloadBytes = 64 << 10;
 /** 执行轨迹中用于识别并脱敏凭证类字段名的匹配规则。 */
 const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|credential/i;
+/** 对话列表每条助手回复附带展示的工具调用条数上限，超出只保留最早的调用。 */
+const maxConversationToolCalls = 50;
+/** 对话列表工具调用参数展示的最大字节数，避免把整段轨迹负载塞进列表接口。 */
+const maxConversationToolInputBytes = 2048;
 
 interface JobRow {
   id: string;
@@ -1181,7 +1186,31 @@ export class JobStore {
        LEFT JOIN jobs ON jobs.id=conversation_messages.job_id
        WHERE conversation_messages.conversation_id=? ORDER BY conversation_messages.created_at,conversation_messages.rowid`,
     ).all(conversationId).map((value) => this.readConversationMessage(value as Record<string, unknown>));
-    return { ...this.readConversationSummary(row), messages };
+    // 工具调用摘要按回复任务的 job_id 归组，只读取列表展示所需的字段，避免把整条轨迹带进列表接口。
+    const toolCallsByJob = new Map<string, ConversationToolCall[]>();
+    const jobIds = messages.flatMap((message) => (message.role === "assistant" && message.jobId ? [message.jobId] : []));
+    if (jobIds.length > 0) {
+      const rows = this.db.prepare(
+        `SELECT job_id, name, status, trace_input, duration_ms FROM job_trace
+         WHERE kind='tool' AND job_id IN (${jobIds.map(() => "?").join(",")})
+         ORDER BY started_at,id`,
+      ).all(...jobIds);
+      for (const value of rows) {
+        const toolRow = value as Record<string, unknown>;
+        const jobId = stringColumn(toolRow, "job_id");
+        const calls = toolCallsByJob.get(jobId) ?? [];
+        if (calls.length >= maxConversationToolCalls) continue;
+        calls.push(this.readConversationToolCall(toolRow));
+        toolCallsByJob.set(jobId, calls);
+      }
+    }
+    return {
+      ...this.readConversationSummary(row),
+      messages: messages.map((message) => ({
+        ...message,
+        toolCalls: message.jobId ? toolCallsByJob.get(message.jobId) ?? [] : [],
+      })),
+    };
   }
 
   /**
@@ -1409,6 +1438,29 @@ export class JobStore {
       jobStatus: (jobStatus ?? null) as ConversationMessage["jobStatus"],
       traceCount: row.trace_count === undefined ? 0 : numberColumn(row, "trace_count"),
       eventCount: row.event_count === undefined ? 0 : numberColumn(row, "event_count"),
+      toolCalls: [],
+    };
+  }
+
+  /** 把一条工具轨迹行收窄为对话列表展示的摘要，参数按上限截断。 */
+  private readConversationToolCall(row: Record<string, unknown>): ConversationToolCall {
+    const status = stringColumn(row, "status");
+    if (status !== "running" && status !== "succeeded" && status !== "failed") {
+      throw new Error(`SQLite job trace status "${status}" is invalid`);
+    }
+    const duration = row.duration_ms;
+    if (duration !== null && duration !== undefined && (typeof duration !== "number" || !Number.isSafeInteger(duration))) {
+      throw new Error('SQLite column "duration_ms" is not a safe integer or null');
+    }
+    const input = row.trace_input;
+    if (input !== null && input !== undefined && typeof input !== "string") {
+      throw new Error('SQLite column "trace_input" is not text or null');
+    }
+    return {
+      name: stringColumn(row, "name"),
+      status,
+      input: typeof input === "string" ? input.slice(0, maxConversationToolInputBytes) : null,
+      durationMs: typeof duration === "number" ? duration : null,
     };
   }
 

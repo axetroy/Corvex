@@ -329,6 +329,65 @@
   margin-bottom: 0;
 }
 
+.conversation-tool-calls {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: #f7f9fb;
+  font-size: 12px;
+}
+
+.conversation-tool-calls-summary {
+  cursor: pointer;
+  color: var(--conversation-muted);
+  font-weight: 550;
+}
+
+.conversation-tool-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conversation-tool-call {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conversation-tool-call-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--conversation-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-tool-call-status {
+  flex: 0 0 auto;
+  color: var(--conversation-muted);
+}
+
+.conversation-tool-call-status-succeeded {
+  color: #1f8a4c;
+}
+
+.conversation-tool-call-status-failed {
+  color: #b42318;
+}
+
+.conversation-tool-call-duration {
+  flex: 0 0 auto;
+  color: var(--conversation-muted);
+}
+
 .conversation-message-actions {
   margin-top: 6px;
   opacity: 0.55;
