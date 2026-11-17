@@ -7,14 +7,14 @@ import { Loading } from "./components/common.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, sessionsHash } from "./routing.js";
+import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, conversationsHash } from "./routing.js";
 import type { JobQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
 const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((module) => ({ default: module.OverviewPage })));
 const JobsPage = lazy(() => import("./components/JobsPage.js").then((module) => ({ default: module.JobsPage })));
 const JobDetailPage = lazy(() => import("./components/JobDetailPage.js").then((module) => ({ default: module.JobDetailPage })));
-const SessionsPage = lazy(() => import("./components/SessionsPage.js").then((module) => ({ default: module.SessionsPage })));
+const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -46,11 +46,11 @@ function saveLocale(locale: Locale): void {
   }
 }
 
-/** 当前地址栏 hash 对应的原始路由文本，默认回到概览。 */
+/** 当前地址栏 hash 对应的原始路由文本，默认回到对话页。 */
 function useHashRoute(): string {
-  const [route, setRoute] = useState(() => window.location.hash.slice(1) || "overview");
+  const [route, setRoute] = useState(() => window.location.hash.slice(1) || "conversations");
   useEffect(() => {
-    const onChange = () => setRoute(window.location.hash.slice(1) || "overview");
+    const onChange = () => setRoute(window.location.hash.slice(1) || "conversations");
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
@@ -82,9 +82,9 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 未知路由与非法任务 ID 统一回到概览，避免停留在空白页。
+  // 未知路由与非法任务 ID 统一回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "unknown") window.location.hash = "overview";
+    if (page.kind === "unknown") window.location.hash = "conversations";
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
@@ -98,8 +98,8 @@ export function App() {
     }
     window.location.hash = target;
   }, []);
-  const updateSessionRoute = useCallback((sessionId: string) => {
-    const target = sessionsHash(sessionId);
+  const updateConversationRoute = useCallback((conversationId: string) => {
+    const target = conversationsHash(conversationId);
     if (window.location.hash !== target) window.location.hash = target;
   }, []);
 
@@ -123,7 +123,7 @@ export function App() {
         {copy.skipToContent}
       </a>
       <header className="topbar">
-        <a className="brand" href="#overview" aria-label={copy.brandLabel}>
+        <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
           <span className="brand-mark">C</span>
           <span>
             Corvex <small>OPERATIONS</small>
@@ -133,18 +133,18 @@ export function App() {
           <Menu
             className="primary-nav"
             mode="horizontal"
-            selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "sessions"]}
+            selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "conversations"]}
             onClick={({ key }) => {
               window.location.hash = key === "jobs"
                 ? jobsHash(queue)
-                : key === "sessions" && page.kind === "sessions"
-                  ? sessionsHash(page.id)
+                : key === "conversations" && page.kind === "conversations"
+                  ? conversationsHash(page.id)
                   : key;
             }}
             items={[
-              { key: "overview", label: copy.navOverview },
+              { key: "conversations", label: copy.navConversations },
               { key: "jobs", label: copy.navJobs },
-              { key: "sessions", label: copy.navSessions },
+              { key: "overview", label: copy.navOverview },
             ]}
           />
         </nav>
@@ -165,7 +165,7 @@ export function App() {
         </span>
       </header>
       <main id="app" className="content" ref={mainRef} tabIndex={-1}>
-        <ErrorBoundary key={page.kind === "sessions" ? "sessions" : route} copy={copy}>
+        <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
           <Suspense fallback={<Loading>{copy.loading}</Loading>}>
           {page.kind === "overview" ? (
             <OverviewPage
@@ -198,15 +198,15 @@ export function App() {
               onRefresh={refresh}
             />
           ) : null}
-          {page.kind === "sessions" ? (
-            <SessionsPage
-              sessionId={page.id ?? ""}
+          {page.kind === "conversations" ? (
+            <ConversationsPage
+              conversationId={page.id ?? ""}
               copy={copy}
               locale={locale}
               refreshToken={refreshToken}
               onUpdated={handleUpdated}
               onRefresh={refresh}
-              onSessionChange={updateSessionRoute}
+              onConversationChange={updateConversationRoute}
             />
           ) : null}
           </Suspense>

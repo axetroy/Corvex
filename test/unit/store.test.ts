@@ -89,9 +89,9 @@ describe("JobStore", () => {
     });
   });
 
-  it("creates a repository session and its first pinned message job atomically", async () => {
+  it("creates a repository conversation and its first pinned message job atomically", async () => {
     store = await JobStore.open(":memory:");
-    const result = store.createChatSession({
+    const result = store.createConversation({
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
@@ -100,9 +100,9 @@ describe("JobStore", () => {
       request: "Explain the routing module",
     });
 
-    const session = store.getChatSession(result.sessionId);
-    expect(session).toMatchObject({
-      id: result.sessionId,
+    const conversation = store.getConversation(result.conversationId);
+    expect(conversation).toMatchObject({
+      id: result.conversationId,
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
@@ -113,17 +113,17 @@ describe("JobStore", () => {
     });
     expect(store.claimNextWithLease(30_000)).toMatchObject({
       id: result.jobId,
-      type: "session",
+      type: "conversation",
       targetBranch: "main",
-      sessionId: result.sessionId,
-      sessionResponseId: session?.messages[1]?.id,
+      conversationId: result.conversationId,
+      conversationResponseId: conversation?.messages[1]?.id,
       headSha: "a".repeat(40),
     });
   });
 
-  it("serializes session turns and reflects retry and cancellation states", async () => {
+  it("serializes conversation turns and reflects retry and cancellation states", async () => {
     store = await JobStore.open(":memory:");
-    const created = store.createChatSession({
+    const created = store.createConversation({
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
@@ -131,30 +131,30 @@ describe("JobStore", () => {
       actorId: 0,
       request: "First turn",
     });
-    expect(() => store.addChatSessionMessage(created.sessionId, {
+    expect(() => store.addConversationMessage(created.conversationId, {
       projectId: 7,
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
       request: "Overlapping turn",
-    })).toThrow("chat session already has an active message");
+    })).toThrow("chat conversation already has an active message");
 
     const firstAttempt = store.claimNextWithLease(30_000);
-    if (!firstAttempt) throw new Error("expected initial session turn to be claimed");
+    if (!firstAttempt) throw new Error("expected initial conversation turn to be claimed");
     expect(store.retryLeasedJob(firstAttempt.id, firstAttempt.leaseToken, "preparing", Date.now() - 1, "temporary failure"))
       .toBe(true);
-    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({ status: "queued" });
+    expect(store.getConversation(created.conversationId)?.messages[1]).toMatchObject({ status: "queued" });
 
     const retry = store.claimNextWithLease(30_000);
-    if (!retry) throw new Error("expected retried session turn to be claimed");
-    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({ status: "running" });
+    if (!retry) throw new Error("expected retried conversation turn to be claimed");
+    expect(store.getConversation(created.conversationId)?.messages[1]).toMatchObject({ status: "running" });
     store.updateLeasedStatus(retry.id, retry.leaseToken, "preparing", "cancelled", "cancelled by test");
-    store.finishChatSessionResponse(retry.id, "cancelled", "This turn was cancelled.");
-    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({
+    store.finishConversationResponse(retry.id, "cancelled", "This turn was cancelled.");
+    expect(store.getConversation(created.conversationId)?.messages[1]).toMatchObject({
       status: "failed",
       content: "This turn was cancelled.",
     });
-    expect(store.addChatSessionMessage(created.sessionId, {
+    expect(store.addConversationMessage(created.conversationId, {
       projectId: 7,
       targetBranch: "main",
       headSha: "a".repeat(40),
@@ -163,35 +163,111 @@ describe("JobStore", () => {
     }).jobId).toBeTruthy();
   });
 
-  it("requeues the assistant response when retrying a failed session job", async () => {
+  it("requeues the assistant response when retrying a failed conversation job", async () => {
     store = await JobStore.open(":memory:");
-    const created = store.createChatSession({
+    const created = store.createConversation({
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
-      request: "Retry this session turn",
+      request: "Retry this conversation turn",
     });
     const job = store.claimNextWithLease(30_000);
-    if (!job) throw new Error("expected a session job to be claimed");
+    if (!job) throw new Error("expected a conversation job to be claimed");
     store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "failed", "temporary failure");
-    expect(store.getChatSession(created.sessionId)?.messages[1]?.status).toBe("failed");
+    expect(store.getConversation(created.conversationId)?.messages[1]?.status).toBe("failed");
 
     store.retryFailedJob(job.id);
 
     expect(store.getJob(job.id).status).toBe("queued");
-    expect(store.getChatSession(created.sessionId)?.messages[1]).toMatchObject({
+    expect(store.getConversation(created.conversationId)?.messages[1]).toMatchObject({
       status: "queued",
       jobId: job.id,
     });
-    expect(() => store.addChatSessionMessage(created.sessionId, {
+    expect(() => store.addConversationMessage(created.conversationId, {
       projectId: 7,
       targetBranch: "main",
       headSha: "a".repeat(40),
       actorId: 0,
       request: "Do not overlap the retry",
-    })).toThrow("chat session already has an active message");
+    })).toThrow("chat conversation already has an active message");
+  });
+
+  it("exposes each conversation turn's own trajectory and execution records", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Explain the routing module",
+    });
+    const job = store.claimNextWithLease(30_000);
+    if (!job) throw new Error("expected a conversation job to be claimed");
+    store.updateLeasedStatus(job.id, job.leaseToken, "preparing", "analyzing");
+    const traceId = store.startJobTrace(
+      job.id,
+      job.attemptCount,
+      "llm",
+      "conversation",
+      "test/model",
+      JSON.stringify({ systemPrompt: "Answer read-only.", userPrompt: "Explain routing." }),
+      { round: 1, input: "conversation context" },
+    );
+    store.finishJobTrace(traceId, "succeeded", 80, 40, 20, undefined, "assistant response");
+    store.recordExecutionEvent({
+      jobId: job.id,
+      attempt: job.attemptCount,
+      step: "workflow.read_only_conversation",
+      status: "succeeded",
+      input: { requestCharacters: 24 },
+      output: { textBytes: 18 },
+    });
+    store.updateLeasedStatus(job.id, job.leaseToken, "analyzing", "completed");
+    store.finishConversationResponse(job.id, "completed", "Routing lives in routing.ts.");
+
+    const turn = store.getConversationTurn(created.conversationId, job.id);
+    expect(turn).toMatchObject({
+      conversationId: created.conversationId,
+      jobId: job.id,
+      status: "completed",
+      request: "Explain the routing module",
+      headSha: "a".repeat(40),
+      attemptCount: job.attemptCount,
+    });
+    expect(turn?.trajectory).toHaveLength(1);
+    expect(turn?.trajectory[0]).toMatchObject({ kind: "llm", status: "succeeded", output: "assistant response" });
+    expect(turn?.events.some((event) => event.step === "workflow.read_only_conversation")).toBe(true);
+    expect(turn?.timeline.some((transition) => transition.to === "completed")).toBe(true);
+    // 轮次记录必须绑定到该对话，跨对话或未知任务返回 undefined。
+    expect(store.getConversationTurn("other-conversation", job.id)).toBeUndefined();
+    expect(store.getConversationTurn(created.conversationId, "missing-job")).toBeUndefined();
+  });
+
+  it("counts conversation turns and surfaces the latest turn status", async () => {
+    store = await JobStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    expect(store.listConversations(10, 0).items[0]).toMatchObject({ turnCount: 1, lastTurnStatus: "queued" });
+    const first = store.claimNextWithLease(30_000);
+    if (!first) throw new Error("expected the first conversation turn to be claimed");
+    store.updateLeasedStatus(first.id, first.leaseToken, "preparing", "analyzing");
+    store.updateLeasedStatus(first.id, first.leaseToken, "analyzing", "completed");
+    store.finishConversationResponse(first.id, "completed", "First answer");
+    expect(store.getConversation(created.conversationId)?.messages[1]).toMatchObject({
+      jobStatus: "completed",
+      traceCount: 0,
+      eventCount: 0,
+    });
+    expect(store.listConversations(10, 0).items[0]).toMatchObject({ turnCount: 1, lastTurnStatus: "completed" });
   });
 
   it("queues Issue assistant jobs with a distinct issue target", async () => {
@@ -650,7 +726,7 @@ describe("JobStore", () => {
     expect(store.jobCounts().failed ?? 0).toBe(0);
   });
 
-  it("prunes idle chat sessions with their messages but keeps sessions with an active reply", async () => {
+  it("prunes idle conversations with their messages but keeps conversations with an active reply", async () => {
     store = await JobStore.open(":memory:");
     const base = {
       projectId: 7,
@@ -659,16 +735,16 @@ describe("JobStore", () => {
       headSha: "a".repeat(40),
       actorId: 0,
     };
-    const idle = store.createChatSession({ ...base, request: "Summarize the repository layout" });
-    const active = store.createChatSession({ ...base, request: "Explain the worker loop" });
-    const activeResponseId = store.getChatSession(active.sessionId)?.messages[1]?.id;
-    if (!activeResponseId) throw new Error("expected a queued session response");
-    store.finishChatSessionResponse(idle.jobId, "completed", "The repository has a src and test tree.");
+    const idle = store.createConversation({ ...base, request: "Summarize the repository layout" });
+    const active = store.createConversation({ ...base, request: "Explain the worker loop" });
+    const activeResponseId = store.getConversation(active.conversationId)?.messages[1]?.id;
+    if (!activeResponseId) throw new Error("expected a queued conversation response");
+    store.finishConversationResponse(idle.jobId, "completed", "The repository has a src and test tree.");
 
     store.pruneHistory(new Date(Date.now() + 86_400_000), new Date(Date.now() + 86_400_000));
 
-    expect(store.getChatSession(idle.sessionId)).toBeUndefined();
-    const kept = store.getChatSession(active.sessionId);
+    expect(store.getConversation(idle.conversationId)).toBeUndefined();
+    const kept = store.getConversation(active.conversationId);
     expect(kept?.messages).toHaveLength(2);
     expect(kept?.messages[1]).toMatchObject({ id: activeResponseId, status: "queued" });
   });
@@ -679,8 +755,16 @@ describe("JobStore", () => {
     expect(() => store.reserveModelTokens(100, 1)).toThrow("budget");
     store.settleModelTokens(day, 100, 25);
     store.recordModelCall("review", "success", 1250, 70, 25);
-    store.recordModelCall("session", "success", 800, 40, 20);
+    store.recordModelCall("conversation", "success", 800, 40, 20);
     expect(store.modelCallMetrics()).toEqual([
+      {
+        taskType: "conversation",
+        outcome: "success",
+        calls: 1,
+        durationMs: 800,
+        inputTokens: 40,
+        outputTokens: 20,
+      },
       {
         taskType: "review",
         outcome: "success",
@@ -688,14 +772,6 @@ describe("JobStore", () => {
         durationMs: 1250,
         inputTokens: 70,
         outputTokens: 25,
-      },
-      {
-        taskType: "session",
-        outcome: "success",
-        calls: 1,
-        durationMs: 800,
-        inputTokens: 40,
-        outputTokens: 20,
       },
     ]);
   });
@@ -804,7 +880,7 @@ describe("JobStore", () => {
     expect(store.claimNextWithLease(30_000)?.id).toBe("legacy-job");
   });
 
-  it("drops legacy session target columns while keeping existing sessions readable", async () => {
+  it("renames legacy session tables and columns while keeping conversations readable", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-legacy-session-"));
     const databasePath = join(directory, "state.db");
     const legacy = new DatabaseSync(databasePath);
@@ -830,11 +906,15 @@ describe("JobStore", () => {
         (id,project_id,project_name,target_type,target_iid,target_branch,target_title,created_at,updated_at)
       VALUES
         ('legacy-session',7,'group/project','merge_request',5,'feature/session','Old MR title','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+      INSERT INTO chat_session_messages
+        (id,session_id,role,content,status,job_id,head_sha,created_at,updated_at)
+      VALUES
+        ('legacy-message','legacy-session','user','Hello','completed',NULL,'a','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
     `);
     legacy.close();
 
     store = await JobStore.open(databasePath);
-    expect(store.listChatSessions(10, 0)).toEqual({
+    expect(store.listConversations(10, 0)).toEqual({
       items: [{
         id: "legacy-session",
         projectId: 7,
@@ -842,14 +922,20 @@ describe("JobStore", () => {
         targetBranch: "feature/session",
         createdAt: "2025-01-01T00:00:00.000Z",
         updatedAt: "2025-01-01T00:00:00.000Z",
+        turnCount: 0,
+        lastTurnStatus: null,
       }],
       total: 1,
     });
+    expect(store.getConversation("legacy-session")?.messages[0]).toMatchObject({ id: "legacy-message", content: "Hello" });
     const inspector = new DatabaseSync(databasePath);
-    const columns = inspector.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
+    const conversationColumns = inspector.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+    const messageColumns = inspector.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[];
     inspector.close();
-    expect(columns.map((column) => column.name)).not.toContain("target_type");
-    expect(columns.map((column) => column.name)).not.toContain("target_iid");
-    expect(columns.map((column) => column.name)).not.toContain("target_title");
+    expect(conversationColumns.map((column) => column.name)).not.toContain("target_type");
+    expect(conversationColumns.map((column) => column.name)).not.toContain("target_iid");
+    expect(conversationColumns.map((column) => column.name)).not.toContain("target_title");
+    expect(messageColumns.map((column) => column.name)).toContain("conversation_id");
+    expect(messageColumns.map((column) => column.name)).not.toContain("session_id");
   });
 });

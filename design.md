@@ -7,9 +7,9 @@
 
 Corvex 是一个可自行部署的 GitLab 合并请求（MR）审查与修复建议助手。用户在
 GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`fix`、
-`status` 或 `cancel` 命令。运维控制台还提供绑定到 GitLab 项目、分支、Issue 或 MR
-固定 SHA 的持久只读对话会话。系统会验证请求身份和权限，将请求持久化，针对确切的
-目标版本进行分析，并按对应工作流校验或保存结果。
+`status` 或 `cancel` 命令。运维控制台还提供绑定到 GitLab 项目与分支固定 SHA 的
+持久只读对话。系统会验证请求身份和权限，将请求持久化，针对确切的目标版本进行分析，
+并按对应工作流校验或保存结果。
 
 ## 目标与非目标
 
@@ -25,8 +25,9 @@ GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`f
   执行。
 - 将权限控制、结果校验、补丁范围检查和发布决策保留在可信的 Corvex 代码中，不交由
   Agent 决定。
-- 通过运维控制台创建持久会话，发现范围由 GitLab 只读 Token 的可见项目决定；会话绑定
-  仓库分支，每轮固定到服务端解析的分支头 SHA，且仅提供只读仓库能力。
+- 通过运维控制台创建持久对话，发现范围由 GitLab 只读 Token 的可见项目决定；对话绑定
+  仓库分支，每轮固定到服务端解析的分支头 SHA，且仅提供只读仓库能力。对话是运维控制台
+  的一等对象：每一轮都保留自己的轨迹与执行记录，可在对话内直接查看。
 - 将仓库代码、GitLab 凭证、模型凭证和 Agent 工具限制在已配置的自托管部署边界内。
 
 ### 非目标
@@ -48,16 +49,16 @@ TypeScript 服务端
   - 过滤机器人及系统评论
   - 检查可选用户阻止列表
   - 解析命令并创建幂等任务
-  - 提供运维 API 和持久会话工作台
+  - 提供运维 API 和持久对话工作台
        |
        v
-SQLite 任务/会话存储 <----- TypeScript Worker
+SQLite 任务/对话存储 <----- TypeScript Worker
                          - 领取租约、心跳、处理取消和重试
-                         - 获取当前 MR 或会话目标及固定版本
+                         - 获取当前 MR 或对话目标及固定版本
                          - 准备隔离的 detached worktree
                          - 使用任务专属工具调用 Pi SDK
                          - 校验输出并重新确认 MR 版本
-                         - 只读会话不提供仓库写入或 GitLab 发布
+                         - 只读对话不提供仓库写入或 GitLab 发布
                          - 其他授权工作流按策略校验和发布结果
 ```
 
@@ -70,7 +71,7 @@ SQLite 任务/会话存储 <----- TypeScript Worker
 | 领域 | 负责方 |
 |---|---|
 | Webhook 验证、命令解析、用户阻止列表和能力授权 | Corvex 策略代码 |
-| 持久化任务/会话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与 Worker |
+| 持久化任务/对话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与 Worker |
 | GitLab API 访问和评论发布 | Corvex GitLab 客户端 |
 | 镜像、固定 SHA 的 worktree、受限差异和安全文件访问 | Corvex Git 引擎 |
 | Agent 循环、模型提供方、会话和上下文生命周期 | Pi SDK |
@@ -79,7 +80,7 @@ SQLite 任务/会话存储 <----- TypeScript Worker
 
 Pi 是执行依赖，不是业务状态的权威来源。Pi 会话用于 Agent 上下文和诊断；任务状态、
 持久聊天轮次、重试、审计、取消和发布状态均以 SQLite 记录为准。独立任务使用一次性
-Pi 会话；持久工作台会话的消息另存于 Corvex SQLite，不依赖 Pi 进程生命周期。
+Pi 会话；持久对话的消息另存于 Corvex SQLite，不依赖 Pi 进程生命周期。
 
 ## Pi 集成与能力
 
@@ -105,7 +106,7 @@ Pi 工具和扩展以 Worker 的操作系统权限运行。Worker 应使用专�
 ## 安全不变量
 
 1. 以恒定时间比较 Webhook 密钥，并限制请求体大小。
-2. Webhook Secret 用于认证投递；只在需要接受指令的项目中注册 Webhook。会话工作台的
+2. Webhook Secret 用于认证投递；只在需要接受指令的项目中注册 Webhook。运维控制台的
   项目发现范围由 GitLab 只读 Token 决定，不使用静态项目白名单；可选用户阻止列表
   由 Corvex 强制执行。
 3. 机器人和系统评论不得创建任务；重复的 Webhook 事件必须保持幂等。
@@ -119,6 +120,21 @@ Pi 工具和扩展以 Worker 的操作系统权限运行。Worker 应使用专�
    仅具备写入所需权限的 Token。
 9. 外部发布结果不确定时不得盲目重试。
 10. 不执行仓库命令或脚本。若要增加执行器，必须单独设计沙箱和显式授权模型。
+
+## 对话与轨迹语义
+
+对话是运维控制台的一等对象，绑定 GitLab 项目与分支，并固定到服务端解析的分支头
+SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助手回复组成；每轮回复对应一个
+`conversation` 任务，因此每轮都拥有自己独立的轨迹（`job_trace`）与执行记录
+（`execution_events`）。
+
+- 对话列表与详情返回轮次数量与最近一轮状态，让控制台无需额外请求即可概览对话进展。
+- 单轮记录通过 `GET /api/ops/conversations/:id/turns/:jobId` 读取；服务端校验该任务
+  确实属于目标对话的助手回复，避免跨对话读取轨迹。
+- 轨迹是任务级的只读可观测数据，不构成授权依据；每轮对话的轨迹与记录随任务终态固定
+  下来，不因后续轮次或对话状态变化而改变。
+- 对话始终只读：不发布到 GitLab，不写入 worktree。轨迹内容在 `src/jobs/store.ts`
+  统一脱敏并限长，不得绕过该路径。
 
 ## 任务与失败语义
 
@@ -173,8 +189,9 @@ Server/Worker 前按进程角色校验配置。Server 通常不需要读取令�
 
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
 Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
-只读 Token 发现目标、固定 SHA 并保存每轮消息；Agent 不得修改 worktree 或发布 GitLab
-评论。React、React DOM 和 Vite 属于构建期依赖，不进入运行时依赖。
+只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
+Agent 不得修改 worktree 或发布 GitLab 评论。React、React DOM、Vite、antd、`@ant-design/x`
+与 `@ant-design/x-markdown` 均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。
 
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。

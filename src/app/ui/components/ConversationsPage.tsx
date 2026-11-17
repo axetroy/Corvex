@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { UIEvent } from "react";
-import { Button, Select, Space, Tag, Typography } from "antd";
-import { Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
+import { Button, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
-import "./SessionsPage.css";
+import { XMarkdown } from "@ant-design/x-markdown";
+import "./ConversationsPage.css";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
+import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
+import { ConversationTurnDrawer } from "./ConversationTurnDrawer.js";
 import { Empty, ErrorBanner } from "./common.js";
 
 interface ProjectOption {
@@ -34,45 +37,18 @@ interface BranchSelectOption {
   meta?: string;
 }
 
-interface SessionSummary {
-  id: string;
-  projectId: number;
-  projectName: string;
-  targetBranch: string;
-  updatedAt: string;
-}
-
-interface SessionMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  status: "queued" | "running" | "completed" | "failed";
-  jobId: string | null;
-  headSha: string;
-  createdAt: string;
-}
-
-interface SessionDetail extends SessionSummary {
-  messages: SessionMessage[];
-}
-
-interface SessionPage {
-  items: SessionSummary[];
-  total: number;
-}
-
 interface Props {
-  sessionId: string;
+  conversationId: string;
   copy: Copy;
   locale: Locale;
   refreshToken: number;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
-  onSessionChange: (sessionId: string) => void;
+  onConversationChange: (conversationId: string) => void;
 }
 
-/** 会话列表每页条数。 */
-const sessionPageSize = 50;
+/** 对话列表每页条数。 */
+const conversationPageSize = 50;
 /** GitLab 项目/分支搜索每页条数，与服务端 `per_page` 保持一致。 */
 const listPageSize = 50;
 
@@ -83,26 +59,63 @@ function atListBottom(event: UIEvent<HTMLDivElement>): boolean {
 }
 
 /** 消息处理状态对应的界面文案；完成状态不展示徽标。 */
-function messageStatus(message: SessionMessage, copy: Copy): string {
+function messageStatus(message: ConversationMessage, copy: Copy): string {
   if (message.status === "queued") return copy.statuses.queued;
   if (message.status === "running") return copy.statuses.analyzing;
   if (message.status === "failed") return copy.statuses.failed;
   return "";
 }
 
-export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated, onRefresh, onSessionChange }: Props) {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [sessionOffset, setSessionOffset] = useState(0);
-  const [sessionTotal, setSessionTotal] = useState(0);
-  const [selectedSessionId, setSelectedSessionId] = useState(sessionId);
-  const selectedSessionIdRef = useRef(sessionId);
-  const [session, setSession] = useState<SessionDetail>();
+/** 最近一轮状态对应的徽标颜色；无轮次返回中性色。 */
+function lastTurnColor(status: ConversationSummary["lastTurnStatus"]): string {
+  if (status === "completed") return "success";
+  if (status === "failed") return "error";
+  if (status === "queued" || status === "running") return "processing";
+  return "default";
+}
+
+/** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
+function MessageContent({ message, copy }: { message: ConversationMessage; copy: Copy }) {
+  if (message.role === "user") {
+    return <div className="conversation-message-text">{message.content}</div>;
+  }
+  // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
+  const settled = message.status === "completed" || message.status === "failed";
+  return (
+    <div className="conversation-message-markdown">
+      {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
+      <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab />
+      {settled ? (
+        <div className="conversation-message-actions">
+          <Actions
+            variant="borderless"
+            items={[
+              {
+                key: "copy",
+                label: copy.copyMessage,
+                actionRender: <Actions.Copy text={message.content} />,
+              },
+            ]}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ConversationsPage({ conversationId, copy, locale, refreshToken, onUpdated, onRefresh, onConversationChange }: Props) {
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationOffset, setConversationOffset] = useState(0);
+  const [conversationTotal, setConversationTotal] = useState(0);
+  const [selectedConversationId, setSelectedConversationId] = useState(conversationId);
+  const selectedConversationIdRef = useRef(conversationId);
+  const [conversation, setConversation] = useState<Conversation>();
   const pendingReplyJobs = useRef(new Map<string, string>());
-  const [pendingReplySessions, setPendingReplySessions] = useState<Set<string>>(() => new Set());
+  const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showCreate, setShowCreate] = useState(!sessionId);
+  const [showCreate, setShowCreate] = useState(!conversationId);
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [projectPage, setProjectPage] = useState(0);
@@ -116,53 +129,54 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   const [selectedBranch, setSelectedBranch] = useState("");
   const [branchQuery, setBranchQuery] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
+  const [turnJobId, setTurnJobId] = useState("");
   const projectSearchRequest = useRef(0);
   const branchSearchRequest = useRef(0);
   const replySubmitting = useRef(false);
 
   useEffect(() => {
-    selectedSessionIdRef.current = sessionId;
-    setSelectedSessionId(sessionId);
-    setSession(undefined);
-    setShowCreate(!sessionId);
+    selectedConversationIdRef.current = conversationId;
+    setSelectedConversationId(conversationId);
+    setConversation(undefined);
+    setShowCreate(!conversationId);
     setDraftMessage("");
     setError("");
-  }, [sessionId]);
+  }, [conversationId]);
 
   useEffect(() => {
     let active = true;
-    fetchJson<SessionPage>(`/api/ops/sessions?limit=${sessionPageSize}&offset=${sessionOffset}`, copy)
+    fetchJson<ConversationPage>(`/api/ops/conversations?limit=${conversationPageSize}&offset=${conversationOffset}`, copy)
       .then((page) => {
         if (!active) return;
-        setSessions((current) => {
-          if (sessionOffset === 0) return page.items;
+        setConversations((current) => {
+          if (conversationOffset === 0) return page.items;
           const byId = new Map(current.map((item) => [item.id, item]));
           for (const item of page.items) byId.set(item.id, item);
           return [...byId.values()];
         });
-        setSessionTotal(page.total);
+        setConversationTotal(page.total);
         onUpdated(new Date().toISOString());
       })
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
     return () => {
       active = false;
     };
-  }, [copy, sessionOffset, refreshToken, onUpdated]);
+  }, [copy, conversationOffset, refreshToken, onUpdated]);
 
   useEffect(() => {
-    if (!selectedSessionId) {
-      setSession(undefined);
+    if (!selectedConversationId) {
+      setConversation(undefined);
       return;
     }
     let active = true;
-    fetchJson<SessionDetail>(`/api/ops/sessions/${encodeURIComponent(selectedSessionId)}`, copy)
+    fetchJson<Conversation>(`/api/ops/conversations/${encodeURIComponent(selectedConversationId)}`, copy)
       .then((value) => {
         if (!active) return;
-        setSession(value);
+        setConversation(value);
         const pendingJobId = pendingReplyJobs.current.get(value.id);
         if (pendingJobId && value.messages.some((message) => message.jobId === pendingJobId)) {
           pendingReplyJobs.current.delete(value.id);
-          setPendingReplySessions((current) => {
+          setPendingReplyConversations((current) => {
             const next = new Set(current);
             next.delete(value.id);
             return next;
@@ -175,17 +189,17 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     return () => {
       active = false;
     };
-  }, [copy, selectedSessionId, refreshToken, pollToken, onUpdated]);
+  }, [copy, selectedConversationId, refreshToken, pollToken, onUpdated]);
 
-  const currentSession = session?.id === selectedSessionId && selectedSessionId === sessionId ? session : undefined;
-  const hasActiveTurn = currentSession?.messages.some((message) => message.role === "assistant" &&
+  const currentConversation = conversation?.id === selectedConversationId && selectedConversationId === conversationId ? conversation : undefined;
+  const hasActiveTurn = currentConversation?.messages.some((message) => message.role === "assistant" &&
     (message.status === "queued" || message.status === "running")) ?? false;
 
   useEffect(() => {
-    if (!hasActiveTurn && !pendingReplySessions.has(selectedSessionId)) return;
+    if (!hasActiveTurn && !pendingReplyConversations.has(selectedConversationId)) return;
     const timer = window.setInterval(() => setPollToken((value) => value + 1), 2_500);
     return () => window.clearInterval(timer);
-  }, [hasActiveTurn, pendingReplySessions, selectedSessionId]);
+  }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
 
   async function loadProjects(query: string, page: number, append: boolean) {
     const requestId = ++projectSearchRequest.current;
@@ -236,7 +250,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     void loadBranches(value, "", 1, false);
   }
 
-  async function createSession(message: string) {
+  async function createConversation(message: string) {
     if (!message.trim()) return;
     if (!project || !selectedBranch) {
       setError(copy.chooseProject);
@@ -245,7 +259,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     setBusy(true);
     setError("");
     try {
-      const result = await fetch("/api/ops/sessions", {
+      const result = await fetch("/api/ops/conversations", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message }),
@@ -257,13 +271,13 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      const created = await result.json() as { sessionId: string };
+      const created = await result.json() as { conversationId: string };
       setDraftMessage("");
-      setSelectedSessionId(created.sessionId);
-      selectedSessionIdRef.current = created.sessionId;
-      onSessionChange(created.sessionId);
+      setSelectedConversationId(created.conversationId);
+      selectedConversationIdRef.current = created.conversationId;
+      onConversationChange(created.conversationId);
       setShowCreate(false);
-      setSessionOffset(0);
+      setConversationOffset(0);
       setPollToken((value) => value + 1);
       onRefresh();
       setError("");
@@ -275,13 +289,13 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
   }
 
   async function sendReply(message: string) {
-    if (!currentSession || !message.trim() || hasActiveTurn || busy || replySubmitting.current || pendingReplySessions.has(currentSession.id)) return;
-    const replySessionId = currentSession.id;
+    if (!currentConversation || !message.trim() || hasActiveTurn || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
+    const replyConversationId = currentConversation.id;
     replySubmitting.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await fetch(`/api/ops/sessions/${encodeURIComponent(replySessionId)}/messages`, {
+      const result = await fetch(`/api/ops/conversations/${encodeURIComponent(replyConversationId)}/messages`, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify({ message }),
@@ -291,8 +305,8 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
       if (!result.ok) {
         if (result.status === 409) {
           const body = await result.json() as { error?: unknown };
-          if (body.error === "chat session already has an active message") {
-            throw new Error(copy.sessionTurnActive);
+          if (body.error === "chat conversation already has an active message") {
+            throw new Error(copy.conversationTurnActive);
           }
           throw new Error(copy.targetChanged);
         }
@@ -301,24 +315,24 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
       const queued = await result.json() as { jobId: string };
-      pendingReplyJobs.current.set(replySessionId, queued.jobId);
-      setPendingReplySessions((current) => new Set(current).add(replySessionId));
-      if (selectedSessionIdRef.current === replySessionId) setDraftMessage("");
+      pendingReplyJobs.current.set(replyConversationId, queued.jobId);
+      setPendingReplyConversations((current) => new Set(current).add(replyConversationId));
+      if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
       setPollToken((value) => value + 1);
       onRefresh();
     } catch (cause) {
-      if (selectedSessionIdRef.current === replySessionId) setError(errorMessage(cause));
+      if (selectedConversationIdRef.current === replyConversationId) setError(errorMessage(cause));
     } finally {
       replySubmitting.current = false;
       setBusy(false);
     }
   }
 
-  function startNewSession() {
-    setSelectedSessionId("");
-    selectedSessionIdRef.current = "";
-    onSessionChange("");
-    setSession(undefined);
+  function startNewConversation() {
+    setSelectedConversationId("");
+    selectedConversationIdRef.current = "";
+    onConversationChange("");
+    setConversation(undefined);
     setShowCreate(true);
     setProjectQuery("");
     setProjects([]);
@@ -334,18 +348,18 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     setError("");
   }
 
-  function openSession(key: string) {
-    setSelectedSessionId(key);
-    selectedSessionIdRef.current = key;
-    setSession(undefined);
+  function openConversation(key: string) {
+    setSelectedConversationId(key);
+    selectedConversationIdRef.current = key;
+    setConversation(undefined);
     setDraftMessage("");
     setError("");
-    onSessionChange(key);
+    onConversationChange(key);
     setShowCreate(false);
   }
 
   function submitMessage(message: string) {
-    if (showCreate) void createSession(message);
+    if (showCreate) void createConversation(message);
     else void sendReply(message);
   }
 
@@ -360,98 +374,118 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
     meta: item.commit.id.slice(0, 12),
   }));
   const suggestionItems: PromptsItemType[] = [
-    { key: "explain", label: copy.sessionPromptExplain },
-    { key: "locate", label: copy.sessionPromptLocate },
-    { key: "improve", label: copy.sessionPromptImprove },
-    { key: "onboard", label: copy.sessionPromptOnboard },
+    { key: "explain", label: copy.conversationPromptExplain },
+    { key: "locate", label: copy.conversationPromptLocate },
+    { key: "improve", label: copy.conversationPromptImprove },
+    { key: "onboard", label: copy.conversationPromptOnboard },
   ];
-  const canReply = Boolean(currentSession && !hasActiveTurn && !pendingReplySessions.has(selectedSessionId));
+  const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
 
-  const conversationItems: ConversationItemType[] = sessions.map((item) => ({
+  const conversationItems: ConversationItemType[] = conversations.map((item) => ({
     key: item.id,
     label: (
-      <div className="session-conversation-label">
+      <div className="conversation-summary-label">
         <Typography.Text strong ellipsis>{item.projectName}</Typography.Text>
         <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
-        <Typography.Text type="secondary" className="session-conversation-time">
-          {formatDate(item.updatedAt, copy, locale)}
-        </Typography.Text>
+        <div className="conversation-summary-meta">
+          <Tag className="conversation-summary-turns" color={lastTurnColor(item.lastTurnStatus)}>
+            {(item.turnCount === 1 ? copy.conversationTurnTemplate : copy.conversationTurnsTemplate).replace("{count}", String(item.turnCount))}
+          </Tag>
+          <Typography.Text type="secondary" className="conversation-summary-time">
+            {formatDate(item.updatedAt, copy, locale)}
+          </Typography.Text>
+        </div>
       </div>
     ),
   }));
-  const bubbleItems: BubbleItemType[] = (currentSession?.messages ?? []).map((message) => ({
-    key: message.id,
-    role: message.role === "user" ? "user" : "ai",
-    header: (
-      <Space size={8} wrap>
-        <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
-        <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
-        {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
-      </Space>
-    ),
-    content: message.content,
-    loading: message.role === "assistant" && !message.content && (message.status === "queued" || message.status === "running"),
-    status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
-  }));
+  const bubbleItems: BubbleItemType[] = (currentConversation?.messages ?? []).map((message) => {
+    const showTurn = message.role === "assistant" && Boolean(message.jobId) && (message.traceCount > 0 || message.eventCount > 0);
+    return {
+      key: message.id,
+      role: message.role === "user" ? "user" : "ai",
+      header: (
+        <Space size={8} wrap>
+          <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
+          <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
+          {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
+          {showTurn ? (
+            <Tooltip title={copy.conversationTurnTooltip}>
+              <Button
+                className="conversation-turn-button"
+                type="link"
+                size="small"
+                onClick={() => setTurnJobId(message.jobId ?? "")}
+              >
+                {copy.conversationTurnButton}
+              </Button>
+            </Tooltip>
+          ) : null}
+        </Space>
+      ),
+      content: <MessageContent message={message} copy={copy} />,
+      loading: message.role === "assistant" && !message.content && (message.status === "queued" || message.status === "running"),
+      status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
+    };
+  });
 
   return (
     <>
       {error ? <ErrorBanner message={error} /> : null}
-      <section className="sessions-layout" aria-label={copy.sessionsDescription}>
-        <aside className="session-sidebar" aria-label={copy.sessionList}>
-          <div className="session-sidebar-heading">
-            <Typography.Text strong className="session-sidebar-title">{copy.sessionsTitle}</Typography.Text>
-            <Button className="session-new-button" type="primary" onClick={startNewSession}>
+      <section className="conversations-layout" aria-label={copy.conversationsDescription}>
+        <aside className="conversation-sidebar" aria-label={copy.conversationList}>
+          <div className="conversation-sidebar-heading">
+            <Typography.Text strong className="conversation-sidebar-title">{copy.conversationsTitle}</Typography.Text>
+            <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
               <span aria-hidden="true">+</span>
-              {copy.newSession}
+              {copy.newConversation}
             </Button>
           </div>
-          <div className="session-sidebar-list">
+          <div className="conversation-sidebar-list">
             {conversationItems.length ? (
               <Conversations
                 items={conversationItems}
-                activeKey={selectedSessionId || undefined}
-                onActiveChange={(key) => openSession(key)}
+                activeKey={selectedConversationId || undefined}
+                onActiveChange={(key) => openConversation(key)}
               />
-            ) : <Empty>{copy.noSessions}</Empty>}
-            {sessions.length < sessionTotal ? (
-              <Button className="session-load-more" type="text" onClick={() => setSessionOffset((value) => value + sessionPageSize)}>
+            ) : <Empty>{copy.noConversations}</Empty>}
+            {conversations.length < conversationTotal ? (
+              <Button className="conversation-load-more" type="text" onClick={() => setConversationOffset((value) => value + conversationPageSize)}>
                 {copy.loadMore}
               </Button>
             ) : null}
           </div>
         </aside>
-        <section className="session-workspace">
-          <div className="session-workspace-heading">
+        <section className="conversation-workspace">
+          <div className="conversation-workspace-heading">
             {showCreate ? (
-              <Typography.Text strong className="session-workspace-title">{copy.newSession}</Typography.Text>
-            ) : currentSession ? (
-              <div className="session-workspace-title">
+              <Typography.Text strong className="conversation-workspace-title">{copy.newConversation}</Typography.Text>
+            ) : currentConversation ? (
+              <div className="conversation-workspace-title">
                 <Space size={8} wrap>
-                  <Typography.Text strong>{currentSession.projectName}</Typography.Text>
-                  <Tag className="session-branch-tag">{currentSession.targetBranch}</Tag>
+                  <Typography.Text strong>{currentConversation.projectName}</Typography.Text>
+                  <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
                 </Space>
-                <Typography.Text type="secondary" className="session-pinned">
-                  {copy.pinnedRevision}: <code>{currentSession.messages.at(-1)?.headSha ?? copy.none}</code>
+                <Typography.Text type="secondary" className="conversation-pinned">
+                  {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha ?? copy.none}</code>
                 </Typography.Text>
               </div>
-            ) : <Typography.Text strong className="session-workspace-title">{copy.sessionsTitle}</Typography.Text>}
+            ) : <Typography.Text strong className="conversation-workspace-title">{copy.conversationsTitle}</Typography.Text>}
             {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
           </div>
-          <div className="session-chat">
-            <div className={`session-transcript-pane${showCreate ? " session-setup-pane" : ""}`}>
+          <div className="conversation-chat">
+            <div className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}>
               {showCreate ? (
-                <div className="session-start">
+                <div className="conversation-start">
                   <Welcome
-                    className="session-welcome"
+                    className="conversation-welcome"
                     variant="borderless"
-                    icon={<span className="session-welcome-icon" aria-hidden="true">C</span>}
-                    title={copy.sessionWelcomeTitle}
-                    description={copy.sessionWelcomeDescription}
+                    icon={<span className="conversation-welcome-icon" aria-hidden="true">C</span>}
+                    title={copy.conversationWelcomeTitle}
+                    description={copy.conversationWelcomeDescription}
                   />
-                  <div className="session-picker-row">
+                  <div className="conversation-picker-row">
                     <Select<number, ProjectSelectOption>
-                      className="session-select"
+                      className="conversation-select"
                       aria-label={copy.projectSearch}
                       showSearch
                       filterOption={false}
@@ -459,11 +493,11 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                       value={project?.id}
                       loading={projectLoading}
                       options={projectOptions}
-                      notFoundContent={<span className="session-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
+                      notFoundContent={<span className="conversation-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
                       optionRender={(option) => (
-                        <div className="session-option">
-                          <span className="session-option-label">{option.data.label}</span>
-                          {option.data.meta ? <span className="session-option-meta">{option.data.meta}</span> : null}
+                        <div className="conversation-option">
+                          <span className="conversation-option-label">{option.data.label}</span>
+                          {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
                         </div>
                       )}
                       onOpenChange={(open) => {
@@ -480,7 +514,7 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                       onChange={(value) => selectProject(value)}
                     />
                     <Select<string, BranchSelectOption>
-                      className="session-select"
+                      className="conversation-select"
                       aria-label={copy.branch}
                       showSearch
                       filterOption={false}
@@ -489,11 +523,11 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                       disabled={!project}
                       loading={branchLoading}
                       options={branchOptions}
-                      notFoundContent={<span className="session-select-empty">{copy.noBranches}</span>}
+                      notFoundContent={<span className="conversation-select-empty">{copy.noBranches}</span>}
                       optionRender={(option) => (
-                        <div className="session-option">
-                          <span className="session-option-label">{option.data.label}</span>
-                          {option.data.meta ? <span className="session-option-meta">{option.data.meta}</span> : null}
+                        <div className="conversation-option">
+                          <span className="conversation-option-label">{option.data.label}</span>
+                          {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
                         </div>
                       )}
                       onOpenChange={(open) => {
@@ -511,16 +545,16 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                     />
                   </div>
                   <Prompts
-                    className="session-prompts"
-                    title={copy.sessionSuggestions}
+                    className="conversation-prompts"
+                    title={copy.conversationSuggestions}
                     items={suggestionItems}
                     wrap
                     onItemClick={({ data }) => setDraftMessage(String(data.label ?? ""))}
                   />
                 </div>
-              ) : currentSession && bubbleItems.length ? (
+              ) : currentConversation && bubbleItems.length ? (
                 <Bubble.List
-                  className="session-transcript"
+                  className="conversation-transcript"
                   items={bubbleItems}
                   autoScroll
                   role={{
@@ -528,10 +562,10 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
                     ai: { placement: "start", variant: "outlined" },
                   }}
                 />
-              ) : <Welcome className="session-welcome session-welcome-empty" title={copy.sessionPlaceholder} />}
+              ) : <Welcome className="conversation-welcome conversation-welcome-empty" title={copy.conversationPlaceholder} />}
             </div>
             <Sender
-              className="session-composer"
+              className="conversation-composer"
               aria-label={copy.initialMessage}
               value={draftMessage}
               placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
@@ -539,12 +573,21 @@ export function SessionsPage({ sessionId, copy, locale, refreshToken, onUpdated,
               onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
               onSubmit={submitMessage}
               suffix={(_node, { components: { SendButton } }) => (
-                <SendButton aria-label={showCreate ? copy.createSession : copy.sendMessage} />
+                <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
               )}
             />
           </div>
         </section>
       </section>
+      <ConversationTurnDrawer
+        conversationId={selectedConversationId}
+        jobId={turnJobId}
+        copy={copy}
+        locale={locale}
+        refreshToken={refreshToken}
+        onClose={() => setTurnJobId("")}
+        onUpdated={onUpdated}
+      />
     </>
   );
 }

@@ -41,6 +41,7 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "@ant-design/x-markdown": "2.10.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "^1.4.0",
     "cheerio": "^1.2.0",

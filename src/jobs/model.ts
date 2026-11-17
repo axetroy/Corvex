@@ -1,5 +1,5 @@
 /** 系统可入队并由 Worker 处理的任务类型集合。 */
-export const jobTypes = ["review", "fix", "explain", "chat", "implement", "session"] as const;
+export const jobTypes = ["review", "fix", "explain", "chat", "implement", "conversation"] as const;
 export type JobType = (typeof jobTypes)[number];
 
 /** 在边界处校验外部字符串是否为已知任务类型。 */
@@ -8,7 +8,7 @@ export function isJobType(value: string): value is JobType {
 }
 
 export type JobTargetType = "merge_request" | "issue" | "repository";
-export type ChatSessionMessageStatus = "queued" | "running" | "completed" | "failed";
+export type ConversationMessageStatus = "queued" | "running" | "completed" | "failed";
 
 /** SQLite、Worker 和运维界面共同使用的任务生命周期状态集合。 */
 export const jobStatuses = [
@@ -40,8 +40,8 @@ export interface Job {
   targetIid: number;
   targetBranch: string;
   headSha: string;
-  sessionId: string | null;
-  sessionResponseId: string | null;
+  conversationId: string | null;
+  conversationResponseId: string | null;
   actorId: number;
   request: string;
   createdAt: string;
@@ -71,36 +71,70 @@ export interface JobPage {
   total: number;
 }
 
-export interface ChatSessionSummary {
+export interface ConversationSummary {
   id: string;
   projectId: number;
   projectName: string;
   targetBranch: string;
   createdAt: string;
   updatedAt: string;
+  /** 该对话已入队的轮次总数（每条助手回复对应一轮）。 */
+  turnCount: number;
+  /** 最近一轮助手回复的状态；尚无轮次时为空。 */
+  lastTurnStatus: ConversationMessageStatus | null;
 }
 
-export interface ChatSessionMessage {
+export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  status: ChatSessionMessageStatus;
+  status: ConversationMessageStatus;
   jobId: string | null;
   headSha: string;
   createdAt: string;
   updatedAt: string;
+  /** 助手回复所对应任务的终态；用户消息与未执行回复为空。 */
+  jobStatus: JobStatus | null;
+  /** 助手回复对应任务已记录的轨迹条目数，供界面提示「有轨迹可看」。 */
+  traceCount: number;
+  /** 助手回复对应任务已记录的执行步骤数。 */
+  eventCount: number;
 }
 
-export interface ChatSession extends ChatSessionSummary {
-  messages: ChatSessionMessage[];
+export interface Conversation extends ConversationSummary {
+  messages: ConversationMessage[];
 }
 
-export interface ChatSessionPage {
-  items: ChatSessionSummary[];
+/**
+ * 单轮对话的完整记录：把一轮助手回复背后的任务状态、生命周期、轨迹与执行步骤
+ * 汇总到一起，使运维台可以直接在对话内查看该轮的轨迹，而无需跳到任务详情页。
+ */
+export interface ConversationTurn {
+  conversationId: string;
+  /** 该轮助手回复的消息 ID。 */
+  messageId: string;
+  jobId: string;
+  status: JobStatus;
+  /** 该轮用户提问的原文。 */
+  request: string;
+  headSha: string;
+  createdAt: string;
+  updatedAt: string;
+  attemptCount: number;
+  lastError: string;
+  failureStage: JobStatus | "";
+  timeline: JobStatusTransition[];
+  attempts: JobAttemptSummary[];
+  trajectory: JobTraceEntry[];
+  events: ExecutionEvent[];
+}
+
+export interface ConversationPage {
+  items: ConversationSummary[];
   total: number;
 }
 
-export interface CreateChatSessionInput {
+export interface CreateConversationInput {
   projectId: number;
   projectName: string;
   targetBranch: string;

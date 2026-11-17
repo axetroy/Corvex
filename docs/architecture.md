@@ -4,9 +4,9 @@
 
 Corvex separates the request path from model and repository work:
 
-1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events and jobs in SQLite, and replies to GitLab. The sessions console discovers projects and branches through the configured GitLab read token.
-2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, persistent session messages, model call metrics, and optional daily token reservations.
-3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request head or session branch snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
+1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events and jobs in SQLite, and replies to GitLab. The operations console discovers projects and branches through the configured GitLab read token.
+2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, persistent conversation messages, model call metrics, and optional daily token reservations.
+3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request head or conversation branch snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks.
 
@@ -27,9 +27,9 @@ The server can run without a worker: commands are accepted and persisted, but mo
 
 The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel` on MRs. Plain text after the bot mention starts a chat about the current MR or an assistant task on an Issue. Issue tasks include recent non-system comments and let the model reply, ask for clarification, or propose implementation. Code writes require `issue.implement_enabled: true`; `/implement [request]` remains available as an explicit implementation request. See [Getting started](./guide) for examples.
 
-## Persistent sessions
+## Persistent conversations
 
-The authenticated operations console uses the GitLab read token to search all visible projects and their branches. A session is a general chat bound to one repository branch; the server resolves and pins the branch head SHA when a turn is queued, and turns and assistant replies are persisted in SQLite and serialized per session. The session worker uses read-only repository tools and does not publish to GitLab. If the branch moves before a queued turn starts, that turn ends as `stale` instead of answering from a mismatched snapshot.
+The authenticated operations console uses the GitLab read token to search all visible projects and their branches. A conversation is a general chat bound to one repository branch; the server resolves and pins the branch head SHA when a turn is queued, and turns and assistant replies are persisted in SQLite and serialized per conversation. Each assistant reply is a `conversation` job and therefore keeps its own trajectory and execution records; the console reads them per turn through `GET /api/ops/conversations/<id>/turns/<jobId>`, which verifies the job belongs to that conversation. Conversations are the console's primary object: the conversation list shows turn counts and the latest turn status, and each reply exposes its own trace without leaving the conversation. The conversation worker uses read-only repository tools and does not publish to GitLab. If the branch moves before a queued turn starts, that turn ends as `stale` instead of answering from a mismatched snapshot.
 
 ## Review workflow
 
@@ -76,7 +76,7 @@ SQLite uses WAL mode, a single open connection, and a 5-second busy timeout. Kee
 ## Security boundaries and limitations
 
 - The webhook secret authenticates GitLab deliveries; the optional user blocklist restricts which users can request work.
-- Register the webhook only on projects where Corvex should accept commands. The sessions console project scope is the set of projects visible to its GitLab read token; it is not controlled by a static project allowlist.
+- Register the webhook only on projects where Corvex should accept commands. The operations console project scope is the set of projects visible to its GitLab read token; it is not controlled by a static project allowlist.
 - Use a read token for API/repository reads and a separate write token for MR comments. Do not give the service the administrator token used by the optional hook-registration script.
 - Repository content, comments, filenames, and fix instructions are untrusted model input. Model output is validated, but validation is not a substitute for human review.
 - Model prompts may contain source code and MR text. Review the model provider's data handling and your organization's policies before enabling it.

@@ -61,12 +61,13 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/jobs/<id>` | 任务详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出事件。 |
 | `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
 | `GET /api/ops/projects/<id>/branches` | 搜索项目的分支。 |
-| `GET /api/ops/sessions`、`GET /api/ops/sessions/<id>` | 列出持久会话及其消息。 |
-| `POST /api/ops/sessions`、`POST /api/ops/sessions/<id>/messages` | 创建固定版本的只读会话或排入下一轮对话。 |
+| `GET /api/ops/conversations`、`GET /api/ops/conversations/<id>` | 列出持久对话（含轮次数与最近一轮状态）及其消息。 |
+| `GET /api/ops/conversations/<id>/turns/<jobId>` | 读取单轮对话自己的轨迹、执行记录、尝试与生命周期变化。 |
+| `POST /api/ops/conversations`、`POST /api/ops/conversations/<id>/messages` | 创建固定版本的只读对话或排入下一轮对话。 |
 
 运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护运维凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 
-控制台包含概览、任务、任务详情和持久对话会话视图。新建会话时可搜索只读 GitLab Token 可访问的全部项目及分支；每轮由服务端解析并固定到分支头 SHA，消息保存在 SQLite，并仅提供只读仓库工具。会话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃会话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
+控制台以对话为主：默认打开“对话”页，列表展示每个对话的轮次数与最近一轮状态；概览、任务与任务详情仍然保留。新建对话时可搜索只读 GitLab Token 可访问的全部项目及分支；每轮由服务端解析并固定到分支头 SHA，消息保存在 SQLite，并仅提供只读仓库工具。助手回复按 Markdown 渲染并提供复制操作，每条回复还带“轨迹”入口，可在抽屉中查看该轮自己的轨迹、执行记录与生命周期变化。对话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃对话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。任务列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
 界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
 
 ## 日志与故障排查
@@ -139,7 +140,7 @@ pnpm start -- backup \
 
 恢复前停止 Server 和 Worker，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启两个进程。不要覆盖正在使用的数据库。
 
-Server 启动时执行清理，之后约每 24 小时清理一次。终态任务、尝试记录、关联的执行步骤事件、Agent 轨迹、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联任务的执行事件也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的任务会保留。运维控制台中空闲超过保留期的会话连同其消息一并删除；仍有排队或运行中回复的会话会保留，避免丢弃进行中的对话。执行事件输入/输出有大小限制，并会尽力脱敏类似凭证的内容。为在运维控制台完整呈现会话，Agent 轨迹会保留模型提示词与上下文、工具参数与结果以及模型输出；上下文条目在各轮之间增量存储，查看单轮详情时再重建完整上下文。轨迹可能包含仓库源码、diff、网页内容、评论或秘密信息，且不受执行事件的脱敏和大小限制保护。请妥善保护数据库和备份，通过 HTTPS 访问控制台，并严格限制操作员权限。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
+Server 启动时执行清理，之后约每 24 小时清理一次。终态任务、尝试记录、关联的执行步骤事件、Agent 轨迹、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联任务的执行事件也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的任务会保留。运维控制台中空闲超过保留期的对话连同其消息一并删除；仍有排队或运行中回复的对话会保留，避免丢弃进行中的对话。执行事件输入/输出有大小限制，并会尽力脱敏类似凭证的内容。为在运维控制台完整呈现一轮对话，Agent 轨迹会保留模型提示词与上下文、工具参数与结果以及模型输出；上下文条目在各轮之间增量存储，查看单轮详情时再重建完整上下文。轨迹可能包含仓库源码、diff、网页内容、评论或秘密信息，且不受执行事件的脱敏和大小限制保护。请妥善保护数据库和备份，通过 HTTPS 访问控制台，并严格限制操作员权限。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
 
 ## 升级与开发
 

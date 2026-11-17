@@ -196,7 +196,7 @@ describe("CorvexServer", () => {
       expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);
       const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
       expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
-      const createdSessionResponse = await fetch(`${base}/api/ops/sessions`, {
+      const createdConversationResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({
@@ -205,28 +205,57 @@ describe("CorvexServer", () => {
           message: "Explain this repository",
         }),
       });
-      expect(createdSessionResponse.status).toBe(202);
-      const createdSession = await createdSessionResponse.json() as { sessionId: string; jobId: string };
-      expect(store.getJob(createdSession.jobId)).toMatchObject({
-        type: "session",
+      expect(createdConversationResponse.status).toBe(202);
+      const createdConversation = await createdConversationResponse.json() as { conversationId: string; jobId: string };
+      expect(store.getJob(createdConversation.jobId)).toMatchObject({
+        type: "conversation",
         projectId: 2,
         targetType: "repository",
         targetBranch: "main",
         headSha: "b".repeat(40),
       });
-      const sessionDetailResponse = await fetch(`${base}/api/ops/sessions/${createdSession.sessionId}`, { headers: { authorization } });
-      expect(await sessionDetailResponse.json()).toMatchObject({
-        id: createdSession.sessionId,
+      const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: { authorization } });
+      expect(await conversationDetailResponse.json()).toMatchObject({
+        id: createdConversation.conversationId,
         projectName: "group/project",
         targetBranch: "main",
+        turnCount: 1,
+        lastTurnStatus: "queued",
+        messages: [
+          { role: "user", content: "Explain this repository" },
+          { role: "assistant", status: "queued", jobId: createdConversation.jobId, jobStatus: "queued" },
+        ],
       });
-      const concurrentReplyResponse = await fetch(`${base}/api/ops/sessions/${createdSession.sessionId}/messages`, {
+      // 单轮对话记录端点返回该轮的轨迹与执行步骤，并拒绝跨对话或未知任务。
+      const conversationTurnResponse = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.jobId}`,
+        { headers: { authorization } },
+      );
+      expect(conversationTurnResponse.status).toBe(200);
+      expect(await conversationTurnResponse.json()).toMatchObject({
+        conversationId: createdConversation.conversationId,
+        jobId: createdConversation.jobId,
+        status: "queued",
+        request: "Explain this repository",
+        headSha: "b".repeat(40),
+        trajectory: [],
+        events: [],
+      });
+      expect((await fetch(
+        `${base}/api/ops/conversations/other-conversation/turns/${createdConversation.jobId}`,
+        { headers: { authorization } },
+      )).status).toBe(404);
+      expect((await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/missing-job`,
+        { headers: { authorization } },
+      )).status).toBe(404);
+      const concurrentReplyResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({ message: "A concurrent follow-up" }),
       });
       expect(concurrentReplyResponse.status).toBe(409);
-      const secondSessionResponse = await fetch(`${base}/api/ops/sessions`, {
+      const secondConversationResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
         body: JSON.stringify({
@@ -235,14 +264,14 @@ describe("CorvexServer", () => {
           message: "Summarize the request flow",
         }),
       });
-      expect(secondSessionResponse.status).toBe(202);
-      const secondSession = await secondSessionResponse.json() as { jobId: string };
-      expect(store.getJob(secondSession.jobId)).toMatchObject({
-        type: "session",
+      expect(secondConversationResponse.status).toBe(202);
+      const secondConversation = await secondConversationResponse.json() as { jobId: string };
+      expect(store.getJob(secondConversation.jobId)).toMatchObject({
+        type: "conversation",
         targetBranch: "main",
         headSha: "b".repeat(40),
       });
-      const queuedSessions = store.jobCounts().queued;
+      const queuedConversations = store.jobCounts().queued;
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
@@ -277,7 +306,7 @@ describe("CorvexServer", () => {
       expect((await activeDelivery).status).toBe(202);
       pausePostNotes = false;
       expect((await send()).status).toBe(202);
-      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
+      expect(store.jobCounts().queued).toBe(queuedConversations + 1);
       expect(postedNotes).toBe(1);
       expect(info).toHaveBeenCalledWith(
         "GitLab webhook received",
@@ -341,7 +370,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(ignoredResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
+      expect(store.jobCounts().queued).toBe(queuedConversations + 1);
       expect(info).toHaveBeenCalledWith(
         "GitLab webhook ignored",
         expect.objectContaining({ eventId: "1:101", reason: "not_corvex_command" }),
@@ -365,7 +394,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(unauthorizedBotResponse.status).toBe(403);
-      expect(store.jobCounts().queued).toBe(queuedSessions + 1);
+      expect(store.jobCounts().queued).toBe(queuedConversations + 1);
 
       config.fix.enabled = true;
       const fixPayload = {
@@ -387,7 +416,7 @@ describe("CorvexServer", () => {
         body: JSON.stringify(fixPayload),
       });
       expect(fixResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(queuedSessions + 2);
+      expect(store.jobCounts().queued).toBe(queuedConversations + 2);
       expect(postedNotes).toBe(2);
 
       const chatRequest = "总结这个 PR\n\n再建议一个标题";
@@ -408,7 +437,7 @@ describe("CorvexServer", () => {
         }),
       });
       expect(chatResponse.status).toBe(202);
-      expect(store.jobCounts().queued).toBe(queuedSessions + 3);
+      expect(store.jobCounts().queued).toBe(queuedConversations + 3);
       expect(postedNotes).toBe(3);
       expect(store.listJobs("queued", 10).find((job) => job.type === "chat")?.request).toBe(chatRequest);
 
@@ -462,7 +491,7 @@ describe("CorvexServer", () => {
       });
       expect(jobsResponse.status).toBe(200);
       const jobs = (await jobsResponse.json()) as { items: Array<{ id: string }>; total: number };
-      expect(jobs.total).toBe(queuedSessions + 5);
+      expect(jobs.total).toBe(queuedConversations + 5);
       expect(jobs.items).toHaveLength(1);
       store.startJobTrace(jobs.items[0]!.id, 1, "llm", "review", "test/model", "review prompt");
       const failedTrace = store.startJobTrace(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  conversationsHash,
   decodeJobId,
   jobHash,
   jobQueueFromParams,
@@ -7,13 +8,13 @@ import {
   jobsBackHash,
   jobsHash,
   parseHash,
-  sessionsHash,
 } from "../../src/app/ui/routing.ts";
 
 describe("operations UI routing", () => {
-  it("treats an empty hash as the overview page", () => {
-    expect(parseHash("").page).toEqual({ kind: "overview" });
-    expect(parseHash("#").page).toEqual({ kind: "overview" });
+  it("treats an empty hash as the conversation page", () => {
+    expect(parseHash("").page).toEqual({ kind: "conversations" });
+    expect(parseHash("#").page).toEqual({ kind: "conversations" });
+    expect(parseHash("conversations").page).toEqual({ kind: "conversations" });
     expect(parseHash("overview").page).toEqual({ kind: "overview" });
   });
 
@@ -24,11 +25,11 @@ describe("operations UI routing", () => {
     expect(parseHash("jobs/a%20b").page).toEqual({ kind: "job", id: "a b" });
   });
 
-  it("parses and serializes a selected session ID", () => {
-    expect(parseHash("#sessions/session-1").page).toEqual({ kind: "sessions", id: "session-1" });
-    expect(parseHash("#sessions/%E0%A4%A").page).toEqual({ kind: "unknown" });
-    expect(sessionsHash("session 1")).toBe("#sessions/session%201");
-    expect(sessionsHash()).toBe("#sessions");
+  it("parses and serializes a selected conversation ID", () => {
+    expect(parseHash("#conversations/conversation-1").page).toEqual({ kind: "conversations", id: "conversation-1" });
+    expect(parseHash("#conversations/%E0%A4%A").page).toEqual({ kind: "unknown" });
+    expect(conversationsHash("conversation 1")).toBe("#conversations/conversation%201");
+    expect(conversationsHash()).toBe("#conversations");
   });
 
   it("rejects a job route without a usable ID instead of rendering a blank page", () => {

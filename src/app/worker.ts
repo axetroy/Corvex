@@ -12,7 +12,7 @@ import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } fro
 import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../jobs/execution.js";
-import { getSessionSystemPrompt } from "../agent/prompts.js";
+import { getConversationSystemPrompt } from "../agent/prompts.js";
 
 /** Worker 任务租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
@@ -37,8 +37,8 @@ const retryableNetworkCodes = new Set([
 ]);
 /** Git CLI 在远端网络故障时可能返回文本而非系统错误码。 */
 const retryableNetworkMessage = /network error|connection (?:reset|refused|timed out)|could not resolve host|failed to connect|remote end hung up unexpectedly|tls connection.*(?:timeout|terminated)/i;
-/** 单次会话请求注入模型上下文的历史消息条数上限，按最近优先截断。 */
-const sessionHistoryMessages = 30;
+/** 单次对话请求注入模型上下文的历史消息条数上限，按最近优先截断。 */
+const conversationHistoryMessages = 30;
 
 function isRetryableJobFailure(error: unknown): boolean {
   const pending: unknown[] = [error];
@@ -250,8 +250,8 @@ export class Worker {
           "cancelled",
           `Cancellation requested by task owner: ${errorDetails(processingError)}`,
         );
-        if (job.type === "session") {
-          this.store.finishChatSessionResponse(job.id, "cancelled", "This turn was cancelled before it could finish.");
+        if (job.type === "conversation") {
+          this.store.finishConversationResponse(job.id, "cancelled", "This turn was cancelled before it could finish.");
         }
         return;
       }
@@ -296,8 +296,8 @@ export class Worker {
     const publishingStage = stage === "publishing";
     try {
       this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
-      if (!publishingStage && job.type === "session") {
-        this.store.finishChatSessionResponse(job.id, "failed", `This turn failed: ${errorMessage(processingError)}`);
+      if (!publishingStage && job.type === "conversation") {
+        this.store.finishConversationResponse(job.id, "failed", `This turn failed: ${errorMessage(processingError)}`);
       }
     } catch (statusError) {
       if (publishingStage) {
@@ -359,8 +359,8 @@ export class Worker {
       taskType: job.type,
     };
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    if (job.type === "session") {
-      await this.executeChatSession(job, signal, transition);
+    if (job.type === "conversation") {
+      await this.executeConversation(job, signal, transition);
       return;
     }
     if (!["review", "fix", "explain", "chat", "implement"].includes(job.type)) {
@@ -696,28 +696,28 @@ export class Worker {
     }
   }
 
-  private async executeChatSession(
+  private async executeConversation(
     job: Job,
     signal: AbortSignal,
     transition: (status: JobStatus) => void,
   ): Promise<void> {
-    if (!job.sessionId || !job.sessionResponseId) throw new Error("session job is missing its message association");
+    if (!job.conversationId || !job.conversationResponseId) throw new Error("conversation job is missing its message association");
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
       transition("stale");
-      this.store.finishChatSessionResponse(job.id, "stale", "The branch did not have a valid commit snapshot.");
+      this.store.finishConversationResponse(job.id, "stale", "The branch did not have a valid commit snapshot.");
       return;
     }
     const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    const session = this.store.getChatSession(job.sessionId);
-    if (!session) throw new Error(`chat session "${job.sessionId}" not found`);
-    if (session.projectId !== job.projectId || session.targetBranch !== job.targetBranch) {
-      throw new Error("session job branch does not match its stored session");
+    const conversation = this.store.getConversation(job.conversationId);
+    if (!conversation) throw new Error(`conversation "${job.conversationId}" not found`);
+    if (conversation.projectId !== job.projectId || conversation.targetBranch !== job.targetBranch) {
+      throw new Error("conversation job branch does not match its stored conversation");
     }
 
     const branch = await traceExecutionStep(
       this.store,
       stepContext,
-      "gitlab.get_session_branch",
+      "gitlab.get_conversation_branch",
       { projectId: job.projectId, branch: job.targetBranch },
       () => this.gitlab.getBranch(job.projectId, job.targetBranch, signal),
       (value) => ({ name: value.name, headSha: value.commit.id }),
@@ -725,13 +725,13 @@ export class Worker {
     const remoteHeadSha = branch.commit.id;
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(remoteHeadSha) || remoteHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
       transition("stale");
-      this.store.finishChatSessionResponse(job.id, "stale", "The branch changed after this turn was queued; send a new message to use the current snapshot.");
+      this.store.finishConversationResponse(job.id, "stale", "The branch changed after this turn was queued; send a new message to use the current snapshot.");
       return;
     }
     const project = await traceExecutionStep(
       this.store,
       stepContext,
-      "gitlab.get_session_project",
+      "gitlab.get_conversation_project",
       { projectId: job.projectId },
       () => this.gitlab.getProject(job.projectId, signal),
       (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
@@ -739,7 +739,7 @@ export class Worker {
     const workspace = await traceExecutionStep(
       this.store,
       stepContext,
-      "git.prepare_session_workspace",
+      "git.prepare_conversation_workspace",
       { projectId: job.projectId, jobId: job.id, expectedHeadSha: job.headSha },
       () => this.repo.prepareWorkspace(job.projectId, job.id, project.http_url_to_repo, job.headSha, signal),
       (value) => ({ projectId: value.projectId, jobId: value.jobId, headSha: value.headSha }),
@@ -753,17 +753,17 @@ export class Worker {
     try {
       transition("analyzing");
       let lastUserIndex = -1;
-      for (let index = 0; index < session.messages.length; index++) {
-        if (session.messages[index]?.role === "user") lastUserIndex = index;
+      for (let index = 0; index < conversation.messages.length; index++) {
+        if (conversation.messages[index]?.role === "user") lastUserIndex = index;
       }
-      const history = session.messages
+      const history = conversation.messages
         .slice(0, lastUserIndex)
         .filter((item) => item.status === "completed")
-        .slice(-sessionHistoryMessages)
+        .slice(-conversationHistoryMessages)
         .map(({ role, content }) => ({ role, content }));
       const userPrompt = JSON.stringify({
         repository: {
-          project: session.projectName,
+          project: conversation.projectName,
           branch: job.targetBranch,
           headSha: job.headSha,
         },
@@ -775,28 +775,28 @@ export class Worker {
         const answer = await traceExecutionStep(
           this.store,
           stepContext,
-          "workflow.read_only_session",
+          "workflow.read_only_conversation",
           { projectId: job.projectId, branch: job.targetBranch, headSha: job.headSha, requestCharacters: [...job.request].length },
           () => this.agent.generate(
-            { taskType: "session", systemPrompt: getSessionSystemPrompt(this.config.agent.responseLanguage), userPrompt },
+            { taskType: "conversation", systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage), userPrompt },
             workspace.path,
             signal,
             trace,
           ),
           (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.content) }),
         );
-        this.store.recordModelCall("session", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
+        this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
         transition("completed");
-        this.store.finishChatSessionResponse(job.id, "completed", answer.content);
+        this.store.finishConversationResponse(job.id, "completed", answer.content);
       } catch (error) {
-        this.store.recordModelCall("session", "failure", Date.now() - started, 0, 0);
+        this.store.recordModelCall("conversation", "failure", Date.now() - started, 0, 0);
         throw error;
       }
     } finally {
       await traceExecutionStep(
         this.store,
         stepContext,
-        "git.cleanup_session_workspace",
+        "git.cleanup_conversation_workspace",
         { projectId: workspace.projectId, jobId: workspace.jobId },
         () => this.repo.cleanupWorkspace(workspace),
         () => ({ cleaned: true }),

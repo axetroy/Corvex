@@ -304,17 +304,17 @@ export class CorvexServer {
       }
       return;
     }
-    if (request.method === "GET" && url.pathname === "/api/ops/sessions") {
+    if (request.method === "GET" && url.pathname === "/api/ops/conversations") {
       const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 50;
       const offset = optionalInteger(url.searchParams.get("offset"), 0, 1_000_000) ?? 0;
       if (limit === false || offset === false) {
-        respondJson(response, 400, { error: "invalid session list filter" });
+        respondJson(response, 400, { error: "invalid conversation list filter" });
         return;
       }
-      respondJson(response, 200, this.store.listChatSessions(limit, offset));
+      respondJson(response, 200, this.store.listConversations(limit, offset));
       return;
     }
-    if (request.method === "POST" && url.pathname === "/api/ops/sessions") {
+    if (request.method === "POST" && url.pathname === "/api/ops/conversations") {
       const body = await this.readOperationsBody(request, response);
       if (!body) return;
       const projectId = positiveInteger(body.projectId);
@@ -325,13 +325,13 @@ export class CorvexServer {
         !targetBranch || targetBranch.length > 255 ||
         !message.trim() || message.length > 20_000
       ) {
-        respondJson(response, 400, { error: "invalid session request" });
+        respondJson(response, 400, { error: "invalid conversation request" });
         return;
       }
       try {
         const project = await this.gitlab.getProject(projectId);
         const headSha = (await this.gitlab.getBranch(projectId, targetBranch)).commit.id;
-        const created = this.store.createChatSession({
+        const created = this.store.createConversation({
           projectId,
           projectName: project.path_with_namespace ?? project.name ?? String(projectId),
           targetBranch,
@@ -345,30 +345,48 @@ export class CorvexServer {
       }
       return;
     }
-    const sessionMatch = /^\/api\/ops\/sessions\/([^/]+)$/.exec(url.pathname);
-    if (request.method === "GET" && sessionMatch) {
-      const sessionId = this.decodePathSegment(sessionMatch[1]!);
-      if (!sessionId) {
-        respondJson(response, 400, { error: "invalid session ID" });
+    const conversationMatch = /^\/api\/ops\/conversations\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && conversationMatch) {
+      const conversationId = this.decodePathSegment(conversationMatch[1]!);
+      if (!conversationId) {
+        respondJson(response, 400, { error: "invalid conversation ID" });
         return;
       }
-      const session = this.store.getChatSession(sessionId);
-      if (!session) {
-        respondJson(response, 404, { error: "session not found" });
+      const conversation = this.store.getConversation(conversationId);
+      if (!conversation) {
+        respondJson(response, 404, { error: "conversation not found" });
         return;
       }
-      respondJson(response, 200, session);
+      respondJson(response, 200, conversation);
       return;
     }
-    const sessionMessageMatch = /^\/api\/ops\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
-    if (request.method === "POST" && sessionMessageMatch) {
-      const sessionId = this.decodePathSegment(sessionMessageMatch[1]!);
+    // 单轮对话记录：把该轮任务的状态、生命周期、轨迹与执行步骤一并返回，
+    // 让运维台在对话内直接查看轨迹，无需跳到任务详情页。
+    const conversationTurnMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && conversationTurnMatch) {
+      const conversationId = this.decodePathSegment(conversationTurnMatch[1]!);
+      const jobId = this.decodePathSegment(conversationTurnMatch[2]!);
+      if (!conversationId || !jobId) {
+        respondJson(response, 400, { error: "invalid conversation turn ID" });
+        return;
+      }
+      const turn = this.store.getConversationTurn(conversationId, jobId);
+      if (!turn) {
+        respondJson(response, 404, { error: "conversation turn not found" });
+        return;
+      }
+      respondJson(response, 200, turn);
+      return;
+    }
+    const conversationMessageMatch = /^\/api\/ops\/conversations\/([^/]+)\/messages$/.exec(url.pathname);
+    if (request.method === "POST" && conversationMessageMatch) {
+      const conversationId = this.decodePathSegment(conversationMessageMatch[1]!);
       const body = await this.readOperationsBody(request, response);
       if (!body) return;
       const message = typeof body.message === "string" ? body.message : "";
-      const session = sessionId ? this.store.getChatSession(sessionId) : undefined;
-      if (!sessionId || !session) {
-        respondJson(response, sessionId ? 404 : 400, { error: sessionId ? "session not found" : "invalid session ID" });
+      const conversation = conversationId ? this.store.getConversation(conversationId) : undefined;
+      if (!conversationId || !conversation) {
+        respondJson(response, conversationId ? 404 : 400, { error: conversationId ? "conversation not found" : "invalid conversation ID" });
         return;
       }
       if (!message.trim() || message.length > 20_000) {
@@ -376,15 +394,15 @@ export class CorvexServer {
         return;
       }
       try {
-        const headSha = (await this.gitlab.getBranch(session.projectId, session.targetBranch)).commit.id;
-        const queued = this.store.addChatSessionMessage(session.id, {
-          projectId: session.projectId,
-          targetBranch: session.targetBranch,
+        const headSha = (await this.gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;
+        const queued = this.store.addConversationMessage(conversation.id, {
+          projectId: conversation.projectId,
+          targetBranch: conversation.targetBranch,
           headSha,
           actorId: 0,
           request: message,
         });
-        respondJson(response, 202, { sessionId: session.id, jobId: queued.jobId });
+        respondJson(response, 202, { conversationId: conversation.id, jobId: queued.jobId });
       } catch (error) {
         if (error instanceof Error && error.message.includes("active message")) {
           respondJson(response, 409, { error: error.message });

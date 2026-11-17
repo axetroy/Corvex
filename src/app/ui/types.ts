@@ -1,10 +1,39 @@
-import type { ExecutionEvent, JobDetails, JobOperationsSummary, JobStatus, JobTraceEntry, JobTraceKind, JobType, ModelCallMetric, OperationsOverview } from "../../jobs/model.js";
+import type {
+  Conversation,
+  ConversationMessage,
+  ConversationPage,
+  ConversationSummary,
+  ConversationTurn,
+  ExecutionEvent,
+  JobDetails,
+  JobOperationsSummary,
+  JobStatus,
+  JobTraceEntry,
+  JobTraceKind,
+  JobType,
+  ModelCallMetric,
+  OperationsOverview,
+} from "../../jobs/model.js";
 
 /**
  * 运维台依赖的接口数据结构。字段形状与 `src/jobs/model.ts` 一致，
  * 这里只做 HTTP 边界的重新导出，避免前端重复声明。
  */
-export type { ExecutionEvent, JobDetails, JobOperationsSummary, JobStatus, JobTraceEntry, JobTraceKind, JobType, ModelCallMetric };
+export type {
+  Conversation,
+  ConversationMessage,
+  ConversationPage,
+  ConversationSummary,
+  ConversationTurn,
+  ExecutionEvent,
+  JobDetails,
+  JobOperationsSummary,
+  JobStatus,
+  JobTraceEntry,
+  JobTraceKind,
+  JobType,
+  ModelCallMetric,
+};
 
 /** `GET /api/ops/overview` 的响应体。 */
 export interface OverviewResponse extends OperationsOverview {

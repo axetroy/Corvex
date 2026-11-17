@@ -104,7 +104,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
 | `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | Fix 或 Issue 实现模型补丁大小上限。 |
 
-Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；会话工作台可以发现只读令牌可访问的全部项目。
+Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；运维控制台可以发现只读令牌可访问的全部项目。
 
 ## Issue 实现
 

@@ -102,7 +102,7 @@ The job lease is currently fixed at 30 seconds and renewed during execution; it 
 | `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
 | `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed Fix or Issue implementation patch size. |
 
-Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the sessions console can discover every project visible to its read token.
+Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the operations console can discover every project visible to its read token.
 
 ## Issue implementation
 

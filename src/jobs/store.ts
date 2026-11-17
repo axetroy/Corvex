@@ -6,11 +6,12 @@ import {
   isJobStatus,
   isJobType,
   type EventResult,
-  type ChatSession,
-  type ChatSessionMessage,
-  type ChatSessionPage,
-  type ChatSessionSummary,
-  type CreateChatSessionInput,
+  type Conversation,
+  type ConversationMessage,
+  type ConversationPage,
+  type ConversationSummary,
+  type ConversationTurn,
+  type CreateConversationInput,
   type ExecutionEvent,
   type ExecutionEventStatus,
   type Job,
@@ -52,8 +53,8 @@ interface JobRow {
   target_iid: number;
   target_branch: string;
   head_sha: string;
-  session_id: string | null;
-  session_response_id: string | null;
+  conversation_id: string | null;
+  conversation_response_id: string | null;
   actor_id: number;
   request: string;
   created_at: string;
@@ -151,8 +152,8 @@ function readJobRow(row: Record<string, unknown> | undefined): JobRow | undefine
     target_iid: numberColumn(row, "target_iid"),
     target_branch: stringColumn(row, "target_branch"),
     head_sha: stringColumn(row, "head_sha"),
-    session_id: row.session_id === null ? null : stringColumn(row, "session_id"),
-    session_response_id: row.session_response_id === null ? null : stringColumn(row, "session_response_id"),
+    conversation_id: row.conversation_id === null ? null : stringColumn(row, "conversation_id"),
+    conversation_response_id: row.conversation_response_id === null ? null : stringColumn(row, "conversation_response_id"),
     actor_id: numberColumn(row, "actor_id"),
     request: stringColumn(row, "request"),
     created_at: stringColumn(row, "created_at"),
@@ -287,8 +288,8 @@ function mapJob(row: JobRow): Job {
     targetIid: row.target_iid,
     targetBranch: row.target_branch,
     headSha: row.head_sha,
-    sessionId: row.session_id,
-    sessionResponseId: row.session_response_id,
+    conversationId: row.conversation_id,
+    conversationResponseId: row.conversation_response_id,
     actorId: row.actor_id,
     request: row.request,
     createdAt: row.created_at,
@@ -312,8 +313,8 @@ function mapJobSummary(row: JobRow): JobSummary {
     targetIid: job.targetIid,
     targetBranch: job.targetBranch,
     headSha: job.headSha,
-    sessionId: job.sessionId,
-    sessionResponseId: job.sessionResponseId,
+    conversationId: job.conversationId,
+    conversationResponseId: job.conversationResponseId,
     actorId: job.actorId,
     request: job.request,
     createdAt: job.createdAt,
@@ -434,7 +435,7 @@ export class JobStore {
     inputTokens: number,
     outputTokens: number,
   ): void {
-    if (!["review", "explain", "fix", "chat", "implement", "session"].includes(taskType)) {
+    if (!["review", "explain", "fix", "chat", "implement", "conversation"].includes(taskType)) {
       throw new Error(`unsupported model call task type "${taskType}"`);
     }
     if (!["success", "failure"].includes(outcome)) {
@@ -668,11 +669,11 @@ export class JobStore {
         .prepare(`DELETE FROM jobs WHERE status IN (${statusParams}) AND updated_at < ?`)
         .run(...terminalStatuses, history);
       this.db.prepare("DELETE FROM execution_events WHERE job_id IS NULL AND started_at < ?").run(history);
-      // 会话消息通过外键级联删除；保留仍有排队或运行中回复的会话，避免删除活跃对话。
+      // 对话消息通过外键级联删除；保留仍有排队或运行中回复的对话。
       this.db
         .prepare(
-          `DELETE FROM chat_sessions WHERE updated_at < ?
-           AND id NOT IN (SELECT session_id FROM chat_session_messages WHERE status IN ('queued','running'))`,
+          `DELETE FROM conversations WHERE updated_at < ?
+           AND id NOT IN (SELECT conversation_id FROM conversation_messages WHERE status IN ('queued','running'))`,
         )
         .run(history);
       this.db.prepare("DELETE FROM webhook_events WHERE received_at < ?").run(history);
@@ -979,7 +980,7 @@ export class JobStore {
       this.recoverExpiredLeases();
       const row = readJobRow(this.db
         .prepare(
-          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat','implement','session') ORDER BY created_at LIMIT 1",
+          "SELECT * FROM jobs WHERE status = 'queued' AND available_at <= ? AND type IN ('review','fix','explain','chat','implement','conversation') ORDER BY created_at LIMIT 1",
         )
         .get(Date.now()));
       if (!row) return undefined;
@@ -995,10 +996,10 @@ export class JobStore {
       this.db
         .prepare("INSERT INTO job_attempts(job_id,attempt,started_at) VALUES (?,?,?)")
         .run(row.id, row.attempt_count + 1, now.toISOString());
-      if (row.type === "session" && row.session_response_id) {
+      if (row.type === "conversation" && row.conversation_response_id) {
         this.db.prepare(
-          "UPDATE chat_session_messages SET status='running',updated_at=? WHERE id=? AND status='queued'",
-        ).run(now.toISOString(), row.session_response_id);
+          "UPDATE conversation_messages SET status='running',updated_at=? WHERE id=? AND status='queued'",
+        ).run(now.toISOString(), row.conversation_response_id);
       }
       this.insertAudit(row.actor_id, "job_status", row.id, "queued->preparing", now.toISOString());
       const claimed = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(row.id));
@@ -1030,13 +1031,13 @@ export class JobStore {
         this.db
           .prepare("UPDATE job_attempts SET finished_at=?, error=? WHERE job_id=? AND finished_at IS NULL")
           .run(now, failure, jobId);
-        const sessionJob = this.db
-          .prepare("SELECT session_response_id FROM jobs WHERE id=? AND type='session'")
-          .get(jobId) as { session_response_id: string | null } | undefined;
-        if (sessionJob?.session_response_id) {
+        const conversationJob = this.db
+          .prepare("SELECT conversation_response_id FROM jobs WHERE id=? AND type='conversation'")
+          .get(jobId) as { conversation_response_id: string | null } | undefined;
+        if (conversationJob?.conversation_response_id) {
           this.db.prepare(
-            "UPDATE chat_session_messages SET status=?,updated_at=? WHERE id=? AND status IN ('queued','running')",
-          ).run(to === "completed" ? "completed" : "failed", now, sessionJob.session_response_id);
+            "UPDATE conversation_messages SET status=?,updated_at=? WHERE id=? AND status IN ('queued','running')",
+          ).run(to === "completed" ? "completed" : "failed", now, conversationJob.conversation_response_id);
         }
       }
       this.insertAudit(row.actor_id, "job_status", jobId, `${from}->${to}`, now);
@@ -1078,13 +1079,13 @@ export class JobStore {
       this.db
         .prepare("UPDATE job_attempts SET finished_at=?, error=? WHERE job_id=? AND finished_at IS NULL")
         .run(finishedAt, failure, jobId);
-      const sessionJob = this.db
-        .prepare("SELECT session_response_id FROM jobs WHERE id=? AND type='session'")
-        .get(jobId) as { session_response_id: string | null } | undefined;
-      if (sessionJob?.session_response_id) {
+      const conversationJob = this.db
+        .prepare("SELECT conversation_response_id FROM jobs WHERE id=? AND type='conversation'")
+        .get(jobId) as { conversation_response_id: string | null } | undefined;
+      if (conversationJob?.conversation_response_id) {
         this.db.prepare(
-          "UPDATE chat_session_messages SET status='queued',updated_at=? WHERE id=? AND status='running'",
-        ).run(finishedAt, sessionJob.session_response_id);
+          "UPDATE conversation_messages SET status='queued',updated_at=? WHERE id=? AND status='running'",
+        ).run(finishedAt, conversationJob.conversation_response_id);
       }
       this.insertAudit(row.actor_id, "job_status", jobId, `${from}->queued`, finishedAt);
       this.insertAudit(row.actor_id, "automatic_retry", jobId, `available_at:${availableAt}`, finishedAt);
@@ -1104,94 +1105,146 @@ export class JobStore {
     if (result.changes !== 1) throw new Error(`job "${jobId}" lease is no longer owned`);
   }
 
-  createChatSession(input: CreateChatSessionInput): { sessionId: string; jobId: string } {
-    this.validateChatSessionInput(input);
-    const sessionId = randomUUID();
+  createConversation(input: CreateConversationInput): { conversationId: string; jobId: string } {
+    this.validateConversationInput(input);
+    const conversationId = randomUUID();
     const now = new Date().toISOString();
     return this.transaction(() => {
       this.db.prepare(
-        `INSERT INTO chat_sessions
+        `INSERT INTO conversations
          (id,project_id,project_name,target_branch,created_at,updated_at)
          VALUES (?,?,?,?,?,?)`,
       ).run(
-        sessionId,
+        conversationId,
         input.projectId,
         input.projectName,
         input.targetBranch,
         now,
         now,
       );
-      return this.enqueueChatSessionMessage(sessionId, input, now);
+      return this.enqueueConversationMessage(conversationId, input, now);
     });
   }
 
-  listChatSessions(limit = 50, offset = 0): ChatSessionPage {
+  listConversations(limit = 50, offset = 0): ConversationPage {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error("chat session list limit must be between 1 and 100");
+      throw new Error("chat conversation list limit must be between 1 and 100");
     }
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
-      throw new Error("chat session list offset must be between 0 and 1000000");
+      throw new Error("chat conversation list offset must be between 0 and 1000000");
     }
-    const count = this.db.prepare("SELECT COUNT(*) AS count FROM chat_sessions").get() as Record<string, unknown>;
+    const count = this.db.prepare("SELECT COUNT(*) AS count FROM conversations").get() as Record<string, unknown>;
     const rows = this.db.prepare(
-      "SELECT * FROM chat_sessions ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?",
+      `SELECT conversations.*,
+         (SELECT COUNT(*) FROM conversation_messages
+          WHERE conversation_id=conversations.id AND role='assistant') AS turn_count,
+         (SELECT status FROM conversation_messages
+          WHERE conversation_id=conversations.id AND role='assistant'
+          ORDER BY created_at DESC,rowid DESC LIMIT 1) AS last_turn_status
+       FROM conversations ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
     ).all(limit, offset);
-    return { items: rows.map((row) => this.readChatSessionSummary(row as Record<string, unknown>)), total: numberColumn(count, "count") };
+    return { items: rows.map((row) => this.readConversationSummary(row as Record<string, unknown>)), total: numberColumn(count, "count") };
   }
 
-  getChatSession(sessionId: string): ChatSession | undefined {
-    const row = this.db.prepare("SELECT * FROM chat_sessions WHERE id=?").get(sessionId) as Record<string, unknown> | undefined;
+  getConversation(conversationId: string): Conversation | undefined {
+    const row = this.db.prepare(
+      `SELECT conversations.*,
+         (SELECT COUNT(*) FROM conversation_messages
+          WHERE conversation_id=conversations.id AND role='assistant') AS turn_count,
+         (SELECT status FROM conversation_messages
+          WHERE conversation_id=conversations.id AND role='assistant'
+          ORDER BY created_at DESC,rowid DESC LIMIT 1) AS last_turn_status
+       FROM conversations WHERE id=?`,
+    ).get(conversationId) as Record<string, unknown> | undefined;
     if (!row) return undefined;
+    // 每条助手回复关联一个 conversation 任务；把任务状态、轨迹与执行步骤数量一并带出，
+    // 让会话页无需额外请求就能提示「本轮有轨迹/记录可查看」。
     const messages = this.db.prepare(
-      "SELECT * FROM chat_session_messages WHERE session_id=? ORDER BY created_at,rowid",
-    ).all(sessionId).map((value) => this.readChatSessionMessage(value as Record<string, unknown>));
-    return { ...this.readChatSessionSummary(row), messages };
+      `SELECT conversation_messages.*, jobs.status AS job_status,
+         (SELECT COUNT(*) FROM job_trace WHERE job_id=conversation_messages.job_id) AS trace_count,
+         (SELECT COUNT(*) FROM execution_events WHERE job_id=conversation_messages.job_id) AS event_count
+       FROM conversation_messages
+       LEFT JOIN jobs ON jobs.id=conversation_messages.job_id
+       WHERE conversation_messages.conversation_id=? ORDER BY conversation_messages.created_at,conversation_messages.rowid`,
+    ).all(conversationId).map((value) => this.readConversationMessage(value as Record<string, unknown>));
+    return { ...this.readConversationSummary(row), messages };
   }
 
-  addChatSessionMessage(sessionId: string, input: Omit<CreateChatSessionInput, "projectName">): { jobId: string } {
-    this.validateChatSessionInput({ ...input, projectName: "" });
-    const result = this.db.prepare("SELECT 1 FROM chat_sessions WHERE id=?").get(sessionId);
-    if (!result) throw new Error(`chat session "${sessionId}" not found`);
+  /**
+   * 读取单轮对话的完整记录：任务状态、生命周期、轨迹与执行步骤。
+   * 校验任务确实属于该对话的助手回复，避免跨对话读取轨迹。
+   */
+  getConversationTurn(conversationId: string, jobId: string): ConversationTurn | undefined {
+    const row = this.db.prepare(
+      `SELECT * FROM jobs WHERE id=? AND type='conversation' AND conversation_id=?`,
+    ).get(jobId, conversationId) as Record<string, unknown> | undefined;
+    const job = readJobRow(row);
+    if (!job) return undefined;
+    const messageId = job.conversation_response_id;
+    if (!messageId) throw new Error(`conversation job "${jobId}" is missing its response message`);
+    return {
+      conversationId,
+      messageId,
+      jobId: job.id,
+      status: job.status,
+      request: job.request,
+      headSha: job.head_sha,
+      createdAt: job.created_at,
+      updatedAt: job.updated_at,
+      attemptCount: job.attempt_count,
+      lastError: job.last_error,
+      failureStage: job.failure_stage as ConversationTurn["failureStage"],
+      timeline: this.readJobTimeline(jobId),
+      attempts: this.readJobAttempts(jobId),
+      trajectory: this.readJobTrajectory(jobId),
+      events: this.readJobEvents(jobId),
+    };
+  }
+
+  addConversationMessage(conversationId: string, input: Omit<CreateConversationInput, "projectName">): { jobId: string } {
+    this.validateConversationInput({ ...input, projectName: "" });
+    const result = this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId);
+    if (!result) throw new Error(`chat conversation "${conversationId}" not found`);
     return this.transaction(() => {
       const activeResponse = this.db.prepare(
-        "SELECT 1 FROM chat_session_messages WHERE session_id=? AND role='assistant' AND status IN ('queued','running') LIMIT 1",
-      ).get(sessionId);
-      if (activeResponse) throw new Error("chat session already has an active message");
-      return this.enqueueChatSessionMessage(sessionId, input, new Date().toISOString());
+        "SELECT 1 FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status IN ('queued','running') LIMIT 1",
+      ).get(conversationId);
+      if (activeResponse) throw new Error("chat conversation already has an active message");
+      return this.enqueueConversationMessage(conversationId, input, new Date().toISOString());
     });
   }
 
-  finishChatSessionResponse(
+  finishConversationResponse(
     jobId: string,
     status: "completed" | "failed" | "cancelled" | "stale",
     content: string,
   ): void {
-    const job = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=? AND type='session'").get(jobId));
-    if (!job?.session_response_id || !job.session_id) throw new Error(`session job "${jobId}" not found`);
+    const job = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=? AND type='conversation'").get(jobId));
+    if (!job?.conversation_response_id || !job.conversation_id) throw new Error(`conversation job "${jobId}" not found`);
     const messageStatus = status === "completed" ? "completed" : "failed";
     const now = new Date().toISOString();
     const result = this.db.prepare(
-      `UPDATE chat_session_messages SET content=?,status=?,updated_at=?
-       WHERE id=? AND session_id=? AND role='assistant' AND job_id=?`,
-    ).run(content, messageStatus, now, job.session_response_id, job.session_id, jobId);
-    if (result.changes !== 1) throw new Error(`session response "${job.session_response_id}" not found`);
-    this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, job.session_id);
+      `UPDATE conversation_messages SET content=?,status=?,updated_at=?
+       WHERE id=? AND conversation_id=? AND role='assistant' AND job_id=?`,
+    ).run(content, messageStatus, now, job.conversation_response_id, job.conversation_id, jobId);
+    if (result.changes !== 1) throw new Error(`conversation response "${job.conversation_response_id}" not found`);
+    this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, job.conversation_id);
   }
 
-  private validateChatSessionInput(input: CreateChatSessionInput): void {
+  private validateConversationInput(input: CreateConversationInput): void {
     if (!Number.isSafeInteger(input.projectId) || input.projectId < 1) throw new Error("project ID must be positive");
     if (!input.targetBranch.trim() || input.targetBranch.length > 255) throw new Error("target branch is invalid");
-    if (!/^[a-f0-9]{40,64}$/i.test(input.headSha)) throw new Error("chat session head SHA is invalid");
+    if (!/^[a-f0-9]{40,64}$/i.test(input.headSha)) throw new Error("chat conversation head SHA is invalid");
     if (!Number.isSafeInteger(input.actorId) || input.actorId < 0) throw new Error("actor ID is invalid");
-    if (input.projectName.length > 255) throw new Error("chat session labels are too long");
-    if (!input.request.trim() || input.request.length > 20_000) throw new Error("chat session message must be between 1 and 20000 characters");
+    if (input.projectName.length > 255) throw new Error("chat conversation labels are too long");
+    if (!input.request.trim() || input.request.length > 20_000) throw new Error("chat conversation message must be between 1 and 20000 characters");
   }
 
-  private enqueueChatSessionMessage(
-    sessionId: string,
-    input: Omit<CreateChatSessionInput, "projectName">,
+  private enqueueConversationMessage(
+    conversationId: string,
+    input: Omit<CreateConversationInput, "projectName">,
     now: string,
-  ): { sessionId: string; jobId: string } {
+  ): { conversationId: string; jobId: string } {
     const jobId = randomUUID();
     const userMessageId = randomUUID();
     const responseId = randomUUID();
@@ -1199,13 +1252,13 @@ export class JobStore {
     this.db.prepare(
       `INSERT INTO jobs
          (id,idempotency_key,event_id,type,status,project_id,mr_iid,target_type,target_iid,target_branch,head_sha,
-          actor_id,request,created_at,updated_at,session_id,session_response_id)
+          actor_id,request,created_at,updated_at,conversation_id,conversation_response_id)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       jobId,
-      `session:${sessionId}:${jobId}`,
-      `session:${jobId}`,
-      "session",
+      `conversation:${conversationId}:${jobId}`,
+      `conversation:${jobId}`,
+      "conversation",
       "queued",
       input.projectId,
       0,
@@ -1217,25 +1270,30 @@ export class JobStore {
       request,
       now,
       now,
-      sessionId,
+      conversationId,
       responseId,
     );
     this.db.prepare(
-      `INSERT INTO chat_session_messages
-         (id,session_id,role,content,status,job_id,head_sha,created_at,updated_at)
+      `INSERT INTO conversation_messages
+         (id,conversation_id,role,content,status,job_id,head_sha,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(userMessageId, sessionId, "user", request, "completed", null, input.headSha, now, now);
+    ).run(userMessageId, conversationId, "user", request, "completed", null, input.headSha, now, now);
     this.db.prepare(
-      `INSERT INTO chat_session_messages
-         (id,session_id,role,content,status,job_id,head_sha,created_at,updated_at)
+      `INSERT INTO conversation_messages
+         (id,conversation_id,role,content,status,job_id,head_sha,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(responseId, sessionId, "assistant", "", "queued", jobId, input.headSha, now, now);
-    this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, sessionId);
-    this.insertAudit(input.actorId, "session_message", sessionId, `queued:${jobId}`);
-    return { sessionId, jobId };
+    ).run(responseId, conversationId, "assistant", "", "queued", jobId, input.headSha, now, now);
+    this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
+    this.insertAudit(input.actorId, "conversation_message", conversationId, `queued:${jobId}`);
+    return { conversationId, jobId };
   }
 
-  private readChatSessionSummary(row: Record<string, unknown>): ChatSessionSummary {
+  private readConversationSummary(row: Record<string, unknown>): ConversationSummary {
+    const lastTurnStatus = row.last_turn_status;
+    if (lastTurnStatus !== null && lastTurnStatus !== undefined &&
+      !(["queued", "running", "completed", "failed"] as unknown[]).includes(lastTurnStatus)) {
+      throw new Error(`SQLite conversation turn status "${String(lastTurnStatus)}" is invalid`);
+    }
     return {
       id: stringColumn(row, "id"),
       projectId: numberColumn(row, "project_id"),
@@ -1243,10 +1301,12 @@ export class JobStore {
       targetBranch: stringColumn(row, "target_branch"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
+      turnCount: numberColumn(row, "turn_count"),
+      lastTurnStatus: (lastTurnStatus ?? null) as ConversationSummary["lastTurnStatus"],
     };
   }
 
-  private readChatSessionMessage(row: Record<string, unknown>): ChatSessionMessage {
+  private readConversationMessage(row: Record<string, unknown>): ConversationMessage {
     const role = stringColumn(row, "role");
     const status = stringColumn(row, "status");
     if (role !== "user" && role !== "assistant") throw new Error(`SQLite chat message role "${role}" is invalid`);
@@ -1255,15 +1315,22 @@ export class JobStore {
     }
     const jobId = row.job_id;
     if (jobId !== null && typeof jobId !== "string") throw new Error('SQLite column "job_id" is not text or null');
+    const jobStatus = row.job_status;
+    if (jobStatus !== null && jobStatus !== undefined && (typeof jobStatus !== "string" || !isJobStatus(jobStatus))) {
+      throw new Error(`SQLite conversation job status "${String(jobStatus)}" is invalid`);
+    }
     return {
       id: stringColumn(row, "id"),
       role,
       content: stringColumn(row, "content"),
-      status: status as ChatSessionMessage["status"],
+      status: status as ConversationMessage["status"],
       jobId,
       headSha: stringColumn(row, "head_sha"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
+      jobStatus: (jobStatus ?? null) as ConversationMessage["jobStatus"],
+      traceCount: row.trace_count === undefined ? 0 : numberColumn(row, "trace_count"),
+      eventCount: row.event_count === undefined ? 0 : numberColumn(row, "event_count"),
     };
   }
 
@@ -1382,7 +1449,16 @@ export class JobStore {
   getJobDetails(jobId: string): JobDetails | undefined {
     const job = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id=?").get(jobId));
     if (!job) return undefined;
-    const attempts = this.db
+    const attempts = this.readJobAttempts(jobId);
+    const timeline = this.readJobTimeline(jobId);
+    const trajectory = this.readJobTrajectory(jobId);
+    const events = this.readJobEvents(jobId);
+    const origin = readWebhookOrigin(events);
+    return { ...mapJobSummary(job), ...origin, attempts, timeline, trajectory, events };
+  }
+
+  private readJobAttempts(jobId: string): JobAttemptSummary[] {
+    return this.db
       .prepare("SELECT attempt, started_at, finished_at, error FROM job_attempts WHERE job_id=? ORDER BY attempt")
       .all(jobId)
       .map((value) => {
@@ -1398,7 +1474,10 @@ export class JobStore {
           error: stringColumn(row, "error"),
         } satisfies JobAttemptSummary;
       });
-    const timeline = this.db
+  }
+
+  private readJobTimeline(jobId: string): JobStatusTransition[] {
+    return this.db
       .prepare(
         `SELECT result, created_at FROM audit_events
          WHERE resource=? AND action IN ('job_status','operator_retry') ORDER BY id`,
@@ -1420,16 +1499,20 @@ export class JobStore {
           at: stringColumn(row, "created_at"),
         } satisfies JobStatusTransition;
       });
-    const trajectory = this.db
+  }
+
+  private readJobTrajectory(jobId: string): JobTraceEntry[] {
+    return this.db
       .prepare("SELECT * FROM job_trace WHERE job_id=? ORDER BY started_at DESC,id DESC")
       .all(jobId)
       .map((value) => readJobTrace(value as Record<string, unknown>));
-    const events = this.db
+  }
+
+  private readJobEvents(jobId: string): ExecutionEvent[] {
+    return this.db
       .prepare("SELECT * FROM execution_events WHERE job_id=? ORDER BY started_at DESC,id DESC")
       .all(jobId)
       .map((value) => readExecutionEvent(value as Record<string, unknown>));
-    const origin = readWebhookOrigin(events);
-    return { ...mapJobSummary(job), ...origin, attempts, timeline, trajectory, events };
   }
 
   getJobTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
@@ -1486,18 +1569,18 @@ export class JobStore {
         )
         .run(now, jobId);
       if (result.changes !== 1) throw new Error(`job "${jobId}" changed before it could be retried`);
-      if (job.type === "session") {
-        if (!job.session_id || !job.session_response_id) {
-          throw new Error(`session job "${jobId}" is missing its response`);
+      if (job.type === "conversation") {
+        if (!job.conversation_id || !job.conversation_response_id) {
+          throw new Error(`conversation job "${jobId}" is missing its response`);
         }
         const response = this.db.prepare(
-          `UPDATE chat_session_messages SET status='queued',updated_at=?
-           WHERE id=? AND session_id=? AND role='assistant' AND status='failed'`,
-        ).run(now, job.session_response_id, job.session_id);
+          `UPDATE conversation_messages SET status='queued',updated_at=?
+           WHERE id=? AND conversation_id=? AND role='assistant' AND status='failed'`,
+        ).run(now, job.conversation_response_id, job.conversation_id);
         if (response.changes !== 1) {
-          throw new Error(`session response "${job.session_response_id}" is not failed`);
+          throw new Error(`conversation response "${job.conversation_response_id}" is not failed`);
         }
-        this.db.prepare("UPDATE chat_sessions SET updated_at=? WHERE id=?").run(now, job.session_id);
+        this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, job.conversation_id);
       }
       this.insertAudit(0, "operator_retry", jobId, "failed->queued", now);
       const updated = readJobRow(this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId));
@@ -1513,8 +1596,8 @@ export class JobStore {
         targetIid: summary.targetIid,
         targetBranch: summary.targetBranch,
         headSha: summary.headSha,
-        sessionId: summary.sessionId,
-        sessionResponseId: summary.sessionResponseId,
+        conversationId: summary.conversationId,
+        conversationResponseId: summary.conversationResponseId,
         actorId: summary.actorId,
         request: summary.request,
         createdAt: summary.createdAt,
@@ -1610,8 +1693,8 @@ export class JobStore {
         .prepare("UPDATE job_attempts SET finished_at=?,error=? WHERE job_id=? AND finished_at IS NULL")
         .run(now.toISOString(), error, row.id);
       this.db.prepare(
-        `UPDATE chat_session_messages SET status=?,updated_at=?
-         WHERE id=(SELECT session_response_id FROM jobs WHERE id=? AND type='session')
+        `UPDATE conversation_messages SET status=?,updated_at=?
+         WHERE id=(SELECT conversation_response_id FROM jobs WHERE id=? AND type='conversation')
          AND status IN ('queued','running')`,
       ).run(status === "queued" ? "queued" : "failed", now.toISOString(), row.id);
       const runningEvents = this.db
@@ -1687,29 +1770,30 @@ export class JobStore {
   }
 
   private migrate(): void {
+    this.migrateLegacyConversationSchema();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
         type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
         target_type TEXT NOT NULL DEFAULT 'merge_request', target_iid INTEGER NOT NULL DEFAULT 0,
         target_branch TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
-        session_id TEXT, session_response_id TEXT,
+        conversation_id TEXT, conversation_response_id TEXT,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
         available_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_mr_created_idx ON jobs(project_id,mr_iid,created_at DESC);
-      CREATE TABLE IF NOT EXISTS chat_sessions (
+      CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
         target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS chat_sessions_updated_idx ON chat_sessions(updated_at DESC,id DESC);
-      CREATE TABLE IF NOT EXISTS chat_session_messages (
-        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      CREATE INDEX IF NOT EXISTS conversations_updated_idx ON conversations(updated_at DESC,id DESC);
+      CREATE TABLE IF NOT EXISTS conversation_messages (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
         role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, job_id TEXT,
         head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS chat_session_messages_order_idx ON chat_session_messages(session_id,created_at,id);
+      CREATE INDEX IF NOT EXISTS conversation_messages_order_idx ON conversation_messages(conversation_id,created_at,id);
       CREATE TABLE IF NOT EXISTS webhook_events (
         event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL
@@ -1772,8 +1856,8 @@ export class JobStore {
       target_type: "TEXT NOT NULL DEFAULT 'merge_request'",
       target_iid: "INTEGER NOT NULL DEFAULT 0",
       target_branch: "TEXT NOT NULL DEFAULT ''",
-      session_id: "TEXT",
-      session_response_id: "TEXT",
+      conversation_id: "TEXT",
+      conversation_response_id: "TEXT",
     };
     for (const [name, definition] of Object.entries(additions)) {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${definition}`);
@@ -1801,11 +1885,46 @@ export class JobStore {
     for (const [name, definition] of Object.entries(traceAdditions)) {
       if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE job_trace ADD COLUMN ${name} ${definition}`);
     }
-    // 会话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
-    const sessionColumns = this.db.prepare("PRAGMA table_info(chat_sessions)").all() as { name: string }[];
-    const legacySessionColumns = new Set(sessionColumns.map((column) => column.name));
+    // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
+    const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+    const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));
     for (const name of ["target_type", "target_iid", "target_title"]) {
-      if (legacySessionColumns.has(name)) this.db.exec(`ALTER TABLE chat_sessions DROP COLUMN ${name}`);
+      if (legacyConversationColumns.has(name)) this.db.exec(`ALTER TABLE conversations DROP COLUMN ${name}`);
+    }
+  }
+
+  /**
+   * 把旧版 `chat_sessions` / `chat_session_messages` 表与 `jobs` 的会话列
+   * 重命名为对话（conversation）命名。SQLite 的 RENAME 会自动改写子表外键、
+   * 索引和触发器，因此保留既有数据；重命名后再由 `migrate()` 建表语句补齐新列。
+   */
+  private migrateLegacyConversationSchema(): void {
+    const tables = new Set(
+      (this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[])
+        .map((row) => row.name),
+    );
+    if (tables.has("chat_session_messages")) {
+      this.db.exec("ALTER TABLE chat_session_messages RENAME TO conversation_messages");
+    }
+    if (tables.has("chat_sessions")) this.db.exec("ALTER TABLE chat_sessions RENAME TO conversations");
+    const messageColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[])
+        .map((column) => column.name),
+    );
+    if (messageColumns.has("session_id") && !messageColumns.has("conversation_id")) {
+      this.db.exec("ALTER TABLE conversation_messages RENAME COLUMN session_id TO conversation_id");
+    }
+    if (tables.has("jobs")) {
+      const jobColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((column) => column.name),
+      );
+      if (jobColumns.has("session_id") && !jobColumns.has("conversation_id")) {
+        this.db.exec("ALTER TABLE jobs RENAME COLUMN session_id TO conversation_id");
+      }
+      if (jobColumns.has("session_response_id") && !jobColumns.has("conversation_response_id")) {
+        this.db.exec("ALTER TABLE jobs RENAME COLUMN session_response_id TO conversation_response_id");
+      }
+      this.db.exec("UPDATE jobs SET type='conversation' WHERE type='session'");
     }
   }
 }

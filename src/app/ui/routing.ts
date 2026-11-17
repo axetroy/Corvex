@@ -5,7 +5,7 @@ import type { JobQueue } from "./types.js";
 export type Route =
   | { kind: "overview" }
   | { kind: "jobs" }
-  | { kind: "sessions"; id?: string }
+  | { kind: "conversations"; id?: string }
   | { kind: "job"; id: string }
   | { kind: "unknown" };
 
@@ -27,12 +27,12 @@ export function decodeJobId(value: string): string | undefined {
 
 /** 解析 hash 的路径部分；无法识别的路径与缺失/非法任务 ID 返回 `unknown`。 */
 function parsePath(route: string): Route {
-  if (route === "" || route === "overview") return { kind: "overview" };
+  if (route === "" || route === "conversations") return { kind: "conversations" };
+  if (route === "overview") return { kind: "overview" };
   if (route === "jobs") return { kind: "jobs" };
-  if (route === "sessions") return { kind: "sessions" };
-  if (route.startsWith("sessions/")) {
-    const id = decodeJobId(route.slice("sessions/".length));
-    return id ? { kind: "sessions", id } : { kind: "unknown" };
+  if (route.startsWith("conversations/")) {
+    const id = decodeJobId(route.slice("conversations/".length));
+    return id ? { kind: "conversations", id } : { kind: "unknown" };
   }
   if (route.startsWith("jobs/")) {
     const id = decodeJobId(route.slice("jobs/".length));
@@ -41,7 +41,7 @@ function parsePath(route: string): Route {
   return { kind: "unknown" };
 }
 
-/** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为概览。 */
+/** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为对话页。 */
 export function parseHash(hash: string): ParsedHash {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const queryIndex = raw.indexOf("?");
@@ -80,9 +80,9 @@ export function jobsHash(queue: JobQueue): string {
   return `#jobs${jobQueueQuery(queue)}`;
 }
 
-/** 会话页 hash；有 ID 时指向该会话，无 ID 时进入新会话视图。 */
-export function sessionsHash(id = ""): string {
-  return id ? `#sessions/${encodeURIComponent(id)}` : "#sessions";
+/** 对话页 hash；有 ID 时指向该对话，无 ID 时进入新建视图。 */
+export function conversationsHash(id = ""): string {
+  return id ? `#conversations/${encodeURIComponent(id)}` : "#conversations";
 }
 
 /** 任务详情 hash，携带列表筛选条件以便返回时恢复。 */
