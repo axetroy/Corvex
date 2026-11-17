@@ -37,6 +37,10 @@ describe("operations UI locale", () => {
     expect(en.triggerComment).toBe("Original comment");
     expect(zhCN.triggerComment).toBe("触发评论");
     expect(zhCN.executionStatuses.interrupted).toBe("已中断");
+    expect(en.branchPickerHint).toBe("Type to search, or scroll to browse every branch.");
+    expect(zhCN.branchPickerHint).toBe("输入关键字搜索，或滚动浏览全部分支。");
+    expect(zhCN.pickerClear).toBe("清除选择");
+    expect(zhCN.commitMinutesTemplate).toBe("{value} 分钟前");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
     expect(zhCN.traceToolDetails).toBe("查看调用详情");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());

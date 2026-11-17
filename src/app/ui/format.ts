@@ -8,6 +8,27 @@ export function formatDate(value: string | null | undefined, copy: Copy, locale:
   return Number.isNaN(date.valueOf()) ? copy.invalidDate : date.toLocaleString(locale);
 }
 
+/**
+ * 把提交时间格式化为相对描述（如 `3 天前`）；无效或缺失返回占位文案。
+ * 使用固定时长（而非自然月/年）以保证输出稳定、易于测试。
+ */
+export function formatRelativeTime(value: string | null | undefined, copy: Copy, now = Date.now()): string {
+  if (!value) return copy.none;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return copy.invalidDate;
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  if (seconds < 60) return copy.commitJustNow;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return copy.commitMinutesTemplate.replace("{value}", String(minutes));
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return copy.commitHoursTemplate.replace("{value}", String(hours));
+  const days = Math.floor(hours / 24);
+  if (days < 30) return copy.commitDaysTemplate.replace("{value}", String(days));
+  const months = Math.floor(days / 30);
+  if (months < 12) return copy.commitMonthsTemplate.replace("{value}", String(months));
+  return copy.commitYearsTemplate.replace("{value}", String(Math.floor(months / 12)));
+}
+
 /** 把任务目标渲染为 `project:MR !iid` 或 `project:Issue #iid`。 */
 export function formatJobTarget(
   job: { targetType: string; projectId: number; mrIid: number; targetIid: number },

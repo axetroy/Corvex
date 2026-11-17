@@ -274,56 +274,6 @@
   gap: 12px;
 }
 
-/* 仓库选择器独占一行，给描述留出足够的横向空间。 */
-.conversation-picker-row .project-picker {
-  flex: 0 0 auto;
-}
-
-.conversation-select {
-  flex: 0 0 auto;
-  width: 100%;
-  min-width: 0;
-}
-
-.conversation-select .ant-select-content {
-  height: 42px;
-  border-color: var(--conversation-border-strong);
-  border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
-}
-
-.conversation-select .ant-select-selection-item,
-.conversation-select .ant-select-placeholder {
-  line-height: 40px;
-}
-
-.conversation-option {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.conversation-option-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-option-meta {
-  flex: 0 0 auto;
-  color: var(--conversation-muted);
-  font-size: 12px;
-}
-
-.conversation-select-empty {
-  display: block;
-  padding: 8px 0;
-  color: var(--conversation-muted);
-  text-align: center;
-}
-
 .conversation-prompts.ant-prompts {
   margin-top: 20px;
 }
@@ -581,10 +531,6 @@
 
   .conversation-welcome .ant-welcome-title {
     font-size: 26px;
-  }
-
-  .conversation-select {
-    flex-basis: 100%;
   }
 
   .conversation-composer {

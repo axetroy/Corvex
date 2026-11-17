@@ -1,0 +1,146 @@
+/* 远程选择器（仓库 / 分支）共享样式：两行展示，与对话页配色保持一致。 */
+
+.remote-picker {
+  --remote-picker-border: var(--conversation-border-strong, #d5dce3);
+  --remote-picker-muted: var(--conversation-muted, #71808e);
+  --remote-picker-ink: var(--conversation-ink, #17212b);
+  --remote-picker-brand: var(--conversation-brand, #1769aa);
+
+  width: 100%;
+  min-width: 0;
+}
+
+.remote-picker .ant-select-content {
+  height: 58px;
+  padding: 0 12px;
+  border-color: var(--remote-picker-border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.remote-picker.ant-select-focused .ant-select-content,
+.remote-picker:hover .ant-select-content {
+  border-color: var(--remote-picker-brand);
+}
+
+.remote-picker.ant-select-focused .ant-select-content {
+  box-shadow: 0 0 0 3px rgb(23 105 170 / 12%);
+}
+
+.remote-picker .ant-select-selection-item,
+.remote-picker .ant-select-placeholder {
+  display: flex;
+  height: 56px;
+  align-items: center;
+  line-height: normal;
+}
+
+/* 收起状态：主标题 + 副标题两行。 */
+.remote-picker-value {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.remote-picker-value-title,
+.remote-picker-option-title {
+  overflow: hidden;
+  color: var(--remote-picker-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-picker-value-title {
+  font-size: 14px;
+}
+
+.remote-picker-value-subtitle,
+.remote-picker-option-subtitle {
+  overflow: hidden;
+  color: var(--remote-picker-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 下拉项：主标题 + 副标题两行，右侧可选的提交时间。 */
+.remote-picker-option {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 2px 0;
+}
+
+.remote-picker-option-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.remote-picker-option-title {
+  font-size: 13px;
+}
+
+.remote-picker-option-meta {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--remote-picker-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.remote-picker .ant-select-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.remote-picker .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+  background: rgb(23 105 170 / 6%);
+}
+
+.remote-picker .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: rgb(23 105 170 / 10%);
+}
+
+.remote-picker .ant-select-item-option-selected .remote-picker-option-title {
+  color: var(--remote-picker-brand);
+}
+
+/* 加载、空结果与错误态。 */
+.remote-picker-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 8px;
+  color: var(--remote-picker-muted);
+  text-align: center;
+}
+
+.remote-picker-status-error {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.remote-picker-status-text {
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.remote-picker-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0 4px;
+  color: var(--remote-picker-muted);
+  font-size: 12px;
+}

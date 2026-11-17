@@ -72,13 +72,34 @@ describe("GitLab write receipts", () => {
     const server = createServer((request, response) => {
       requests.push(request.url ?? "");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify([{ name: "main", commit: { id: "b".repeat(40) } }]));
+      response.end(JSON.stringify([{
+        name: "main",
+        commit: {
+          id: "b".repeat(40),
+          short_id: "bbbbbbbb",
+          title: "Tighten branch search",
+          committed_date: "2026-11-01T08:00:00.000Z",
+        },
+      }, {
+        name: "legacy",
+        commit: { id: "c".repeat(40), title: "   " },
+      }]));
     });
     const port = await listen(server);
     try {
       const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      // 提交元数据按类型收窄后透传；空白标题等无效值被丢弃。
       await expect(client.listBranches(5, "ma", 2)).resolves.toEqual([
-        { name: "main", commit: { id: "b".repeat(40) } },
+        {
+          name: "main",
+          commit: {
+            id: "b".repeat(40),
+            short_id: "bbbbbbbb",
+            title: "Tighten branch search",
+            committed_date: "2026-11-01T08:00:00.000Z",
+          },
+        },
+        { name: "legacy", commit: { id: "c".repeat(40) } },
       ]);
       expect(requests.map((url) => new URL(url, "http://localhost").pathname)).toEqual([
         "/api/v4/projects/5/repository/branches",

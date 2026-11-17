@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { UIEvent } from "react";
-import { Button, Select, Space, Tabs, Tag, Typography } from "antd";
+import { Button, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -12,20 +11,10 @@ import type { Copy, Locale } from "../i18n.js";
 import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
+import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner } from "./common.js";
-
-interface BranchOption {
-  name: string;
-  commit: { id: string };
-}
-
-interface BranchSelectOption {
-  value: string;
-  label: string;
-  meta?: string;
-}
 
 interface Props {
   conversationId: string;
@@ -42,14 +31,6 @@ type ConversationDetailTab = "chat" | "trace" | "stats";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
-/** GitLab 项目/分支搜索每页条数，与服务端 `per_page` 保持一致。 */
-const listPageSize = 50;
-
-/** 判断下拉列表是否已滚动到底部，用于追加下一页。 */
-function atListBottom(event: UIEvent<HTMLDivElement>): boolean {
-  const target = event.currentTarget;
-  return target.scrollTop + target.offsetHeight >= target.scrollHeight - 8;
-}
 
 /** 消息处理状态对应的界面文案；完成状态不展示徽标。 */
 function messageStatus(message: ConversationMessage, copy: Copy): string {
@@ -110,15 +91,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(!conversationId);
   const [project, setProject] = useState<ProjectOption>();
-  const [branches, setBranches] = useState<BranchOption[]>([]);
-  const [branchPage, setBranchPage] = useState(0);
-  const [branchHasMore, setBranchHasMore] = useState(false);
-  const [branchLoading, setBranchLoading] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState("");
-  const [branchQuery, setBranchQuery] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
-  const branchSearchRequest = useRef(0);
   const replySubmitting = useRef(false);
 
   useEffect(() => {
@@ -189,37 +164,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
 
-  async function loadBranches(value: ProjectOption, query: string, page: number, append: boolean) {
-    const requestId = ++branchSearchRequest.current;
-    setBranchLoading(true);
-    setError("");
-    try {
-      const params = new URLSearchParams({ search: query.trim(), page: String(page) });
-      const result = await fetchJson<BranchOption[]>(`/api/ops/projects/${value.id}/branches?${params}`, copy);
-      if (requestId !== branchSearchRequest.current) return;
-      setBranches((current) => (append ? [...current, ...result] : result));
-      setBranchPage(page);
-      setBranchHasMore(result.length >= listPageSize);
-    } catch (cause) {
-      if (requestId === branchSearchRequest.current) setError(errorMessage(cause));
-    } finally {
-      if (requestId === branchSearchRequest.current) setBranchLoading(false);
-    }
-  }
-
   function selectProject(value: ProjectOption | undefined) {
     setProject(value);
-    setBranches([]);
-    setBranchQuery("");
-    setBranchPage(0);
-    setBranchHasMore(false);
     setError("");
-    if (!value) {
-      setSelectedBranch("");
-      return;
-    }
-    setSelectedBranch(value.default_branch ?? "");
-    void loadBranches(value, "", 1, false);
+    // 分支列表由 BranchPicker 自己加载；这里只把默认分支作为初始选中值。
+    setSelectedBranch(value?.default_branch ?? "");
   }
 
   async function createConversation(message: string) {
@@ -307,11 +256,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setConversation(undefined);
     setShowCreate(true);
     setProject(undefined);
-    setBranches([]);
-    setBranchPage(0);
-    setBranchHasMore(false);
     setSelectedBranch("");
-    setBranchQuery("");
     setDraftMessage("");
     setError("");
   }
@@ -331,11 +276,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     else void sendReply(message);
   }
 
-  const branchOptions: BranchSelectOption[] = branches.map((item) => ({
-    value: item.name,
-    label: item.name,
-    meta: item.commit.id.slice(0, 12),
-  }));
   const suggestionItems: PromptsItemType[] = [
     { key: "explain", label: copy.conversationPromptExplain },
     { key: "locate", label: copy.conversationPromptLocate },
@@ -448,35 +388,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               disabled={busy}
                               onChange={selectProject}
                             />
-                            <Select<string, BranchSelectOption>
-                              className="conversation-select"
-                              aria-label={copy.branch}
-                              showSearch
-                              filterOption={false}
-                              placeholder={copy.branchSearchPlaceholder}
-                              value={selectedBranch || undefined}
-                              disabled={!project}
-                              loading={branchLoading}
-                              options={branchOptions}
-                              notFoundContent={<span className="conversation-select-empty">{copy.noBranches}</span>}
-                              optionRender={(option) => (
-                                <div className="conversation-option">
-                                  <span className="conversation-option-label">{option.data.label}</span>
-                                  {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
-                                </div>
-                              )}
-                              onOpenChange={(open) => {
-                                if (open && project && branches.length === 0) void loadBranches(project, "", 1, false);
-                              }}
-                              onSearch={(value) => {
-                                setBranchQuery(value);
-                                if (project) void loadBranches(project, value, 1, false);
-                              }}
-                              onPopupScroll={(event) => {
-                                if (!project || !branchHasMore || branchLoading || !atListBottom(event)) return;
-                                void loadBranches(project, branchQuery, branchPage + 1, true);
-                              }}
-                              onChange={(value) => setSelectedBranch(value)}
+                            <BranchPicker
+                              copy={copy}
+                              value={selectedBranch}
+                              projectId={project?.id}
+                              disabled={busy}
+                              onChange={setSelectedBranch}
                             />
                           </div>
                           <Prompts

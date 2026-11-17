@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
 import { Button, Select, Spin, Typography } from "antd";
-import "./ProjectPicker.css";
+import "./RemotePicker.css";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -80,17 +80,17 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
   const options = useMemo(() => projects.map(toProjectSelectOption), [projects]);
 
   const notFoundContent = (() => {
-    if (loading) return <div className="project-picker-status"><Spin size="small" /> {copy.projectPickerSearching}</div>;
+    if (loading) return <div className="remote-picker-status"><Spin size="small" /> {copy.pickerSearching}</div>;
     if (error) {
       return (
-        <div className="project-picker-status project-picker-status-error">
-          <Typography.Text type="danger" className="project-picker-status-text">{error}</Typography.Text>
-          <Button size="small" onClick={retry}>{copy.projectPickerRetry}</Button>
+        <div className="remote-picker-status remote-picker-status-error">
+          <Typography.Text type="danger" className="remote-picker-status-text">{error}</Typography.Text>
+          <Button size="small" onClick={retry}>{copy.pickerRetry}</Button>
         </div>
       );
     }
     return (
-      <div className="project-picker-status">
+      <div className="remote-picker-status">
         {query.trim() ? copy.noProjects : copy.projectPickerHint}
       </div>
     );
@@ -98,7 +98,7 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
 
   return (
     <Select<number, ProjectSelectOption>
-      className="project-picker"
+      className="remote-picker"
       aria-label={copy.projectSearch}
       showSearch={{
         filterOption: false,
@@ -106,7 +106,7 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
       }}
       placeholder={copy.projectSearchPlaceholder}
       value={value?.id}
-      allowClear={{ label: copy.projectPickerClear }}
+      allowClear={{ label: copy.pickerClear }}
       disabled={disabled}
       loading={loading}
       options={options}
@@ -123,23 +123,25 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
         void loadProjects(query, page + 1, true);
       }}
       optionRender={(option) => (
-        <div className="project-picker-option">
-          <span className="project-picker-option-title">{option.data.title}</span>
-          <span className="project-picker-option-subtitle">{option.data.subtitle}</span>
+        <div className="remote-picker-option">
+          <div className="remote-picker-option-main">
+            <span className="remote-picker-option-title">{option.data.title}</span>
+            <span className="remote-picker-option-subtitle">{option.data.subtitle}</span>
+          </div>
         </div>
       )}
       labelRender={() => (
-        <div className="project-picker-value">
-          <span className="project-picker-value-title">{value ? toProjectSelectOption(value).title : ""}</span>
-          <span className="project-picker-value-subtitle">{value ? toProjectSelectOption(value).subtitle : ""}</span>
+        <div className="remote-picker-value">
+          <span className="remote-picker-value-title">{value ? toProjectSelectOption(value).title : ""}</span>
+          <span className="remote-picker-value-subtitle">{value ? toProjectSelectOption(value).subtitle : ""}</span>
         </div>
       )}
       popupRender={(menu) => (
         <>
           {menu}
           {hasMore && projects.length > 0 ? (
-            <div className="project-picker-more">
-              {loading ? <><Spin size="small" /> {copy.projectPickerLoadingMore}</> : copy.projectPickerLoadMoreHint}
+            <div className="remote-picker-more">
+              {loading ? <><Spin size="small" /> {copy.pickerLoadingMore}</> : copy.pickerLoadMoreHint}
             </div>
           ) : null}
         </>
