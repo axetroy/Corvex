@@ -20,6 +20,8 @@ export interface Project {
   id: number;
   name?: string;
   path_with_namespace?: string;
+  /** 项目描述；GitLab 允许为空字符串。运维台用它作为选择器的第二行。 */
+  description?: string;
   http_url_to_repo: string;
   default_branch?: string;
 }
@@ -247,7 +249,6 @@ export class GitLabClient {
       throw new Error("GitLab project page must be between 1 and 10000");
     }
     const query = new URLSearchParams({
-      simple: "true",
       per_page: "50",
       page: String(page),
       order_by: "name",

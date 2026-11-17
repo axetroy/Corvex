@@ -12,24 +12,13 @@ import type { Copy, Locale } from "../i18n.js";
 import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
+import { ProjectPicker } from "./ProjectPicker.js";
+import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner } from "./common.js";
-
-interface ProjectOption {
-  id: number;
-  name?: string;
-  path_with_namespace?: string;
-  default_branch?: string;
-}
 
 interface BranchOption {
   name: string;
   commit: { id: string };
-}
-
-interface ProjectSelectOption {
-  value: number;
-  label: string;
-  meta?: string;
 }
 
 interface BranchSelectOption {
@@ -120,11 +109,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(!conversationId);
-  const [projectQuery, setProjectQuery] = useState("");
-  const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [projectPage, setProjectPage] = useState(0);
-  const [projectHasMore, setProjectHasMore] = useState(false);
-  const [projectLoading, setProjectLoading] = useState(false);
   const [project, setProject] = useState<ProjectOption>();
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [branchPage, setBranchPage] = useState(0);
@@ -134,7 +118,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [branchQuery, setBranchQuery] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
-  const projectSearchRequest = useRef(0);
   const branchSearchRequest = useRef(0);
   const replySubmitting = useRef(false);
 
@@ -206,24 +189,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
 
-  async function loadProjects(query: string, page: number, append: boolean) {
-    const requestId = ++projectSearchRequest.current;
-    setProjectLoading(true);
-    setError("");
-    try {
-      const params = new URLSearchParams({ search: query.trim(), page: String(page) });
-      const result = await fetchJson<ProjectOption[]>(`/api/ops/projects?${params}`, copy);
-      if (requestId !== projectSearchRequest.current) return;
-      setProjects((current) => (append ? [...current, ...result] : result));
-      setProjectPage(page);
-      setProjectHasMore(result.length >= listPageSize);
-    } catch (cause) {
-      if (requestId === projectSearchRequest.current) setError(errorMessage(cause));
-    } finally {
-      if (requestId === projectSearchRequest.current) setProjectLoading(false);
-    }
-  }
-
   async function loadBranches(value: ProjectOption, query: string, page: number, append: boolean) {
     const requestId = ++branchSearchRequest.current;
     setBranchLoading(true);
@@ -242,16 +207,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
-  function selectProject(id: number) {
-    const value = projects.find((item) => item.id === id);
-    if (!value) return;
+  function selectProject(value: ProjectOption | undefined) {
     setProject(value);
-    setSelectedBranch(value.default_branch ?? "");
     setBranches([]);
     setBranchQuery("");
     setBranchPage(0);
     setBranchHasMore(false);
     setError("");
+    if (!value) {
+      setSelectedBranch("");
+      return;
+    }
+    setSelectedBranch(value.default_branch ?? "");
     void loadBranches(value, "", 1, false);
   }
 
@@ -339,10 +306,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     onConversationChange("");
     setConversation(undefined);
     setShowCreate(true);
-    setProjectQuery("");
-    setProjects([]);
-    setProjectPage(0);
-    setProjectHasMore(false);
     setProject(undefined);
     setBranches([]);
     setBranchPage(0);
@@ -368,11 +331,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     else void sendReply(message);
   }
 
-  const projectOptions: ProjectSelectOption[] = projects.map((item) => ({
-    value: item.id,
-    label: item.path_with_namespace ?? item.name ?? String(item.id),
-    meta: item.name && item.name !== item.path_with_namespace ? item.name : undefined,
-  }));
   const branchOptions: BranchSelectOption[] = branches.map((item) => ({
     value: item.name,
     label: item.name,
@@ -484,34 +442,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             description={copy.conversationWelcomeDescription}
                           />
                           <div className="conversation-picker-row">
-                            <Select<number, ProjectSelectOption>
-                              className="conversation-select"
-                              aria-label={copy.projectSearch}
-                              showSearch
-                              filterOption={false}
-                              placeholder={copy.projectSearchPlaceholder}
-                              value={project?.id}
-                              loading={projectLoading}
-                              options={projectOptions}
-                              notFoundContent={<span className="conversation-select-empty">{projectQuery ? copy.noProjects : copy.chooseProject}</span>}
-                              optionRender={(option) => (
-                                <div className="conversation-option">
-                                  <span className="conversation-option-label">{option.data.label}</span>
-                                  {option.data.meta ? <span className="conversation-option-meta">{option.data.meta}</span> : null}
-                                </div>
-                              )}
-                              onOpenChange={(open) => {
-                                if (open && projects.length === 0) void loadProjects("", 1, false);
-                              }}
-                              onSearch={(value) => {
-                                setProjectQuery(value);
-                                void loadProjects(value, 1, false);
-                              }}
-                              onPopupScroll={(event) => {
-                                if (!projectHasMore || projectLoading || !atListBottom(event)) return;
-                                void loadProjects(projectQuery, projectPage + 1, true);
-                              }}
-                              onChange={(value) => selectProject(value)}
+                            <ProjectPicker
+                              copy={copy}
+                              value={project}
+                              disabled={busy}
+                              onChange={selectProject}
                             />
                             <Select<string, BranchSelectOption>
                               className="conversation-select"

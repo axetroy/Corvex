@@ -22,6 +22,7 @@ describe("GitLab write receipts", () => {
         id: 5,
         name: "Corvex",
         path_with_namespace: "axetroy/Corvex",
+        description: "GitLab code review and repair agent",
         http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
         default_branch: "main",
       }]));
@@ -33,10 +34,11 @@ describe("GitLab write receipts", () => {
         id: 5,
         name: "Corvex",
         path_with_namespace: "axetroy/Corvex",
+        description: "GitLab code review and repair agent",
         http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
         default_branch: "main",
       }]);
-      expect(requestUrl).toBe("/api/v4/projects?simple=true&per_page=50&page=2&order_by=name&sort=asc&search=Corvex");
+      expect(requestUrl).toBe("/api/v4/projects?per_page=50&page=2&order_by=name&sort=asc&search=Corvex");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }

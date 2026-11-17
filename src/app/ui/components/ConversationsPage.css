@@ -270,16 +270,22 @@
 
 .conversation-picker-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 仓库选择器独占一行，给描述留出足够的横向空间。 */
+.conversation-picker-row .project-picker {
+  flex: 0 0 auto;
 }
 
 .conversation-select {
-  flex: 1 1 260px;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
 }
 
-.conversation-select .ant-select-selector {
+.conversation-select .ant-select-content {
   height: 42px;
   border-color: var(--conversation-border-strong);
   border-radius: 10px;
@@ -288,7 +294,7 @@
 }
 
 .conversation-select .ant-select-selection-item,
-.conversation-select .ant-select-selection-placeholder {
+.conversation-select .ant-select-placeholder {
   line-height: 40px;
 }
 
