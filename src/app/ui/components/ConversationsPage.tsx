@@ -418,7 +418,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             ai: { placement: "start", variant: "outlined" },
                           }}
                         />
-                      ) : <Welcome className="conversation-welcome conversation-welcome-empty" title={copy.conversationPlaceholder} />}
+                      ) : <Welcome className="conversation-welcome conversation-welcome-empty" variant="borderless" title={copy.conversationPlaceholder} />}
                     </div>
                     <Sender
                       className="conversation-composer"

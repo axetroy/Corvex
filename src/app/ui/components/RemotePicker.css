@@ -17,13 +17,13 @@
 /* 可见边框只画在 Select 根节点上；content 只负责布局，避免出现双层描边。 */
 .remote-picker {
   display: flex;
-  height: 58px;
+  height: 44px;
   align-items: center;
   width: 100%;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 1px solid var(--remote-picker-border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
   box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
   line-height: normal;
@@ -85,7 +85,7 @@
 .remote-picker .ant-select-placeholder,
 .remote-picker .ant-select-input {
   color: var(--remote-picker-muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* 箭头：跟随打开状态旋转，并统一为弱化色。 */
@@ -141,21 +141,21 @@
 }
 
 .remote-picker-value-title {
-  font-size: 14px;
-  line-height: 1.3;
+  font-size: 13px;
+  line-height: 1.25;
 }
 
 .remote-picker-value-subtitle,
 .remote-picker-option-subtitle {
   overflow: hidden;
   color: var(--remote-picker-muted);
-  font-size: 12px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .remote-picker-value-subtitle {
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 /* ============================= 下拉 ============================= */

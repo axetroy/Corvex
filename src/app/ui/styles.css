@@ -270,7 +270,7 @@ details summary {
 
 .details-preview {
   display: inline-block;
-  max-width: min(420px, 60vw);
+  max-width: min(420px, 100%);
   min-width: 0;
   margin-left: 8px;
   overflow: hidden;
@@ -360,7 +360,7 @@ details summary {
 }
 
 .trace-session-system-prompt .details-preview {
-  max-width: min(680px, 72vw);
+  max-width: 100%;
 }
 
 .trace-session-list {

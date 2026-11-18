@@ -85,8 +85,9 @@
 
 .conversation-summary-label {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
+  padding: 6px 2px;
 }
 
 .conversation-summary-label > * {
@@ -128,7 +129,7 @@
 
 .conversation-sidebar-list .ant-conversations-item {
   width: 100%;
-  min-height: 66px;
+  min-height: 72px;
   margin-bottom: 2px;
   border-radius: 9px;
 }
@@ -215,22 +216,24 @@
   padding: 26px;
 }
 
+/* 内容较矮时垂直居中；内容高于可视区时 margin:auto 归零，从顶部开始滚动，
+   避免 justify-content:center 把顶部内容推到滚动区之外。 */
 .conversation-setup-pane {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .conversation-start {
   width: 100%;
-  max-width: 680px;
+  max-width: 640px;
   margin: auto;
-  padding: 20px 8px 40px;
+  padding: 12px 8px 28px;
 }
 
 .conversation-welcome.ant-welcome {
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 8px 0 28px;
+  gap: 12px;
+  padding: 4px 0 20px;
   text-align: center;
 }
 
@@ -241,41 +244,48 @@
 
 .conversation-welcome .ant-welcome-title {
   color: var(--conversation-ink);
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1.25;
 }
 
 .conversation-welcome .ant-welcome-description {
-  margin-top: 10px;
+  margin-top: 6px;
   color: #6b7280;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .conversation-welcome-icon {
   display: grid;
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   place-items: center;
   color: #fff;
   background: linear-gradient(135deg, #1d7fc9, var(--conversation-brand));
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: 0 8px 18px rgb(23 105 170 / 28%);
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
 }
 
 .conversation-welcome-empty.ant-welcome {
   margin: auto;
+  color: var(--conversation-muted);
+}
+
+.conversation-welcome-empty .ant-welcome-title {
+  color: var(--conversation-muted);
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .conversation-picker-row {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 10px;
 }
 
 .conversation-prompts.ant-prompts {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .conversation-prompts .ant-prompts-title {
@@ -520,21 +530,33 @@
   white-space: nowrap;
 }
 
-.conversation-composer {
+/* 输入框：与正文列对齐，不贴边。Ant Design 运行时样式的选择器带三个类名，
+   这里用四个类名覆盖宽度、边框与圆角，否则会退回默认的 100% 宽。 */
+.conversations-layout .conversation-chat .conversation-composer.ant-sender {
   position: relative;
   z-index: 2;
+  width: min(720px, calc(100% - 52px));
   flex: 0 0 auto;
-  width: min(768px, calc(100% - 52px));
-  margin: 0 auto 22px;
+  margin: 0 auto 20px;
   border: 1px solid var(--conversation-border-strong);
-  border-radius: 16px;
+  border-radius: 14px;
   background: #fff;
-  box-shadow: 0 8px 24px rgb(23 33 43 / 8%);
+  box-shadow: 0 6px 20px rgb(23 33 43 / 7%);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.conversation-composer:focus-within {
+.conversations-layout .conversation-chat .conversation-composer.ant-sender:focus-within {
   border-color: var(--conversation-brand);
-  box-shadow: 0 8px 24px rgb(23 105 170 / 16%);
+  box-shadow: 0 6px 22px rgb(23 105 170 / 16%);
+}
+
+.conversations-layout .conversation-chat .conversation-composer.ant-sender.ant-sender-disabled {
+  background: #f8f9fa;
+  box-shadow: none;
+}
+
+.conversations-layout .conversation-chat .conversation-composer.ant-sender .ant-sender-content {
+  padding: 9px 10px 9px 14px;
 }
 
 @media (max-width: 900px) {
@@ -592,11 +614,15 @@
     padding: 12px 4px 28px;
   }
 
-  .conversation-welcome .ant-welcome-title {
-    font-size: 26px;
+  .conversation-picker-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .conversation-composer {
+  .conversation-welcome .ant-welcome-title {
+    font-size: 24px;
+  }
+
+  .conversations-layout .conversation-chat .conversation-composer.ant-sender {
     width: calc(100% - 24px);
     margin-bottom: 12px;
   }
