@@ -224,6 +224,16 @@ h1 {
   margin-bottom: 23px;
 }
 
+/* 标题与说明占据剩余宽度并按需换行；操作区保持完整宽度，避免在窄视口下把标题挤成一列。 */
+.page-heading-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-heading-actions {
+  flex: 0 0 auto;
+}
+
 .page-heading p {
   margin: 7px 0 0;
   color: #71808e;

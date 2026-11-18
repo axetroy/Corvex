@@ -4,7 +4,16 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { reloadConfig, validateConfig } from "../config/config.js";
-import { applyRuntimeSettings, copyRuntimeSettings, isRuntimeSettingKey, runtimeSettingsView, validateRuntimeSettings } from "../config/settings.js";
+import {
+  applyRuntimeSettingRows,
+  applyRuntimeSettings,
+  copyRuntimeSettings,
+  isRuntimeSettingKey,
+  runtimeSettingsEffective,
+  runtimeSettingsView,
+  validateRuntimeSettings,
+  type DerivedContextMetrics,
+} from "../config/settings.js";
 import { getConversationSystemPrompt } from "../agent/prompts.js";
 import { EventStore } from "../events/store.js";
 import { isEventStatus, isEventType } from "../events/model.js";
@@ -162,6 +171,7 @@ export class CorvexServer {
   }
 
   async run(signal: AbortSignal): Promise<void> {
+    this.applyStoredSettings();
     await new Promise<void>((resolvePromise, rejectPromise) => {
       this.server.once("error", rejectPromise);
       this.server.listen(this.address.port, this.address.host, () => {
@@ -605,36 +615,59 @@ export class CorvexServer {
   }
 
   /**
-   * 读取 Agent 控制台可编辑的上下文设置：以配置文件为基准，叠加运行时覆盖项。
-   * 返回每个键的当前值、覆盖值以及是否被覆盖，界面据此显示「已覆盖」。
+   * 启动时应用数据库中的运行时覆盖。界面回显的是「文件值 + 覆盖项」，
+   * 如果进程启动时不应用，重启后会出现「显示已覆盖、实际仍用文件值」的假象。
+   */
+  private applyStoredSettings(): void {
+    try {
+      const applied = applyRuntimeSettingRows(this.config, this.store.listRuntimeSettings());
+      if (applied.length > 0) {
+        console.info("applied stored runtime settings", { keys: applied });
+      }
+    } catch (error) {
+      console.error("apply stored runtime settings failed", { error: errorMessage(error) });
+    }
+  }
+
+  /**
+   * 读取 Agent 控制台可编辑的设置：以配置文件为基准，叠加运行时覆盖项。
+   * 同时返回自动推导后的生效值，界面据此解释「填写的值为何与运行值不同」。
    */
   private async readSettings(): Promise<{
     settings: Record<string, number | boolean>;
+    effective: Record<string, number | boolean>;
+    adjusted: string[];
+    derived: DerivedContextMetrics;
     base: Record<string, number | boolean> | null;
     overrides: Record<string, string>;
+    overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
     editable: boolean;
     configPath: string | null;
   }> {
-    const overrides = Object.fromEntries(
-      this.store
-        .listRuntimeSettings()
-        .filter((row) => isRuntimeSettingKey(row.key))
-        .map((row) => [row.key, row.value]),
+    const rows = this.store.listRuntimeSettings().filter((row) => isRuntimeSettingKey(row.key));
+    const overrides = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+    const overrideMeta = Object.fromEntries(
+      rows.map((row) => [row.key, { updatedAt: row.updatedAt, updatedBy: row.updatedBy }]),
     );
     // 配置文件的值用于「恢复默认」：重新读盘而不是复用启动时的配置，
     // 这样手工编辑配置文件后界面也能立即反映。
     let base: Record<string, number | boolean> | null = null;
     if (this.configPath) {
       try {
-        base = runtimeSettingsView((await reloadConfig(this.configPath)).agent);
+        base = runtimeSettingsView(await reloadConfig(this.configPath));
       } catch (error) {
         console.warn("read config file for settings view failed", { error: errorMessage(error) });
       }
     }
+    const view = runtimeSettingsEffective(this.config);
     return {
-      settings: runtimeSettingsView(this.config.agent),
+      settings: runtimeSettingsView(this.config),
+      effective: view.effective,
+      adjusted: view.adjusted,
+      derived: view.derived,
       base,
       overrides,
+      overrideMeta,
       editable: Boolean(this.configPath),
       configPath: this.configPath ?? null,
     };
@@ -687,20 +720,40 @@ export class CorvexServer {
       return;
     }
     const now = new Date().toISOString();
-    const previous = this.store.listRuntimeSettings().map((row) => row.key);
+    const actor = this.config.operations.username.trim() || "ops-console";
+    const previousRows = this.store
+      .listRuntimeSettings()
+      .filter((row) => isRuntimeSettingKey(row.key));
+    const previous = new Map(previousRows.map((row) => [row.key, row.value]));
+    // 审计只记录真正变化的键：旧值与新值都省略时为「回到配置文件值」。
+    const changes: Record<string, string> = {};
+    for (const key of new Set([...previous.keys(), ...Object.keys(overrides)])) {
+      const before = previous.get(key);
+      const after = overrides[key];
+      if (before === after) continue;
+      changes[key] = `${before ?? "(config)"} -> ${after ?? "(config)"}`;
+    }
     try {
-      for (const key of previous) {
-        if (isRuntimeSettingKey(key) && !(key in overrides)) this.store.setRuntimeSetting(key, null);
+      for (const key of previous.keys()) {
+        if (!(key in overrides)) this.store.setRuntimeSetting(key, null, actor);
       }
-      for (const [key, value] of Object.entries(overrides)) this.store.setRuntimeSetting(key, value);
+      for (const [key, value] of Object.entries(overrides)) {
+        this.store.setRuntimeSetting(key, value, actor);
+      }
     } catch (error) {
       respondJson(response, 500, { error: errorMessage(error) });
       return;
     }
+    try {
+      this.store.recordSettingsAudit(actor, changes);
+    } catch (error) {
+      // 设置已生效，审计失败不回滚，只记录日志避免掩盖真实结果。
+      console.error("record runtime settings audit failed", { error: errorMessage(error) });
+    }
     // 内存配置以「配置文件 + 覆盖项」重建：先复位可编辑字段再应用覆盖，避免残留旧值。
-    copyRuntimeSettings(base.agent, this.config.agent);
+    copyRuntimeSettings(base, this.config);
     applyRuntimeSettings(this.config, overrides);
-    console.info("runtime settings updated", { keys: Object.keys(overrides), updatedAt: now });
+    console.info("runtime settings updated", { keys: Object.keys(overrides), actor, updatedAt: now });
     respondJson(response, 200, await this.readSettings());
   }
 

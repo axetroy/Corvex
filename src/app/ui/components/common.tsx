@@ -17,11 +17,11 @@ export function Panel({ title, children }: { title: string; children: ReactNode 
 export function PageHeading({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="page-heading">
-      <div>
+      <div className="page-heading-text">
         <Typography.Title level={1}>{title}</Typography.Title>
         {description ? <Typography.Paragraph type="secondary">{description}</Typography.Paragraph> : null}
       </div>
-      {actions}
+      {actions ? <div className="page-heading-actions">{actions}</div> : null}
     </div>
   );
 }

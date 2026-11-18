@@ -623,8 +623,11 @@ describe("CorvexServer", () => {
       expect(initial.status).toBe(200);
       const initialBody = await initial.json() as {
         settings: Record<string, number | boolean>;
+        effective: Record<string, number | boolean>;
+        adjusted: string[];
         base: Record<string, number | boolean> | null;
         overrides: Record<string, string>;
+        overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
         editable: boolean;
         configPath: string | null;
       };
@@ -633,6 +636,9 @@ describe("CorvexServer", () => {
       expect(initialBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
       expect(initialBody.base).toMatchObject({ context_window: 131_072 });
       expect(initialBody.overrides).toEqual({});
+      // 0 表示自动推导，界面必须拿到生效值，否则看起来像没保存。
+      expect(initialBody.effective.max_input_tokens).toBe(131_072 - 4_096 - 2_000);
+      expect(initialBody.adjusted).toContain("max_input_tokens");
 
       // 只提交与配置文件不同的键：服务端据此记录覆盖项。
       const saved = await fetch(`${base}/api/ops/settings`, {
@@ -643,7 +649,9 @@ describe("CorvexServer", () => {
       expect(saved.status).toBe(200);
       const savedBody = await saved.json() as typeof initialBody;
       expect(savedBody.settings).toMatchObject({ context_window: 200_000, summary_enabled: false });
+      expect(savedBody.effective).toMatchObject({ context_window: 200_000 });
       expect(savedBody.overrides).toMatchObject({ context_window: "200000", summary_enabled: "false" });
+      expect(savedBody.overrideMeta.context_window?.updatedBy).toBe("operator");
       expect(config.agent.contextWindow).toBe(200_000);
       expect(config.agent.summaryEnabled).toBe(false);
 
@@ -678,6 +686,13 @@ describe("CorvexServer", () => {
 
       expect((await fetch(`${base}/api/ops/settings`, { method: "POST", headers: { authorization } })).status).toBe(405);
       expect((await fetch(`${base}/api/ops/settings`)).status).toBe(401);
+
+      // 每次写入都留下审计：操作者来自控制台凭据，结果记录旧值->新值。
+      const audit = store.listAuditEvents().filter((entry) => entry.action === "update_settings");
+      expect(audit).toHaveLength(2);
+      expect(audit[1]).toMatchObject({ actorId: 0, resource: "settings:operator" });
+      expect(audit[1]?.result).toContain("context_window: (config) -> 200000");
+      expect(audit[0]?.result).toContain("context_window: 200000 -> (config)");
     } finally {
       controller.abort();
       await running;

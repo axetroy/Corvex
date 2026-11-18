@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyRuntimeSettingRows,
   applyRuntimeSettings,
   copyRuntimeSettings,
   isRuntimeSettingKey,
   runtimeSettingDefinitions,
+  runtimeSettingsEffective,
   runtimeSettingsView,
   validateRuntimeSettings,
 } from "../../src/config/settings.js";
@@ -36,6 +38,17 @@ function agentConfig(): CorvexConfig["agent"] {
   };
 }
 
+/** 只包含设置相关段的配置对象；其余段不参与运行时设置测试。 */
+function settingsConfig(): CorvexConfig {
+  return {
+    agent: agentConfig(),
+    review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+    chat: { historyComments: 20 },
+    issue: { implementEnabled: false, historyComments: 20 },
+    fix: { enabled: false, maxPatchBytes: 128 << 10 },
+  } as CorvexConfig;
+}
+
 describe("validateRuntimeSettings", () => {
   it("接受合法覆盖项", () => {
     expect(validateRuntimeSettings({ context_window: "200000", summary_enabled: "false" })).toEqual([]);
@@ -65,41 +78,95 @@ describe("validateRuntimeSettings", () => {
 
 describe("applyRuntimeSettings", () => {
   it("把覆盖项写回配置对象的对应字段", () => {
-    const config = { agent: agentConfig() } as CorvexConfig;
-    applyRuntimeSettings(config, { context_window: "200000", summary_enabled: "false", max_output_tokens: "2048" });
+    const config = settingsConfig();
+    applyRuntimeSettings(config, {
+      context_window: "200000",
+      summary_enabled: "false",
+      max_output_tokens: "2048",
+      review_max_files: "42",
+      fix_enabled: "true",
+    });
     expect(config.agent.contextWindow).toBe(200_000);
     expect(config.agent.summaryEnabled).toBe(false);
     expect(config.agent.maxOutputTokens).toBe(2_048);
+    expect(config.review.maxFiles).toBe(42);
+    expect(config.fix.enabled).toBe(true);
   });
 
   it("忽略未知键与未覆盖的字段", () => {
-    const config = { agent: agentConfig() } as CorvexConfig;
+    const config = settingsConfig();
     const before = config.agent.model;
     applyRuntimeSettings(config, { nope: "1" });
     expect(config.agent.model).toBe(before);
   });
 });
 
+describe("applyRuntimeSettingRows", () => {
+  it("应用合法行并跳过损坏行", () => {
+    const config = settingsConfig();
+    const applied = applyRuntimeSettingRows(config, [
+      { key: "review_max_findings", value: "12" },
+      { key: "unknown_key", value: "1" },
+      { key: "context_window", value: "not-a-number" },
+    ]);
+    expect(applied).toEqual(["review_max_findings"]);
+    expect(config.review.maxFindings).toBe(12);
+    expect(config.agent.contextWindow).toBe(131_072);
+  });
+});
+
 describe("runtimeSettingsView", () => {
   it("把配置字段映射为设置键", () => {
-    const view = runtimeSettingsView(agentConfig());
+    const view = runtimeSettingsView(settingsConfig());
     expect(view).toMatchObject({
       context_window: 131_072,
       history_token_budget: 24_000,
       summary_enabled: true,
+      review_max_files: 100,
+      fix_max_patch_bytes: 128 << 10,
     });
+  });
+});
+
+describe("runtimeSettingsEffective", () => {
+  it("推导输入上限、工具预算与压缩阈值", () => {
+    const config = settingsConfig();
+    const view = runtimeSettingsEffective(config);
+    expect(view.effective.max_input_tokens).toBe(131_072 - 4_096 - 2_000);
+    expect(view.effective.turn_tool_result_bytes).toBe(256 << 10);
+    expect(view.effective.compaction_reserve_tokens).toBe(40_960);
+    expect(view.derived).toMatchObject({
+      toolRoundBytes: 64 << 10,
+      toolCallBytes: 32 << 10,
+      compactionTriggerTokens: 131_072 - 40_960,
+    });
+    expect(view.adjusted).toContain("compaction_reserve_tokens");
+  });
+
+  it("配置值更大时按配置生效", () => {
+    const config = settingsConfig();
+    config.agent.turnToolResultBytes = 32 << 10;
+    config.agent.compactionReserveTokens = 64 << 10;
+    config.agent.maxInputTokens = 90_000;
+    const view = runtimeSettingsEffective(config);
+    expect(view.effective.turn_tool_result_bytes).toBe(32 << 10);
+    expect(view.effective.compaction_reserve_tokens).toBe(64 << 10);
+    expect(view.effective.max_input_tokens).toBe(90_000);
+    expect(view.adjusted).toEqual([]);
   });
 });
 
 describe("copyRuntimeSettings", () => {
   it("把可编辑字段从源配置复制到目标配置", () => {
-    const from = agentConfig();
-    from.contextWindow = 300_000;
-    from.summaryEnabled = false;
-    const to = agentConfig();
+    const from = settingsConfig();
+    from.agent.contextWindow = 300_000;
+    from.agent.summaryEnabled = false;
+    from.review.maxFiles = 10;
+    const to = settingsConfig();
     copyRuntimeSettings(from, to);
-    expect(to.contextWindow).toBe(300_000);
-    expect(to.summaryEnabled).toBe(false);
+    expect(to.agent.contextWindow).toBe(300_000);
+    expect(to.agent.summaryEnabled).toBe(false);
+    expect(to.review.maxFiles).toBe(10);
   });
 });
 

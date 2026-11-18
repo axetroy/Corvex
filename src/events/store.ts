@@ -1587,26 +1587,68 @@ export class EventStore {
     return row?.value;
   }
 
-  /** 写入运行时设置并返回写入时间；空值表示删除该覆盖项。 */
-  setRuntimeSetting(key: string, value: string | null): string {
+  /** 写入运行时设置并返回写入时间；空值表示删除该覆盖项。actor 记录控制台操作者。 */
+  setRuntimeSetting(key: string, value: string | null, actor = ""): string {
     const now = new Date().toISOString();
     if (value === null) {
       this.db.prepare("DELETE FROM runtime_settings WHERE key=?").run(key);
       return now;
     }
     this.db.prepare(
-      `INSERT INTO runtime_settings (key,value,updated_at) VALUES (?,?,?)
-       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`,
-    ).run(key, value, now);
+      `INSERT INTO runtime_settings (key,value,updated_at,updated_by) VALUES (?,?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at,updated_by=excluded.updated_by`,
+    ).run(key, value, now, actor);
     return now;
   }
 
   /** 列出全部运行时设置覆盖项，键按字典序。 */
-  listRuntimeSettings(): { key: string; value: string; updatedAt: string }[] {
+  listRuntimeSettings(): { key: string; value: string; updatedAt: string; updatedBy: string }[] {
     const rows = this.db.prepare(
-      "SELECT key,value,updated_at FROM runtime_settings ORDER BY key",
-    ).all() as { key: string; value: string; updated_at: string }[];
-    return rows.map((row) => ({ key: row.key, value: row.value, updatedAt: row.updated_at }));
+      "SELECT key,value,updated_at,updated_by FROM runtime_settings ORDER BY key",
+    ).all() as { key: string; value: string; updated_at: string; updated_by: string }[];
+    return rows.map((row) => ({
+      key: row.key,
+      value: row.value,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by,
+    }));
+  }
+
+  /** 读取最近的审计记录（写入顺序倒序），供运维排查与测试断言。 */
+  listAuditEvents(limit = 100): {
+    actorId: number;
+    action: string;
+    resource: string;
+    result: string;
+    createdAt: string;
+  }[] {
+    const rows = this.db.prepare(
+      "SELECT actor_id,action,resource,result,created_at FROM audit_events ORDER BY id DESC LIMIT ?",
+    ).all(limit) as {
+      actor_id: number;
+      action: string;
+      resource: string;
+      result: string;
+      created_at: string;
+    }[];
+    return rows.map((row) => ({
+      actorId: row.actor_id,
+      action: row.action,
+      resource: row.resource,
+      result: row.result,
+      createdAt: row.created_at,
+    }));
+  }
+
+  /**
+   * 记录一次运行时设置变更。设置不属于 GitLab 用户，actor_id 固定为 0，
+   * 控制台操作者写入 resource；结果保存「旧值->新值」摘要，便于审计回溯。
+   */
+  recordSettingsAudit(actor: string, changes: Record<string, string>): void {
+    const keys = Object.keys(changes).sort();
+    if (keys.length === 0) return;
+    const summary = keys.map((key) => `${key}: ${changes[key]}`).join("; ").slice(0, 4_000);
+    this.insertAudit(0, "update_settings", `settings:${actor || "ops-console"}`, summary);
   }
 
   /** 标记对话轮次为取消；已结束的轮次保持原状。 */
@@ -2264,7 +2306,8 @@ export class EventStore {
         received_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS runtime_settings (
-        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id INTEGER NOT NULL, action TEXT NOT NULL,
@@ -2358,6 +2401,13 @@ export class EventStore {
       (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((column) => column.name),
     );
     if (!stepColumns.has("turn_id")) this.db.exec("ALTER TABLE execution_steps ADD COLUMN turn_id TEXT");
+    // 运行时设置记录修改者，便于回答「谁把窗口改小了」；旧库留空。
+    const runtimeColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(runtime_settings)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!runtimeColumns.has("updated_by")) {
+      this.db.exec("ALTER TABLE runtime_settings ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''");
+    }
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));

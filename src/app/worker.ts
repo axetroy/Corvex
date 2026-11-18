@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
+import { applyRuntimeSettingRows, copyRuntimeSettings } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import { FixWorkflow } from "../fix/workflow.js";
 import { ImplementWorkflow } from "../implement/workflow.js";
@@ -88,11 +89,15 @@ function errorDetails(error: unknown): string {
 export class Worker {
   private readonly workerId = randomUUID();
   private readonly repo: GitManager;
-  private readonly reviewer: ReviewWorkflow;
-  private readonly fixer: FixWorkflow;
-  private readonly implementer: ImplementWorkflow;
+  private reviewer!: ReviewWorkflow;
+  private fixer!: FixWorkflow;
+  private implementer!: ImplementWorkflow;
   private readonly agent: PiAgent;
-  private readonly contextByteLimit: number;
+  private contextByteLimit!: number;
+  /** 配置文件基线：每次热加载先复位可覆盖字段，删除覆盖项后立即回到文件值。 */
+  private readonly baseline: CorvexConfig;
+  /** 上次应用的覆盖项签名；相同则跳过重建流程对象。 */
+  private runtimeSignature = "";
 
   constructor(
     private readonly config: CorvexConfig,
@@ -100,7 +105,7 @@ export class Worker {
     private readonly gitlab: GitLabClient,
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
-    this.contextByteLimit = Math.min(config.review.maxContextBytes, maxAgentUserPromptBytes);
+    this.baseline = structuredClone(config);
     this.repo = new GitManager(
       config.storage.root,
       config.gitlab.baseUrl,
@@ -115,6 +120,16 @@ export class Worker {
       (projectId, mrIid, update, signal) => this.gitlab.updateMergeRequest(projectId, mrIid, update, signal),
       this.repo,
     );
+    this.buildWorkflows();
+  }
+
+  /**
+   * 按当前配置重建依赖构造期参数的流程对象。审查文件上限、发现的严重级别数量、
+   * diff 字节上限与批量并发都在构造函数里读取，运行时设置变更后必须重建。
+   */
+  private buildWorkflows(): void {
+    const config = this.config;
+    this.contextByteLimit = Math.min(config.review.maxContextBytes, maxAgentUserPromptBytes);
     this.reviewer = new ReviewWorkflow(
       this.agent,
       config.review.maxFiles,
@@ -137,10 +152,31 @@ export class Worker {
     );
   }
 
+  /**
+   * 从数据库读取运行时覆盖项并热加载。Server 写入后 Worker 在下一次轮询时生效，
+   * 不需要重启；签名未变化时只做一次字符串比较，避免每轮重建对象。
+   */
+  private refreshRuntimeSettings(): void {
+    try {
+      const rows = this.store.listRuntimeSettings();
+      const signature = rows.map((row) => `${row.key}=${row.value}`).join("\n");
+      if (signature === this.runtimeSignature) return;
+      // 先复位到配置文件基线，再叠加覆盖：删除的键因此立即回到文件值。
+      copyRuntimeSettings(this.baseline, this.config);
+      const applied = applyRuntimeSettingRows(this.config, rows);
+      this.runtimeSignature = signature;
+      this.buildWorkflows();
+      console.info("worker applied runtime settings", { keys: applied });
+    } catch (error) {
+      console.error("refresh runtime settings failed", { error: errorMessage(error) });
+    }
+  }
+
   async run(signal: AbortSignal): Promise<void> {
     await this.repo.initialize();
     console.info("Corvex worker started", { pollIntervalMs: this.config.worker.pollInterval });
     while (!signal.aborted) {
+      this.refreshRuntimeSettings();
       try {
         this.store.heartbeatWorker(this.workerId);
       } catch (error) {

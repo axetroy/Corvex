@@ -1,36 +1,75 @@
 import type { CorvexConfig } from "./config.js";
+import { resolveMaxInputTokens } from "../agent/budget.js";
+import {
+  resolveCompactionKeepRecentTokens,
+  resolveCompactionReserveTokens,
+  resolveToolCallBytes,
+  resolveToolRoundBytes,
+  resolveTurnToolResultBytes,
+} from "../agent/tool-budget.js";
 
 /**
- * Agent 控制台可在运行时覆盖的模型上下文设置。
+ * Agent 控制台可在运行时覆盖的设置。
  *
- * 这些值影响提示词预算与压缩阈值，改错会直接导致请求失败，因此每个键都带类型与
- * 范围约束；写入前逐项校验，写入后立即作用于后续请求。凭据与网络类配置不在此列，
- * 它们只从配置文件或环境变量读取。
+ * 这些值影响模型上下文、审查流程与发布策略，改错会直接导致请求失败或行为异常，
+ * 因此每个键都带类型与范围约束；写入前逐项校验，写入后立即作用于后续请求。
+ * 凭据、地址、令牌与工作进程轮询参数不在此列，它们只从配置文件或环境变量读取，
+ * 修改需要重启进程。
  */
+export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix";
+
 export interface RuntimeSettingDefinition {
   key: string;
-  field: keyof CorvexConfig["agent"];
+  section: RuntimeSettingSection;
+  field: string;
   type: "number" | "boolean";
   min?: number;
   max?: number;
+  /**
+   * 该键被 Worker 在构造阶段读取（例如审查文件上限）。变更后 Worker 需要重建
+   * 依赖这些参数的组件，仅改内存配置不会生效。
+   */
+  workerScoped?: boolean;
 }
 
 export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
-  { key: "context_window", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000 },
-  { key: "max_input_tokens", field: "maxInputTokens", type: "number", min: 0, max: 10_000_000 },
-  { key: "history_token_budget", field: "historyTokenBudget", type: "number", min: 0, max: 10_000_000 },
-  { key: "turn_tool_result_bytes", field: "turnToolResultBytes", type: "number", min: 0, max: 64 << 20 },
-  { key: "compaction_reserve_tokens", field: "compactionReserveTokens", type: "number", min: 0, max: 10_000_000 },
-  { key: "compaction_keep_recent_tokens", field: "compactionKeepRecentTokens", type: "number", min: 0, max: 10_000_000 },
-  { key: "max_output_tokens", field: "maxOutputTokens", type: "number", min: 1, max: 8_192 },
-  { key: "daily_token_budget", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
-  { key: "summary_enabled", field: "summaryEnabled", type: "boolean" },
+  // 上下文预算
+  { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000 },
+  { key: "max_input_tokens", section: "agent", field: "maxInputTokens", type: "number", min: 0, max: 10_000_000 },
+  { key: "history_token_budget", section: "agent", field: "historyTokenBudget", type: "number", min: 0, max: 10_000_000 },
+  { key: "turn_tool_result_bytes", section: "agent", field: "turnToolResultBytes", type: "number", min: 0, max: 64 << 20 },
+  { key: "compaction_reserve_tokens", section: "agent", field: "compactionReserveTokens", type: "number", min: 0, max: 10_000_000 },
+  { key: "compaction_keep_recent_tokens", section: "agent", field: "compactionKeepRecentTokens", type: "number", min: 0, max: 10_000_000 },
+  { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192 },
+  { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
+  { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
+  // 工具开关
+  { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
+  { key: "mcp_enabled", section: "agent", field: "mcpEnabled", type: "boolean" },
+  // 审查与历史评论
+  { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, workerScoped: true },
+  { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, workerScoped: true },
+  { key: "review_max_context_bytes", section: "review", field: "maxContextBytes", type: "number", min: 1, max: 8 << 20, workerScoped: true },
+  { key: "review_batch_concurrency", section: "review", field: "batchConcurrency", type: "number", min: 1, max: 4, workerScoped: true },
+  { key: "chat_history_comments", section: "chat", field: "historyComments", type: "number", min: 0, max: 50 },
+  { key: "issue_history_comments", section: "issue", field: "historyComments", type: "number", min: 0, max: 50 },
+  // 修复与 Issue 实现
+  { key: "fix_enabled", section: "fix", field: "enabled", type: "boolean" },
+  { key: "fix_max_patch_bytes", section: "fix", field: "maxPatchBytes", type: "number", min: 1, max: 256 << 10, workerScoped: true },
+  { key: "issue_implement_enabled", section: "issue", field: "implementEnabled", type: "boolean" },
 ];
 
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));
 
 export interface RuntimeSettingValues {
   [key: string]: number | boolean;
+}
+
+type MutableSection = Record<string, unknown>;
+
+/** 按设置定义定位到配置对象里的段；各段字段互不重叠。 */
+function sectionOf(config: CorvexConfig, section: RuntimeSettingSection): MutableSection {
+  return config[section] as unknown as MutableSection;
 }
 
 /** 把字符串形式的覆盖值解析为对应的数字或布尔值；类型非法时抛错。 */
@@ -99,40 +138,125 @@ export function validateRuntimeSettings(overrides: Record<string, string>): stri
 }
 
 /**
- * 把覆盖项应用到配置对象。就地修改 `config.agent`，让已经持有该对象引用的
- * Runner 与 PiAgent 立即看到新值。
+ * 把覆盖项应用到配置对象。就地修改对应段，让已经持有该对象引用的 Runner 与
+ * PiAgent 立即看到新值；Worker 需要自行决定何时重建构造期读取参数的组件。
  */
 export function applyRuntimeSettings(config: CorvexConfig, overrides: Record<string, string>): void {
-  const values: RuntimeSettingValues = {};
   for (const [key, raw] of Object.entries(overrides)) {
     const definition = definitionsByKey.get(key);
     if (!definition) continue;
-    values[key] = parseSettingValue(definition, raw);
-  }
-  for (const definition of runtimeSettingDefinitions) {
-    const value = values[definition.key];
-    if (value === undefined) continue;
-    (config.agent as Record<string, unknown>)[definition.field] = value;
+    sectionOf(config, definition.section)[definition.field] = parseSettingValue(definition, raw);
   }
 }
 
-/** 当前生效的设置值，供 Agent 控制台回显；键与覆盖项一致。 */
-export function runtimeSettingsView(agent: CorvexConfig["agent"]): RuntimeSettingValues {
+/**
+ * 把存储中的覆盖项应用到配置；单行损坏时跳过并告警，避免旧数据拖垮整个进程。
+ * 返回实际应用的键，供启动与热加载日志记录。
+ */
+export function applyRuntimeSettingRows(
+  config: CorvexConfig,
+  rows: readonly { key: string; value: string }[],
+): string[] {
+  const applied: string[] = [];
+  for (const row of rows) {
+    const definition = definitionsByKey.get(row.key);
+    if (!definition) continue;
+    try {
+      sectionOf(config, definition.section)[definition.field] = parseSettingValue(definition, row.value);
+      applied.push(row.key);
+    } catch (error) {
+      console.warn("ignored invalid runtime setting", {
+        key: row.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return applied;
+}
+
+/** 当前配置中的设置值，供 Agent 控制台回显；键与覆盖项一致。 */
+export function runtimeSettingsView(config: CorvexConfig): RuntimeSettingValues {
   const view: RuntimeSettingValues = {};
   for (const definition of runtimeSettingDefinitions) {
-    view[definition.key] = agent[definition.field] as number | boolean;
+    view[definition.key] = sectionOf(config, definition.section)[definition.field] as number | boolean;
   }
   return view;
 }
 
-/** 把可编辑字段从源配置复制到目标配置，使删除覆盖项后能立即回退到文件值。 */
-export function copyRuntimeSettings(from: CorvexConfig["agent"], to: CorvexConfig["agent"]): void {
+/** 把可覆盖字段从源配置复制到目标配置，使删除覆盖项后能立即回退到文件值。 */
+export function copyRuntimeSettings(from: CorvexConfig, to: CorvexConfig): void {
   for (const definition of runtimeSettingDefinitions) {
-    (to as Record<string, unknown>)[definition.field] = from[definition.field];
+    sectionOf(to, definition.section)[definition.field] =
+      sectionOf(from, definition.section)[definition.field];
   }
 }
 
 /** Agent 控制台可覆盖的配置键集合，用于把存储中的覆盖项过滤为已知键。 */
 export function isRuntimeSettingKey(key: string): boolean {
   return definitionsByKey.has(key);
+}
+
+/** 由窗口与工具预算推导出的只读指标，界面用来解释「配置值 ≠ 生效值」。 */
+export interface DerivedContextMetrics {
+  /** 单次请求输入上限（由窗口、输出预留推导）。 */
+  maxInputTokens: number;
+  /** 单个工具结果的硬上限（字节）。 */
+  toolCallBytes: number;
+  /** 每个助手轮次的工具输出硬上限（字节）。 */
+  toolRoundBytes: number;
+  /** 实际触发压缩的估算 token 数 = 窗口 − 预留。 */
+  compactionTriggerTokens: number;
+  /** 压缩后保留的最近 token 数。 */
+  compactionKeepRecentTokens: number;
+  /** 单轮软检查点阈值（字节）；0 表示关闭提醒。 */
+  turnToolResultBytes: number;
+}
+
+export interface EffectiveSettings {
+  /** 每个键的实际生效值：配置值叠加运行时的自动推导与上下限。 */
+  effective: RuntimeSettingValues;
+  /** 生效值与配置值不一致的键；界面据此提示「已自动调整」。 */
+  adjusted: string[];
+  derived: DerivedContextMetrics;
+}
+
+/**
+ * 计算实际生效值。运行时会根据窗口推导输入上限、工具输出预算与压缩阈值，
+ * 因此界面必须展示推导结果，否则用户会以为填写的值没有保存。
+ */
+export function runtimeSettingsEffective(config: CorvexConfig): EffectiveSettings {
+  const agent = config.agent;
+  const configured = runtimeSettingsView(config);
+  const effective = { ...configured };
+  const maxInputTokens = resolveMaxInputTokens(agent);
+  const toolRoundBytes = resolveToolRoundBytes(agent.contextWindow);
+  const compactionReserveTokens = resolveCompactionReserveTokens(
+    agent.contextWindow,
+    agent.maxOutputTokens,
+    agent.compactionReserveTokens,
+  );
+  const compactionKeepRecentTokens = resolveCompactionKeepRecentTokens(
+    agent.contextWindow,
+    agent.compactionKeepRecentTokens,
+    compactionReserveTokens,
+  );
+  const turnToolResultBytes = resolveTurnToolResultBytes(agent.contextWindow, agent.turnToolResultBytes);
+  effective.max_input_tokens = maxInputTokens;
+  effective.turn_tool_result_bytes = turnToolResultBytes;
+  effective.compaction_reserve_tokens = compactionReserveTokens;
+  effective.compaction_keep_recent_tokens = compactionKeepRecentTokens;
+  const adjusted = ["max_input_tokens", "turn_tool_result_bytes", "compaction_reserve_tokens", "compaction_keep_recent_tokens"]
+    .filter((key) => effective[key] !== configured[key]);
+  return {
+    effective,
+    adjusted,
+    derived: {
+      maxInputTokens,
+      toolCallBytes: resolveToolCallBytes(toolRoundBytes),
+      toolRoundBytes,
+      compactionTriggerTokens: Math.max(0, agent.contextWindow - compactionReserveTokens),
+      compactionKeepRecentTokens,
+      turnToolResultBytes,
+    },
+  };
 }

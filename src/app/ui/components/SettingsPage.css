@@ -51,6 +51,11 @@
   font-weight: 600;
 }
 
+.settings-badge-adjusted {
+  background: #fff4e5;
+  color: #a15c00;
+}
+
 .settings-field-control {
   display: flex;
   align-items: center;
@@ -64,6 +69,31 @@
 .settings-unit {
   color: #7a8593;
   font-size: 12px;
+}
+
+.settings-effective {
+  color: #a15c00;
+  font-size: 12px;
+}
+
+.settings-field-meta {
+  font-size: 12px;
+}
+
+.settings-derived {
+  margin: 0;
+  padding-left: 18px;
+  color: #5a6673;
+  font-size: 13px;
+}
+
+.settings-derived li + li {
+  margin-top: 4px;
+}
+
+.settings-advanced {
+  margin-top: 16px;
+  border-radius: 8px;
 }
 
 .settings-field-hint {
