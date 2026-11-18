@@ -15,10 +15,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--conversation-border);
-  border-radius: 14px;
   background: var(--conversation-surface);
-  box-shadow: 0 12px 32px rgb(23 33 43 / 6%);
 }
 
 .conversation-sidebar {

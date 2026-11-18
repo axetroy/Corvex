@@ -112,118 +112,117 @@ export function App() {
       csp={cspNonce ? { nonce: cspNonce } : undefined}
       theme={{ token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" } }}
     >
-      <>
-      <a
-        className="skip-link"
-        href="#app"
-        onClick={(event) => {
-          event.preventDefault();
-          mainRef.current?.focus();
-        }}
-      >
-        {copy.skipToContent}
-      </a>
-      <header className="topbar">
-        <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
-          <span className="brand-mark">C</span>
-          <span>
-            Corvex <small>OPERATIONS</small>
-          </span>
-        </a>
-        <nav aria-label={copy.navLabel}>
-          <Menu
-            className="primary-nav"
-            mode="horizontal"
-            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
-            onClick={({ key }) => {
-              window.location.hash = key === "events"
-                ? eventsHash(queue)
-                : key === "conversations" && page.kind === "conversations"
-                  ? conversationsHash(page.id)
-                  : key;
-            }}
-            items={[
-              { key: "conversations", label: copy.navConversations },
-              { key: "events", label: copy.navEvents },
-              { key: "overview", label: copy.navOverview },
-              { key: "settings", label: copy.navSettings },
-            ]}
-          />
-        </nav>
-        <Select
-          id="language"
-          className="language-select"
-          aria-label={copy.languageLabel}
-          value={locale}
-          options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]}
-          onChange={(value) => {
-            const next = resolveLocale(value, browserLanguages);
-            saveLocale(next);
-            setLocale(next);
+      <div className="app-shell">
+        <a
+          className="skip-link"
+          href="#app"
+          onClick={(event) => {
+            event.preventDefault();
+            mainRef.current?.focus();
           }}
-        />
-        <span id="updated" className="updated">
-          {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
-        </span>
-      </header>
-      <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
-        <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
-          <Suspense fallback={<Loading>{copy.loading}</Loading>}>
-          {page.kind === "overview" ? (
-            <OverviewPage
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
+        >
+          {copy.skipToContent}
+        </a>
+        <header className="topbar">
+          <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
+            <span className="brand-mark">C</span>
+            <span>
+              Corvex <small>OPERATIONS</small>
+            </span>
+          </a>
+          <nav aria-label={copy.navLabel}>
+            <Menu
+              className="primary-nav"
+              mode="horizontal"
+              selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
+              onClick={({ key }) => {
+                window.location.hash = key === "events"
+                  ? eventsHash(queue)
+                  : key === "conversations" && page.kind === "conversations"
+                    ? conversationsHash(page.id)
+                    : key;
+              }}
+              items={[
+                { key: "conversations", label: copy.navConversations },
+                { key: "events", label: copy.navEvents },
+                { key: "overview", label: copy.navOverview },
+                { key: "settings", label: copy.navSettings },
+              ]}
             />
-          ) : null}
-          {page.kind === "events" ? (
-            <EventsPage
-              copy={copy}
-              locale={locale}
-              queue={queue}
-              refreshToken={refreshToken}
-              onQueueChange={updateQueue}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
-          ) : null}
-          {page.kind === "event" ? (
-            <EventDetailPage
-              eventId={page.id}
-              backHash={eventsBackHash(params)}
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
-          ) : null}
-          {page.kind === "conversations" ? (
-            <ConversationsPage
-              conversationId={page.id ?? ""}
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-              onConversationChange={updateConversationRoute}
-            />
-          ) : null}
-          {page.kind === "settings" ? (
-            <SettingsPage
-              copy={copy}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
-          ) : null}
-          </Suspense>
-        </ErrorBoundary>
-      </main>
-      <footer>{copy.footer}</footer>
-      </>
+          </nav>
+          <Select
+            id="language"
+            className="language-select"
+            aria-label={copy.languageLabel}
+            value={locale}
+            options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]}
+            onChange={(value) => {
+              const next = resolveLocale(value, browserLanguages);
+              saveLocale(next);
+              setLocale(next);
+            }}
+          />
+          <span id="updated" className="updated">
+            {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
+          </span>
+        </header>
+        <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
+          <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
+            <Suspense fallback={<Loading>{copy.loading}</Loading>}>
+            {page.kind === "overview" ? (
+              <OverviewPage
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "events" ? (
+              <EventsPage
+                copy={copy}
+                locale={locale}
+                queue={queue}
+                refreshToken={refreshToken}
+                onQueueChange={updateQueue}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "event" ? (
+              <EventDetailPage
+                eventId={page.id}
+                backHash={eventsBackHash(params)}
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "conversations" ? (
+              <ConversationsPage
+                conversationId={page.id ?? ""}
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+                onConversationChange={updateConversationRoute}
+              />
+            ) : null}
+            {page.kind === "settings" ? (
+              <SettingsPage
+                copy={copy}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            </Suspense>
+          </ErrorBoundary>
+        </main>
+      </div>
     </ConfigProvider>
   );
 }
