@@ -10,6 +10,7 @@ import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
+import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { ConversationToolCalls } from "./ConversationToolCalls.js";
@@ -28,8 +29,8 @@ interface Props {
   onConversationChange: (conversationId: string) => void;
 }
 
-/** 对话详情右侧的标签：对话流、轮次轨迹与用量统计。 */
-type ConversationDetailTab = "chat" | "trace" | "stats";
+/** 对话详情右侧的标签：对话流、调用记录、轮次轨迹与用量统计。 */
+type ConversationDetailTab = "chat" | "records" | "trace" | "stats";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
@@ -457,10 +458,25 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 ),
               },
               {
+                key: "records",
+                label: copy.traceRecords,
+                children: (
+                  <div className="conversation-tab-pane">
+                    <ConversationRecordsTab
+                      conversationId={selectedConversationId}
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={onUpdated}
+                    />
+                  </div>
+                ),
+              },
+              {
                 key: "trace",
                 label: copy.conversationTabTrace,
                 children: (
-                  <div className="conversation-tab-pane">
+                  <div className="conversation-tab-pane conversation-trace-pane">
                     <ConversationTraceTab
                       conversationId={selectedConversationId}
                       messages={currentConversation?.messages ?? []}

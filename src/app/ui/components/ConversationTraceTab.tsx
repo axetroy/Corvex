@@ -6,8 +6,7 @@ import { formatDate, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationMessage, ConversationTurn, ConversationTurns } from "../types.js";
-import { Empty, ErrorBanner, Loading, Panel, StatusBadge } from "./common.js";
-import { ExecutionSteps } from "./ExecutionSteps.js";
+import { Empty, ErrorBanner, Loading, StatusBadge } from "./common.js";
 import { TraceExperience } from "./TraceExperience.js";
 
 interface Props {
@@ -139,9 +138,6 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
             {single.lastError ? <p className="conversation-turn-error">{single.lastError}</p> : null}
           </div>
           <TraceExperience entries={single.trajectory} copy={copy} locale={locale} />
-          <Panel title={copy.traceRecords}>
-            <ExecutionSteps events={single.events} copy={copy} locale={locale} />
-          </Panel>
         </>
       ) : null}
       {all ? (
@@ -150,13 +146,10 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
             <Space size={10} wrap>
               <Tag>{copy.conversationTraceTurnCountTemplate.replace("{count}", String(all.turns.length))}</Tag>
               <Tag>{copy.traceDuration}: {formatTraceDuration(mergedDurationMs(all), copy)}</Tag>
-              <Tag>{copy.traceRecords}: {all.trajectory.length}</Tag>
+              <Tag>{copy.trajectory}: {all.trajectory.length}</Tag>
             </Space>
           </div>
           <TraceExperience entries={all.trajectory} turns={all.turns} copy={copy} locale={locale} />
-          <Panel title={copy.traceRecords}>
-            <ExecutionSteps events={all.events} copy={copy} locale={locale} />
-          </Panel>
         </>
       ) : null}
     </div>

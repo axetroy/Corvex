@@ -26,29 +26,30 @@
   background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fa 100%);
 }
 
+/* 与右侧标签栏保持一致的高度：两侧内容从同一条水平线开始，不会因按钮更高而错位。 */
 .conversation-sidebar-heading {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  padding: 12px 14px;
+  min-height: 41px;
+  align-items: center;
+  padding: 0 12px;
   border-bottom: 1px solid var(--conversation-border);
 }
 
 .conversation-new-button.ant-btn {
   display: flex;
-  width: 100%;
-  height: 36px;
+  height: 29px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  border-radius: 9px;
-  box-shadow: 0 4px 12px rgb(23 105 170 / 22%);
+  gap: 5px;
+  padding: 0 12px;
+  border-radius: 7px;
+  box-shadow: 0 2px 7px rgb(23 105 170 / 18%);
+  font-size: 13px;
   font-weight: 550;
 }
 
 .conversation-new-button > span[aria-hidden="true"] {
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 400;
   line-height: 1;
 }
@@ -533,6 +534,58 @@
   gap: 18px;
 }
 
+/* 轨迹页占满标签内容区高度且不产生外层滚动：时间线与工作台按剩余高度伸缩，
+   只有内部的调用记录列表自己滚动。 */
+.conversation-trace-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.conversation-trace-pane .conversation-trace {
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation-trace-pane .trace-experience,
+.conversation-trace-pane .trace-diagram-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-trace-pane .trace-overview,
+.conversation-trace-pane .trace-selection-toolbar {
+  flex: 0 0 auto;
+}
+
+.conversation-trace-pane .trace-workbench {
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation-trace-pane .trace-events-pane,
+.conversation-trace-pane .trace-inspector {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-trace-pane .trace-event-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.conversation-trace-pane .trace-inspector-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
 .conversation-trace-picker {
   display: flex;
   align-items: center;
@@ -566,6 +619,13 @@
   color: #b42318;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.conversation-records {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .conversation-stats {
@@ -640,7 +700,7 @@
   }
 
   .conversation-sidebar-heading {
-    padding: 14px;
+    padding: 0 14px;
   }
 
   .conversation-sidebar-list .ant-conversations {
@@ -690,5 +750,21 @@
   .conversations-layout .conversation-chat .conversation-composer.ant-sender {
     width: calc(100% - 24px);
     margin-bottom: 12px;
+  }
+}
+
+@media (max-width: 500px) {
+  /* 工作台在窄屏改为上下堆叠，内容高度不再可控，恢复外层滚动。
+     调用记录列表仍保留自己的滚动区域。 */
+  .conversation-trace-pane {
+    overflow: auto;
+  }
+
+  .conversation-trace-pane .trace-workbench {
+    flex: 0 0 auto;
+  }
+
+  .conversation-trace-pane .trace-event-list {
+    max-height: 260px;
   }
 }
