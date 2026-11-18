@@ -28,6 +28,17 @@ agent:
   web_blocked_hosts: []
   skill_paths: []
 
+  # 上下文预算：模型窗口、提示词预算与 SDK 压缩阈值。
+  # context_window 是模型的真实窗口；请求超限时先按下面的预算在本地裁剪，
+  # 而不是依赖服务端报错。max_input_tokens 为 0 时由窗口减输出预留推导。
+  context_window: 131072
+  max_input_tokens: 0
+  history_token_budget: 24000
+  turn_tool_result_bytes: 524288
+  compaction_reserve_tokens: 16384
+  compaction_keep_recent_tokens: 20000
+  summary_enabled: true
+
 review:
   max_files: 100
   max_findings: 30

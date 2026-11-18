@@ -31,6 +31,10 @@ MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/can
 
 经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。对话使用独立表（`conversations`、`conversation_messages`、`conversation_turns`），不进入事件队列：每轮由 Server 通过 `ConversationRunner` 内联执行，因此对话轮次不是事件，也不会出现在事件列表里。每轮仍各自拥有独立的轨迹与执行记录，按 `turn_id` 存储；控制台通过 `GET /api/ops/conversations/<id>/turns` 读取整段对话（把各轮轨迹与执行记录合并成一条时间线），或通过 `GET /api/ops/conversations/<id>/turns/<turnId>` 按轮读取并校验该轮确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**轨迹**、**统计** 三个标签页分别呈现消息记录（含每条助手回复的工具调用）、整段对话合并后的轨迹（可切换到单轮）与整段对话的汇总。内联执行只提供只读仓库工具，不会向 GitLab 发布内容；每个对话常驻一个只读 worktree 并跨轮次复用（同一固定快照的追问只重新校验 HEAD，不再重新 checkout 工作树），空闲工作区按 TTL 与缓存上限淘汰，并在 Server 关闭时删除。目前运行在 Server 进程内，后续可迁移到容器而无需改动该契约。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
 
+### 上下文预算
+
+Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 估算 Token 数，`trimHistory` 只保留符合 `agent.history_token_budget` 的最近若干历史轮次；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，请求本身也以结构化多消息构建，而不是拼成一个大字符串。单轮内，工具输出按 `agent.turn_tool_result_bytes` 累计，超出预算时优雅中止本轮。Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值，使 SDK 自动压缩与 Corvex 自身的裁剪保持一致。若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。这些键可在控制台设置页面运行时调整；Server 落库前会用与配置文件相同的定义校验它们。
+
 ## 审查流程
 
 1. 获取 MR，确认其仍处于打开状态，并且 Head SHA 与任务入队时记录的 SHA 一致。若 MR 已关闭或提交变化，则将任务标记为 stale，不会对移动中的版本进行审查。

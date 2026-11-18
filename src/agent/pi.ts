@@ -7,10 +7,11 @@ import {
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { AssistantMessageEvent, StreamOptions } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, AssistantMessage, StreamOptions, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import type { EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
@@ -18,6 +19,7 @@ import type { EventStore } from "../events/store.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
+import { isContextOverflowError } from "./budget.js";
 import {
   GitLabWriteError,
   type GitLabWriteReceipt,
@@ -36,10 +38,39 @@ export const maxAgentPromptBytes = 96 << 10;
 /** Keep initial workflow payload below the total prompt cap to reserve system prompt space. */
 export const maxAgentUserPromptBytes = 80 << 10;
 
+/** 把配置的历史消息转换为 SDK 的会话条目，用于在 prompt 之前注入上下文。 */
+function seedHistoryMessages(
+  history: readonly { role: "user" | "assistant"; content: string }[],
+  providerId: string,
+  model: string,
+): (UserMessage | AssistantMessage)[] {
+  return history.map((message) => message.role === "user"
+    ? {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: message.content }],
+        timestamp: Date.now(),
+      }
+    : {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: message.content }],
+        api: "openai-completions" as const,
+        provider: providerId,
+        model,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop" as const,
+        timestamp: Date.now(),
+      });
+}
+
 export interface ModelRequest {
   taskType: ModelTaskType;
   systemPrompt: string;
   userPrompt: string;
+  /**
+   * 对话历史，按时间升序。提供时按独立消息注入会话，让模型与 SDK 的压缩逻辑
+   * 都能识别轮次边界；不提供时只发送 `userPrompt`。
+   */
+  history?: { role: "user" | "assistant"; content: string }[];
 }
 
 export function getAgentToolAccess(
@@ -148,7 +179,8 @@ export class PiAgent {
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }
-    const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt);
+    const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt) +
+      (request.history ?? []).reduce((sum, message) => sum + Buffer.byteLength(message.content), 0);
     if (promptBytes > maxAgentPromptBytes) {
       throw new Error(`agent prompt exceeds the conservative ${maxAgentPromptBytes}-byte request budget`);
     }
@@ -167,7 +199,21 @@ export class PiAgent {
       const sessionSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.sessionTimeout)])
         : AbortSignal.timeout(this.config.agent.sessionTimeout);
-      response = await this.runSession(request, workingDirectory, sessionSignal, trace);
+      try {
+        response = await this.runSession(request, workingDirectory, sessionSignal, trace);
+      } catch (error) {
+        // 本地预算估算总有误差（不同分词器差异很大）。服务端仍报超限时收缩一次
+        // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
+        if (signal?.aborted || !isContextOverflowError(errorMessage(error))) throw error;
+        const retry: ModelRequest = request.history?.length
+          ? { ...request, history: [] }
+          : request;
+        console.warn("model request exceeded the context window; retrying without history", {
+          taskType: request.taskType,
+          historyMessages: request.history?.length ?? 0,
+        });
+        response = await this.runSession(retry, workingDirectory, sessionSignal, trace);
+      }
     } catch (error) {
       if (budgetDay) {
         try {
@@ -274,7 +320,7 @@ export class PiAgent {
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           reasoning: false,
-          contextWindow: 128_000,
+          contextWindow: this.config.agent.contextWindow,
           maxTokens: this.config.agent.maxOutputTokens,
         },
       ],
@@ -419,12 +465,30 @@ export class PiAgent {
       modelRuntime: runtime,
       model,
       resourceLoader,
+      // 压缩阈值与配置的上下文窗口绑定：SDK 默认值按 200K 窗口调过，直接沿用
+      // 会让 128K 窗口在压缩前就已超限。这里用内存设置管理器覆盖，不落盘。
+      settingsManager: SettingsManager.inMemory({
+        compaction: {
+          enabled: true,
+          reserveTokens: this.config.agent.compactionReserveTokens,
+          keepRecentTokens: this.config.agent.compactionKeepRecentTokens,
+        },
+      }),
       sessionManager: SessionManager.inMemory(),
       noTools: "builtin",
     });
+    // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
+    // SDK 的压缩切点也才能在正确的轮次边界上工作。
+    for (const message of seedHistoryMessages(request.history ?? [], providerId, this.config.agent.model)) {
+      session.sessionManager.appendMessage(message);
+    }
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
     let currentRound = 0;
+    // 单轮内工具结果累计字节：超过预算即中止本轮，避免请求在服务端才因超窗口报错。
+    const toolResultByteLimit = this.config.agent.turnToolResultBytes;
+    let toolResultBytes = 0;
+    let toolBudgetExceeded = false;
     const recordedContextEntryIds = new Set<string>();
     let hasRecordedContext = false;
     const unsubscribe = session.subscribe((event) => {
@@ -520,6 +584,13 @@ export class PiAgent {
           JSON.stringify(event.result),
         );
         activeTools.delete(event.toolCallId);
+        if (toolResultByteLimit > 0) {
+          toolResultBytes += Buffer.byteLength(JSON.stringify(event.result) ?? "");
+          if (toolResultBytes > toolResultByteLimit) {
+            toolBudgetExceeded = true;
+            void session.abort();
+          }
+        }
       }
     });
     const abort = () => {
@@ -532,7 +603,14 @@ export class PiAgent {
       await session.prompt(request.userPrompt);
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
       const content = session.getLastAssistantText()?.trim();
-      if (!content) throw new Error("Pi returned an empty completion");
+      if (!content) {
+        if (toolBudgetExceeded) {
+          throw new Error(
+            "This turn read more repository content than the per-turn context budget allows; narrow the request or start a new conversation.",
+          );
+        }
+        throw new Error("Pi returned an empty completion");
+      }
       const usage = session.getSessionStats().tokens;
       return {
         content,

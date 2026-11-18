@@ -393,6 +393,10 @@ export interface ConversationTurnContext {
   actorId: number;
   request: string;
   attempt: number;
-  /** 该轮之前已完成的历史消息，按时间升序。 */
-  history: { role: "user" | "assistant"; content: string }[];
+  /** 该轮之前已完成的历史消息，按时间升序；带消息 ID 以便推进摘要边界。 */
+  history: { id: string; role: "user" | "assistant"; content: string }[];
+  /** 该对话已生成的滚动摘要；覆盖 `summary_message_id` 之前的历史。 */
+  summary: string | null;
+  /** 摘要覆盖到的最后一条消息 ID；为空表示摘要为空。 */
+  summaryMessageId: string | null;
 }

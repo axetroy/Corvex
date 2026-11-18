@@ -210,7 +210,7 @@ async function run(): Promise<void> {
   process.once("SIGTERM", onSignal);
   try {
     if (options.mode === "server") {
-      await new CorvexServer(config, store, gitlab).run(controller.signal);
+      await new CorvexServer(config, store, gitlab, options.configPath).run(controller.signal);
     } else {
       await new Worker(config, store, gitlab).run(controller.signal);
     }

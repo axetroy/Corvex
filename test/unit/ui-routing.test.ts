@@ -38,7 +38,11 @@ describe("operations UI routing", () => {
   });
 
   it("rejects unknown routes", () => {
-    expect(parseHash("settings").page).toEqual({ kind: "unknown" });
+    expect(parseHash("nope").page).toEqual({ kind: "unknown" });
+  });
+
+  it("accepts the settings route", () => {
+    expect(parseHash("settings").page).toEqual({ kind: "settings" });
   });
 
   it("decodes only well-formed event IDs", () => {

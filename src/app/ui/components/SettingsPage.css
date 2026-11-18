@@ -1,0 +1,75 @@
+.settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-alert {
+  margin-bottom: 12px;
+}
+
+.settings-config-path {
+  margin: 0 0 12px;
+  color: #5a6673;
+  font-size: 13px;
+}
+
+.settings-config-path code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef2f6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.settings-group-hint {
+  margin-bottom: 12px !important;
+}
+
+.settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #e6f0fa;
+  color: #1769aa;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-field-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-number {
+  width: 180px;
+}
+
+.settings-unit {
+  color: #7a8593;
+  font-size: 12px;
+}
+
+.settings-field-hint {
+  font-size: 12px;
+}
+
+.settings-field-error {
+  font-size: 12px;
+}

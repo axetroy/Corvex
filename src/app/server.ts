@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
+import { reloadConfig, validateConfig } from "../config/config.js";
+import { applyRuntimeSettings, copyRuntimeSettings, isRuntimeSettingKey, runtimeSettingsView, validateRuntimeSettings } from "../config/settings.js";
 import { EventStore } from "../events/store.js";
 import { isEventStatus, isEventType } from "../events/model.js";
 import { errorMessage } from "../errors.js";
@@ -129,6 +131,8 @@ export class CorvexServer {
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
+    /** 配置文件路径；提供时运维台可在运行时覆盖上下文设置并持久化。 */
+    private readonly configPath?: string,
   ) {
     this.conversations = new ConversationRunner(config, store, gitlab);
     this.address = parseListenAddress(config.server.listen);
@@ -502,6 +506,18 @@ export class CorvexServer {
       }
       return;
     }
+    if (url.pathname === "/api/ops/settings") {
+      if (request.method === "GET") {
+        respondJson(response, 200, await this.readSettings());
+        return;
+      }
+      if (request.method === "PUT") {
+        await this.writeSettings(request, response);
+        return;
+      }
+      respondJson(response, 405, { error: "method not allowed" });
+      return;
+    }
     if (request.method !== "GET") {
       respondJson(response, 405, { error: "method not allowed" });
       return;
@@ -580,6 +596,106 @@ export class CorvexServer {
       return;
     }
     respondJson(response, 404, { error: "not found" });
+  }
+
+  /**
+   * 读取运维台可编辑的上下文设置：以配置文件为基准，叠加运行时覆盖项。
+   * 返回每个键的当前值、覆盖值以及是否被覆盖，界面据此显示「已覆盖」。
+   */
+  private async readSettings(): Promise<{
+    settings: Record<string, number | boolean>;
+    base: Record<string, number | boolean> | null;
+    overrides: Record<string, string>;
+    editable: boolean;
+    configPath: string | null;
+  }> {
+    const overrides = Object.fromEntries(
+      this.store
+        .listRuntimeSettings()
+        .filter((row) => isRuntimeSettingKey(row.key))
+        .map((row) => [row.key, row.value]),
+    );
+    // 配置文件的值用于「恢复默认」：重新读盘而不是复用启动时的配置，
+    // 这样手工编辑配置文件后界面也能立即反映。
+    let base: Record<string, number | boolean> | null = null;
+    if (this.configPath) {
+      try {
+        base = runtimeSettingsView((await reloadConfig(this.configPath)).agent);
+      } catch (error) {
+        console.warn("read config file for settings view failed", { error: errorMessage(error) });
+      }
+    }
+    return {
+      settings: runtimeSettingsView(this.config.agent),
+      base,
+      overrides,
+      editable: Boolean(this.configPath),
+      configPath: this.configPath ?? null,
+    };
+  }
+
+  /**
+   * 写入运行时设置：先校验，再重新读取配置文件作为基准，应用全部覆盖项，
+   * 用配置文件的原生校验器验证最终结果。只有校验通过才落库并生效。
+   */
+  private async writeSettings(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!this.configPath) {
+      respondJson(response, 409, { error: "runtime settings require the server to run with --config" });
+      return;
+    }
+    const body = await this.readOperationsBody(request, response);
+    if (!body) return;
+    const incoming = body.settings;
+    if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming)) {
+      respondJson(response, 400, { error: "settings must be a JSON object" });
+      return;
+    }
+    const overrides: Record<string, string> = {};
+    for (const [key, value] of Object.entries(incoming as Record<string, unknown>)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === "number" || typeof value === "boolean") {
+        overrides[key] = String(value);
+      } else {
+        respondJson(response, 400, { error: `setting "${key}" must be a number or boolean` });
+        return;
+      }
+    }
+    const problems = validateRuntimeSettings(overrides);
+    if (problems.length > 0) {
+      respondJson(response, 400, { error: problems.join("; ") });
+      return;
+    }
+    let base: CorvexConfig;
+    try {
+      base = await reloadConfig(this.configPath);
+    } catch (error) {
+      respondJson(response, 500, { error: errorMessage(error) });
+      return;
+    }
+    // 覆盖项是整份替换：未提交的键回退到配置文件值，界面上的「恢复默认」据此生效。
+    applyRuntimeSettings(base, overrides);
+    try {
+      validateConfig(base);
+    } catch (error) {
+      respondJson(response, 400, { error: errorMessage(error) });
+      return;
+    }
+    const now = new Date().toISOString();
+    const previous = this.store.listRuntimeSettings().map((row) => row.key);
+    try {
+      for (const key of previous) {
+        if (isRuntimeSettingKey(key) && !(key in overrides)) this.store.setRuntimeSetting(key, null);
+      }
+      for (const [key, value] of Object.entries(overrides)) this.store.setRuntimeSetting(key, value);
+    } catch (error) {
+      respondJson(response, 500, { error: errorMessage(error) });
+      return;
+    }
+    // 内存配置以「配置文件 + 覆盖项」重建：先复位可编辑字段再应用覆盖，避免残留旧值。
+    copyRuntimeSettings(base.agent, this.config.agent);
+    applyRuntimeSettings(this.config, overrides);
+    console.info("runtime settings updated", { keys: Object.keys(overrides), updatedAt: now });
+    respondJson(response, 200, await this.readSettings());
   }
 
   private async readOperationsBody(

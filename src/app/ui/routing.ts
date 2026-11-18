@@ -7,6 +7,7 @@ export type Route =
   | { kind: "events" }
   | { kind: "conversations"; id?: string }
   | { kind: "event"; id: string }
+  | { kind: "settings" }
   | { kind: "unknown" };
 
 /** 解析结果：页面路由与查询参数（事件列表筛选条件）。 */
@@ -30,6 +31,7 @@ function parsePath(route: string): Route {
   if (route === "" || route === "conversations") return { kind: "conversations" };
   if (route === "overview") return { kind: "overview" };
   if (route === "events") return { kind: "events" };
+  if (route === "settings") return { kind: "settings" };
   if (route.startsWith("conversations/")) {
     const id = decodeEventId(route.slice("conversations/".length));
     return id ? { kind: "conversations", id } : { kind: "unknown" };

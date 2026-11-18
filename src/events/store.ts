@@ -63,7 +63,8 @@ const maxConversationToolCalls = 50;
 /** 对话列表工具调用参数展示的最大字节数，避免把整段轨迹负载塞进列表接口。 */
 const maxConversationToolInputBytes = 2048;
 /** 单次对话轮次注入模型上下文的历史消息条数上限，按最近优先截断。 */
-const maxConversationHistoryMessages = 30;
+/** 滚动摘要的最大字符数，避免摘要本身撑大提示词。 */
+const maxConversationSummaryCharacters = 4_000;
 
 interface ConversationTurnRow {
   id: string;
@@ -1442,10 +1443,16 @@ export class EventStore {
         | undefined;
       if (!conversation) throw new Error(`conversation "${turn.conversation_id}" not found`);
       const history = this.db.prepare(
-        `SELECT role, content FROM conversation_messages
+        `SELECT id, role, content FROM conversation_messages
          WHERE conversation_id=? AND status='completed' AND id <> ? AND id <> ?
          ORDER BY created_at,rowid`,
-      ).all(turn.conversation_id, turn.message_id ?? "", turn.user_message_id ?? "") as { role: string; content: string }[];
+      ).all(turn.conversation_id, turn.message_id ?? "", turn.user_message_id ?? "") as { id: string; role: string; content: string }[];
+      const summaryMessageId = stringColumn(conversation, "summary_message_id");
+      // 摘要覆盖到的消息不再注入原文：它们已被压缩成 summary，重复注入只会浪费预算。
+      const summaryIndex = summaryMessageId
+        ? history.findIndex((item) => item.id === summaryMessageId)
+        : -1;
+      const recent = summaryIndex >= 0 ? history.slice(summaryIndex + 1) : history;
       return {
         turnId: turn.id,
         conversationId: turn.conversation_id,
@@ -1456,10 +1463,11 @@ export class EventStore {
         actorId: turn.actor_id,
         request: turn.request,
         attempt: turn.attempt_count + 1,
-        history: history
+        history: recent
           .filter((item) => item.role === "user" || item.role === "assistant")
-          .slice(-maxConversationHistoryMessages)
-          .map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
+          .map((item) => ({ id: item.id, role: item.role as "user" | "assistant", content: item.content })),
+        summary: stringColumn(conversation, "summary") || null,
+        summaryMessageId: summaryMessageId || null,
       };
     });
   }
@@ -1512,6 +1520,68 @@ export class EventStore {
       }
       this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, turn.conversation_id);
     });
+  }
+
+  /**
+   * 保存对话的滚动摘要，并记录摘要覆盖到的消息边界。只向前推进：传入的
+   * `summaryMessageId` 早于或等于当前边界时忽略，避免并发轮次把摘要回退。
+   */
+  saveConversationSummary(
+    conversationId: string,
+    summary: string,
+    summaryMessageId: string | null,
+  ): void {
+    const trimmed = summary.trim().slice(0, maxConversationSummaryCharacters);
+    if (!trimmed) return;
+    this.transaction(() => {
+      const row = this.db.prepare("SELECT * FROM conversations WHERE id=?").get(conversationId) as
+        | Record<string, unknown>
+        | undefined;
+      if (!row) throw new Error(`conversation "${conversationId}" not found`);
+      const currentMessageId = stringColumn(row, "summary_message_id");
+      if (currentMessageId && summaryMessageId) {
+        const boundary = this.db.prepare(
+          `SELECT id FROM conversation_messages WHERE conversation_id=? AND id IN (?,?)
+           ORDER BY created_at,rowid`,
+        ).all(conversationId, currentMessageId, summaryMessageId) as { id: string }[];
+        // 新边界若不在旧边界之后，说明摘要不会推进，直接放弃写入。
+        if (boundary.length === 2 && boundary[0]!.id !== summaryMessageId) return;
+        if (boundary.length === 0) return;
+      }
+      this.db.prepare(
+        "UPDATE conversations SET summary=?,summary_message_id=?,updated_at=? WHERE id=?",
+      ).run(trimmed, summaryMessageId ?? "", new Date().toISOString(), conversationId);
+    });
+  }
+
+  /** 读取运维台可覆盖的运行时设置；键不存在时返回 undefined。 */
+  getRuntimeSetting(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM runtime_settings WHERE key=?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  /** 写入运行时设置并返回写入时间；空值表示删除该覆盖项。 */
+  setRuntimeSetting(key: string, value: string | null): string {
+    const now = new Date().toISOString();
+    if (value === null) {
+      this.db.prepare("DELETE FROM runtime_settings WHERE key=?").run(key);
+      return now;
+    }
+    this.db.prepare(
+      `INSERT INTO runtime_settings (key,value,updated_at) VALUES (?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`,
+    ).run(key, value, now);
+    return now;
+  }
+
+  /** 列出全部运行时设置覆盖项，键按字典序。 */
+  listRuntimeSettings(): { key: string; value: string; updatedAt: string }[] {
+    const rows = this.db.prepare(
+      "SELECT key,value,updated_at FROM runtime_settings ORDER BY key",
+    ).all() as { key: string; value: string; updated_at: string }[];
+    return rows.map((row) => ({ key: row.key, value: row.value, updatedAt: row.updated_at }));
   }
 
   /** 标记对话轮次为取消；已结束的轮次保持原状。 */
@@ -2138,7 +2208,8 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS events_mr_created_idx ON events(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
-        target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS conversations_updated_idx ON conversations(updated_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -2159,6 +2230,9 @@ export class EventStore {
       CREATE TABLE IF NOT EXISTS webhook_deliveries (
         webhook_event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS runtime_settings (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id INTEGER NOT NULL, action TEXT NOT NULL,
@@ -2257,6 +2331,15 @@ export class EventStore {
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));
     for (const name of ["target_type", "target_iid", "target_title"]) {
       if (legacyConversationColumns.has(name)) this.db.exec(`ALTER TABLE conversations DROP COLUMN ${name}`);
+    }
+    // 跨轮滚动摘要：记录被裁剪历史压缩出的摘要，以及摘要覆盖到的消息边界。
+    for (const [name, definition] of Object.entries({
+      summary: "TEXT NOT NULL DEFAULT ''",
+      summary_message_id: "TEXT NOT NULL DEFAULT ''",
+    })) {
+      if (!legacyConversationColumns.has(name)) {
+        this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);
+      }
     }
     this.backfillConversationTurns();
     this.finalizeConversationMigration();

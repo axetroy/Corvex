@@ -1,4 +1,7 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import type { CorvexConfig } from "../../src/config/config.js";
@@ -566,6 +569,196 @@ describe("CorvexServer", () => {
       await new Promise<void>((resolve, reject) =>
         fakeGitLab.close((error) => (error ? reject(error) : resolve())),
       );
+      info.mockRestore();
+    }
+  });
+
+  it("exposes and updates runtime context settings over the operations API", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // 凭据与令牌只从环境变量读取，测试用 stubEnv 注入并在结束时还原。
+    vi.stubEnv("CORVEX_OPS_USERNAME", "operator");
+    vi.stubEnv("CORVEX_OPS_PASSWORD", "a secure password with 16 chars");
+    vi.stubEnv("CORVEX_GITLAB_READ_TOKEN", "read");
+    vi.stubEnv("CORVEX_GITLAB_TOKEN", "write");
+    vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
+    const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
+    const configPath = join(root, "config.yaml");
+    await writeFile(configPath, JSON.stringify({
+      server: { listen: "127.0.0.1:0" },
+      gitlab: { base_url: "https://gitlab.example.com" },
+      storage: { root, database: join(root, "state.db") },
+      agent: { enabled: false },
+    }), "utf8");
+    const { loadConfig } = await import("../../src/config/config.js");
+    const config = await loadConfig(configPath, "server");
+    const store = await EventStore.open(":memory:");
+    const controller = new AbortController();
+    const application = new CorvexServer(
+      config,
+      store,
+      new GitLabClient(config.gitlab.baseUrl, "read", "write"),
+      configPath,
+    );
+    const running = application.run(controller.signal);
+    try {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          application.getListeningAddress();
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      const address = application.getListeningAddress();
+      const base = `http://127.0.0.1:${address.port}`;
+      const authorization = `Basic ${Buffer.from(
+        `${config.operations.username}:${config.operations.password}`,
+      ).toString("base64")}`;
+
+      const initial = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
+      expect(initial.status).toBe(200);
+      const initialBody = await initial.json() as {
+        settings: Record<string, number | boolean>;
+        base: Record<string, number | boolean> | null;
+        overrides: Record<string, string>;
+        editable: boolean;
+        configPath: string | null;
+      };
+      expect(initialBody.editable).toBe(true);
+      expect(initialBody.configPath).toBe(configPath);
+      expect(initialBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
+      expect(initialBody.base).toMatchObject({ context_window: 131_072 });
+      expect(initialBody.overrides).toEqual({});
+
+      // 只提交与配置文件不同的键：服务端据此记录覆盖项。
+      const saved = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { context_window: 200_000, summary_enabled: false } }),
+      });
+      expect(saved.status).toBe(200);
+      const savedBody = await saved.json() as typeof initialBody;
+      expect(savedBody.settings).toMatchObject({ context_window: 200_000, summary_enabled: false });
+      expect(savedBody.overrides).toMatchObject({ context_window: "200000", summary_enabled: "false" });
+      expect(config.agent.contextWindow).toBe(200_000);
+      expect(config.agent.summaryEnabled).toBe(false);
+
+      // 覆盖项是整份替换：未提交的键回退到配置文件值。
+      const reset = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: {} }),
+      });
+      expect(reset.status).toBe(200);
+      const resetBody = await reset.json() as typeof initialBody;
+      expect(resetBody.overrides).toEqual({});
+      expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
+      expect(config.agent.contextWindow).toBe(131_072);
+
+      // 非法取值被拒绝，且不改变当前生效值。
+      const rejected = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { context_window: 10 } }),
+      });
+      expect(rejected.status).toBe(400);
+      expect((await rejected.json() as { error: string }).error).toContain("context_window");
+      expect(config.agent.contextWindow).toBe(131_072);
+
+      const unknown = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { nope: 1 } }),
+      });
+      expect(unknown.status).toBe(400);
+
+      expect((await fetch(`${base}/api/ops/settings`, { method: "POST", headers: { authorization } })).status).toBe(405);
+      expect((await fetch(`${base}/api/ops/settings`)).status).toBe(401);
+    } finally {
+      controller.abort();
+      await running;
+      store.close();
+      await rm(root, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it("reports runtime settings as read-only when the server runs without a config file", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const store = await EventStore.open(":memory:");
+    const config: CorvexConfig = {
+      server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
+      operations: { username: "operator", password: "a secure password with 16 chars" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com",
+        readToken: "read",
+        writeToken: "write",
+        webhookSecret: "secret",
+        blockedUserIds: [],
+        botUsername: "corvex",
+      },
+      storage: { root: ".", database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en",
+        enabled: false,
+        baseUrl: "https://api.openai.com/v1",
+        model: "",
+        apiKey: "",
+        requestTimeout: 120000,
+        sessionTimeout: 30 * 60_000,
+        maxOutputTokens: 4096,
+        dailyTokenBudget: 0,
+        mcpEnabled: false,
+        webEnabled: true,
+        webBlockedHosts: [],
+        skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 512 << 10,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
+      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    };
+    const controller = new AbortController();
+    const application = new CorvexServer(config, store, new GitLabClient(config.gitlab.baseUrl, "read", "write"));
+    const running = application.run(controller.signal);
+    try {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          application.getListeningAddress();
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      const address = application.getListeningAddress();
+      const base = `http://127.0.0.1:${address.port}`;
+      const authorization = `Basic ${Buffer.from(
+        `${config.operations.username}:${config.operations.password}`,
+      ).toString("base64")}`;
+      const response = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ editable: false, configPath: null, base: null });
+      const write = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { context_window: 200_000 } }),
+      });
+      expect(write.status).toBe(409);
+    } finally {
+      controller.abort();
+      await running;
+      store.close();
       info.mockRestore();
     }
   });

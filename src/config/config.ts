@@ -43,6 +43,20 @@ export interface CorvexConfig {
     webEnabled: boolean;
     webBlockedHosts: string[];
     skillPaths: string[];
+    /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
+    contextWindow: number;
+    /** 单次请求输入 token 上限；0 表示由上下文窗口与输出预留推导。 */
+    maxInputTokens: number;
+    /** 对话历史注入模型上下文时的 token 预算，超出时按最近优先裁剪。 */
+    historyTokenBudget: number;
+    /** 单轮内工具结果累计字节上限，超出时中止本轮，避免请求超出上下文窗口。 */
+    turnToolResultBytes: number;
+    /** SDK 压缩预留 token：触发压缩的阈值 = context_window - reserve。 */
+    compactionReserveTokens: number;
+    /** SDK 压缩后保留的最近 token 数。 */
+    compactionKeepRecentTokens: number;
+    /** 是否启用跨轮滚动摘要，把被裁剪的历史压缩成持久化摘要。 */
+    summaryEnabled: boolean;
   };
   review: {
     maxFiles: number;
@@ -99,6 +113,13 @@ const defaults: CorvexConfig = {
     webEnabled: true,
     webBlockedHosts: [],
     skillPaths: [],
+    contextWindow: 131_072,
+    maxInputTokens: 0,
+    historyTokenBudget: 24_000,
+    turnToolResultBytes: 512 << 10,
+    compactionReserveTokens: 16_384,
+    compactionKeepRecentTokens: 20_000,
+    summaryEnabled: true,
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
   chat: { historyComments: 20 },
@@ -243,6 +264,13 @@ function parseConfig(raw: unknown): CorvexConfig {
       webEnabled: boolean(agent.web_enabled, defaults.agent.webEnabled),
       webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
+      contextWindow: number(agent.context_window, defaults.agent.contextWindow),
+      maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),
+      historyTokenBudget: number(agent.history_token_budget, defaults.agent.historyTokenBudget),
+      turnToolResultBytes: number(agent.turn_tool_result_bytes, defaults.agent.turnToolResultBytes),
+      compactionReserveTokens: number(agent.compaction_reserve_tokens, defaults.agent.compactionReserveTokens),
+      compactionKeepRecentTokens: number(agent.compaction_keep_recent_tokens, defaults.agent.compactionKeepRecentTokens),
+      summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
     },
     review: {
       maxFiles: number(review.max_files, defaults.review.maxFiles),
@@ -402,6 +430,30 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     if (config.agent.dailyTokenBudget < 0 || config.agent.dailyTokenBudget > 1_000_000_000) {
       problems.push("agent.daily_token_budget must be between 0 and 1000000000");
     }
+    if (config.agent.contextWindow < 1_024 || config.agent.contextWindow > 10_000_000) {
+      problems.push("agent.context_window must be between 1024 and 10000000");
+    }
+    if (config.agent.maxInputTokens < 0 || config.agent.maxInputTokens >= config.agent.contextWindow) {
+      problems.push("agent.max_input_tokens must be 0 or less than agent.context_window");
+    }
+    if (config.agent.historyTokenBudget < 0 || config.agent.historyTokenBudget > config.agent.contextWindow) {
+      problems.push("agent.history_token_budget must be between 0 and agent.context_window");
+    }
+    if (config.agent.turnToolResultBytes < 0 || config.agent.turnToolResultBytes > 64 << 20) {
+      problems.push("agent.turn_tool_result_bytes must be between 0 and 64 MiB");
+    }
+    if (
+      config.agent.compactionReserveTokens < 0 ||
+      config.agent.compactionReserveTokens >= config.agent.contextWindow
+    ) {
+      problems.push("agent.compaction_reserve_tokens must be 0 or less than agent.context_window");
+    }
+    if (
+      config.agent.compactionKeepRecentTokens < 0 ||
+      config.agent.compactionKeepRecentTokens > config.agent.contextWindow
+    ) {
+      problems.push("agent.compaction_keep_recent_tokens must be between 0 and agent.context_window");
+    }
   }
   if (problems.length > 0) throw new Error(problems.join("; "));
 }
@@ -424,6 +476,24 @@ export async function loadConfig(path: string, role?: ConfigRole): Promise<Corve
   await mkdir(join(config.storage.root, "mirrors"), { recursive: true });
   await mkdir(join(config.storage.root, "workspaces"), { recursive: true });
   return config;
+}
+
+/**
+ * 读取配置文件但不做角色校验，用于运维台在运行时重新加载设置。
+ * 调用方负责在应用前校验；解析失败时抛出错误，调用方保留旧配置。
+ */
+export async function reloadConfig(path: string): Promise<CorvexConfig> {
+  let contents: string;
+  try {
+    contents = await readFile(path, "utf8");
+  } catch (error) {
+    throw new Error(`read config "${path}": ${String(error)}`, { cause: error });
+  }
+  try {
+    return parseConfig(parse(contents));
+  } catch (error) {
+    throw new Error(`parse config "${path}": ${String(error)}`, { cause: error });
+  }
 }
 
 export async function initializeConfig(path: string): Promise<void> {

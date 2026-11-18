@@ -64,6 +64,15 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.web_enabled` | `true` | Boolean | Enables the read-only `web_fetch` tool for review and explain tasks. Set to `false` to disable. |
 | `agent.web_blocked_hosts` | `[]` | Array of DNS hostnames | Optional exact hostnames to block, including their subdomains. Private, reserved, and special-use IP ranges/hostnames are always blocked. |
 | `agent.skill_paths` | `[]` | Array of paths | Additional trusted Pi Skill directories. These paths are also permitted roots for the bounded read-only `read_file` tool. |
+| `agent.context_window` | `131072` | 1,024–10,000,000 | Total token window of the model. It drives prompt budgets and the SDK compaction threshold; it must match what the provider serves. |
+| `agent.max_input_tokens` | `0` | 0 ≤ value < `context_window` | Hard cap on a single request's input tokens. `0` derives it from `context_window` minus `max_output_tokens` and a fixed framing overhead. |
+| `agent.history_token_budget` | `24000` | 0–`context_window` | Token budget for re-injecting earlier turns into a conversation request. Older history beyond it is trimmed, or summarized when `summary_enabled` is on. |
+| `agent.turn_tool_result_bytes` | `524288` | 0–67,108,864 | Cumulative tool-output bytes allowed within one turn before the run stops gracefully. `0` disables the limit. |
+| `agent.compaction_reserve_tokens` | `16384` | 0 ≤ value < `context_window` | Tokens held back from `context_window` so SDK compaction output still fits. |
+| `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | Recent tokens the SDK keeps verbatim when it compacts. |
+| `agent.summary_enabled` | `true` | Boolean | Compress trimmed conversation history into a stored rolling summary that later turns reuse. |
+
+These context-budget keys are the primary defence against provider `context length exceeded` errors: Corvex trims history and caps tool output before a request leaves the process, and makes one more aggressive retry without history if the provider still reports an overflow. They can also be tuned at runtime from the operations console Settings page without editing the config file.
 
 `CORVEX_MODEL_API_KEY` is required when the agent is enabled. The budget conservatively reserves prompt bytes plus the configured maximum output tokens, then settles against provider usage. If a request result is uncertain, the reservation is retained. It is a token limit, not a price-based spending cap.
 

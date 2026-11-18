@@ -7,10 +7,9 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
-import { getConversationSystemPrompt } from "../agent/prompts.js";
+import { buildConversationPrompt, trimHistory } from "../agent/budget.js";
+import { getConversationSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 
-/** 单次对话请求注入模型上下文的历史消息条数上限，按最近优先截断。 */
-const conversationHistoryMessages = 30;
 /** 常驻对话工作区的空闲存活时间，超时后由 Runner 或 storage cleanup 回收。 */
 const conversationWorkspaceTtlMs = 60 * 60_000;
 /** 常驻对话工作区的数量上限，超出时按最近最少使用淘汰。 */
@@ -149,6 +148,42 @@ export class ConversationRunner {
     return false;
   }
 
+  /**
+   * 维护跨轮滚动摘要：把「上一份摘要 + 本轮被裁剪掉的历史」压缩成新摘要并持久化。
+   * 摘要失败不影响本轮结果——它只是优化，不能因为压缩出错就让已回答的轮次变失败。
+   */
+  private async updateSummary(
+    turn: ConversationTurnContext,
+    dropped: { id?: string; role: "user" | "assistant"; content: string }[],
+    workspacePath: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!this.config.agent.summaryEnabled || dropped.length === 0) return;
+    const summaryMessageId = dropped.at(-1)?.id;
+    if (!summaryMessageId) return;
+    const transcript = [
+      ...(turn.summary ? [{ role: "assistant" as const, content: `[Existing summary]\n${turn.summary}` }] : []),
+      ...dropped.map((message) => ({ role: message.role, content: message.content })),
+    ];
+    try {
+      const summary = await this.agent.generate(
+        {
+          taskType: "conversation",
+          systemPrompt: getSummarySystemPrompt(this.config.agent.responseLanguage),
+          userPrompt: JSON.stringify({ conversation: transcript }),
+        },
+        workspacePath,
+        signal,
+      );
+      this.store.saveConversationSummary(turn.conversationId, summary.content, summaryMessageId);
+    } catch (error) {
+      console.warn("conversation summary update failed", {
+        conversationId: turn.conversationId,
+        error: errorMessage(error),
+      });
+    }
+  }
+
   private async execute(turn: ConversationTurnContext, signal: AbortSignal): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
@@ -200,13 +235,26 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      const userPrompt = JSON.stringify({
+      // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
+      // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。
+      const { messages: history, dropped } = trimHistory(
+        turn.history,
+        this.config.agent.historyTokenBudget,
+      );
+      if (dropped.length > 0) {
+        console.info("conversation history trimmed to fit the token budget", {
+          turnId: turn.turnId,
+          dropped: dropped.length,
+          kept: history.length,
+        });
+      }
+      const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
           branch: turn.targetBranch,
           headSha: turn.headSha,
         },
-        conversation: turn.history.slice(-conversationHistoryMessages),
+        summary: turn.summary,
         currentRequest: turn.request,
       });
       const started = Date.now();
@@ -223,7 +271,12 @@ export class ConversationRunner {
             requestCharacters: [...turn.request].length,
           },
           () => this.agent.generate(
-            { taskType: "conversation", systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage), userPrompt },
+            {
+              taskType: "conversation",
+              systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage),
+              userPrompt,
+              history,
+            },
             workspace.path,
             signal,
             trace,
@@ -236,6 +289,7 @@ export class ConversationRunner {
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
       this.store.finishConversationTurn(turn.turnId, answer.content);
+      await this.updateSummary(turn, dropped, workspace.path, signal);
     } catch (error) {
       if (signal.aborted) {
         this.store.cancelConversationTurn(turn.turnId, "This turn was cancelled before it could finish.");

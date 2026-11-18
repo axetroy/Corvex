@@ -15,6 +15,7 @@ const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((mod
 const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
 const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
+const SettingsPage = lazy(() => import("./components/SettingsPage.js").then((module) => ({ default: module.SettingsPage })));
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -133,7 +134,7 @@ export function App() {
           <Menu
             className="primary-nav"
             mode="horizontal"
-            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
+            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
             onClick={({ key }) => {
               window.location.hash = key === "events"
                 ? eventsHash(queue)
@@ -145,6 +146,7 @@ export function App() {
               { key: "conversations", label: copy.navConversations },
               { key: "events", label: copy.navEvents },
               { key: "overview", label: copy.navOverview },
+              { key: "settings", label: copy.navSettings },
             ]}
           />
         </nav>
@@ -207,6 +209,14 @@ export function App() {
               onUpdated={handleUpdated}
               onRefresh={refresh}
               onConversationChange={updateConversationRoute}
+            />
+          ) : null}
+          {page.kind === "settings" ? (
+            <SettingsPage
+              copy={copy}
+              refreshToken={refreshToken}
+              onUpdated={handleUpdated}
+              onRefresh={refresh}
             />
           ) : null}
           </Suspense>

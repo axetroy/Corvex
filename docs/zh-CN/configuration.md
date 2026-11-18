@@ -66,6 +66,15 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `agent.web_enabled` | `true` | 布尔值 | 为 review 和 explain 任务启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组 | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 | `agent.skill_paths` | `[]` | 路径数组 | 额外的可信 Pi Skill 目录；这些路径也可作为有界只读 `read_file` 工具的允许根目录。 |
+| `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。它决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。 |
+| `agent.max_input_tokens` | `0` | 0 ≤ 值 < `context_window` | 单次请求输入 Token 的硬上限。`0` 表示由 `context_window` 减去 `max_output_tokens` 与固定框架开销推导。 |
+| `agent.history_token_budget` | `24000` | 0–`context_window` | 对话请求中重新注入历史轮次的 Token 预算；超出后裁剪较早历史，`summary_enabled` 开启时改为压缩成摘要。 |
+| `agent.turn_tool_result_bytes` | `524288` | 0–67,108,864 | 单轮内允许累计的工具输出字节数，超出时优雅中止本轮。`0` 表示不限制。 |
+| `agent.compaction_reserve_tokens` | `16384` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。 |
+| `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。 |
+| `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |
+
+这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出；若服务商仍报超窗，会再去掉历史激进重试一次。它们也可以在运维台设置页面上运行时调整，无需修改配置文件。
 
 启用 Agent 后必须提供 `CORVEX_MODEL_API_KEY`。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
