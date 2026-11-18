@@ -46,6 +46,22 @@ function validConfig(): CorvexConfig {
 }
 
 describe("validateConfig", () => {
+  it("defaults the per-turn tool result budget to 2 MiB", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-tool-budget-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(configPath, JSON.stringify({
+        gitlab: { base_url: "https://gitlab.example.com" },
+        storage: { root, database: join(root, "state.db") },
+      }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        agent: { turnToolResultBytes: 2 << 20 },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps issue implementation disabled by default and requires the Agent when enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-issue-config-"));
     const configPath = join(root, "config.yaml");

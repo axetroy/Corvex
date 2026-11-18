@@ -69,7 +69,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。它决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。 |
 | `agent.max_input_tokens` | `0` | 0 ≤ 值 < `context_window` | 单次请求输入 Token 的硬上限。`0` 表示由 `context_window` 减去 `max_output_tokens` 与固定框架开销推导。 |
 | `agent.history_token_budget` | `24000` | 0–`context_window` | 对话请求中重新注入历史轮次的 Token 预算；超出后裁剪较早历史，`summary_enabled` 开启时改为压缩成摘要。 |
-| `agent.turn_tool_result_bytes` | `524288` | 0–67,108,864 | 单轮内允许累计的工具输出字节数。达到 75% 时提示模型先收尾并在下一条消息继续；超出时以预算错误中止本轮。`0` 表示不限制。 |
+| `agent.turn_tool_result_bytes` | `2097152` | 0–67,108,864 | 单轮内允许累计的工具输出字节数。达到 75% 时提示模型先收尾并在下一条消息继续；超出时以预算错误中止本轮。`0` 表示不限制。 |
 | `agent.compaction_reserve_tokens` | `16384` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。 |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。 |
 | `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |

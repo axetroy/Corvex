@@ -34,7 +34,7 @@ agent:
   context_window: 131072
   max_input_tokens: 0
   history_token_budget: 24000
-  turn_tool_result_bytes: 524288
+  turn_tool_result_bytes: 2097152
   compaction_reserve_tokens: 16384
   compaction_keep_recent_tokens: 20000
   summary_enabled: true
