@@ -244,6 +244,22 @@ describe("CorvexServer", () => {
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/missing-turn`,
         { headers: { authorization } },
       )).status).toBe(404);
+      // 整段对话轨迹端点把全部轮次合并成一条时间线，未知对话返回 404。
+      const conversationTurnsResponse = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/turns`,
+        { headers: { authorization } },
+      );
+      expect(conversationTurnsResponse.status).toBe(200);
+      expect(await conversationTurnsResponse.json()).toMatchObject({
+        conversationId: createdConversation.conversationId,
+        turns: [{ turnId: createdConversation.turnId, status: "queued", request: "Explain this repository" }],
+        trajectory: [],
+        events: [],
+      });
+      expect((await fetch(
+        `${base}/api/ops/conversations/missing-conversation/turns`,
+        { headers: { authorization } },
+      )).status).toBe(404);
       // 统计端点汇总整段对话的用量与逐轮明细，未知对话返回 404。
       const conversationStatsResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/stats`,

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { Tabs } from "antd";
 import type { Copy, Locale } from "../i18n.js";
-import type { EventTraceEntry } from "../types.js";
+import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
 import { Empty } from "./common.js";
 import { TraceDiagram } from "./TraceDiagram.js";
 import { TraceSession } from "./TraceSession.js";
@@ -12,11 +12,15 @@ type TraceView = "session" | "trace";
 export const TraceExperience = memo(function TraceExperience({
   entries,
   userRequest,
+  turns,
   copy,
   locale,
 }: {
   entries: readonly EventTraceEntry[];
-  userRequest: string;
+  /** 单轮场景的用户请求；与 `turns` 二选一。 */
+  userRequest?: string;
+  /** 按轮分组的元数据；有值时两个视图都按轮分段展示整段对话。 */
+  turns?: readonly ConversationTurnSegment[];
   copy: Copy;
   locale: Locale;
 }) {
@@ -54,7 +58,7 @@ export const TraceExperience = memo(function TraceExperience({
           {
             key: "session",
             label: copy.traceTabSession,
-            children: <TraceSession traces={traces} userRequest={userRequest} copy={copy} locale={locale} />,
+            children: <TraceSession traces={traces} userRequest={userRequest} turns={turns} copy={copy} locale={locale} />,
           },
           {
             key: "trace",
@@ -62,6 +66,7 @@ export const TraceExperience = memo(function TraceExperience({
             children: (
               <TraceDiagram
                 traces={traces}
+                turns={turns}
                 copy={copy}
                 locale={locale}
                 selection={selection}

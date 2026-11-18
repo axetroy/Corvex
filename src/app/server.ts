@@ -389,6 +389,23 @@ export class CorvexServer {
       respondJson(response, 200, conversation);
       return;
     }
+    // 整段对话轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
+    // 供对话页「轨迹」标签默认在一个轨迹里展示所有轮次。
+    const conversationTurnsMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns$/.exec(url.pathname);
+    if (request.method === "GET" && conversationTurnsMatch) {
+      const conversationId = this.decodePathSegment(conversationTurnsMatch[1]!);
+      if (!conversationId) {
+        respondJson(response, 400, { error: "invalid conversation ID" });
+        return;
+      }
+      const turns = this.store.getConversationTurns(conversationId);
+      if (!turns) {
+        respondJson(response, 404, { error: "conversation not found" });
+        return;
+      }
+      respondJson(response, 200, turns);
+      return;
+    }
     // 单轮对话记录：把该轮的状态、生命周期、轨迹与执行步骤一并返回，
     // 供对话页「轨迹」标签查看某一轮的完整记录，无需跳到事件详情页。
     const conversationTurnMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(url.pathname);

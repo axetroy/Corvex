@@ -5,7 +5,7 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
-import type { ConversationMessage, ConversationTurn } from "../types.js";
+import type { ConversationMessage, ConversationTurn, ConversationTurns } from "../types.js";
 import { Empty, ErrorBanner, Loading, Panel, StatusBadge } from "./common.js";
 import { ExecutionSteps } from "./ExecutionSteps.js";
 import { TraceExperience } from "./TraceExperience.js";
@@ -20,7 +20,7 @@ interface Props {
   onUpdated: (value: string) => void;
 }
 
-/** 可查看轨迹的轮次：助手回复且已关联事件（含尚未产出轨迹的进行中轮次）。 */
+/** 可查看轨迹的轮次：助手回复且已关联轮次（含尚未产出轨迹的进行中轮次）。 */
 interface TurnOption {
   messageId: string;
   turnId: string;
@@ -30,8 +30,8 @@ interface TurnOption {
 }
 
 /**
- * 对话「轨迹」标签：从该对话的轮次里选择一轮，展示该轮的模型与工具轨迹，
- * 以及事件生命周期与执行步骤。数据按需从单轮记录端点拉取。
+ * 对话「轨迹」标签：默认把该对话全部轮次合并成一条轨迹，从会话与时间线两个视图查看
+ * 整段对话的模型与工具活动；也可以只聚焦某一轮，连同该轮的生命周期与执行步骤一起查看。
  */
 export function ConversationTraceTab({ conversationId, messages, copy, locale, refreshToken, onUpdated }: Props) {
   const turns = useMemo<TurnOption[]>(
@@ -48,30 +48,47 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
       .map((turn, index, all) => ({ ...turn, label: `#${all.length - index} · ${turn.label}` })),
     [messages, copy, locale],
   );
+  // 空字符串表示「全部轮次」，即把整段对话合并成一条轨迹。
   const [selectedTurnId, setSelectedTurnId] = useState("");
-  const [turn, setTurn] = useState<ConversationTurn>();
+  const [all, setAll] = useState<ConversationTurns>();
+  const [single, setSingle] = useState<ConversationTurn>();
   const [error, setError] = useState<string>();
 
-  // 选中轮次在刷新后可能消失（例如被取消），回退到最新一轮。
+  // 切换对话时回到「全部轮次」的默认视图。
   useEffect(() => {
-    setSelectedTurnId((current) => (turns.some((option) => option.turnId === current) ? current : turns[0]?.turnId ?? ""));
+    setSelectedTurnId("");
+    setAll(undefined);
+    setSingle(undefined);
+  }, [conversationId]);
+
+  // 选中轮次在刷新后可能消失（例如被取消），回退到全部轮次。
+  useEffect(() => {
+    setSelectedTurnId((current) => (current && !turns.some((option) => option.turnId === current) ? "" : current));
   }, [turns]);
 
   useEffect(() => {
-    if (!conversationId || !selectedTurnId) {
-      setTurn(undefined);
+    if (!conversationId) {
+      setAll(undefined);
+      setSingle(undefined);
       setError(undefined);
       return;
     }
     let active = true;
     setError(undefined);
-    fetchJson<ConversationTurn>(
-      `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(selectedTurnId)}`,
-      copy,
-    )
+    const path = selectedTurnId
+      ? `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(selectedTurnId)}`
+      : `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns`;
+    fetchJson<ConversationTurns | ConversationTurn>(path, copy)
       .then((value) => {
         if (!active) return;
-        setTurn(value);
+        // 整段返回带 `turns`，单轮返回带 `timeline`；据此区分两份视图数据。
+        if ("turns" in value) {
+          setAll(value);
+          setSingle(undefined);
+        } else {
+          setSingle(value);
+          setAll(undefined);
+        }
         onUpdated(new Date().toISOString());
       })
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
@@ -88,6 +105,8 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
     );
   }
 
+  const loading = selectedTurnId ? !single : !all;
+
   return (
     <div className="conversation-trace">
       <div className="conversation-trace-picker">
@@ -96,29 +115,47 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
           <Select
             className="conversation-turn-select"
             aria-label={copy.conversationTurnPicker}
-            value={selectedTurnId || undefined}
-            options={turns.map((option) => ({ value: option.turnId, label: option.label }))}
+            value={selectedTurnId}
+            options={[
+              { value: "", label: copy.conversationTraceAllTurns },
+              ...turns.map((option) => ({ value: option.turnId, label: option.label })),
+            ]}
             onChange={(value) => setSelectedTurnId(value)}
           />
-          {turn ? <StatusBadge status={turn.status} label={translate(copy.statuses, turn.status)} /> : null}
+          {single ? <StatusBadge status={single.status} label={translate(copy.statuses, single.status)} /> : null}
         </Space>
         <Typography.Text type="secondary" className="conversation-trace-hint">{copy.conversationTraceSelectHint}</Typography.Text>
       </div>
       {error ? <ErrorBanner message={error} /> : null}
-      {!turn && !error ? <Loading>{copy.loading}</Loading> : null}
-      {turn ? (
+      {loading && !error ? <Loading>{copy.loading}</Loading> : null}
+      {single ? (
         <>
           <div className="conversation-turn-meta">
             <Space size={10} wrap>
-              <Tag>{copy.traceDuration}: {formatTraceDuration(turnDurationMs(turn), copy)}</Tag>
-              <Tag>{copy.attempts}: {turn.attemptCount}</Tag>
-              <Tag>{copy.headSha}: {turn.headSha.slice(0, 12)}</Tag>
+              <Tag>{copy.traceDuration}: {formatTraceDuration(turnDurationMs(single), copy)}</Tag>
+              <Tag>{copy.attempts}: {single.attemptCount}</Tag>
+              <Tag>{copy.headSha}: {single.headSha.slice(0, 12)}</Tag>
             </Space>
-            {turn.lastError ? <p className="conversation-turn-error">{turn.lastError}</p> : null}
+            {single.lastError ? <p className="conversation-turn-error">{single.lastError}</p> : null}
           </div>
-          <TraceExperience entries={turn.trajectory} userRequest={turn.request} copy={copy} locale={locale} />
+          <TraceExperience entries={single.trajectory} userRequest={single.request} copy={copy} locale={locale} />
           <Panel title={copy.traceRecords}>
-            <ExecutionSteps events={turn.events} copy={copy} locale={locale} />
+            <ExecutionSteps events={single.events} copy={copy} locale={locale} />
+          </Panel>
+        </>
+      ) : null}
+      {all ? (
+        <>
+          <div className="conversation-turn-meta">
+            <Space size={10} wrap>
+              <Tag>{copy.conversationTraceTurnCountTemplate.replace("{count}", String(all.turns.length))}</Tag>
+              <Tag>{copy.traceDuration}: {formatTraceDuration(mergedDurationMs(all), copy)}</Tag>
+              <Tag>{copy.traceRecords}: {all.trajectory.length}</Tag>
+            </Space>
+          </div>
+          <TraceExperience entries={all.trajectory} turns={all.turns} copy={copy} locale={locale} />
+          <Panel title={copy.traceRecords}>
+            <ExecutionSteps events={all.events} copy={copy} locale={locale} />
           </Panel>
         </>
       ) : null}
@@ -132,4 +169,18 @@ function turnDurationMs(turn: ConversationTurn): number | null {
   const end = Date.parse(turn.updatedAt);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
   return end - start;
+}
+
+/** 全部轮次的累计耗时：按各轮创建到更新的时长求和，缺失的轮次跳过。 */
+function mergedDurationMs(all: ConversationTurns): number | null {
+  let total = 0;
+  let measured = 0;
+  for (const turn of all.turns) {
+    const start = Date.parse(turn.createdAt);
+    const end = Date.parse(turn.updatedAt);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
+    total += end - start;
+    measured++;
+  }
+  return measured > 0 ? total : null;
 }

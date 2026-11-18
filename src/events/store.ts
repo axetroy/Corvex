@@ -36,7 +36,9 @@ import {
   type EventTraceKind,
   type EventTraceStatus,
   type EventType,
+  type ConversationTurnSegment,
   type ConversationTurnTransition,
+  type ConversationTurns,
   type ModelCallMetric,
   type ModelTaskType,
   type OperationsOverview,
@@ -1300,6 +1302,48 @@ export class EventStore {
       timeline: this.readTurnTimeline(turnId),
       trajectory: this.readEventTrajectory({ kind: "conversation", turnId }),
       events: this.readExecutionSteps({ kind: "conversation", turnId }),
+    };
+  }
+
+  /**
+   * 读取整段对话的轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
+   * 并按轮次创建时间给出分组边界。对话不存在时返回 undefined。
+   */
+  getConversationTurns(conversationId: string): ConversationTurns | undefined {
+    if (!this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId)) return undefined;
+    const turns = this.db.prepare(
+      `SELECT * FROM conversation_turns
+       WHERE conversation_id=? AND role='assistant'
+       ORDER BY created_at,rowid`,
+    ).all(conversationId).flatMap((value): ConversationTurnSegment[] => {
+      const turn = readConversationTurnRow(value as Record<string, unknown>);
+      if (!turn) return [];
+      return [{
+        turnId: turn.id,
+        status: turn.status,
+        request: turn.request,
+        headSha: turn.head_sha,
+        attemptCount: turn.attempt_count,
+        createdAt: turn.created_at,
+        updatedAt: turn.updated_at,
+        lastError: turn.last_error,
+      }];
+    });
+    if (turns.length === 0) return { conversationId, turns, trajectory: [], events: [] };
+    const placeholders = turns.map(() => "?").join(",");
+    const turnIds = turns.map((turn) => turn.turnId);
+    return {
+      conversationId,
+      turns,
+      // 同一对话的轮次内联串行执行，轨迹时间天然不重叠；这里仍按时间排序，便于直接渲染。
+      trajectory: this.db
+        .prepare(`SELECT * FROM event_trace WHERE turn_id IN (${placeholders}) ORDER BY started_at,id`)
+        .all(...turnIds)
+        .map((value) => readEventTrace(value as Record<string, unknown>)),
+      events: this.db
+        .prepare(`SELECT * FROM execution_steps WHERE turn_id IN (${placeholders}) ORDER BY started_at,id`)
+        .all(...turnIds)
+        .map((value) => readExecutionStep(value as Record<string, unknown>)),
     };
   }
 

@@ -1,18 +1,20 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import {
   anchoredScrollLeft,
+  buildTimelineLayout,
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
   clampZoom,
   reconstructLlmInput,
   timelineTickCount,
+  traceTurnId,
   wheelZoomFactor,
 } from "../trace.js";
-import type { EventTraceEntry, EventTraceKind } from "../types.js";
+import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
 
 type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing";
@@ -157,15 +159,25 @@ function InspectorContent({
   );
 }
 
-/** 时间轴上每条轨迹的横向位置比例。 */
-interface TracePosition {
-  entry: EventTraceEntry;
-  startRatio: number;
-  widthRatio: number;
+/** 时间轴上的一个轮次分段：段内位置、标尺与分隔标签。 */
+interface TurnBand {
+  /** 轮次 ID；未分组的单段场景为空字符串。 */
+  key: string;
+  /** 轮次序号，用于「第 N 轮」标签；未分组时为 null。 */
+  ordinal: number | null;
+  /** 该轮的用户提问，作为分隔标签的提示。 */
+  request: string | null;
+  /** 缩放后的像素位置与宽度。 */
+  offset: number;
+  width: number;
+  /** 该段的时间跨度（毫秒），用于生成段内刻度。 */
+  duration: number;
 }
 
 interface DiagramProps {
   traces: readonly EventTraceEntry[];
+  /** 按轮分组的元数据；为空表示单段（事件轨迹），时间轴不分段。 */
+  turns?: readonly ConversationTurnSegment[];
   copy: Copy;
   locale: Locale;
   selection: ReadonlySet<number>;
@@ -173,33 +185,42 @@ interface DiagramProps {
 }
 
 /** 轨迹视图：时间轴概览、活动列表与事件详情面板。 */
-export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, selection, onSelectionChange }: DiagramProps) {
+export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, locale, selection, onSelectionChange }: DiagramProps) {
   const [zoom, setZoom] = useState(1);
-  const [drag, setDrag] = useState<{ start: number; current: number; kind: EventTraceKind }>();
+  const [drag, setDrag] = useState<{ start: number; current: number }>();
   const [activeTab, setActiveTab] = useState<InspectorTab>("overview");
-  const plots = useRef<Partial<Record<EventTraceKind, HTMLDivElement | null>>>({});
+  const plot = useRef<HTMLDivElement | null>(null);
   const scroll = useRef<HTMLDivElement | null>(null);
   // 滚轮事件必须在非 passive 监听器里 preventDefault，否则页面会跟着滚动。
   const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
 
   // 时间轴几何只依赖轨迹内容：用 reduce 而非展开参数，避免超长轨迹触发参数上限。
-  const { duration, basePlotWidth, positions } = useMemo(() => {
+  const { duration, layout } = useMemo(() => {
     const starts = traces.map((entry) => Date.parse(entry.startedAt));
     const ends = traces.map((entry) => Date.parse(entry.finishedAt ?? entry.startedAt));
     const startTime = starts.reduce((min, value) => Math.min(min, value), Number.POSITIVE_INFINITY);
     const endTime = ends.reduce((max, value) => Math.max(max, value), Number.NEGATIVE_INFINITY);
-    const span = Math.max(1, endTime - startTime);
+    // 分组后每轮各占一段、可窄一些；事件详情等单段场景保持较宽的默认时间轴。
+    const grouped = traces.some((entry) => traceTurnId(entry) !== null);
     return {
-      duration: span,
-      basePlotWidth: Math.max(760, Math.min(1400, traces.length * 22)),
-      positions: traces.map((entry): TracePosition => {
-        const startRatio = Math.max(0, (Date.parse(entry.startedAt) - startTime) / span);
-        const endRatio = Math.max(startRatio, (Date.parse(entry.finishedAt ?? entry.startedAt) - startTime) / span);
-        return { entry, startRatio, widthRatio: endRatio - startRatio };
-      }),
+      duration: Math.max(1, endTime - startTime),
+      layout: buildTimelineLayout(traces, traceTurnId, grouped ? undefined : { minWidth: 760 }),
     };
   }, [traces]);
-  const plotWidth = Math.round(basePlotWidth * zoom);
+  const plotWidth = Math.round(layout.width * zoom);
+  // 分段与条目共用同一缩放比例，标尺与色条才能对齐。
+  const bands = useMemo<TurnBand[]>(
+    () => layout.segments.map((segment, index) => ({
+      key: segment.key,
+      ordinal: segment.key ? index + 1 : null,
+      request: turns?.find((turn) => turn.turnId === segment.key)?.request ?? null,
+      offset: segment.offset * zoom,
+      width: segment.width * zoom,
+      duration: segment.duration,
+    })),
+    [layout, turns, zoom],
+  );
+  const grouped = bands.some((band) => band.ordinal !== null);
 
   // 保持光标下方的时间点不动：缩放前后用同一比例换算滚动位置。
   const zoomAt = (nextZoom: number, viewport: HTMLDivElement, clientX?: number): void => {
@@ -257,33 +278,38 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
 
   const ticks = timelineTickCount(zoom);
 
-  const plotLocalX = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind): number => {
-    const plot = plots.current[kind];
-    return plot ? event.clientX - plot.getBoundingClientRect().left : 0;
+  const plotLocalX = (event: ReactPointerEvent<HTMLDivElement>): number => {
+    const node = plot.current;
+    return node ? event.clientX - node.getBoundingClientRect().left : 0;
   };
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
-    const point = plotLocalX(event, kind);
-    setDrag({ start: point, current: point, kind });
+    const point = plotLocalX(event);
+    setDrag({ start: point, current: point });
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag) return;
-    setDrag({ ...drag, current: plotLocalX(event, drag.kind) });
+    setDrag({ ...drag, current: plotLocalX(event) });
   };
 
-  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind) => {
-    if (!drag || drag.kind !== kind) return;
-    const endX = Math.max(0, Math.min(plotWidth, plotLocalX(event, kind)));
-    const fromRatio = Math.min(drag.start, endX) / plotWidth;
-    const toRatio = Math.max(drag.start, endX) / plotWidth;
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag) return;
+    const endX = Math.max(0, Math.min(plotWidth, plotLocalX(event)));
     const selected = new Set<number>();
     // 拖动距离过小视为点击空白处，清空选择。
     if (Math.abs(endX - drag.start) > 5) {
-      for (const { entry, startRatio, widthRatio } of positions) {
-        if (startRatio + widthRatio >= fromRatio && startRatio <= toRatio) selected.add(entry.id);
+      const fromX = Math.min(drag.start, endX);
+      const toX = Math.max(drag.start, endX);
+      // 按像素判定：轮次分段各自压缩过空档，比例坐标无法跨段比较。
+      for (const band of bands) {
+        for (const { entry, startRatio, widthRatio } of layout.segments.find((segment) => segment.key === band.key)?.positions ?? []) {
+          const left = band.offset + startRatio * band.width;
+          const right = left + Math.max(4, widthRatio * band.width);
+          if (right >= fromX && left <= toX) selected.add(entry.id);
+        }
       }
     }
     setDrag(undefined);
@@ -364,15 +390,28 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
             <div className="trace-overview-axis-row">
               <span className="trace-overview-label-spacer" />
               <div className="trace-overview-axis" style={{ width: `${plotWidth}px` }}>
-                {Array.from({ length: ticks }, (_, index) => (
-                  <span
-                    key={index}
-                    className="trace-overview-tick"
-                    aria-hidden="true"
-                    style={{ left: `${(index / (ticks - 1)) * 100}%` }}
+                {bands.map((band) => (
+                  <div
+                    key={band.key || "single"}
+                    className={`trace-overview-band-axis${band.ordinal === null ? " is-ungrouped" : ""}`}
+                    style={{ left: `${band.offset}px`, width: `${band.width}px` }}
                   >
-                    {formatTraceDuration(Math.round(duration * (index / (ticks - 1))), copy)}
-                  </span>
+                    {band.ordinal !== null ? (
+                      <span className="trace-overview-band-label" title={band.request ?? undefined}>
+                        {copy.traceTurnLabelTemplate.replace("{turn}", String(band.ordinal))}
+                      </span>
+                    ) : null}
+                    {Array.from({ length: ticks }, (_, index) => (
+                      <span
+                        key={index}
+                        className="trace-overview-tick"
+                        aria-hidden="true"
+                        style={{ left: `${(index / (ticks - 1)) * 100}%` }}
+                      >
+                        {formatTraceDuration(Math.round(band.duration * (index / (ticks - 1))), copy)}
+                      </span>
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>
@@ -383,32 +422,46 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
                   className={`trace-overview-plot trace-overview-plot-${kind}`}
                   style={{ width: `${plotWidth}px` }}
                   ref={(node) => {
-                    plots.current[kind] = node;
+                    plot.current = node;
                   }}
-                  onPointerDown={(event) => handlePointerDown(event, kind)}
+                  onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
-                  onPointerUp={(event) => handlePointerUp(event, kind)}
+                  onPointerUp={handlePointerUp}
                   onPointerCancel={() => setDrag(undefined)}
                 >
-                  {positions
-                    .filter((position) => position.entry.kind === kind)
-                    .map(({ entry, startRatio, widthRatio }) => {
-                      const title = entry.kind === "llm" ? entry.model || entry.name : entry.name;
-                      return (
-                        <button
-                          key={entry.id}
-                          type="button"
-                          className={`trace-time-bar trace-time-bar-${entry.kind} trace-time-bar-${entry.status}${selection.has(entry.id) ? " is-selected" : ""}`}
-                          title={`${title} · ${formatTraceDuration(entry.durationMs, copy)}`}
-                          aria-label={`${copy.traceKinds[entry.kind]}: ${title}, ${formatTraceDuration(entry.durationMs, copy)}`}
-                          style={{
-                            left: `${startRatio * plotWidth}px`,
-                            width: `${Math.max(4, widthRatio * plotWidth)}px`,
-                          }}
-                          onClick={() => onSelectionChange(new Set([entry.id]))}
-                        />
-                      );
-                    })}
+                  {/* 轮次分隔线：每轮各占一段，段间空档被压缩后仍能一眼看出轮次边界。 */}
+                  {grouped
+                    ? bands.map((band) => (
+                      <span
+                        key={band.key}
+                        className="trace-overview-band"
+                        aria-hidden="true"
+                        style={{ left: `${band.offset}px`, width: `${band.width}px` }}
+                      />
+                    ))
+                    : null}
+                  {bands.flatMap((band) => {
+                    const segment = layout.segments.find((candidate) => candidate.key === band.key);
+                    return (segment?.positions ?? [])
+                      .filter((position) => position.entry.kind === kind)
+                      .map(({ entry, startRatio, widthRatio }) => {
+                        const title = entry.kind === "llm" ? entry.model || entry.name : entry.name;
+                        return (
+                          <button
+                            key={entry.id}
+                            type="button"
+                            className={`trace-time-bar trace-time-bar-${entry.kind} trace-time-bar-${entry.status}${selection.has(entry.id) ? " is-selected" : ""}`}
+                            title={`${title} · ${formatTraceDuration(entry.durationMs, copy)}`}
+                            aria-label={`${copy.traceKinds[entry.kind]}: ${title}, ${formatTraceDuration(entry.durationMs, copy)}`}
+                            style={{
+                              left: `${band.offset + startRatio * band.width}px`,
+                              width: `${Math.max(4, widthRatio * band.width)}px`,
+                            }}
+                            onClick={() => onSelectionChange(new Set([entry.id]))}
+                          />
+                        );
+                      });
+                  })}
                 </div>
               </div>
             ))}
@@ -443,28 +496,40 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
             <span className="trace-event-count">{traces.length}</span>
           </div>
           <div className="trace-event-list" aria-label={copy.traceRecords}>
-            {traces.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className={`trace-event-row trace-event-row-${entry.kind}${selection.has(entry.id) ? " is-selected" : ""}`}
-                aria-pressed={selection.has(entry.id)}
-                onClick={() => onSelectionChange(new Set([entry.id]))}
-              >
-                <span className="trace-event-kind">{copy.traceKinds[entry.kind]}</span>
-                <strong className="trace-event-title">
-                  {entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name}
-                </strong>
-                <span className="trace-event-round">
-                  {copy.traceAttemptRoundTemplate
-                    .replace("{attempt}", String(entry.attempt))
-                    .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round))}
-                </span>
-                <span className={`trace-event-status trace-event-status-${entry.status}`}>
-                  {translate(copy.traceStatuses, entry.status)}
-                </span>
-                <time className="trace-event-duration">{formatTraceDuration(entry.durationMs, copy)}</time>
-              </button>
+            {bands.map((band, bandIndex) => (
+              <Fragment key={band.key || "single"}>
+                {band.ordinal !== null ? (
+                  <div className="trace-event-band" title={band.request ?? undefined}>
+                    <span className="trace-event-band-label">
+                      {copy.traceTurnLabelTemplate.replace("{turn}", String(band.ordinal))}
+                    </span>
+                    {band.request ? <span className="trace-event-band-request">{band.request}</span> : null}
+                  </div>
+                ) : null}
+                {(layout.segments[bandIndex]?.entries ?? []).map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={`trace-event-row trace-event-row-${entry.kind}${selection.has(entry.id) ? " is-selected" : ""}`}
+                    aria-pressed={selection.has(entry.id)}
+                    onClick={() => onSelectionChange(new Set([entry.id]))}
+                  >
+                    <span className="trace-event-kind">{copy.traceKinds[entry.kind]}</span>
+                    <strong className="trace-event-title">
+                      {entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name}
+                    </strong>
+                    <span className="trace-event-round">
+                      {copy.traceAttemptRoundTemplate
+                        .replace("{attempt}", String(entry.attempt))
+                        .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round))}
+                    </span>
+                    <span className={`trace-event-status trace-event-status-${entry.status}`}>
+                      {translate(copy.traceStatuses, entry.status)}
+                    </span>
+                    <time className="trace-event-duration">{formatTraceDuration(entry.durationMs, copy)}</time>
+                  </button>
+                ))}
+              </Fragment>
             ))}
           </div>
         </section>

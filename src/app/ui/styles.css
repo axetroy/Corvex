@@ -412,6 +412,37 @@ details summary {
   color: #a56a11;
 }
 
+.trace-session-status-queued,
+.trace-session-status-preparing,
+.trace-session-status-analyzing,
+.trace-session-status-stale,
+.trace-session-status-cancelled {
+  color: #64737f;
+}
+
+.trace-session-turn {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e6eaed;
+}
+
+.trace-session-turn-label {
+  color: #40515e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trace-session-turn-error {
+  min-width: 0;
+  overflow: hidden;
+  color: #b63838;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .trace-session-duration {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -764,6 +795,40 @@ footer {
   border-bottom: 1px solid #dfe5e9;
 }
 
+.trace-overview-band-axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  border-left: 1px dashed #c7d1d8;
+}
+
+.trace-overview-band-axis.is-ungrouped {
+  border-left: 0;
+}
+
+.trace-overview-band-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  max-width: calc(100% - 8px);
+  overflow: hidden;
+  color: #4c5b66;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-overview-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  border-left: 1px dashed #d8dfe4;
+  pointer-events: none;
+}
+
 .trace-overview-tick {
   position: absolute;
   bottom: 4px;
@@ -910,6 +975,31 @@ footer {
 .trace-event-list {
   max-height: 430px;
   overflow: auto;
+}
+
+.trace-event-band {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px 4px;
+  background: #f6f9fb;
+  border-bottom: 1px solid #e2e8ec;
+}
+
+.trace-event-band-label {
+  color: #40515e;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trace-event-band-request {
+  min-width: 0;
+  overflow: hidden;
+  color: #6b7a86;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .trace-event-row {

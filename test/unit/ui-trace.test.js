@@ -7,11 +7,13 @@ import { ConversationToolCalls } from "../../src/app/ui/components/ConversationT
 import { TraceSession } from "../../src/app/ui/components/TraceSession.tsx";
 import {
   anchoredScrollLeft,
+  buildTimelineLayout,
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
   clampZoom,
   reconstructLlmInput,
   timelineTickCount,
+  traceTurnId,
   wheelZoomFactor,
 } from "../../src/app/ui/trace.ts";
 
@@ -365,5 +367,87 @@ describe("operations UI trace reconstruction", () => {
     expect(timelineTickCount(4)).toBe(33);
     expect(timelineTickCount(32)).toBe(33);
     expect(timelineTickCount(Number.NaN)).toBe(9);
+  });
+
+  it("segments a merged conversation trace by turn and compresses idle gaps", () => {
+    const entry = (id, turnId, startedAt, finishedAt) => ({
+      id,
+      turnId,
+      startedAt,
+      finishedAt,
+    });
+    const layout = buildTimelineLayout([
+      entry(1, "turn-a", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.000Z"),
+      entry(2, "turn-a", "2026-01-01T00:00:05.000Z", "2026-01-01T00:00:06.000Z"),
+      // 两轮之间隔了一小时：只保留被压缩后的有限空档，不会撑爆时间轴。
+      entry(3, "turn-b", "2026-01-01T01:00:00.000Z", "2026-01-01T01:00:01.000Z"),
+    ], (value) => value.turnId, { minWidth: 100, maxWidth: 400, perEntry: 100, segmentGap: 24 });
+
+    expect(layout.segments.map((segment) => segment.key)).toEqual(["turn-a", "turn-b"]);
+    // 每段独立测量时间跨度：第一段 10s，第二段 1s。
+    expect(layout.segments[0].duration).toBe(10_000);
+    expect(layout.segments[1].duration).toBe(1_000);
+    // 段内位置按该段自己的时间比例换算。
+    expect(layout.segments[0].positions[1].startRatio).toBeCloseTo(0.5);
+    // 第二段起点 = 第一段宽度 + 固定像素间隔；一小时的间隔不会撑出巨量空白。
+    expect(layout.segments[1].offset).toBe(200 + 24);
+    expect(layout.width).toBe(200 + 24 + 100);
+  });
+
+  it("keeps a single ungrouped timeline as one segment", () => {
+    const layout = buildTimelineLayout([
+      { id: 1, startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" },
+      { id: 2, startedAt: "2026-01-01T00:00:02.000Z", finishedAt: "2026-01-01T00:00:03.000Z" },
+    ], traceTurnId, { minWidth: 320, maxWidth: 1400, perEntry: 22 });
+
+    expect(layout.segments).toHaveLength(1);
+    expect(layout.segments[0].key).toBe("");
+    expect(layout.segments[0].offset).toBe(0);
+    expect(layout.segments[0].duration).toBe(3_000);
+    expect(layout.width).toBe(320);
+  });
+
+  it("renders every turn of a merged conversation in one session view", () => {
+    const trace = (id, turnId, startedAt, output) => ({
+      id,
+      turnId,
+      attempt: 1,
+      round: 1,
+      kind: "llm",
+      name: "conversation",
+      status: "succeeded",
+      startedAt,
+      finishedAt: startedAt,
+      durationMs: 10,
+      firstTokenMs: null,
+      generationDurationMs: null,
+      model: "test-model",
+      inputTokens: null,
+      outputTokens: null,
+      input: null,
+      output: JSON.stringify({ content: [{ type: "text", text: output }] }),
+      schema: null,
+      rawContent: null,
+      errorDetail: null,
+    });
+    const markup = renderToStaticMarkup(createElement(TraceSession, {
+      traces: [
+        trace(1, "turn-a", "2026-01-01T00:00:00.000Z", "First answer."),
+        trace(2, "turn-b", "2026-01-01T01:00:00.000Z", "Second answer."),
+      ],
+      turns: [
+        { turnId: "turn-a", status: "completed", request: "First question", headSha: "a".repeat(40), attemptCount: 1, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:10.000Z", lastError: "" },
+        { turnId: "turn-b", status: "completed", request: "Second question", headSha: "a".repeat(40), attemptCount: 1, createdAt: "2026-01-01T01:00:00.000Z", updatedAt: "2026-01-01T01:00:01.000Z", lastError: "" },
+      ],
+      copy: en,
+      locale: "en",
+    }));
+
+    expect(markup).toContain("Turn 1");
+    expect(markup).toContain("Turn 2");
+    expect(markup).toContain("First question");
+    expect(markup).toContain("Second question");
+    expect(markup).toContain("First answer.");
+    expect(markup).toContain("Second answer.");
   });
 });

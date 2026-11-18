@@ -240,6 +240,75 @@ describe("EventStore", () => {
     expect(store.getConversationTurn(created.conversationId, "missing-turn")).toBeUndefined();
   });
 
+  it("merges every turn of a conversation into one ordered timeline", async () => {
+    store = await EventStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First question",
+    });
+    const first = store.claimConversationTurn(created.turnId);
+    if (!first) throw new Error("expected the first turn to be claimed");
+    const firstTrace = store.startEventTrace(
+      { kind: "conversation", turnId: first.turnId },
+      first.attempt,
+      "llm",
+      "conversation",
+      "test/model",
+      null,
+      { round: 1, input: "first context" },
+    );
+    store.finishEventTrace(firstTrace, "succeeded", 50, 10, 5, undefined, "First answer.");
+    store.recordExecutionStep({
+      turnId: first.turnId,
+      attempt: first.attempt,
+      step: "workflow.read_only_conversation",
+      status: "succeeded",
+    });
+    store.finishConversationTurn(first.turnId, "First answer.");
+
+    const added = store.addConversationMessage(created.conversationId, {
+      projectId: 7,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Second question",
+    });
+    const second = store.claimConversationTurn(added.turnId);
+    if (!second) throw new Error("expected the second turn to be claimed");
+    const secondTrace = store.startEventTrace(
+      { kind: "conversation", turnId: second.turnId },
+      second.attempt,
+      "llm",
+      "conversation",
+      "test/model",
+      null,
+      { round: 1, input: "second context" },
+    );
+    store.finishEventTrace(secondTrace, "succeeded", 70, 12, 6, undefined, "Second answer.");
+    store.recordExecutionStep({
+      turnId: second.turnId,
+      attempt: second.attempt,
+      step: "workflow.read_only_conversation",
+      status: "succeeded",
+    });
+    store.finishConversationTurn(second.turnId, "Second answer.");
+
+    const merged = store.getConversationTurns(created.conversationId);
+    expect(merged?.conversationId).toBe(created.conversationId);
+    // 轮次按创建时间升序，轨迹条目各自带回所属轮次，前端据此分段。
+    expect(merged?.turns.map((turn) => turn.turnId)).toEqual([first.turnId, second.turnId]);
+    expect(merged?.turns.map((turn) => turn.request)).toEqual(["First question", "Second question"]);
+    expect(merged?.trajectory.map((entry) => entry.output)).toEqual(["First answer.", "Second answer."]);
+    expect(merged?.trajectory.map((entry) => entry.turnId)).toEqual([first.turnId, second.turnId]);
+    expect(merged?.events).toHaveLength(2);
+    // 未注册的对话返回 undefined，端点据此给出 404。
+    expect(store.getConversationTurns("missing-conversation")).toBeUndefined();
+  });
+
   it("counts conversation turns and surfaces the latest turn status", async () => {
     store = await EventStore.open(":memory:");
     const created = store.createConversation({

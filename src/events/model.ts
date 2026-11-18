@@ -178,6 +178,36 @@ export interface ConversationPage {
 }
 
 /**
+ * 合并轨迹里的一段轮次边界：只保留在一条轨迹中划分轮次所需的字段，
+ * 轨迹与执行步骤通过各自的 `turnId` 归属到对应分段。
+ */
+export interface ConversationTurnSegment {
+  turnId: string;
+  status: ConversationTurnStatus;
+  /** 该轮用户提问原文，作为轨迹中的用户消息。 */
+  request: string;
+  headSha: string;
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+  lastError: string;
+}
+
+/**
+ * 整段对话的轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
+ * 并带上按轮分组的边界，供运维台默认在一条轨迹里展示所有轮次。
+ */
+export interface ConversationTurns {
+  conversationId: string;
+  /** 合并后的轮次分段，按轮次创建时间升序。 */
+  turns: ConversationTurnSegment[];
+  /** 全部轮次合并后的轨迹，按开始时间升序。 */
+  trajectory: EventTraceEntry[];
+  /** 全部轮次合并后的执行步骤，按开始时间升序。 */
+  events: ExecutionStep[];
+}
+
+/**
  * 单轮对话的用量与耗时汇总，供对话页「统计」标签展示。
  * 时间与用量来自该轮对话的轨迹记录；缺失字段按未记录处理。
  */

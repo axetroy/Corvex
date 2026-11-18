@@ -11,7 +11,7 @@ import {
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import { asTraceRecord, calculateAverageFirstTokenMs, calculateGenerationTokensPerSecond, parseTraceValue } from "../trace.js";
-import type { EventTraceEntry } from "../types.js";
+import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
 import { Empty, ExpandableText } from "./common.js";
 
 /** 会话中的一段角色消息。 */
@@ -102,11 +102,15 @@ function roundLabel(entry: EventTraceEntry, copy: Copy): string {
 export const TraceSession = memo(function TraceSession({
   traces,
   userRequest,
+  turns,
   copy,
   locale,
 }: {
   traces: readonly EventTraceEntry[];
-  userRequest: string;
+  /** 单轮场景的用户请求；与 `turns` 二选一。 */
+  userRequest?: string;
+  /** 按轮分组的元数据；有值时按轮分段展示每轮的提问与活动。 */
+  turns?: readonly ConversationTurnSegment[];
   copy: Copy;
   locale: Locale;
 }) {
@@ -137,8 +141,7 @@ export const TraceSession = memo(function TraceSession({
     return typeof prompt === "string" && prompt.trim() ? [prompt] : [];
   }))];
 
-  // 模型上下文含有注入的附件数据；用户气泡只展示事件保存的原始请求。
-  const items = traces.map((entry) => {
+  const renderEntry = (entry: EventTraceEntry) => {
     const started = Date.parse(entry.startedAt);
     const time = Number.isFinite(started)
       ? new Date(started).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
@@ -201,7 +204,35 @@ export const TraceSession = memo(function TraceSession({
         ) : null}
       </Fragment>
     );
-  });
+  };
+
+  // 有轮次元数据时按轮分段：每轮先给出该轮的提问，再渲染该轮的活动。
+  // 事件详情等单轮场景没有元数据，退化为原有的单条时间线。
+  const segments = turns && turns.length > 0
+    ? turns.map((turn) => ({ turn, entries: traces.filter((entry) => entry.turnId === turn.turnId) }))
+    : [{ turn: undefined, entries: traces }];
+  const items = segments.flatMap((segment, index) => [
+    segment.turn ? (
+      <div className="trace-session-turn" key={`turn-${segment.turn.turnId}`}>
+        <span className="trace-session-turn-label">
+          {copy.traceTurnLabelTemplate.replace("{turn}", String(index + 1))}
+        </span>
+        <span className={`trace-session-status trace-session-status-${segment.turn.status}`}>
+          {translate(copy.statuses, segment.turn.status)}
+        </span>
+        {segment.turn.lastError ? <span className="trace-session-turn-error">{segment.turn.lastError}</span> : null}
+      </div>
+    ) : null,
+    segment.turn?.request.trim() ? (
+      <SessionMessage
+        key={`request-${segment.turn.turnId}`}
+        label={copy.traceSessionUser}
+        value={segment.turn.request.trim()}
+        kind="user"
+      />
+    ) : null,
+    ...segment.entries.map(renderEntry),
+  ]);
 
   return (
     <div className="trace-session-view" id="trace-session-panel" role="tabpanel" aria-labelledby="trace-session-tab">
@@ -215,7 +246,7 @@ export const TraceSession = memo(function TraceSession({
             className="trace-session-system-prompt"
           />
         ))}
-        {userRequest.trim() ? (
+        {!turns && userRequest?.trim() ? (
           <SessionMessage label={copy.traceSessionUser} value={userRequest.trim()} kind="user" />
         ) : null}
         {items.length === 0 ? <Empty>{copy.noTrajectory}</Empty> : items}
