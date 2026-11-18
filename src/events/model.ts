@@ -35,6 +35,44 @@ export function isConversationTurnStatus(value: string): value is ConversationTu
   return conversationTurnStatuses.some((status) => status === value);
 }
 
+/**
+ * 对话模式：决定该对话允许的仓库能力。
+ *
+ * `read_only` 是当前唯一实现，而不是永久约束——以后要开放修改时新增一个模式即可。
+ * 新增模式必须同时在 `conversationCapabilities` 中声明能力，并在存储、执行与界面
+ * 三处接线，避免把「只读」继续散落成隐式假设。
+ */
+export const conversationModes = ["read_only"] as const;
+export type ConversationMode = (typeof conversationModes)[number];
+
+/** 新建对话默认使用的模式。 */
+export const defaultConversationMode: ConversationMode = "read_only";
+
+/** 在边界处校验外部字符串是否为已知对话模式。 */
+export function isConversationMode(value: string): value is ConversationMode {
+  return conversationModes.some((mode) => mode === value);
+}
+
+/** 某一对话模式允许的能力；执行与界面都以此为唯一依据。 */
+export interface ConversationCapabilities {
+  /** 该模式执行的执行步骤名，写入执行记录并展示在轨迹中。 */
+  workflowStep: string;
+  /** 是否允许仓库写入类工具（打补丁、提交、推送）。 */
+  repositoryWrite: boolean;
+}
+
+/** 由模式派生能力；新增模式时这里会因缺少分支而编译失败，强制补齐声明。 */
+export function conversationCapabilities(mode: ConversationMode): ConversationCapabilities {
+  switch (mode) {
+    case "read_only":
+      return { workflowStep: "workflow.read_only_conversation", repositoryWrite: false };
+    default: {
+      const exhaustive: never = mode;
+      throw new Error(`unhandled conversation mode: ${String(exhaustive)}`);
+    }
+  }
+}
+
 /** 轨迹归属：事件轨迹写入事件表，对话轨迹写入对话表。 */
 export type TraceScope =
   | { kind: "event"; eventId: string }
@@ -104,6 +142,8 @@ export interface ConversationSummary {
   projectId: number;
   projectName: string;
   targetBranch: string;
+  /** 该对话的模式；决定允许的仓库能力（当前只有 `read_only`）。 */
+  mode: ConversationMode;
   createdAt: string;
   updatedAt: string;
   /** 该对话的轮次总数（每条助手回复对应一轮）。 */
@@ -257,6 +297,8 @@ export interface CreateConversationInput {
   headSha: string;
   actorId: number;
   request: string;
+  /** 对话模式；省略时使用 `defaultConversationMode`。 */
+  mode?: ConversationMode;
 }
 
 export interface EventOperationsSummary extends EventSummary {
@@ -382,13 +424,15 @@ export interface CreatedConversationTurn {
   turnId: string;
 }
 
-/** 对话轮次执行所需的只读上下文快照。 */
+/** 对话轮次执行所需的上下文快照；允许的能力由 `mode` 决定。 */
 export interface ConversationTurnContext {
   turnId: string;
   conversationId: string;
   projectId: number;
   projectName: string;
   targetBranch: string;
+  /** 该对话的模式；执行器据此派生工作流步骤名与允许的工具能力。 */
+  mode: ConversationMode;
   headSha: string;
   actorId: number;
   request: string;

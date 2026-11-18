@@ -106,6 +106,8 @@ describe("EventStore", () => {
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
+      // 未指定模式时默认为只读。
+      mode: "read_only",
       turnCount: 1,
       lastTurnStatus: "queued",
       messages: [
@@ -120,6 +122,7 @@ describe("EventStore", () => {
       turnId: result.turnId,
       projectId: 7,
       targetBranch: "main",
+      mode: "read_only",
       headSha: "a".repeat(40),
       request: "Explain the routing module",
       attempt: 1,
@@ -1127,6 +1130,8 @@ describe("EventStore", () => {
         projectId: 7,
         projectName: "group/project",
         targetBranch: "feature/session",
+        // 旧库迁移后默认只读，与旧行为一致。
+        mode: "read_only",
         createdAt: "2025-01-01T00:00:00.000Z",
         updatedAt: "2025-01-01T00:00:00.000Z",
         turnCount: 0,

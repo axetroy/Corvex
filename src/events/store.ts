@@ -3,6 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { backup as sqliteBackup, DatabaseSync } from "node:sqlite";
 import {
+  defaultConversationMode,
+  isConversationMode,
   isConversationTurnStatus,
   isEventStatus,
   isEventType,
@@ -1198,13 +1200,14 @@ export class EventStore {
   createConversation(input: CreateConversationInput): CreatedConversationTurn {
     this.validateConversationInput(input);
     const conversationId = randomUUID();
+    const mode = input.mode ?? defaultConversationMode;
     const now = new Date().toISOString();
     return this.transaction(() => {
       this.db.prepare(
         `INSERT INTO conversations
-         (id,project_id,project_name,target_branch,created_at,updated_at)
-         VALUES (?,?,?,?,?,?)`,
-      ).run(conversationId, input.projectId, input.projectName, input.targetBranch, now, now);
+         (id,project_id,project_name,target_branch,mode,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(conversationId, input.projectId, input.projectName, input.targetBranch, mode, now, now);
       return this.enqueueConversationTurn(conversationId, input, now);
     });
   }
@@ -1448,6 +1451,8 @@ export class EventStore {
          ORDER BY created_at,rowid`,
       ).all(turn.conversation_id, turn.message_id ?? "", turn.user_message_id ?? "") as { id: string; role: string; content: string }[];
       const summaryMessageId = stringColumn(conversation, "summary_message_id");
+      const mode = stringColumn(conversation, "mode");
+      if (!isConversationMode(mode)) throw new Error(`SQLite conversation mode "${mode}" is invalid`);
       // 摘要覆盖到的消息不再注入原文：它们已被压缩成 summary，重复注入只会浪费预算。
       const summaryIndex = summaryMessageId
         ? history.findIndex((item) => item.id === summaryMessageId)
@@ -1459,6 +1464,7 @@ export class EventStore {
         projectId: numberColumn(conversation, "project_id"),
         projectName: stringColumn(conversation, "project_name"),
         targetBranch: stringColumn(conversation, "target_branch"),
+        mode,
         headSha: turn.head_sha,
         actorId: turn.actor_id,
         request: turn.request,
@@ -1642,6 +1648,7 @@ export class EventStore {
     if (!/^[a-f0-9]{40,64}$/i.test(input.headSha)) throw new Error("conversation head SHA is invalid");
     if (!Number.isSafeInteger(input.actorId) || input.actorId < 0) throw new Error("actor ID is invalid");
     if (input.projectName.length > 255) throw new Error("conversation labels are too long");
+    if (input.mode !== undefined && !isConversationMode(input.mode)) throw new Error("conversation mode is invalid");
     if (!input.request.trim() || input.request.length > 20_000) throw new Error("conversation message must be between 1 and 20000 characters");
   }
 
@@ -1693,11 +1700,14 @@ export class EventStore {
       (typeof lastTurnStatus !== "string" || !isConversationTurnStatus(lastTurnStatus))) {
       throw new Error(`SQLite conversation turn status "${String(lastTurnStatus)}" is invalid`);
     }
+    const mode = stringColumn(row, "mode");
+    if (!isConversationMode(mode)) throw new Error(`SQLite conversation mode "${mode}" is invalid`);
     return {
       id: stringColumn(row, "id"),
       projectId: numberColumn(row, "project_id"),
       projectName: stringColumn(row, "project_name"),
       targetBranch: stringColumn(row, "target_branch"),
+      mode,
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
       turnCount: numberColumn(row, "turn_count"),
@@ -2208,7 +2218,8 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS events_mr_created_idx ON events(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
-        target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS conversations_updated_idx ON conversations(updated_at DESC,id DESC);
@@ -2336,6 +2347,8 @@ export class EventStore {
     for (const [name, definition] of Object.entries({
       summary: "TEXT NOT NULL DEFAULT ''",
       summary_message_id: "TEXT NOT NULL DEFAULT ''",
+      // 对话模式：旧库默认只读，与旧行为一致。
+      mode: "TEXT NOT NULL DEFAULT 'read_only'",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);

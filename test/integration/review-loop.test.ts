@@ -542,6 +542,7 @@ describe("review task loop", () => {
     expect(serverStore.listEvents(undefined, 200).some((event) => event.type === "conversation")).toBe(false);
     await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
     const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
+    expect(conversationDetail?.mode).toBe("read_only");
     expect(conversationDetail?.messages[1]).toMatchObject({
       role: "assistant",
       status: "completed",

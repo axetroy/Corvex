@@ -166,6 +166,10 @@ export const en = {
     success: "Success",
     failure: "Failure",
   },
+  /** 对话模式标签；当前只有只读模式，新增模式时同步补齐。 */
+  conversationModes: {
+    read_only: "Read-only",
+  },
   eventsTitle: "Events",
   eventsDescription: "Filter and inspect recent work.",
   statusFilter: "Status",
@@ -496,6 +500,10 @@ export const zhCN: Copy = {
   outcomes: {
     success: "成功",
     failure: "失败",
+  },
+  /** 对话模式标签；当前只有只读模式，新增模式时同步补齐。 */
+  conversationModes: {
+    read_only: "只读",
   },
   eventsTitle: "事件",
   eventsDescription: "筛选并查看近期事件。",

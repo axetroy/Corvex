@@ -8,6 +8,7 @@ import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
+import { translate } from "../i18n.js";
 import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
@@ -47,6 +48,11 @@ function lastTurnColor(status: ConversationSummary["lastTurnStatus"]): string {
   if (status === "failed") return "error";
   if (status === "queued" || status === "running") return "processing";
   return "default";
+}
+
+/** 对话模式标签文案；未知模式回退为原始值，避免界面留白。 */
+function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): string {
+  return translate(copy.conversationModes, mode);
 }
 
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
@@ -296,6 +302,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           <Tag className="conversation-summary-turns" color={lastTurnColor(item.lastTurnStatus)}>
             {(item.turnCount === 1 ? copy.conversationTurnTemplate : copy.conversationTurnsTemplate).replace("{count}", String(item.turnCount))}
           </Tag>
+          <Tag className="conversation-summary-mode">{conversationModeLabel(item.mode, copy)}</Tag>
           <Typography.Text type="secondary" className="conversation-summary-time">
             {formatDate(item.updatedAt, copy, locale)}
           </Typography.Text>
@@ -356,6 +363,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 <Space size={8} wrap>
                   <Typography.Text strong>{currentConversation.projectName}</Typography.Text>
                   <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
+                  <Tag className="conversation-mode-tag">{conversationModeLabel(currentConversation.mode, copy)}</Tag>
                 </Space>
                 <Typography.Text type="secondary" className="conversation-pinned">
                   {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha ?? copy.none}</code>

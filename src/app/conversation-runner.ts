@@ -1,5 +1,6 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
+import { conversationCapabilities } from "../events/model.js";
 import type { ConversationTurnContext } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
@@ -263,7 +264,7 @@ export class ConversationRunner {
         answer = await traceExecutionStep(
           this.store,
           stepContext,
-          "workflow.read_only_conversation",
+          conversationCapabilities(turn.mode).workflowStep,
           {
             projectId: turn.projectId,
             branch: turn.targetBranch,
@@ -273,7 +274,8 @@ export class ConversationRunner {
           () => this.agent.generate(
             {
               taskType: "conversation",
-              systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage),
+              conversationMode: turn.mode,
+              systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage, turn.mode),
               userPrompt,
               history,
             },

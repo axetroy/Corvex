@@ -112,6 +112,17 @@
   line-height: 18px;
 }
 
+.conversation-summary-mode.ant-tag {
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 6px;
+  border-color: var(--conversation-border-strong);
+  background: #eef3f8;
+  color: #3b4a58;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .conversation-summary-time {
   flex: 1 1 auto;
   min-width: 0;
@@ -182,6 +193,14 @@
   background: #f2f6fa;
   color: #3b4a58;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.conversation-mode-tag.ant-tag {
+  margin: 0;
+  border-color: var(--conversation-border-strong);
+  background: #eef3f8;
+  color: #3b4a58;
   font-size: 12px;
 }
 

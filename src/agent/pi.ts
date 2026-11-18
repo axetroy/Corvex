@@ -14,7 +14,8 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { AssistantMessageEvent, AssistantMessage, StreamOptions, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
-import type { EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
+import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
+import type { ConversationMode, EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
@@ -77,11 +78,17 @@ export interface ModelRequest {
    * 都能识别轮次边界；不提供时只发送 `userPrompt`。
    */
   history?: { role: "user" | "assistant"; content: string }[];
+  /**
+   * 对话轮次的模式；仅 `taskType === "conversation"` 时使用，用于派生工具能力。
+   * 省略时按 `defaultConversationMode`（只读）处理，保持既有只读行为。
+   */
+  conversationMode?: ConversationMode;
 }
 
 export function getAgentToolAccess(
   taskType: ModelTaskType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
+  conversationMode: ConversationMode = defaultConversationMode,
 ): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
   return {
     webFetch: ["review", "explain", "chat", "conversation"].includes(taskType) && config.webEnabled,
@@ -89,7 +96,9 @@ export function getAgentToolAccess(
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
     gitHistory: taskType === "chat" || taskType === "conversation",
-    gitWrite: taskType === "chat",
+    // 对话是否可写由模式决定：当前只有只读模式，`repositoryWrite` 恒为 false。
+    // 新增可写模式时此处即生效，但仍需在 Runner 中接线写入工具所需的上下文。
+    gitWrite: taskType === "chat" || (taskType === "conversation" && conversationCapabilities(conversationMode).repositoryWrite),
   };
 }
 
@@ -341,7 +350,7 @@ export class PiAgent {
     }));
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
-    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
+    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent, request.conversationMode);
     const workspace = trace?.workspace;
     const mergeRequest = trace?.mergeRequest;
 
