@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { maxAgentUserPromptBytes, type EventTraceContext, type PiAgent } from "../../src/agent/pi.js";
-import { getPromptTemplates } from "../../src/agent/prompts.js";
+import { getPromptTemplates, getConversationSystemPrompt } from "../../src/agent/prompts.js";
 import { FixWorkflow, parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
 import type { EventTraceEntry } from "../../src/events/model.js";
@@ -74,6 +74,13 @@ describe("review and fix response validation", () => {
       expect(followup).toContain("src/app.ts");
       expect(followup).toContain(language === "en" ? "complete file reads" : "分片读取规则");
     }
+  });
+
+  it("derives the conversation system prompt from the mode in both languages", () => {
+    expect(getConversationSystemPrompt("en", "read_only")).toContain("read-only code assistant");
+    expect(getConversationSystemPrompt("en", "read_only")).toContain("Never modify files");
+    expect(getConversationSystemPrompt("zh-CN", "read_only")).toContain("只读代码助手");
+    expect(getConversationSystemPrompt("zh-CN", "read_only")).toContain("不得修改文件");
   });
 
   it("answers chat requests from merge request context and the diff without review JSON parsing", async () => {

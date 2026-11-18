@@ -9,14 +9,14 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
-import type { Conversation, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { ConversationToolCalls } from "./ConversationToolCalls.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import type { ProjectOption } from "../projectPicker.js";
-import { Empty, ErrorBanner } from "./common.js";
+import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
 interface Props {
   conversationId: string;
@@ -91,7 +91,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [conversationTotal, setConversationTotal] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState(conversationId);
   const selectedConversationIdRef = useRef(conversationId);
-  const [conversation, setConversation] = useState<Conversation>();
+  const [conversation, setConversation] = useState<ConversationDetail>();
   const pendingReplyTurns = useRef(new Map<string, string>());
   const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
@@ -140,7 +140,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       return;
     }
     let active = true;
-    fetchJson<Conversation>(`/api/ops/conversations/${encodeURIComponent(selectedConversationId)}`, copy)
+    fetchJson<ConversationDetail>(`/api/ops/conversations/${encodeURIComponent(selectedConversationId)}`, copy)
       .then((value) => {
         if (!active) return;
         setConversation(value);
@@ -384,6 +384,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 children: (
                   <div className="conversation-chat">
                     <div className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}>
+                      {!showCreate && currentConversation?.systemPrompt ? (
+                        <ExpandableText
+                          label={copy.traceSystemPrompt}
+                          value={currentConversation.systemPrompt}
+                          className="conversation-system-prompt"
+                        />
+                      ) : null}
                       {showCreate ? (
                         <div className="conversation-start">
                           <Welcome

@@ -189,6 +189,16 @@ export interface Conversation extends ConversationSummary {
 }
 
 /**
+ * 对话详情：在列表摘要与消息之外，附带该对话的系统提示词。
+ *
+ * 提示词由响应语言与对话模式派生，与执行器真正下发给模型的一致；服务端在详情响应中
+ * 现算，因此尚未执行过任何轮次的新对话也能查看。
+ */
+export interface ConversationDetail extends Conversation {
+  systemPrompt: string;
+}
+
+/**
  * 单轮对话的完整记录：把一轮助手回复背后的轮次状态、轨迹与执行步骤汇总到一起，
  * 使运维台可以直接在对话内查看该轮的轨迹，而无需跳到事件详情页。
  */

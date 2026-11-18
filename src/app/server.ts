@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { reloadConfig, validateConfig } from "../config/config.js";
 import { applyRuntimeSettings, copyRuntimeSettings, isRuntimeSettingKey, runtimeSettingsView, validateRuntimeSettings } from "../config/settings.js";
+import { getConversationSystemPrompt } from "../agent/prompts.js";
 import { EventStore } from "../events/store.js";
 import { isEventStatus, isEventType } from "../events/model.js";
 import { errorMessage } from "../errors.js";
@@ -396,7 +397,12 @@ export class CorvexServer {
         respondJson(response, 404, { error: "conversation not found" });
         return;
       }
-      respondJson(response, 200, conversation);
+      // 系统提示词由响应语言与对话模式派生，与执行器下发的一致；在详情里现算，
+      // 使尚未执行过轮次的新对话也能在控制台查看。
+      respondJson(response, 200, {
+        ...conversation,
+        systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage, conversation.mode),
+      });
       return;
     }
     // 整段对话轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，

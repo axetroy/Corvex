@@ -333,6 +333,25 @@
   padding: 6px 0;
 }
 
+/* 对话系统提示词：折叠展示在对话流顶部，与轨迹视图中的提示词样式保持一致。 */
+.conversation-system-prompt {
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: #f7f9fb;
+  color: var(--conversation-muted);
+  font-size: 12px;
+}
+
+.conversation-system-prompt .details-preview {
+  max-width: 100%;
+}
+
+.conversation-system-prompt .details-content {
+  max-width: 100%;
+}
+
 .conversation-transcript .ant-bubble-content {
   line-height: 1.7;
 }

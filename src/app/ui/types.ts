@@ -1,5 +1,6 @@
 import type {
   Conversation,
+  ConversationDetail,
   ConversationMessage,
   ConversationPage,
   ConversationStats,
@@ -27,6 +28,7 @@ import type {
  */
 export type {
   Conversation,
+  ConversationDetail,
   ConversationMessage,
   ConversationPage,
   ConversationStats,

@@ -213,7 +213,8 @@ describe("CorvexServer", () => {
       // 对话轮次不再进入事件队列；agent.enabled=false 时只排队、不执行。
       expect(store.eventCounts().queued ?? 0).toBe(0);
       const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: { authorization } });
-      expect(await conversationDetailResponse.json()).toMatchObject({
+      const conversationDetail = await conversationDetailResponse.json() as { systemPrompt: string };
+      expect(conversationDetail).toMatchObject({
         id: createdConversation.conversationId,
         projectName: "group/project",
         targetBranch: "main",
@@ -224,6 +225,8 @@ describe("CorvexServer", () => {
           { role: "assistant", status: "queued", turnId: createdConversation.turnId, turnStatus: "queued" },
         ],
       });
+      // 详情附带与执行器一致的系统提示词；未执行过轮次的新对话也能查看。
+      expect(conversationDetail.systemPrompt).toContain("read-only code assistant");
       // 单轮对话记录端点返回该轮的轨迹与执行步骤，并拒绝跨对话或未知轮次。
       const conversationTurnResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}`,
