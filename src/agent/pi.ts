@@ -27,6 +27,7 @@ import {
   type MergeRequestMetadataUpdate,
 } from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
+import { getToolBudgetWarningPrompt } from "./prompts.js";
 import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createMergeRequestMetadataExtension } from "./mr-update.js";
@@ -35,6 +36,11 @@ import { createWebReadExtension } from "./web-read.js";
 
 /** 128K-token model window minus output and system/tool safety reserves. */
 export const maxAgentPromptBytes = 96 << 10;
+/** 单轮工具输出超出预算时统一使用的错误文案，避免被下游的中止错误覆盖。 */
+const toolBudgetExceededMessage =
+  "This turn read more repository content than the per-turn context budget allows; narrow the request or start a new conversation.";
+/** 工具输出预算软阈值：达到后先让模型收尾，把剩余工作留到下一轮。 */
+const toolBudgetWarningRatio = 0.75;
 /** Keep initial workflow payload below the total prompt cap to reserve system prompt space. */
 export const maxAgentUserPromptBytes = 80 << 10;
 
@@ -489,6 +495,7 @@ export class PiAgent {
     const toolResultByteLimit = this.config.agent.turnToolResultBytes;
     let toolResultBytes = 0;
     let toolBudgetExceeded = false;
+    let toolBudgetWarningSent = false;
     const recordedContextEntryIds = new Set<string>();
     let hasRecordedContext = false;
     const unsubscribe = session.subscribe((event) => {
@@ -551,7 +558,11 @@ export class PiAgent {
           durationMs,
           message.usage.input,
           message.usage.output,
-          failed ? message.errorMessage ?? `model request ${message.stopReason}` : undefined,
+          failed
+            ? toolBudgetExceeded && !signal?.aborted
+              ? toolBudgetExceededMessage
+              : message.errorMessage ?? `model request ${message.stopReason}`
+            : undefined,
           JSON.stringify({
             content: message.content.filter((part) => part.type === "text" || part.type === "toolCall"),
             stopReason: message.stopReason,
@@ -589,6 +600,20 @@ export class PiAgent {
           if (toolResultBytes > toolResultByteLimit) {
             toolBudgetExceeded = true;
             void session.abort();
+          } else if (
+            !toolBudgetWarningSent &&
+            toolResultBytes >= toolResultByteLimit * toolBudgetWarningRatio
+          ) {
+            // 软阈值：给模型一次主动收尾的机会，把未完成的调查留给下一轮，
+            // 而不是等到硬上限直接中止整轮。
+            toolBudgetWarningSent = true;
+            void session.steer(getToolBudgetWarningPrompt(
+              this.config.agent.responseLanguage,
+              toolResultBytes,
+              toolResultByteLimit,
+            )).catch((error) => {
+              console.warn("tool budget warning could not be delivered", { error: errorMessage(error) });
+            });
           }
         }
       }
@@ -601,16 +626,12 @@ export class PiAgent {
       await session.bindExtensions({});
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
       await session.prompt(request.userPrompt);
+      // 外部取消优先；否则预算中止必须归因为预算错误，而不是 SDK 的
+      // "This operation was aborted"，也不能把中止后的半截文本当成完成。
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
+      if (toolBudgetExceeded) throw new Error(toolBudgetExceededMessage);
       const content = session.getLastAssistantText()?.trim();
-      if (!content) {
-        if (toolBudgetExceeded) {
-          throw new Error(
-            "This turn read more repository content than the per-turn context budget allows; narrow the request or start a new conversation.",
-          );
-        }
-        throw new Error("Pi returned an empty completion");
-      }
+      if (!content) throw new Error("Pi returned an empty completion");
       const usage = session.getSessionStats().tokens;
       return {
         content,
@@ -622,6 +643,7 @@ export class PiAgent {
         },
       };
     } catch (error) {
+      const failure = toolBudgetExceeded && !signal?.aborted ? new Error(toolBudgetExceededMessage) : error;
       if (activeModelCall) {
         const endedAt = performance.now();
         const durationMs = endedAt - activeModelCall.startedAt;
@@ -634,7 +656,7 @@ export class PiAgent {
           durationMs,
           undefined,
           undefined,
-          errorMessage(error),
+          errorMessage(failure),
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,
@@ -643,7 +665,7 @@ export class PiAgent {
         );
         activeModelCall = undefined;
       }
-      throw error;
+      throw failure;
     } finally {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
@@ -659,7 +681,9 @@ export class PiAgent {
           durationMs,
           undefined,
           undefined,
-          "model request did not complete",
+          toolBudgetExceeded && !signal?.aborted
+            ? toolBudgetExceededMessage
+            : "model request did not complete",
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,

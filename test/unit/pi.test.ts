@@ -304,4 +304,245 @@ describe("PiAgent", () => {
       status: "failed",
     });
   }, 20_000);
+
+  it("reports the tool-output budget instead of the SDK abort message", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-budget-"));
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        const currentRequest = requestCount++;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(
+          `data: ${JSON.stringify({
+            id: "chatcmpl-budget",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{
+              index: 0,
+              delta: currentRequest === 0
+                ? {
+                    role: "assistant",
+                    tool_calls: [{
+                      index: 0,
+                      id: "call-big-file",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "big.txt" }) },
+                    }],
+                  }
+                : { role: "assistant", content: "partial answer" },
+              finish_reason: null,
+            }],
+          })}\n\n`,
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            id: "chatcmpl-budget",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{ index: 0, delta: {}, finish_reason: currentRequest === 0 ? "tool_calls" : "stop" }],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+          })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+
+    await writeFile(join(temporaryDirectory, "big.txt"), "x".repeat(8 << 10));
+    store = await EventStore.open(":memory:");
+    store.createReview("event-budget", "key-budget", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const event = store.claimNextWithLease(30_000);
+    if (!event) throw new Error("expected a queued event to be claimed");
+    const agent = new PiAgent({
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com",
+        readToken: "read",
+        writeToken: "write",
+        webhookSecret: "secret",
+        blockedUserIds: [],
+        botUsername: "",
+      },
+      storage: {
+        root: temporaryDirectory,
+        database: join(temporaryDirectory, "state.db"),
+        retentionDays: 90,
+        auditRetentionDays: 365,
+      },
+      agent: {
+        responseLanguage: "en",
+        enabled: true,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "test-model",
+        apiKey: "test-key",
+        requestTimeout: 5000,
+        sessionTimeout: 10_000,
+        maxOutputTokens: 4096,
+        dailyTokenBudget: 0,
+        mcpEnabled: false,
+        webEnabled: false,
+        webBlockedHosts: [],
+        skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 512,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
+      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    }, store);
+
+    await expect(
+      agent.generate(
+        { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read big.txt." },
+        temporaryDirectory,
+        undefined,
+        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+      ),
+    ).rejects.toThrow("per-turn context budget");
+  }, 10_000);
+
+  it("asks the model to checkpoint before the tool budget is exhausted", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-checkpoint-"));
+    const requestBodies: string[] = [];
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      request.on("end", () => {
+        requestBodies[requestCount] = body;
+        const currentRequest = requestCount++;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(
+          `data: ${JSON.stringify({
+            id: "chatcmpl-checkpoint",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{
+              index: 0,
+              delta: currentRequest === 0
+                ? {
+                    role: "assistant",
+                    tool_calls: [{
+                      index: 0,
+                      id: "call-medium-file",
+                      type: "function",
+                      function: { name: "read_file", arguments: JSON.stringify({ path: "medium.txt" }) },
+                    }],
+                  }
+                : { role: "assistant", content: "wrapped up" },
+              finish_reason: null,
+            }],
+          })}\n\n`,
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            id: "chatcmpl-checkpoint",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{ index: 0, delta: {}, finish_reason: currentRequest === 0 ? "tool_calls" : "stop" }],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+          })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+
+    await writeFile(join(temporaryDirectory, "medium.txt"), "x".repeat(3_500));
+    store = await EventStore.open(":memory:");
+    store.createReview("event-checkpoint", "key-checkpoint", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const event = store.claimNextWithLease(30_000);
+    if (!event) throw new Error("expected a queued event to be claimed");
+    const agent = new PiAgent({
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com",
+        readToken: "read",
+        writeToken: "write",
+        webhookSecret: "secret",
+        blockedUserIds: [],
+        botUsername: "",
+      },
+      storage: {
+        root: temporaryDirectory,
+        database: join(temporaryDirectory, "state.db"),
+        retentionDays: 90,
+        auditRetentionDays: 365,
+      },
+      agent: {
+        responseLanguage: "en",
+        enabled: true,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "test-model",
+        apiKey: "test-key",
+        requestTimeout: 5000,
+        sessionTimeout: 10_000,
+        maxOutputTokens: 4096,
+        dailyTokenBudget: 0,
+        mcpEnabled: false,
+        webEnabled: false,
+        webBlockedHosts: [],
+        skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 4096,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
+      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    }, store);
+
+    const result = await agent.generate(
+      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read medium.txt." },
+      temporaryDirectory,
+      undefined,
+      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+    );
+
+    expect(result.content).toBe("wrapped up");
+    expect(requestBodies[1]).toContain("tool-output budget");
+    expect(requestBodies[1]).toContain("continue in a new message");
+  }, 10_000);
 });

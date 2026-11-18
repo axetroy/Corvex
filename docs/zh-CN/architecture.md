@@ -33,7 +33,7 @@ MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/can
 
 ### 上下文预算
 
-Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 估算 Token 数，`trimHistory` 只保留符合 `agent.history_token_budget` 的最近若干历史轮次；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，请求本身也以结构化多消息构建，而不是拼成一个大字符串。单轮内，工具输出按 `agent.turn_tool_result_bytes` 累计，超出预算时优雅中止本轮。Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值，使 SDK 自动压缩与 Corvex 自身的裁剪保持一致。若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。这些键可在控制台设置页面运行时调整；Server 落库前会用与配置文件相同的定义校验它们。
+Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 估算 Token 数，`trimHistory` 只保留符合 `agent.history_token_budget` 的最近若干历史轮次；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，请求本身也以结构化多消息构建，而不是拼成一个大字符串。单轮内，工具输出按 `agent.turn_tool_result_bytes` 累计。达到预算 75% 时模型会收到检查点提示：停止继续读取，汇总已确认的发现，让用户在下一条消息中继续（新轮次预算重新计算，历史由滚动摘要承接）。达到 100% 时中止本轮，并以明确的预算错误收尾，而不是透出服务商的中止错误。Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值，使 SDK 自动压缩与 Corvex 自身的裁剪保持一致。若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。这些键可在控制台设置页面运行时调整；Server 落库前会用与配置文件相同的定义校验它们。
 
 ## 审查流程
 
