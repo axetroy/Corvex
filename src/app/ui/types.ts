@@ -23,7 +23,7 @@ import type {
 } from "../../events/model.js";
 
 /**
- * 运维台依赖的接口数据结构。字段形状与 `src/events/model.ts` 一致，
+ * Agent 控制台依赖的接口数据结构。字段形状与 `src/events/model.ts` 一致，
  * 这里只做 HTTP 边界的重新导出，避免前端重复声明。
  */
 export type {
@@ -62,7 +62,7 @@ export interface EventPageResponse {
   total: number;
 }
 
-/** 运维台展示的事件生命周期状态，与服务端 `eventStatuses` 保持同一顺序。 */
+/** Agent 控制台展示的事件生命周期状态，与服务端 `eventStatuses` 保持同一顺序。 */
 export const statuses: readonly EventStatus[] = [
   "queued",
   "preparing",
@@ -104,7 +104,7 @@ export interface SettingsResponse {
 /** 设置项的输入类型；布尔项渲染为开关，数字项渲染为输入框。 */
 export type SettingKind = "number" | "boolean";
 
-/** 运维台展示的上下文设置元数据，键名与 `src/config/settings.ts` 一致。 */
+/** Agent 控制台展示的上下文设置元数据，键名与 `src/config/settings.ts` 一致。 */
 export interface SettingField {
   key: string;
   kind: SettingKind;

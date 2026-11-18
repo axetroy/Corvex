@@ -3,7 +3,7 @@
  * 并处理无限滚动的合并去重。与 React 解耦，便于单独测试。
  */
 
-/** 运维台可见的仓库摘要，字段与 `GitLabClient.listProjects` 保持一致。 */
+/** Agent 控制台可见的仓库摘要，字段与 `GitLabClient.listProjects` 保持一致。 */
 export interface ProjectOption {
   id: number;
   name?: string;

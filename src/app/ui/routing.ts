@@ -1,7 +1,7 @@
 import { eventTypes, statuses } from "./types.js";
 import type { EventQueue } from "./types.js";
 
-/** 运维台页面路由，由地址栏 hash 解析得到。 */
+/** Agent 控制台页面路由，由地址栏 hash 解析得到。 */
 export type Route =
   | { kind: "overview" }
   | { kind: "events" }

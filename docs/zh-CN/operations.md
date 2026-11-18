@@ -22,7 +22,7 @@ pnpm start -- --config configs/config.yaml worker
 ## Docker Compose
 
 1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。只有运行 Worker 时才需要读取令牌和模型 API 密钥。妥善保护此文件，不要提交到版本控制。
-2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml` 并填写 GitLab URL；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。运维控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
+2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml` 并填写 GitLab URL；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。Agent 控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
 3. 启动 Server：
 
    ```sh
@@ -45,7 +45,7 @@ GHCR 的包可见性决定是否允许匿名拉取；如部署不应要求 `dock
 Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2 CPU/2 GiB、256 个 PID。可通过 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS`、`CORVEX_PIDS_LIMIT` 以及对应的 `CORVEX_WORKER_MEM_LIMIT`、`CORVEX_WORKER_CPUS`、`CORVEX_WORKER_PIDS_LIMIT` 覆盖。JSON 日志单个最大 10 MiB，保留 3 个文件。
 
 通过 HTTPS 向 GitLab 暴露 Webhook，并在网络或代理层限制 GitLab API、数据库卷和指标端点的访问。Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡器处终止 TLS。
-只读运维控制台默认关闭；同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD` 后，可访问 `https://<corvex-host>/ops`。相同凭据也保护其 API。请使用强且唯一的密码；不要通过普通 HTTP 或不可信网络暴露控制台。
+只读 Agent 控制台默认关闭；同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD` 后，可访问 `https://<corvex-host>/ops`。相同凭据也保护其 API。请使用强且唯一的密码；不要通过普通 HTTP 或不可信网络暴露控制台。
 
 ## HTTP 接口
 
@@ -55,8 +55,8 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /healthz` | 进程存活检查，返回 `200 ok`。 |
 | `GET /readyz` | SQLite 就绪检查；数据库不可用时返回 `503`。 |
 | `GET /metrics` | Prometheus 文本格式指标，包含事件状态、模型调用次数、耗时和 Token 汇总。 |
-| `GET /ops` | 可选的 Basic Auth 保护只读运维控制台；未配置运维凭据时禁用。 |
-| `GET /api/ops/overview` | 运维概览：事件状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
+| `GET /ops` | 可选的 Basic Auth 保护只读 Agent 控制台；未配置控制台凭据时禁用。 |
+| `GET /api/ops/overview` | Agent 控制台概览：事件状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
 | `GET /api/ops/events` | 筛选/分页事件列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
 | `GET /api/ops/events/<id>` | 事件详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出记录。 |
 | `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
@@ -68,7 +68,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `POST /api/ops/conversations`、`POST /api/ops/conversations/<id>/messages` | 创建固定版本的只读对话或排入下一轮对话。 |
 | `GET /api/ops/settings`、`PUT /api/ops/settings` | 读取模型上下文相关设置的生效值与是否可编辑，或在运行时覆盖它们。`PUT` 把提交的覆盖项存入 SQLite（叠加在配置文件之上）并返回新的生效值；Server 启动时未提供 `--config` 会返回 `409`。 |
 
-运维接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护运维凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
+Agent 控制台接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护控制台凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 
 控制台以对话为主：默认打开“对话”页，列表展示每个对话的轮次数、模式标签与最近一轮状态。外壳本身铺满视口：左侧为可折叠的导航栏，容纳品牌、导航与语言选择（收起状态保存在 `localStorage`）；主区域占据剩余宽度，且不再有页脚，因此对话工作区可以占满全屏。概览、事件、事件详情与**设置**页仍然保留——设置页可在运行时调整模型上下文窗口、提示词与工具输出预算、压缩阈值，并写入 SQLite 叠加在配置文件之上；Server 未带 `--config` 启动时该页为只读。新建对话时可使用带搜索的仓库选择器，按项目全路径与描述两行展示；分支选择器同样支持搜索，并展示每个分支的最近提交（短 SHA、提交标题与相对时间）；两者均可滚动浏览只读 GitLab Token 可访问的全部项目及分支；每轮由服务端解析并固定到分支头 SHA，消息保存在 SQLite，并按对话的模式（当前为 `read_only`，在左侧列表与仓库头部以标签展示）提供仓库工具。页面铺满视口：左侧列出对话，右侧工作区把仓库信息（项目、分支、模式标签与固定版本）与三个标签页放在同一行——**对话** 呈现 Markdown 回复并提供复制，且每条助手回复下方直接列出该轮的工具调用（可读描述、结果与耗时），并在记录上方以折叠块展示该对话的系统提示词，**轨迹** 默认把全部轮次合并成一条轨迹，也可聚焦单轮，查看该范围的轨迹、执行记录与生命周期变化（时间线概览按轮分段、每段自带标尺，段间以固定像素间隔分隔；支持滚轮自由缩放，以光标为锚点，`Shift`+滚轮平移，拖拽选择时间段，另有缩放按钮与重置），**统计** 汇总用量与耗时并给出逐轮明细。对话不会修改仓库或向 GitLab 发布回复。控制台会自动刷新队列视图，活跃对话轮询更频繁。请使用权限最小化的 GitLab 只读 Token 和强 Basic Auth 凭据。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发。`ui:dev` 会把 `/api` 代理到 `http://127.0.0.1:8080`，可用 `CORVEX_OPS_API` 指向其他 Server。事件列表的筛选条件（`status`、`type`、`search`）会写入 URL。`/ops` 只响应 `GET` 和 `HEAD`，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`，避免控制台被索引或嵌入。
 界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
@@ -109,7 +109,7 @@ pnpm start -- events retry <event-id> --database ./data/state/corvex.db
 
 发布阶段失败不能重试，因为 GitLab 可能已经接受了评论。CLI 会写入操作员重试审计事件；请在能访问持久数据库的主机上运行。
 
-任务在发布阶段失败时，应将结果视为可能只部分生效。请在运维控制台打开任务详情，检查执行事件中的 `gitlab.post_discussion`、`gitlab.post_review_summary` 或 `gitlab.post_fix_proposal` 成功记录，再与 MR 中实际出现的评论逐项核对。不要重试失败任务：即使 Corvex 没收到响应，GitLab 也可能已接受评论，重试可能造成重复。目前 Corvex 不会恢复或对账单个发布步骤。如需重新执行，先确认哪些评论已经存在，并评估重复发布的风险。
+任务在发布阶段失败时，应将结果视为可能只部分生效。请在 Agent 控制台打开任务详情，检查执行事件中的 `gitlab.post_discussion`、`gitlab.post_review_summary` 或 `gitlab.post_fix_proposal` 成功记录，再与 MR 中实际出现的评论逐项核对。不要重试失败任务：即使 Corvex 没收到响应，GitLab 也可能已接受评论，重试可能造成重复。目前 Corvex 不会恢复或对账单个发布步骤。如需重新执行，先确认哪些评论已经存在，并评估重复发布的风险。
 
 Webhook 命令回复使用短期数据库发送租约，避免并发重投同时发布同一回复。但这不保证 exactly-once：如果 GitLab 已接受评论但响应丢失，租约到期后的重试仍可能产生重复评论。排查命令回复重复时，请检查事件的 `gitlab.post_note` 和 `webhook.mark_delivered` 步骤。
 
@@ -143,7 +143,7 @@ pnpm start -- backup \
 
 恢复前停止 Server 和 Worker，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启两个进程。不要覆盖正在使用的数据库。
 
-Server 启动时执行清理，之后约每 24 小时清理一次。终态事件、尝试记录、关联的执行步骤、Agent 轨迹、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联事件的执行步骤也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的事件会保留。运维控制台中空闲超过保留期的对话连同其消息一并删除；仍有排队或运行中回复的对话会保留，避免丢弃进行中的对话。执行事件输入/输出有大小限制，并会尽力脱敏类似凭证的内容。为在运维控制台完整呈现一轮对话，Agent 轨迹会保留模型提示词与上下文、工具参数与结果以及模型输出；上下文条目在各轮之间增量存储，查看单轮详情时再重建完整上下文。轨迹可能包含仓库源码、diff、网页内容、评论或秘密信息，且不受执行事件的脱敏和大小限制保护。请妥善保护数据库和备份，通过 HTTPS 访问控制台，并严格限制操作员权限。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
+Server 启动时执行清理，之后约每 24 小时清理一次。终态事件、尝试记录、关联的执行步骤、Agent 轨迹、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联事件的执行步骤也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的事件会保留。Agent 控制台中空闲超过保留期的对话连同其消息一并删除；仍有排队或运行中回复的对话会保留，避免丢弃进行中的对话。执行事件输入/输出有大小限制，并会尽力脱敏类似凭证的内容。为在 Agent 控制台完整呈现一轮对话，Agent 轨迹会保留模型提示词与上下文、工具参数与结果以及模型输出；上下文条目在各轮之间增量存储，查看单轮详情时再重建完整上下文。轨迹可能包含仓库源码、diff、网页内容、评论或秘密信息，且不受执行事件的脱敏和大小限制保护。请妥善保护数据库和备份，通过 HTTPS 访问控制台，并严格限制操作员权限。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
 
 ## 升级与开发
 

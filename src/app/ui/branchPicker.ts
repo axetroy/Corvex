@@ -11,7 +11,7 @@ export interface BranchCommit {
   committed_date?: string;
 }
 
-/** 运维台可见的分支摘要，字段与 `GitLabClient.listBranches` 保持一致。 */
+/** Agent 控制台可见的分支摘要，字段与 `GitLabClient.listBranches` 保持一致。 */
 export interface BranchOption {
   name: string;
   commit: BranchCommit;

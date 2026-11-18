@@ -22,7 +22,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
-    console.error("operations console render failed", { error, componentStack: info.componentStack });
+    console.error("agent console render failed", { error, componentStack: info.componentStack });
   }
 
   render(): ReactNode {

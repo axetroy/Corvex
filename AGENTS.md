@@ -28,7 +28,7 @@ Each conversation keeps one read-only worktree reused across its turns (`workspa
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm run build` | `tsc -p tsconfig.json` into `dist/`, then bundles the React operations console into `dist/app/ui` with Vite |
+| `pnpm run build` | `tsc -p tsconfig.json` into `dist/`, then bundles the React agent console into `dist/app/ui` with Vite |
 | `pnpm run typecheck` | Type-checks `src` (`tsconfig.json`), `src` + `test` + `scripts` (`tsconfig.test.json`), and the console (`src/app/ui/tsconfig.json`) |
 | `pnpm run ui:build` / `ui:dev` | Build the console, or open the Vite dev server proxying `/api` to a local Server |
 | `pnpm run lint` | ESLint over `src`, `test`, `scripts` |
@@ -55,7 +55,7 @@ Before finishing a change, run `pnpm run lint`, `pnpm run typecheck` and `pnpm t
 src/cli.ts          argument parsing and process wiring (init/backup/events/storage/server/worker)
 src/config/         YAML loading, role-based validation, defaults
 src/app/            HTTP server, inline conversation runner, worker loop, leases/retries, readiness, metrics, ops console
-src/app/ui/         React operations console, bundled by Vite into dist/app/ui and served under /ops
+src/app/ui/         React agent console, bundled by Vite into dist/app/ui and served under /ops
 src/events/         SQLite schema + migrations, event/conversation store, state machine, trace/metrics persistence
 src/gitlab/         webhook verification/parsing, command parsing, REST client
 src/git/            mirror clones, detached worktrees, diffs, path and patch checks

@@ -1,7 +1,7 @@
 import type { CorvexConfig } from "./config.js";
 
 /**
- * 运维台可在运行时覆盖的模型上下文设置。
+ * Agent 控制台可在运行时覆盖的模型上下文设置。
  *
  * 这些值影响提示词预算与压缩阈值，改错会直接导致请求失败，因此每个键都带类型与
  * 范围约束；写入前逐项校验，写入后立即作用于后续请求。凭据与网络类配置不在此列，
@@ -116,7 +116,7 @@ export function applyRuntimeSettings(config: CorvexConfig, overrides: Record<str
   }
 }
 
-/** 当前生效的设置值，供运维台回显；键与覆盖项一致。 */
+/** 当前生效的设置值，供 Agent 控制台回显；键与覆盖项一致。 */
 export function runtimeSettingsView(agent: CorvexConfig["agent"]): RuntimeSettingValues {
   const view: RuntimeSettingValues = {};
   for (const definition of runtimeSettingDefinitions) {
@@ -132,7 +132,7 @@ export function copyRuntimeSettings(from: CorvexConfig["agent"], to: CorvexConfi
   }
 }
 
-/** 运维台可覆盖的配置键集合，用于把存储中的覆盖项过滤为已知键。 */
+/** Agent 控制台可覆盖的配置键集合，用于把存储中的覆盖项过滤为已知键。 */
 export function isRuntimeSettingKey(key: string): boolean {
   return definitionsByKey.has(key);
 }

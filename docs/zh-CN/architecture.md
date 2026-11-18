@@ -4,9 +4,9 @@
 
 Corvex 将请求接入与模型、仓库处理分离：
 
-1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件写入 SQLite，并回复 GitLab。运维控制台通过配置的 GitLab 只读 Token 发现项目和分支。
+1. **Server** 提供 GitLab Note Hook 和经过认证的 Agent 接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件写入 SQLite，并回复 GitLab。Agent 控制台通过配置的 GitLab 只读 Token 发现项目和分支。
 2. **SQLite** 是持久化队列和状态存储，记录事件、Webhook 幂等/投递状态、执行尝试、审计事件、对话及其消息/轮次、模型调用指标以及可选的每日 Token 预留。
-3. **Worker** 轮询数据库，领取事件并续租，同时记录供运维监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。对话轮次不是事件，改由 Server 内联执行。
+3. **Worker** 轮询数据库，领取事件并续租，同时记录供 Agent 控制台监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。对话轮次不是事件，改由 Server 内联执行。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
 5. **OpenAI 兼容模型 API** 由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现，也由 Server 为内联对话轮次调用。
 
@@ -29,11 +29,11 @@ MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/can
 
 ## 持久对话
 
-经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。对话使用独立表（`conversations`、`conversation_messages`、`conversation_turns`），不进入事件队列：每轮由 Server 通过 `ConversationRunner` 内联执行，因此对话轮次不是事件，也不会出现在事件列表里。每轮仍各自拥有独立的轨迹与执行记录，按 `turn_id` 存储；控制台通过 `GET /api/ops/conversations/<id>/turns` 读取整段对话（把各轮轨迹与执行记录合并成一条时间线），或通过 `GET /api/ops/conversations/<id>/turns/<turnId>` 按轮读取并校验该轮确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时；详情响应（`GET /api/ops/conversations/<id>`）还会派生并返回该对话的系统提示词，供控制台展示。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**轨迹**、**统计** 三个标签页分别呈现消息记录（含每条助手回复的工具调用，并在记录上方展示该对话的系统提示词）、整段对话合并后的轨迹（可切换到单轮）与整段对话的汇总。每个对话都带一个显式模式（`ConversationMode`），当前只有 `read_only` 一种，并在左侧列表与仓库头部以标签展示。内联执行由该模式派生仓库能力：`read_only` 只提供只读仓库工具，不会向 GitLab 发布内容。每个对话常驻一个只读 worktree 并跨轮次复用（同一固定快照的追问只重新校验 HEAD，不再重新 checkout 工作树），空闲工作区按 TTL 与缓存上限淘汰，并在 Server 关闭时删除。目前运行在 Server 进程内，后续可迁移到容器而无需改动该契约。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
+经过认证的 Agent 控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。对话使用独立表（`conversations`、`conversation_messages`、`conversation_turns`），不进入事件队列：每轮由 Server 通过 `ConversationRunner` 内联执行，因此对话轮次不是事件，也不会出现在事件列表里。每轮仍各自拥有独立的轨迹与执行记录，按 `turn_id` 存储；控制台通过 `GET /api/ops/conversations/<id>/turns` 读取整段对话（把各轮轨迹与执行记录合并成一条时间线），或通过 `GET /api/ops/conversations/<id>/turns/<turnId>` 按轮读取并校验该轮确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时；详情响应（`GET /api/ops/conversations/<id>`）还会派生并返回该对话的系统提示词，供控制台展示。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**轨迹**、**统计** 三个标签页分别呈现消息记录（含每条助手回复的工具调用，并在记录上方展示该对话的系统提示词）、整段对话合并后的轨迹（可切换到单轮）与整段对话的汇总。首轮完成后，Corvex 会依据开场提问让模型生成一个简短标题并写入对话，左侧列表即按该标题展示（标题生成前回退为项目名）；标题生成是尽力而为，失败不会让轮次失败。每个对话都带一个显式模式（`ConversationMode`），当前只有 `read_only` 一种，并在左侧列表与仓库头部以标签展示。内联执行由该模式派生仓库能力：`read_only` 只提供只读仓库工具，不会向 GitLab 发布内容。每个对话常驻一个只读 worktree 并跨轮次复用（同一固定快照的追问只重新校验 HEAD，不再重新 checkout 工作树），空闲工作区按 TTL 与缓存上限淘汰，并在 Server 关闭时删除。目前运行在 Server 进程内，后续可迁移到容器而无需改动该契约。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
 
 ### 上下文预算
 
-Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 估算 Token 数，`trimHistory` 只保留符合 `agent.history_token_budget` 的最近若干历史轮次；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，请求本身也以结构化多消息构建，而不是拼成一个大字符串。单轮内，工具输出按 `agent.turn_tool_result_bytes` 累计。达到预算 75% 时模型会收到检查点提示：停止继续读取，汇总已确认的发现，让用户在下一条消息中继续（新轮次预算重新计算，历史由滚动摘要承接）。达到 100% 时中止本轮，并以明确的预算错误收尾，而不是透出服务商的中止错误。Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值，使 SDK 自动压缩与 Corvex 自身的裁剪保持一致。若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。这些键可在控制台设置页面运行时调整；Server 落库前会用与配置文件相同的定义校验它们。
+Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 估算 Token 数，`trimHistory` 只保留符合 `agent.history_token_budget` 的最近若干历史轮次；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，请求本身也以结构化多消息构建，而不是拼成一个大字符串。单轮内，工具输出按 `agent.turn_tool_result_bytes` 累计，它是软检查点而非硬上限：达到预算 75% 时，模型会被告知先记录已确认的结论，再改用更聚焦的读取继续，直到任务完成。上下文的增长由 SDK 压缩吸收（Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值，使 SDK 自动压缩与 Corvex 自身的裁剪保持一致）；若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。因此单轮字节预算不会再中止长任务，这正是任务能在单个 128K Token 窗口内完成的原因。这些键可在控制台设置页面运行时调整；Server 落库前会用与配置文件相同的定义校验它们。
 
 ## 审查流程
 
@@ -64,7 +64,7 @@ Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创�
 
 ```text
 queued -> preparing -> analyzing -> publishing -> completed
-                              \-> fixing -> verifying -/
+ \-> fixing -> verifying -/
 ```
 
 事件也可能以 `failed`、`stale` 或 `cancelled` 结束。Worker 按 `worker.poll_interval` 轮询，并受 `worker.event_timeout` 限制。
@@ -80,7 +80,7 @@ SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库�
 ## 安全边界和限制
 
 - Webhook Secret 用于验证 GitLab 投递；仅在需要接受指令的项目中注册 Webhook，并可通过用户黑名单限制发起任务的用户。
-- 运维控制台可发现只读 GitLab Token 有权访问的所有项目，不受静态项目白名单控制。
+- Agent 控制台可发现只读 GitLab Token 有权访问的所有项目，不受静态项目白名单控制。
 - 使用只读令牌读取 API 和仓库，并使用独立写令牌发布 MR 评论。不要把注册 Webhook 时使用的管理员令牌提供给运行中的服务。
 - 仓库内容、评论、文件名和 Fix 指令都是不可信模型输入。模型输出会经过校验，但校验不能替代人工审阅。
 - 模型提示内容可能包含源代码和 MR 文本。启用模型前，应审查服务商的数据处理方式及组织政策。

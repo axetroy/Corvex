@@ -14,7 +14,7 @@ Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `
 | `server.read_timeout` | `5s` | Positive duration | HTTP header-read timeout. |
 | `server.shutdown_timeout` | `30s` | Positive duration | Graceful HTTP shutdown limit. |
 
-The optional operations console uses HTTP Basic Auth credentials supplied only through environment variables. Set both variables to enable it; leave both unset to keep the console disabled. Use a strong, unique password and access the console only over HTTPS.
+The optional agent console uses HTTP Basic Auth credentials supplied only through environment variables. Set both variables to enable it; leave both unset to keep the console disabled. Use a strong, unique password and access the console only over HTTPS.
 
 | Variable | Use |
 |---|---|
@@ -33,7 +33,7 @@ Credentials are mandatory environment variables:
 
 | Variable | Use |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Required in worker mode and when the operations console is enabled in server mode. Used for GitLab API reads, project/target discovery, and authenticated Git repository fetches. |
+| `CORVEX_GITLAB_READ_TOKEN` | Required in worker mode and when the agent console is enabled in server mode. Used for GitLab API reads, project/target discovery, and authenticated Git repository fetches. |
 | `CORVEX_GITLAB_TOKEN` | Required for GitLab writes. Posts notes and inline discussions; Chat may commit/push to same-project MR branches, and enabled Issue implementation pushes a new branch and creates a Draft MR. Use a separate write token with only the required permissions. |
 | `CORVEX_WEBHOOK_SECRET` | Required. Must match the project webhook's secret token. |
 
@@ -67,12 +67,12 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.context_window` | `131072` | 1,024–10,000,000 | Total token window of the model. It drives prompt budgets and the SDK compaction threshold; it must match what the provider serves. |
 | `agent.max_input_tokens` | `0` | 0 ≤ value < `context_window` | Hard cap on a single request's input tokens. `0` derives it from `context_window` minus `max_output_tokens` and a fixed framing overhead. |
 | `agent.history_token_budget` | `24000` | 0–`context_window` | Token budget for re-injecting earlier turns into a conversation request. Older history beyond it is trimmed, or summarized when `summary_enabled` is on. |
-| `agent.turn_tool_result_bytes` | `2097152` | 0–67,108,864 | Cumulative tool-output bytes allowed within one turn. At 75% the model is told to checkpoint and continue in a new turn; at 100% the turn fails with a budget error. `0` disables the limit. |
+| `agent.turn_tool_result_bytes` | `2097152` | 0–67,108,864 | Cumulative tool-output bytes within one turn. This is a soft checkpoint, not a hard cap: at 75% the model is told to record what it has confirmed and continue with more targeted reads, and it keeps running until the task is done. `0` disables the checkpoint. |
 | `agent.compaction_reserve_tokens` | `16384` | 0 ≤ value < `context_window` | Tokens held back from `context_window` so SDK compaction output still fits. |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | Recent tokens the SDK keeps verbatim when it compacts. |
 | `agent.summary_enabled` | `true` | Boolean | Compress trimmed conversation history into a stored rolling summary that later turns reuse. |
 
-These context-budget keys are the primary defence against provider `context length exceeded` errors: Corvex trims history and caps tool output before a request leaves the process, and makes one more aggressive retry without history if the provider still reports an overflow. They can also be tuned at runtime from the operations console Settings page without editing the config file.
+These context-budget keys are the primary defence against provider `context length exceeded` errors: Corvex trims history and caps tool output before a request leaves the process, and makes one more aggressive retry without history if the provider still reports an overflow. They can also be tuned at runtime from the agent console Settings page without editing the config file.
 
 `CORVEX_MODEL_API_KEY` is required when the agent is enabled. The budget conservatively reserves prompt bytes plus the configured maximum output tokens, then settles against provider usage. If a request result is uncertain, the reservation is retained. It is a token limit, not a price-based spending cap.
 
@@ -111,7 +111,7 @@ The event lease is currently fixed at 30 seconds and renewed during execution; i
 | `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
 | `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed Fix or Issue implementation patch size. |
 
-Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the operations console can discover every project visible to its read token.
+Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the agent console can discover every project visible to its read token.
 
 ## Issue implementation
 
@@ -126,11 +126,11 @@ Issue tasks use the project default branch unless the current request explicitly
 
 | Variable | YAML setting or purpose |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode and in server mode when the operations console is enabled |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode and in server mode when the agent console is enabled |
 | `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server and worker modes |
 | `CORVEX_WEBHOOK_SECRET` | Webhook secret; required in server mode |
 | `CORVEX_OPS_USERNAME` | Optional operator username; set together with `CORVEX_OPS_PASSWORD` |
-| `CORVEX_OPS_PASSWORD` | Optional operations console password; set together with `CORVEX_OPS_USERNAME` |
+| `CORVEX_OPS_PASSWORD` | Optional agent console password; set together with `CORVEX_OPS_USERNAME` |
 | `CORVEX_MODEL_API_KEY` | Model API key; required in worker mode when the agent is enabled |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |

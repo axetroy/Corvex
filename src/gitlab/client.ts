@@ -20,13 +20,13 @@ export interface Project {
   id: number;
   name?: string;
   path_with_namespace?: string;
-  /** 项目描述；GitLab 允许为空字符串。运维台用它作为选择器的第二行。 */
+  /** 项目描述；GitLab 允许为空字符串。Agent 控制台用它作为选择器的第二行。 */
   description?: string;
   http_url_to_repo: string;
   default_branch?: string;
 }
 
-/** 分支最近一次提交；只有 `id` 是必填，其余字段用于运维台展示。 */
+/** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
 export interface GitLabBranchCommit {
   id: string;
   short_id?: string;
@@ -175,7 +175,7 @@ function fullSha(value: string): boolean {
 
 /**
  * 从 GitLab 对象里取出可选文本字段：非字符串、空白或超长时返回 undefined，
- * 避免把异常数据透传到运维台。
+ * 避免把异常数据透传到 Agent 控制台。
  */
 function optionalString(source: Record<string, unknown>, key: string, maxLength: number): string | undefined {
   const value = source[key];
@@ -327,7 +327,7 @@ export class GitLabClient {
         !isRecord(value) || typeof value.name !== "string" || !isRecord(value.commit) ||
         typeof value.commit.id !== "string" || !fullSha(value.commit.id)
       ) throw new Error("GitLab returned an invalid branch list entry");
-      // 只保留运维台需要的提交元数据；非字符串、空白或超长的值一律丢弃。
+      // 只保留 Agent 控制台需要的提交元数据；非字符串、空白或超长的值一律丢弃。
       const shortId = optionalString(value.commit, "short_id", 64);
       const title = optionalString(value.commit, "title", 4096);
       const committedDate = optionalString(value.commit, "committed_date", 64);

@@ -61,10 +61,10 @@ function respondJson(response: ServerResponse, status: number, value: unknown): 
   response.end(JSON.stringify(value));
 }
 
-/** 构建后的运维控制台目录；开发与生产都从包根目录的 dist/app/ui 读取。 */
+/** 构建后的 Agent 控制台目录；开发与生产都从包根目录的 dist/app/ui 读取。 */
 const operationsUiDirectory = new URL("../../dist/app/ui/", import.meta.url);
 
-/** 运维控制台允许提供的静态资源扩展名与对应响应类型。 */
+/** Agent 控制台允许提供的静态资源扩展名与对应响应类型。 */
 const operationsUiContentTypes: Record<string, string> = {
   js: "text/javascript; charset=utf-8",
   css: "text/css; charset=utf-8",
@@ -132,7 +132,7 @@ export class CorvexServer {
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
-    /** 配置文件路径；提供时运维台可在运行时覆盖上下文设置并持久化。 */
+    /** 配置文件路径；提供时 Agent 控制台可在运行时覆盖上下文设置并持久化。 */
     private readonly configPath?: string,
   ) {
     this.conversations = new ConversationRunner(config, store, gitlab);
@@ -273,7 +273,7 @@ export class CorvexServer {
         return;
       }
       if (!basicCredentialsMatch(request, this.config.operations.username, this.config.operations.password)) {
-        response.setHeader("www-authenticate", 'Basic realm="Corvex Operations", charset="UTF-8"');
+        response.setHeader("www-authenticate", 'Basic realm="Corvex GitLab Cloud Agent", charset="UTF-8"');
         respond(response, 401, "authentication required\n");
         return;
       }
@@ -605,7 +605,7 @@ export class CorvexServer {
   }
 
   /**
-   * 读取运维台可编辑的上下文设置：以配置文件为基准，叠加运行时覆盖项。
+   * 读取 Agent 控制台可编辑的上下文设置：以配置文件为基准，叠加运行时覆盖项。
    * 返回每个键的当前值、覆盖值以及是否被覆盖，界面据此显示「已覆盖」。
    */
   private async readSettings(): Promise<{
@@ -757,7 +757,7 @@ export class CorvexServer {
       contents = await readFile(new URL(target.file, operationsUiDirectory));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      respond(response, 503, "operations console assets are not built; run pnpm run ui:build\n");
+      respond(response, 503, "agent console assets are not built; run pnpm run ui:build\n");
       return;
     }
     response.statusCode = 200;

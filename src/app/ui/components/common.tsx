@@ -8,7 +8,7 @@ interface TableRow {
   cells: ReactNode[];
 }
 
-/** 运维台的通用面板容器，标题与内容使用既有样式类。 */
+/** Agent 控制台的通用面板容器，标题与内容使用既有样式类。 */
 export function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <Card className="panel" title={title} size="small">{children}</Card>;
 }

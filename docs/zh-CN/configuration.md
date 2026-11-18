@@ -14,7 +14,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `server.read_timeout` | `5s` | 正时长 | HTTP 请求头读取超时。 |
 | `server.shutdown_timeout` | `30s` | 正时长 | HTTP 优雅关闭等待时限。 |
 
-可选运维控制台仅通过环境变量配置 HTTP Basic Auth。设置两个变量后启用；两个都不设置则禁用控制台。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
+可选 Agent 控制台仅通过环境变量配置 HTTP Basic Auth。设置两个变量后启用；两个都不设置则禁用控制台。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
 
 | 变量 | 用途 |
 |---|---|
@@ -33,11 +33,11 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 | 变量 | 用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Worker 模式必填；Server 模式启用运维控制台时必填。用于读取 GitLab API、发现项目/目标及通过 Git 抓取仓库。 |
+| `CORVEX_GITLAB_READ_TOKEN` | Worker 模式必填；Server 模式启用 Agent 控制台时必填。用于读取 GitLab API、发现项目/目标及通过 Git 抓取仓库。 |
 | `CORVEX_GITLAB_TOKEN` | GitLab 写操作必填。发布评论和行级讨论；Chat 可提交/推送同项目 MR 分支；启用 Issue 实现后会推送新分支并创建 Draft MR。应使用权限最小化的独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
-| `CORVEX_OPS_PASSWORD` | 可选运维控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
+| `CORVEX_OPS_PASSWORD` | 可选 Agent 控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
 
 ## 存储
 
@@ -69,12 +69,12 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。它决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。 |
 | `agent.max_input_tokens` | `0` | 0 ≤ 值 < `context_window` | 单次请求输入 Token 的硬上限。`0` 表示由 `context_window` 减去 `max_output_tokens` 与固定框架开销推导。 |
 | `agent.history_token_budget` | `24000` | 0–`context_window` | 对话请求中重新注入历史轮次的 Token 预算；超出后裁剪较早历史，`summary_enabled` 开启时改为压缩成摘要。 |
-| `agent.turn_tool_result_bytes` | `2097152` | 0–67,108,864 | 单轮内允许累计的工具输出字节数。达到 75% 时提示模型先收尾并在下一条消息继续；超出时以预算错误中止本轮。`0` 表示不限制。 |
+| `agent.turn_tool_result_bytes` | `2097152` | 0–67,108,864 | 单轮内累计的工具输出字节数。它是软检查点而非硬上限：达到 75% 时提示模型先记录已确认的结论，再改用更聚焦的读取继续，直到任务完成。`0` 表示不检查。 |
 | `agent.compaction_reserve_tokens` | `16384` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。 |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。 |
 | `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |
 
-这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出；若服务商仍报超窗，会再去掉历史激进重试一次。它们也可以在运维台设置页面上运行时调整，无需修改配置文件。
+这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出；若服务商仍报超窗，会再去掉历史激进重试一次。它们也可以在 Agent 控制台设置页面上运行时调整，无需修改配置文件。
 
 启用 Agent 后必须提供 `CORVEX_MODEL_API_KEY`。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
@@ -113,7 +113,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
 | `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | Fix 或 Issue 实现模型补丁大小上限。 |
 
-Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；运维控制台可以发现只读令牌可访问的全部项目。
+Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；Agent 控制台可以发现只读令牌可访问的全部项目。
 
 ## Issue 实现
 
@@ -128,7 +128,7 @@ Issue 任务默认使用项目默认分支；只有当前请求明确命名另�
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式及启用运维控制台的 Server 模式必填 |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式及启用 Agent 控制台的 Server 模式必填 |
 | `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 和 Worker 模式必填 |
 | `CORVEX_WEBHOOK_SECRET` | Webhook Secret，Server 模式必填 |
 | `CORVEX_MODEL_API_KEY` | Agent API 密钥，Worker 模式启用 Agent 时必填 |
