@@ -49,7 +49,7 @@ export interface CorvexConfig {
     maxInputTokens: number;
     /** 对话历史注入模型上下文时的 token 预算，超出时按最近优先裁剪。 */
     historyTokenBudget: number;
-    /** 单轮内工具结果累计字节上限，超出时中止本轮，避免请求超出上下文窗口。 */
+    /** 单轮内工具结果累计字节的软阈值：达到后提示模型收窄读取，但不中止本轮。 */
     turnToolResultBytes: number;
     /** SDK 压缩预留 token：触发压缩的阈值 = context_window - reserve。 */
     compactionReserveTokens: number;
@@ -341,7 +341,7 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   const operationsUsername = config.operations.username.trim();
   const operationsPassword = config.operations.password;
   if (Boolean(operationsUsername) !== Boolean(operationsPassword)) {
-    problems.push("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD must be set to enable the operations dashboard");
+    problems.push("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD must be set to enable the agent console");
   }
   const operationsCredentials = operationsUsername + operationsPassword;
   const hasControlCharacters = [...operationsCredentials].some((character) => {
@@ -349,7 +349,7 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     return code < 32 || code === 127;
   });
   if (operationsUsername.includes(":") || hasControlCharacters) {
-    problems.push("operations dashboard credentials contain invalid characters");
+    problems.push("agent console credentials contain invalid characters");
   }
   if (!validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
@@ -479,7 +479,7 @@ export async function loadConfig(path: string, role?: ConfigRole): Promise<Corve
 }
 
 /**
- * 读取配置文件但不做角色校验，用于运维台在运行时重新加载设置。
+ * 读取配置文件但不做角色校验，用于Agent 控制台在运行时重新加载设置。
  * 调用方负责在应用前校验；解析失败时抛出错误，调用方保留旧配置。
  */
 export async function reloadConfig(path: string): Promise<CorvexConfig> {

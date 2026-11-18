@@ -67,6 +67,8 @@ const maxConversationToolInputBytes = 2048;
 /** 单次对话轮次注入模型上下文的历史消息条数上限，按最近优先截断。 */
 /** 滚动摘要的最大字符数，避免摘要本身撑大提示词。 */
 const maxConversationSummaryCharacters = 4_000;
+/** 模型生成的对话标题最大字符数，避免超长标题破坏列表布局。 */
+const maxConversationTitleCharacters = 120;
 
 interface ConversationTurnRow {
   id: string;
@@ -411,7 +413,6 @@ function mapEventSummary(row: EventRow): EventSummary {
   };
 }
 
-/** 归属重建时使用的表结构：保留外键级联，去掉旧库 NOT NULL 的 `event_id` 约束。 */
 /** 归属重建后需要恢复的索引名。 */
 const indexNames = {
   event_trace: "event_trace_event_started_idx",
@@ -1560,7 +1561,25 @@ export class EventStore {
     });
   }
 
-  /** 读取运维台可覆盖的运行时设置；键不存在时返回 undefined。 */
+  /**
+   * 保存模型生成的对话标题。只写入一次：已有标题时忽略，避免后续轮次把标题改掉，
+   * 也避免与并发的首轮生成相互覆盖。
+   */
+  saveConversationTitle(conversationId: string, title: string): void {
+    const trimmed = title.trim().replaceAll(/\s+/g, " ").slice(0, maxConversationTitleCharacters);
+    if (!trimmed) return;
+    this.transaction(() => {
+      const row = this.db.prepare("SELECT title FROM conversations WHERE id=?").get(conversationId) as
+        | { title: string }
+        | undefined;
+      if (!row) throw new Error(`conversation "${conversationId}" not found`);
+      if (row.title) return;
+      this.db.prepare("UPDATE conversations SET title=?,updated_at=? WHERE id=?")
+        .run(trimmed, new Date().toISOString(), conversationId);
+    });
+  }
+
+  /** 读取 Agent 控制台可覆盖的运行时设置；键不存在时返回 undefined。 */
   getRuntimeSetting(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM runtime_settings WHERE key=?").get(key) as
       | { value: string }
@@ -1704,6 +1723,7 @@ export class EventStore {
     if (!isConversationMode(mode)) throw new Error(`SQLite conversation mode "${mode}" is invalid`);
     return {
       id: stringColumn(row, "id"),
+      title: stringColumn(row, "title"),
       projectId: numberColumn(row, "project_id"),
       projectName: stringColumn(row, "project_name"),
       targetBranch: stringColumn(row, "target_branch"),
@@ -2219,6 +2239,7 @@ export class EventStore {
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only',
+        title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT ''
       );
@@ -2349,6 +2370,8 @@ export class EventStore {
       summary_message_id: "TEXT NOT NULL DEFAULT ''",
       // 对话模式：旧库默认只读，与旧行为一致。
       mode: "TEXT NOT NULL DEFAULT 'read_only'",
+      // 模型生成的标题：旧库留空，首次生成后写入。
+      title: "TEXT NOT NULL DEFAULT ''",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);

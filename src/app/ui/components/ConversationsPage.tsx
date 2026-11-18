@@ -296,7 +296,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     key: item.id,
     label: (
       <div className="conversation-summary-label">
-        <Typography.Text strong ellipsis>{item.projectName}</Typography.Text>
+        <Typography.Text strong ellipsis>{item.title || item.projectName}</Typography.Text>
         <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
         <div className="conversation-summary-meta">
           <Tag className="conversation-summary-turns" color={lastTurnColor(item.lastTurnStatus)}>

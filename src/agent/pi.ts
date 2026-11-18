@@ -35,15 +35,29 @@ import { createMergeRequestMetadataExtension } from "./mr-update.js";
 import { createGitWriteExtension } from "./git-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
-/** 128K-token model window minus output and system/tool safety reserves. */
+/** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
 export const maxAgentPromptBytes = 96 << 10;
-/** 单轮工具输出超出预算时统一使用的错误文案，避免被下游的中止错误覆盖。 */
-const toolBudgetExceededMessage =
-  "This turn read more repository content than the per-turn context budget allows; narrow the request or start a new conversation.";
-/** 工具输出预算软阈值：达到后先让模型收尾，把剩余工作留到下一轮。 */
+/** 工具输出预算软阈值：达到后先让模型记录进展再继续，把整轮留在一个会话内完成。 */
 const toolBudgetWarningRatio = 0.75;
 /** Keep initial workflow payload below the total prompt cap to reserve system prompt space. */
 export const maxAgentUserPromptBytes = 80 << 10;
+/** 估算用的固定开销：system 提示、工具定义与消息框架。 */
+const framingOverheadTokens = 2_000;
+
+/**
+ * 单次请求的输入字节上限：由上下文窗口推导，而不是固定 96 KiB。
+ *
+ * 长任务的历史与工具输出会持续增长；固定上限会让合法请求在出站前就被拒。这里按窗口
+ * 推导字节预算（chars/4 估算），窗口越大允许的提示词越多，真正超限时仍由 SDK 压缩与
+ * 服务端超限重试兜底。
+ */
+export function resolveMaxPromptBytes(
+  config: Pick<CorvexConfig["agent"], "contextWindow" | "maxOutputTokens">,
+): number {
+  const inputTokens = config.contextWindow - config.maxOutputTokens - framingOverheadTokens;
+  if (!Number.isFinite(inputTokens)) return maxAgentPromptBytes;
+  return Math.max(maxAgentPromptBytes, Math.max(1_024, inputTokens) * 4);
+}
 
 /** 把配置的历史消息转换为 SDK 的会话条目，用于在 prompt 之前注入上下文。 */
 function seedHistoryMessages(
@@ -196,8 +210,9 @@ export class PiAgent {
     }
     const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt) +
       (request.history ?? []).reduce((sum, message) => sum + Buffer.byteLength(message.content), 0);
-    if (promptBytes > maxAgentPromptBytes) {
-      throw new Error(`agent prompt exceeds the conservative ${maxAgentPromptBytes}-byte request budget`);
+    const promptByteLimit = resolveMaxPromptBytes(this.config.agent);
+    if (promptBytes > promptByteLimit) {
+      throw new Error(`agent prompt exceeds the ${promptByteLimit}-byte request budget`);
     }
     // 以提示词字节数加最大输出量预留预算，避免并发请求突破每日上限。
     const reservedTokens = promptBytes + this.config.agent.maxOutputTokens;
@@ -500,10 +515,9 @@ export class PiAgent {
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
     let currentRound = 0;
-    // 单轮内工具结果累计字节：超过预算即中止本轮，避免请求在服务端才因超窗口报错。
+    // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。
     const toolResultByteLimit = this.config.agent.turnToolResultBytes;
     let toolResultBytes = 0;
-    let toolBudgetExceeded = false;
     let toolBudgetWarningSent = false;
     const recordedContextEntryIds = new Set<string>();
     let hasRecordedContext = false;
@@ -567,11 +581,7 @@ export class PiAgent {
           durationMs,
           message.usage.input,
           message.usage.output,
-          failed
-            ? toolBudgetExceeded && !signal?.aborted
-              ? toolBudgetExceededMessage
-              : message.errorMessage ?? `model request ${message.stopReason}`
-            : undefined,
+          failed ? message.errorMessage ?? `model request ${message.stopReason}` : undefined,
           JSON.stringify({
             content: message.content.filter((part) => part.type === "text" || part.type === "toolCall"),
             stopReason: message.stopReason,
@@ -606,15 +616,9 @@ export class PiAgent {
         activeTools.delete(event.toolCallId);
         if (toolResultByteLimit > 0) {
           toolResultBytes += Buffer.byteLength(JSON.stringify(event.result) ?? "");
-          if (toolResultBytes > toolResultByteLimit) {
-            toolBudgetExceeded = true;
-            void session.abort();
-          } else if (
-            !toolBudgetWarningSent &&
-            toolResultBytes >= toolResultByteLimit * toolBudgetWarningRatio
-          ) {
-            // 软阈值：给模型一次主动收尾的机会，把未完成的调查留给下一轮，
-            // 而不是等到硬上限直接中止整轮。
+          // 只做软提醒：达到阈值后提示模型优先收尾，但不中止本轮。真正的上下文增长
+          // 由 SDK 压缩与服务端超限重试处理，长任务因此能在同一会话内完成。
+          if (!toolBudgetWarningSent && toolResultBytes >= toolResultByteLimit * toolBudgetWarningRatio) {
             toolBudgetWarningSent = true;
             void session.steer(getToolBudgetWarningPrompt(
               this.config.agent.responseLanguage,
@@ -635,10 +639,8 @@ export class PiAgent {
       await session.bindExtensions({});
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
       await session.prompt(request.userPrompt);
-      // 外部取消优先；否则预算中止必须归因为预算错误，而不是 SDK 的
-      // "This operation was aborted"，也不能把中止后的半截文本当成完成。
+      // 外部取消优先：中止后的半截文本不能当作完成结果。
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
-      if (toolBudgetExceeded) throw new Error(toolBudgetExceededMessage);
       const content = session.getLastAssistantText()?.trim();
       if (!content) throw new Error("Pi returned an empty completion");
       const usage = session.getSessionStats().tokens;
@@ -652,7 +654,6 @@ export class PiAgent {
         },
       };
     } catch (error) {
-      const failure = toolBudgetExceeded && !signal?.aborted ? new Error(toolBudgetExceededMessage) : error;
       if (activeModelCall) {
         const endedAt = performance.now();
         const durationMs = endedAt - activeModelCall.startedAt;
@@ -665,7 +666,7 @@ export class PiAgent {
           durationMs,
           undefined,
           undefined,
-          errorMessage(failure),
+          errorMessage(error),
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,
@@ -674,7 +675,7 @@ export class PiAgent {
         );
         activeModelCall = undefined;
       }
-      throw failure;
+      throw error;
     } finally {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
@@ -690,9 +691,7 @@ export class PiAgent {
           durationMs,
           undefined,
           undefined,
-          toolBudgetExceeded && !signal?.aborted
-            ? toolBudgetExceededMessage
-            : "model request did not complete",
+          "model request did not complete",
           undefined,
           activeModelCall.firstTokenMs,
           generationDurationMs,

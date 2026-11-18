@@ -177,10 +177,18 @@ describe("PiAgent", () => {
         webEnabled: true,
         webBlockedHosts: ["blocked.corp.dev"],
         skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
     } satisfies CorvexConfig;
 
     await writeFile(join(temporaryDirectory, "README.md"), "private repository content");
@@ -196,9 +204,9 @@ describe("PiAgent", () => {
     const agent = new PiAgent(config, store);
     const requestCountBeforeOversizedPrompt = requestCount;
     await expect(agent.generate(
-      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "x".repeat(maxAgentPromptBytes) },
+      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "x".repeat(maxAgentPromptBytes * 8) },
       temporaryDirectory,
-    )).rejects.toThrow("conservative");
+    )).rejects.toThrow("request budget");
     expect(requestCount).toBe(requestCountBeforeOversizedPrompt);
     responseDelayMs = 1400;
     const startedAt = Date.now();
@@ -308,7 +316,7 @@ describe("PiAgent", () => {
     });
   }, 20_000);
 
-  it("reports the tool-output budget instead of the SDK abort message", async () => {
+  it("keeps a long turn running past the tool-output soft budget", async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-budget-"));
     let requestCount = 0;
     server = createServer((request, response) => {
@@ -415,14 +423,14 @@ describe("PiAgent", () => {
       issue: { implementEnabled: false, historyComments: 20 },
     }, store);
 
-    await expect(
-      agent.generate(
-        { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read big.txt." },
-        temporaryDirectory,
-        undefined,
-        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
-      ),
-    ).rejects.toThrow("per-turn context budget");
+    const result = await agent.generate(
+      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read big.txt." },
+      temporaryDirectory,
+      undefined,
+      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+    );
+    expect(result.content).toBe("partial answer");
+    expect(requestCount).toBeGreaterThanOrEqual(2);
   }, 10_000);
 
   it("asks the model to checkpoint before the tool budget is exhausted", async () => {
@@ -546,6 +554,6 @@ describe("PiAgent", () => {
 
     expect(result.content).toBe("wrapped up");
     expect(requestBodies[1]).toContain("tool-output budget");
-    expect(requestBodies[1]).toContain("continue in a new message");
+    expect(requestBodies[1]).toContain("continue until the task is complete");
   }, 10_000);
 });

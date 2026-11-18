@@ -9,7 +9,7 @@ import type { Workspace } from "../git/types.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { buildConversationPrompt, trimHistory } from "../agent/budget.js";
-import { getConversationSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
+import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 
 /** 常驻对话工作区的空闲存活时间，超时后由 Runner 或 storage cleanup 回收。 */
 const conversationWorkspaceTtlMs = 60 * 60_000;
@@ -185,6 +185,35 @@ export class ConversationRunner {
     }
   }
 
+  /**
+   * 为首轮对话生成标题：只根据用户的首条提问推断主题并持久化。
+   * 标题失败不影响本轮结果——它只是列表展示的优化，不能让已回答的轮次变失败。
+   */
+  private async updateTitle(
+    turn: ConversationTurnContext,
+    workspacePath: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (turn.history.length > 0 || turn.summary) return;
+    try {
+      const title = await this.agent.generate(
+        {
+          taskType: "conversation",
+          systemPrompt: getConversationTitleSystemPrompt(this.config.agent.responseLanguage),
+          userPrompt: turn.request,
+        },
+        workspacePath,
+        signal,
+      );
+      this.store.saveConversationTitle(turn.conversationId, title.content);
+    } catch (error) {
+      console.warn("conversation title generation failed", {
+        conversationId: turn.conversationId,
+        error: errorMessage(error),
+      });
+    }
+  }
+
   private async execute(turn: ConversationTurnContext, signal: AbortSignal): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
@@ -291,6 +320,7 @@ export class ConversationRunner {
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
       this.store.finishConversationTurn(turn.turnId, answer.content);
+      await this.updateTitle(turn, workspace.path, signal);
       await this.updateSummary(turn, dropped, workspace.path, signal);
     } catch (error) {
       if (signal.aborted) {

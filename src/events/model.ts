@@ -139,6 +139,8 @@ export interface EventPage {
 
 export interface ConversationSummary {
   id: string;
+  /** 由模型生成的对话标题；尚未生成时为空字符串。 */
+  title: string;
   projectId: number;
   projectName: string;
   targetBranch: string;
@@ -200,7 +202,7 @@ export interface ConversationDetail extends Conversation {
 
 /**
  * 单轮对话的完整记录：把一轮助手回复背后的轮次状态、轨迹与执行步骤汇总到一起，
- * 使运维台可以直接在对话内查看该轮的轨迹，而无需跳到事件详情页。
+ * 使 Agent 控制台可以直接在对话内查看该轮的轨迹，而无需跳到事件详情页。
  */
 export interface ConversationTurn {
   conversationId: string;
@@ -245,7 +247,7 @@ export interface ConversationTurnSegment {
 
 /**
  * 整段对话的轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
- * 并带上按轮分组的边界，供运维台默认在一条轨迹里展示所有轮次。
+ * 并带上按轮分组的边界，供 Agent 控制台默认在一条轨迹里展示所有轮次。
  */
 export interface ConversationTurns {
   conversationId: string;

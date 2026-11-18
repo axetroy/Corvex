@@ -192,6 +192,46 @@ describe("EventStore", () => {
     }).turnId).toBeTruthy();
   });
 
+  it("stores a model-generated conversation title once and ignores later writes", async () => {
+    store = await EventStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Explain the routing module",
+    });
+    // 新对话标题为空，界面回退到项目名。
+    expect(store.listConversations(10, 0).items[0]).toMatchObject({ id: created.conversationId, title: "" });
+
+    store.saveConversationTitle(created.conversationId, "  路由模块说明  ");
+    expect(store.listConversations(10, 0).items[0]?.title).toBe("路由模块说明");
+    expect(store.getConversation(created.conversationId)?.title).toBe("路由模块说明");
+
+    // 只写入一次：后续轮次不会覆盖首轮标题。
+    store.saveConversationTitle(created.conversationId, "Another title");
+    expect(store.getConversation(created.conversationId)?.title).toBe("路由模块说明");
+
+    // 空白标题被忽略，超长标题按字符数截断。
+    store.saveConversationTitle("blank-title", "   ");
+    expect(() => store.saveConversationTitle("missing-conversation", "Title")).toThrow("not found");
+    const longTitle = "字".repeat(200);
+    store.saveConversationTitle(created.conversationId, longTitle);
+    expect(store.getConversation(created.conversationId)?.title).toBe("路由模块说明");
+
+    const second = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Second",
+    });
+    store.saveConversationTitle(second.conversationId, longTitle);
+    expect(store.getConversation(second.conversationId)?.title.length).toBe(120);
+  });
+
   it("exposes each conversation turn's own trajectory and execution records", async () => {
     store = await EventStore.open(":memory:");
     const created = store.createConversation({
@@ -1127,6 +1167,7 @@ describe("EventStore", () => {
     expect(store.listConversations(10, 0)).toEqual({
       items: [{
         id: "legacy-session",
+        title: "",
         projectId: 7,
         projectName: "group/project",
         targetBranch: "feature/session",

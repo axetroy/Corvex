@@ -531,6 +531,8 @@ describe("review task loop", () => {
     // 对话轮次由 Server 内联执行：不经 Worker、不进入事件队列，并逐条暴露工具调用。
     modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
     modelActions.push({ content: "`input.ts` assigns a value without validating it." });
+    // 首轮完成后触发一次标题生成调用，使用模型的独立动作。
+    modelActions.push({ content: "Value assignment in input.ts" });
     const authorization = `Basic ${Buffer.from("operator:a secure password with 16 chars").toString("base64")}`;
     const conversationResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations`, {
       method: "POST",
@@ -543,6 +545,9 @@ describe("review task loop", () => {
     await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
     const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
     expect(conversationDetail?.mode).toBe("read_only");
+    // 首轮完成后由模型总结标题；失败不影响轮次，因此这里等待列表标题出现。
+    await waitFor(() => Boolean(serverStore.getConversation(createdConversation.conversationId)?.title));
+    expect(serverStore.getConversation(createdConversation.conversationId)?.title).toBe("Value assignment in input.ts");
     expect(conversationDetail?.messages[1]).toMatchObject({
       role: "assistant",
       status: "completed",
