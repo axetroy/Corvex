@@ -68,10 +68,12 @@
   align-items: center;
 }
 
-.remote-picker .ant-select-content-has-value .ant-select-input {
-  width: 0;
-  min-width: 0;
-  flex: 0 0 auto;
+/* 手动输入时 Ant Design 会给 content 加 `has-search-value` 并把 content 的
+   color 设为 transparent。输入框不能压缩宽度（这里曾设过 width:0，导致输入的
+   文字落在 0 宽容器里不可见），并显式指定文字色以覆盖继承来的 transparent。 */
+.remote-picker.ant-select .ant-select-content.ant-select-content-has-search-value .ant-select-input {
+  color: var(--remote-picker-ink);
+  caret-color: var(--remote-picker-ink);
 }
 
 .remote-picker .ant-select-selection-item,
