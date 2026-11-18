@@ -30,8 +30,8 @@ interface TurnOption {
 }
 
 /**
- * 对话「轨迹」标签：默认把该对话全部轮次合并成一条轨迹，从会话与时间线两个视图查看
- * 整段对话的模型与工具活动；也可以只聚焦某一轮，连同该轮的生命周期与执行步骤一起查看。
+ * 对话「轨迹」标签：默认把该对话全部轮次合并成一条时间线轨迹，也可以只聚焦某一轮，
+ * 连同该轮的生命周期与执行步骤一起查看。
  */
 export function ConversationTraceTab({ conversationId, messages, copy, locale, refreshToken, onUpdated }: Props) {
   const turns = useMemo<TurnOption[]>(
@@ -138,7 +138,7 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
             </Space>
             {single.lastError ? <p className="conversation-turn-error">{single.lastError}</p> : null}
           </div>
-          <TraceExperience entries={single.trajectory} userRequest={single.request} copy={copy} locale={locale} />
+          <TraceExperience entries={single.trajectory} copy={copy} locale={locale} />
           <Panel title={copy.traceRecords}>
             <ExecutionSteps events={single.events} copy={copy} locale={locale} />
           </Panel>

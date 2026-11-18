@@ -18,19 +18,12 @@ describe("operations UI locale", () => {
     expect(zhCN.overviewTitle).toBe("概览");
     expect(en.age).toBe("Event duration");
     expect(zhCN.age).toBe("事件耗时");
-    expect(zhCN.traceTabSession).toBe("会话");
-    expect(zhCN.traceTabTrace).toBe("轨迹");
-    expect(zhCN.traceSessionUser).toBe("用户");
-    expect(zhCN.traceSessionAssistant).toBe("助手");
     expect(en.conversationTurnActive).toBe("A response is already in progress for this conversation.");
     expect(zhCN.conversationTurnActive).toBe("该对话已有回复正在处理中。");
     expect(zhCN.traceFirstToken).toBe("Time to First Token (TTFT)");
     expect(zhCN.traceGenerationDuration).toBe("Generation duration");
     expect(zhCN.traceTps).toBe("Generation TPS");
     expect(zhCN.traceTpsTemplate).toBe("{value} tokens/s");
-    expect(zhCN.traceFirstTokenShort).toBe("TTFT");
-    expect(zhCN.traceSessionSummaryTemplate).toContain("Avg. TTFT: {ttft}");
-    expect(zhCN.traceSessionSummaryTemplate).toContain("Generation TPS: {tps}");
     expect(zhCN.executionSteps).toBe("执行步骤");
     expect(en.requester).toBe("Requester");
     expect(zhCN.requester).toBe("发起人");
@@ -42,7 +35,6 @@ describe("operations UI locale", () => {
     expect(zhCN.pickerClear).toBe("清除选择");
     expect(zhCN.commitMinutesTemplate).toBe("{value} 分钟前");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
-    expect(zhCN.traceToolDetails).toBe("查看调用详情");
     expect(en.conversationModes.read_only).toBe("Read-only");
     expect(zhCN.conversationModes.read_only).toBe("只读");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());

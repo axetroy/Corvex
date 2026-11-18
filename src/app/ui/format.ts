@@ -68,26 +68,6 @@ export function formatOutputTps(value: number | null, copy: Copy): string {
   return value === null ? copy.none : copy.traceTpsTemplate.replace("{value}", value.toFixed(1));
 }
 
-/** 轨迹字段保存的是 JSON 文本，展示时缩进；无法解析时原样返回。 */
-export function formatTraceJson(value: string | null | undefined): string {
-  const parsed = parseTraceValue(value);
-  return parsed === undefined ? value ?? "" : JSON.stringify(parsed, null, 2);
-}
-
-/** 拼接消息内容中的文本片段，非文本片段按 JSON 展示。 */
-export function formatSessionContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => {
-      const record = asTraceRecord(part);
-      if (record?.type === "text" && typeof record.text === "string") return record.text;
-      return JSON.stringify(part, null, 2);
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 /** 把工具调用参数还原为可读的一行描述，未知工具回退为通用模板。 */
 export function describeSessionTool(
   name: string,
@@ -147,36 +127,6 @@ export function describeSessionTool(
     default:
       return copy.traceToolGenericTemplate.replace("{name}", (name || copy.traceName).replaceAll(/[_-]+/g, " "));
   }
-}
-
-/** 解析模型回复，拆出文本与本次请求的工具调用摘要。 */
-export function readAssistantOutput(value: string | null, copy: Copy): { text: string; toolCalls: string[] } {
-  const parsed = asTraceRecord(parseTraceValue(value));
-  const content = parsed && Array.isArray(parsed.content) ? parsed.content : undefined;
-  if (!content) return { text: formatTraceJson(value), toolCalls: [] };
-  const parts = content.map(asTraceRecord);
-  const text = parts
-    .filter((part) => part?.type === "text" && typeof part.text === "string")
-    .map((part) => String(part?.text))
-    .join("\n\n");
-  const reply = asTraceRecord(parseTraceValue(text));
-  return {
-    text: reply?.action === "reply" && typeof reply.reply === "string" ? reply.reply : text,
-    toolCalls: parts
-      .filter((part) => part?.type === "toolCall")
-      .map((part) => describeSessionTool(String(part?.name ?? ""), part?.arguments, null, copy)),
-  };
-}
-
-/** 格式化工具结果：文本数组按段落拼接，其余按 JSON 缩进展示。 */
-export function formatSessionPayload(value: string | null): string {
-  const parsed = parseTraceValue(value);
-  if (parsed === undefined) return value ?? "";
-  if (typeof parsed === "string") return parsed;
-  if (Array.isArray(parsed)) return formatSessionContent(parsed);
-  const record = asTraceRecord(parsed);
-  if (record && Array.isArray(record.content)) return formatSessionContent(record.content);
-  return JSON.stringify(parsed, null, 2);
 }
 
 /** 执行事件的输入输出按 JSON 展示，非 JSON 文本原样返回。 */

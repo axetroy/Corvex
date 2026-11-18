@@ -1,4 +1,4 @@
-/** 运维台支持的界面语言。 */
+/** Agent 控制台支持的界面语言。 */
 export type Locale = "en" | "zh-CN";
 
 /** 把任意语言标记归一化为受支持的界面语言；不支持时返回 undefined。 */
@@ -25,17 +25,17 @@ export function translate(table: Record<string, string>, key: string): string {
   return table[key] ?? key;
 }
 
-/** 运维台英文界面文案，按界面用途提供本地化字符串。 */
+/** Agent 控制台英文界面文案，按界面用途提供本地化字符串。 */
 export const en = {
-  documentTitle: "Corvex Operations",
-  brandLabel: "Corvex Operations home",
+  documentTitle: "Corvex — GitLab Cloud Agent",
+  brandLabel: "Corvex GitLab Cloud Agent home",
   navLabel: "Main navigation",
   toggleNavigation: "Collapse or expand navigation",
   navOverview: "Overview",
   navEvents: "Events",
   navConversations: "Conversations",
   languageLabel: "Language",
-  loading: "Loading operations data...",
+  loading: "Loading GitLab agent data...",
   conversationsTitle: "Conversations",
   conversationsDescription: "Persistent, read-only conversations pinned to a repository branch.",
   conversationWelcomeTitle: "Chat with your repository",
@@ -234,20 +234,12 @@ export const en = {
   attemptHistory: "Attempt history",
   trajectory: "Trajectory",
   traceDiagram: "Execution sequence",
-  traceTabSession: "Session",
-  traceTabTrace: "Trace",
-  traceSessionSummaryTemplate: "Model calls: {messages} · Tool calls: {tools} · Errors: {errors} · Avg. TTFT: {ttft} · Generation TPS: {tps}",
-  traceFirstTokenShort: "TTFT",
   traceFirstToken: "Time to First Token (TTFT)",
   traceRequestStarted: "Request started",
   traceResponseHeaders: "Response headers",
   traceGenerationDuration: "Generation duration",
   traceTps: "Generation TPS",
   traceTpsTemplate: "{value} tokens/s",
-  traceSessionModelTemplate: "Model: {model}",
-  traceSessionUser: "You",
-  traceSessionAssistant: "Assistant",
-  traceSessionToolCallsTemplate: "Requested {count} tool call(s)",
   traceSystemPrompt: "System Prompt",
   traceOverview: "Timeline overview",
   traceOverviewSummaryTemplate: "{events} events · {duration}",
@@ -276,7 +268,6 @@ export const en = {
   traceOutput: "Output",
   traceArguments: "Arguments",
   traceResult: "Result",
-  traceToolDetails: "View call details",
   traceToolReadFileRangeTemplate: "Read file {path} (lines {start}-{end})",
   traceToolReadDirectoryTemplate: "List directory {path}",
   traceToolInspectPathTemplate: "Inspect path {path}",
@@ -305,7 +296,7 @@ export const en = {
   finished: "Finished",
   error: "Error",
   noAttempts: "No attempts recorded yet.",
-  renderErrorTitle: "The operations console failed to render",
+  renderErrorTitle: "The agent console failed to render",
   renderErrorDescription: "Reload the page to try again. If it keeps failing, check the browser console and the Server logs.",
   reloadPage: "Reload",
   refreshing: "Refreshing…",
@@ -354,23 +345,23 @@ export const en = {
   settingsInvalidNumber: "Enter a whole number between {min} and {max}.",
 };
 
-/** 运维台界面文案结构，中英文共用同一套键。 */
+/** Agent 控制台界面文案结构，中英文共用同一套键。 */
 export type Copy = typeof en;
 
 /** `Copy` 中可直接作为界面文案使用的键（排除嵌套的分组表）。 */
 export type CopyTextKey = { [Key in keyof Copy]: Copy[Key] extends string ? Key : never }[keyof Copy];
 
-/** 运维台简体中文界面文案，与 en 使用相同的键结构。 */
+/** Agent 控制台简体中文界面文案，与 en 使用相同的键结构。 */
 export const zhCN: Copy = {
-  documentTitle: "Corvex 运维控制台",
-  brandLabel: "Corvex 运维控制台首页",
+  documentTitle: "Corvex — GitLab 云端 Agent",
+  brandLabel: "Corvex GitLab 云端 Agent 首页",
   navLabel: "主导航",
   toggleNavigation: "展开或收起导航",
   navOverview: "概览",
   navEvents: "事件",
   navConversations: "对话",
   languageLabel: "语言",
-  loading: "正在加载运维数据...",
+  loading: "正在加载 GitLab Agent 数据...",
   conversationsTitle: "对话",
   conversationsDescription: "绑定仓库分支的持久只读对话。",
   conversationWelcomeTitle: "和仓库对话",
@@ -569,20 +560,12 @@ export const zhCN: Copy = {
   attemptHistory: "尝试历史",
   trajectory: "执行轨迹",
   traceDiagram: "执行时序",
-  traceTabSession: "会话",
-  traceTabTrace: "轨迹",
-  traceSessionSummaryTemplate: "{messages} 条模型消息 · {tools} 次工具调用 · {errors} 个错误 · Avg. TTFT: {ttft} · Generation TPS: {tps}",
-  traceFirstTokenShort: "TTFT",
   traceFirstToken: "Time to First Token (TTFT)",
   traceRequestStarted: "请求开始",
   traceResponseHeaders: "响应头耗时",
   traceGenerationDuration: "Generation duration",
   traceTps: "Generation TPS",
   traceTpsTemplate: "{value} tokens/s",
-  traceSessionModelTemplate: "模型：{model}",
-  traceSessionUser: "用户",
-  traceSessionAssistant: "助手",
-  traceSessionToolCallsTemplate: "请求调用 {count} 个工具",
   traceSystemPrompt: "System Prompt",
   traceOverview: "时间线概览",
   traceOverviewSummaryTemplate: "{events} 个事件 · {duration}",
@@ -611,7 +594,6 @@ export const zhCN: Copy = {
   traceOutput: "输出",
   traceArguments: "入参",
   traceResult: "结果",
-  traceToolDetails: "查看调用详情",
   traceToolReadFileRangeTemplate: "读取 {path} 文件（第 {start}-{end} 行）",
   traceToolReadDirectoryTemplate: "列出 {path} 目录",
   traceToolInspectPathTemplate: "检查 {path} 路径",
@@ -640,7 +622,7 @@ export const zhCN: Copy = {
   finished: "结束时间",
   error: "错误",
   noAttempts: "暂无尝试记录。",
-  renderErrorTitle: "运维控制台渲染失败",
+  renderErrorTitle: "Agent 控制台渲染失败",
   renderErrorDescription: "请重新加载页面；如果仍然失败，请检查浏览器控制台与 Server 日志。",
   reloadPage: "重新加载",
   refreshing: "刷新中…",

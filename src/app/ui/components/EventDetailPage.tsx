@@ -150,7 +150,7 @@ export function EventDetailPage({ eventId, backHash, copy, locale, refreshToken,
         <ExecutionSteps events={event.events} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.traceDiagram}>
-        <TraceExperience entries={event.trajectory} userRequest={event.request} copy={copy} locale={locale} />
+        <TraceExperience entries={event.trajectory} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.attemptHistory}>
         {event.attempts.length === 0 ? (
