@@ -379,6 +379,10 @@
   color: #1f8a4c;
 }
 
+.conversation-tool-call-status-running {
+  color: #b7791f;
+}
+
 .conversation-tool-call-status-failed {
   color: #b42318;
 }

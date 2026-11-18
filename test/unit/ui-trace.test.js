@@ -99,14 +99,24 @@ describe("operations UI trace reconstruction", () => {
       ],
     }));
 
-    expect(markup).toContain("3 tool call(s)");
+    expect(markup).toContain("3 tool calls");
     expect(markup).toContain("Read file src/app/ui/App.tsx (lines 1-200)");
     expect(markup).toContain("Search &quot;createHash&quot; in src");
     expect(markup).toContain("Read webpage unknown path");
     expect(markup).toContain("Succeeded");
     expect(markup).toContain("Failed");
+    expect(markup).toContain("Running");
     expect(markup).toContain("42 ms");
     expect(markup).toContain("7 ms");
+  });
+
+  it("uses the singular summary for a single tool call", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, {
+      copy: en,
+      calls: [{ name: "read_file", status: "succeeded", input: JSON.stringify({ path: "src/app/ui/App.tsx" }), durationMs: 42 }],
+    }));
+    expect(markup).toContain("1 tool call<");
+    expect(markup).not.toContain("1 tool calls");
   });
 
   it("renders nothing when a turn recorded no tool calls", () => {
