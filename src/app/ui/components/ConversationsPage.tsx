@@ -355,28 +355,35 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           </div>
         </aside>
         <section className="conversation-workspace">
-          <div className="conversation-workspace-heading">
-            {showCreate ? (
-              <Typography.Text strong className="conversation-workspace-title">{copy.newConversation}</Typography.Text>
-            ) : currentConversation ? (
-              <div className="conversation-workspace-title">
-                <Space size={8} wrap>
-                  <Typography.Text strong>{currentConversation.projectName}</Typography.Text>
-                  <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
-                  <Tag className="conversation-mode-tag">{conversationModeLabel(currentConversation.mode, copy)}</Tag>
-                </Space>
-                <Typography.Text type="secondary" className="conversation-pinned">
-                  {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha ?? copy.none}</code>
-                </Typography.Text>
-              </div>
-            ) : <Typography.Text strong className="conversation-workspace-title">{copy.conversationsTitle}</Typography.Text>}
-            {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
-          </div>
           <Tabs
             className="conversation-tabs"
             activeKey={detailTab}
             onChange={(key) => setDetailTab(key as ConversationDetailTab)}
             destroyOnHidden
+            tabBarExtraContent={{
+              // 仓库信息与标签页同处一行，减少纵向占用。
+              right: (
+                <div className="conversation-workspace-meta">
+                  {showCreate ? (
+                    <Typography.Text strong className="conversation-workspace-project">{copy.newConversation}</Typography.Text>
+                  ) : currentConversation ? (
+                    <>
+                      <Typography.Text strong className="conversation-workspace-project" ellipsis>
+                        {currentConversation.projectName}
+                      </Typography.Text>
+                      <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
+                      <Tag className="conversation-mode-tag">{conversationModeLabel(currentConversation.mode, copy)}</Tag>
+                      <Typography.Text type="secondary" className="conversation-pinned">
+                        {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
+                      </Typography.Text>
+                      {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
+                    </>
+                  ) : (
+                    <Typography.Text strong className="conversation-workspace-project">{copy.conversationsTitle}</Typography.Text>
+                  )}
+                </div>
+              ),
+            }}
             items={[
               {
                 key: "chat",

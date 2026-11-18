@@ -25,11 +25,10 @@ a:hover {
   text-decoration: underline;
 }
 
-/* 应用外壳：顶栏固定高度，主区域占满剩余视口高度。 */
+/* 应用外壳：左侧可折叠导航栏，主区域占满剩余视口。 */
 .app-shell {
   display: flex;
   height: 100vh;
-  flex-direction: column;
   overflow: hidden;
 }
 
@@ -40,19 +39,41 @@ a:hover {
   }
 }
 
-.topbar {
+.sidebar {
+  display: flex;
+  flex: 0 0 auto;
+  width: 232px;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border-right: 1px solid #e1e6eb;
+  transition: width 0.18s ease;
+}
+
+.sidebar-collapsed {
+  width: 60px;
+}
+
+.sidebar-head {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 24px;
-  min-height: 52px;
-  padding: 0 max(18px, calc((100vw - 1600px) / 2));
-  background: #fff;
-  border-bottom: 1px solid #e1e6eb;
+  gap: 6px;
+  min-height: 56px;
+  padding: 0 12px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.sidebar-collapsed .sidebar-head {
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 10px 0;
 }
 
 .brand {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 9px;
   color: #17212b;
@@ -63,7 +84,13 @@ a:hover {
   text-decoration: none;
 }
 
-.brand small {
+.brand-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.brand-name small {
   display: block;
   margin-top: 1px;
   color: #72808d;
@@ -71,34 +98,105 @@ a:hover {
   letter-spacing: 0.12em;
 }
 
+.sidebar-collapsed .brand-name {
+  display: none;
+}
+
 .brand-mark {
   display: grid;
   width: 30px;
   height: 30px;
+  flex: 0 0 auto;
   place-items: center;
   color: #fff;
   background: #1769aa;
   border-radius: 8px;
 }
 
-.topbar nav {
-  flex: 1;
-  min-width: 0;
+.sidebar-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #5b6b79;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
 }
 
-.primary-nav.ant-menu {
+.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+.sidebar-toggle:hover {
+  color: #17212b;
+  background: #f0f4f8;
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid #1769aa;
+  outline-offset: 1px;
+}
+
+.sidebar-nav.ant-menu {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  border-inline-end: 0;
+}
+
+.sidebar-collapsed .sidebar-nav.ant-menu {
+  padding: 8px 0;
+}
+
+.sidebar-foot {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #eef1f4;
+}
+
+.sidebar-collapsed .sidebar-foot {
+  display: none;
+}
+
+.sidebar-language {
+  display: grid;
+  width: 100%;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #5b6b79;
   background: transparent;
-  border-bottom: 0;
+  border: 0;
+  border-top: 1px solid #eef1f4;
+  cursor: pointer;
+}
+
+.sidebar-language:hover {
+  color: #17212b;
+  background: #f0f4f8;
+}
+
+.sidebar-language:focus-visible {
+  outline: 2px solid #1769aa;
+  outline-offset: -2px;
 }
 
 .updated {
-  margin-left: auto;
   color: #71808e;
   font-size: 12px;
 }
 
 .content {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   padding: 34px max(24px, calc((100% - 1200px) / 2)) 56px;
   overflow: auto;
@@ -107,7 +205,6 @@ a:hover {
 /* 对话页是主要功能：铺满主区域，去掉常规页面的内边距与最大宽度限制。 */
 .content.content-full {
   display: flex;
-  width: 100%;
   min-height: 0;
   flex-direction: column;
   padding: 0;
@@ -631,17 +728,12 @@ details summary {
 }
 
 @media (max-width: 800px) {
-  .topbar {
-    gap: 16px;
-    padding: 0 14px;
+  .sidebar {
+    width: 200px;
   }
 
-  .primary-nav .ant-menu-item {
-    padding-inline: 10px;
-  }
-
-  .updated {
-    display: none;
+  .sidebar-collapsed {
+    width: 56px;
   }
 
   .content {
@@ -663,35 +755,16 @@ details summary {
 }
 
 @media (max-width: 500px) {
-  .topbar {
-    gap: 14px;
+  .sidebar {
+    width: 168px;
   }
 
-  .brand {
-    gap: 7px;
+  .sidebar-collapsed {
+    width: 52px;
+  }
+
+  .brand-name {
     font-size: 13px;
-  }
-
-  .brand-mark {
-    width: 30px;
-    height: 30px;
-  }
-
-  .topbar {
-    flex-wrap: wrap;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-
-  .topbar nav {
-    order: 3;
-    flex-basis: 100%;
-    width: 100%;
-  }
-
-  .primary-nav.ant-menu {
-    width: 100%;
-    overflow: visible;
   }
 
   .cards {

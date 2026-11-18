@@ -1,9 +1,18 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConfigProvider, Menu, Select } from "antd";
+import { ConfigProvider, Dropdown, Menu, Select } from "antd";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
+import {
+  ConversationsIcon,
+  EventsIcon,
+  LanguageIcon,
+  OverviewIcon,
+  SettingsIcon,
+  SidebarCollapseIcon,
+  SidebarExpandIcon,
+} from "./components/icons.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
@@ -19,6 +28,8 @@ const SettingsPage = lazy(() => import("./components/SettingsPage.js").then((mod
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
+/** localStorage 中保存侧边栏展开状态的键名。 */
+const navigationPreferenceKey = "corvex-ops-navigation-collapsed";
 /** 浏览器按偏好顺序提供的语言候选，用于首次访问时选择界面语言。 */
 const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
 /** 运维台自动刷新间隔（毫秒）。 */
@@ -47,6 +58,26 @@ function saveLocale(locale: Locale): void {
   }
 }
 
+/** 读取已保存的侧边栏收起状态；未保存时在窄视口下默认收起。 */
+function readNavigationCollapsed(): boolean {
+  try {
+    const saved = window.localStorage.getItem(navigationPreferenceKey);
+    if (saved !== null) return saved === "true";
+  } catch (error) {
+    window.console.warn("read operations UI navigation preference failed", error);
+  }
+  return window.innerWidth < 700;
+}
+
+/** 保存侧边栏收起状态；写入失败只记录告警。 */
+function saveNavigationCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(navigationPreferenceKey, String(collapsed));
+  } catch (error) {
+    window.console.warn("save operations UI navigation preference failed", error);
+  }
+}
+
 /** 当前地址栏 hash 对应的原始路由文本，默认回到对话页。 */
 function useHashRoute(): string {
   const [route, setRoute] = useState(() => window.location.hash.slice(1) || "conversations");
@@ -58,10 +89,11 @@ function useHashRoute(): string {
   return route;
 }
 
-/** 运维台根组件：顶栏、语言切换、自动刷新与路由分发。 */
+/** 运维台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
   const copy = locale === "zh-CN" ? zhCN : en;
+  const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
   const route = useHashRoute();
   // 页面与筛选条件都来自 hash，刷新或分享链接后视图保持不变。
   const { page, params } = useMemo(() => parseHash(route), [route]);
@@ -104,13 +136,33 @@ export function App() {
     if (window.location.hash !== target) window.location.hash = target;
   }, []);
 
+  const toggleNavigation = useCallback(() => {
+    setNavigationCollapsed((value) => {
+      saveNavigationCollapsed(!value);
+      return !value;
+    });
+  }, []);
+
+  const changeLocale = useCallback((value: string) => {
+    const next = resolveLocale(value, browserLanguages);
+    saveLocale(next);
+    setLocale(next);
+  }, []);
+
+  const languageOptions = [{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }];
+  const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
+  const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
+
   const onEvents = page.kind === "events" || page.kind === "event";
 
   return (
     <ConfigProvider
       locale={locale === "zh-CN" ? zhCNLocale : enUSLocale}
       csp={cspNonce ? { nonce: cspNonce } : undefined}
-      theme={{ token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" } }}
+      theme={{
+        token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
+        components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
+      }}
     >
       <div className="app-shell">
         <a
@@ -123,49 +175,71 @@ export function App() {
         >
           {copy.skipToContent}
         </a>
-        <header className="topbar">
-          <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
-            <span className="brand-mark">C</span>
-            <span>
-              Corvex <small>OPERATIONS</small>
-            </span>
-          </a>
-          <nav aria-label={copy.navLabel}>
-            <Menu
-              className="primary-nav"
-              mode="horizontal"
-              selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
-              onClick={({ key }) => {
-                window.location.hash = key === "events"
-                  ? eventsHash(queue)
-                  : key === "conversations" && page.kind === "conversations"
-                    ? conversationsHash(page.id)
-                    : key;
-              }}
-              items={[
-                { key: "conversations", label: copy.navConversations },
-                { key: "events", label: copy.navEvents },
-                { key: "overview", label: copy.navOverview },
-                { key: "settings", label: copy.navSettings },
-              ]}
-            />
-          </nav>
-          <Select
-            id="language"
-            className="language-select"
-            aria-label={copy.languageLabel}
-            value={locale}
-            options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]}
-            onChange={(value) => {
-              const next = resolveLocale(value, browserLanguages);
-              saveLocale(next);
-              setLocale(next);
+        <aside className={`sidebar${navigationCollapsed ? " sidebar-collapsed" : ""}`} aria-label={copy.navLabel}>
+          <div className="sidebar-head">
+            <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
+              <span className="brand-mark">C</span>
+              <span className="brand-name">
+                Corvex <small>OPERATIONS</small>
+              </span>
+            </a>
+            <button
+              type="button"
+              className="sidebar-toggle"
+              onClick={toggleNavigation}
+              aria-label={copy.toggleNavigation}
+              aria-expanded={!navigationCollapsed}
+              title={copy.toggleNavigation}
+            >
+              {navigationCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
+            </button>
+          </div>
+          <Menu
+            className="sidebar-nav"
+            mode="inline"
+            inlineCollapsed={navigationCollapsed}
+            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
+            onClick={({ key }) => {
+              window.location.hash = key === "events"
+                ? eventsHash(queue)
+                : key === "conversations" && page.kind === "conversations"
+                  ? conversationsHash(page.id)
+                  : key;
             }}
+            items={[
+              { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
+              { key: "events", icon: <EventsIcon />, label: copy.navEvents },
+              { key: "overview", icon: <OverviewIcon />, label: copy.navOverview },
+              { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
+            ]}
           />
-          <span id="updated" className="updated">
-            {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
-          </span>
-        </header>
+          <div className="sidebar-foot">
+            <Select
+              id="language"
+              className="language-select"
+              aria-label={copy.languageLabel}
+              value={locale}
+              options={languageOptions}
+              onChange={changeLocale}
+            />
+            <span id="updated" className="updated">{updatedText}</span>
+          </div>
+          {navigationCollapsed ? (
+            <Dropdown
+              placement="topLeft"
+              trigger={["click"]}
+              menu={{
+                selectedKeys: [locale],
+                items: languageMenuItems,
+                onClick: ({ key }) => changeLocale(key),
+              }}
+            >
+              <button type="button" className="sidebar-language" aria-label={copy.languageLabel} title={copy.languageLabel}>
+                <LanguageIcon />
+              </button>
+            </Dropdown>
+          ) : null}
+        </aside>
         <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
           <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>

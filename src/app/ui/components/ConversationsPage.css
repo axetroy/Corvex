@@ -26,20 +26,13 @@
   background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fa 100%);
 }
 
-.conversation-sidebar-heading,
-.conversation-workspace-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border-bottom: 1px solid var(--conversation-border);
-}
-
 .conversation-sidebar-heading {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
   padding: 18px 16px 16px;
+  border-bottom: 1px solid var(--conversation-border);
 }
 
 .conversation-sidebar-title {
@@ -164,26 +157,28 @@
   flex-direction: column;
 }
 
-.conversation-workspace-heading {
-  position: relative;
-  z-index: 3;
-  min-height: 64px;
-  padding: 0 26px;
-  background: rgb(255 255 255 / 90%);
-  backdrop-filter: blur(8px);
+/* 仓库信息与标签页同处一行：项目名与分支可省略，标签与固定版本保持紧凑。 */
+.conversation-workspace-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
 }
 
-.conversation-workspace-title {
+.conversation-workspace-project.ant-typography {
+  flex: 0 1 auto;
+  max-width: 240px;
   min-width: 0;
+  margin: 0;
   color: var(--conversation-ink);
 }
 
-.conversation-workspace-title .ant-typography {
-  margin: 0;
-}
-
 .conversation-branch-tag.ant-tag {
+  flex: 0 1 auto;
   max-width: 240px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   border-color: var(--conversation-border-strong);
@@ -194,6 +189,7 @@
 }
 
 .conversation-mode-tag.ant-tag {
+  flex: 0 0 auto;
   margin: 0;
   border-color: var(--conversation-border-strong);
   background: #eef3f8;
@@ -202,10 +198,14 @@
 }
 
 .conversation-pinned {
-  display: block;
-  margin-top: 3px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
   color: var(--conversation-muted);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-pinned code {
@@ -461,11 +461,26 @@
 
 .conversation-tabs > .ant-tabs-nav {
   flex: 0 0 auto;
+  align-items: center;
   margin: 0;
   padding: 0 26px;
   background: rgb(255 255 255 / 90%);
   border-bottom: 1px solid var(--conversation-border);
   backdrop-filter: blur(8px);
+}
+
+.conversation-tabs > .ant-tabs-nav .ant-tabs-nav-wrap {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* 标签优先保持完整，仓库信息行让出空间并在过窄时截断。 */
+.conversation-tabs > .ant-tabs-nav .ant-tabs-extra-content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  padding-left: 16px;
 }
 
 .conversation-tabs > .ant-tabs-body-holder {
@@ -599,8 +614,8 @@
     grid-template-columns: 224px minmax(0, 1fr);
   }
 
-  .conversation-workspace-heading {
-    padding: 0 18px;
+  .conversation-workspace-project.ant-typography {
+    max-width: 140px;
   }
 
   .conversation-tabs > .ant-tabs-nav,
@@ -631,9 +646,22 @@
     overflow: auto;
   }
 
-  .conversation-workspace-heading {
-    min-height: 56px;
-    padding: 0 14px;
+  /* 窄屏下仓库信息换到第二行，标签页保持完整不被滚动裁切。 */
+  .conversation-tabs > .ant-tabs-nav {
+    flex-wrap: wrap;
+  }
+
+  .conversation-tabs > .ant-tabs-nav .ant-tabs-extra-content {
+    flex: 1 1 100%;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 0;
+  }
+
+  .conversation-workspace-meta {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .conversation-transcript-pane {
