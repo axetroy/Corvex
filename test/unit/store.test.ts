@@ -1076,4 +1076,105 @@ describe("EventStore", () => {
     expect(messageColumns.map((column) => column.name)).toContain("conversation_id");
     expect(messageColumns.map((column) => column.name)).not.toContain("session_id");
   });
+
+  it("migrates the legacy job-named tables so conversations and metrics stay readable", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-legacy-jobs-"));
+    const databasePath = join(directory, "state.db");
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, event_id TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
+        target_type TEXT NOT NULL DEFAULT 'merge_request', target_iid INTEGER NOT NULL DEFAULT 0,
+        target_branch TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '',
+        actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
+        available_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
+        target_branch TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE conversation_messages (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, job_id TEXT,
+        head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE job_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id), attempt INTEGER NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT, error TEXT NOT NULL DEFAULT '', UNIQUE(job_id,attempt)
+      );
+      CREATE TABLE job_trace (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
+        raw_content TEXT, error_detail TEXT, request_started_at TEXT, response_headers_ms INTEGER
+      );
+      CREATE TABLE execution_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, event_id TEXT,
+        job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+        duration_ms INTEGER, input_json TEXT, output_json TEXT, error_detail TEXT
+      );
+      CREATE TABLE webhook_events (
+        event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
+        received_at TEXT NOT NULL
+      );
+      CREATE TABLE model_call_metrics (
+        task_type TEXT NOT NULL, outcome TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(task_type,outcome)
+      );
+      INSERT INTO jobs
+        (id,idempotency_key,event_id,type,status,project_id,mr_iid,actor_id,request,created_at,updated_at)
+      VALUES
+        ('legacy-job','key-legacy','wh-legacy','conversation','completed',7,3,11,'','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+      INSERT INTO conversations VALUES
+        ('legacy-conversation',7,'group/project','main','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+      INSERT INTO conversation_messages VALUES
+        ('legacy-msg','legacy-conversation','assistant','Answer','completed','legacy-job','${"a".repeat(40)}','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z');
+      INSERT INTO job_trace
+        (job_id,attempt,round,kind,name,status,started_at,finished_at,duration_ms,model)
+      VALUES
+        ('legacy-job',1,1,'llm','chat','succeeded','2025-01-01T00:00:00.000Z','2025-01-01T00:00:01.000Z',1000,'test-model');
+      INSERT INTO execution_events (event_id,job_id,attempt,step,status,started_at)
+      VALUES ('wh-legacy','legacy-job',1,'prepare','succeeded','2025-01-01T00:00:00.000Z');
+      INSERT INTO model_call_metrics (task_type,outcome,calls) VALUES ('session','success',3);
+    `);
+    legacy.close();
+
+    store = await EventStore.open(databasePath);
+    const conversation = store.getConversation("legacy-conversation");
+    expect(conversation?.messages[0]).toMatchObject({ id: "legacy-msg", content: "Answer", turnId: "legacy-job" });
+    expect(conversation?.messages[0]?.traceCount).toBe(1);
+    expect(conversation?.messages[0]?.stepCount).toBe(1);
+    expect(store.listConversations(10, 0).items[0]).toMatchObject({ id: "legacy-conversation", turnCount: 1 });
+    expect(store.modelCallMetrics()).toContainEqual(
+      expect.objectContaining({ taskType: "conversation", calls: 3 }),
+    );
+    const inspector = new DatabaseSync(databasePath);
+    const tableNames = (inspector.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[])
+      .map((row) => row.name);
+    const eventColumns = (inspector.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name);
+    const traceColumns = (inspector.prepare("PRAGMA table_info(event_trace)").all() as { name: string }[]).map((c) => c.name);
+    const stepColumns = (inspector.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((c) => c.name);
+    const messageColumns = (inspector.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((c) => c.name);
+    inspector.close();
+    expect(tableNames).toContain("events");
+    expect(tableNames).toContain("event_trace");
+    expect(tableNames).toContain("execution_steps");
+    expect(tableNames).toContain("webhook_deliveries");
+    expect(tableNames).not.toContain("jobs");
+    expect(tableNames).not.toContain("job_trace");
+    expect(tableNames).not.toContain("execution_events");
+    expect(tableNames).not.toContain("webhook_events");
+    expect(eventColumns).toContain("webhook_event_id");
+    expect(eventColumns).not.toContain("event_id");
+    expect(traceColumns).toContain("turn_id");
+    expect(stepColumns).toContain("turn_id");
+    expect(messageColumns).toContain("turn_id");
+    expect(messageColumns).not.toContain("job_id");
+  });
 });

@@ -6,9 +6,13 @@ import { TraceField } from "../../src/app/ui/components/common.tsx";
 import { ConversationToolCalls } from "../../src/app/ui/components/ConversationToolCalls.tsx";
 import { TraceSession } from "../../src/app/ui/components/TraceSession.tsx";
 import {
+  anchoredScrollLeft,
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
+  clampZoom,
   reconstructLlmInput,
+  timelineTickCount,
+  wheelZoomFactor,
 } from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
@@ -315,5 +319,41 @@ describe("operations UI trace reconstruction", () => {
     const entry = { id: 1, input, rawContent: null };
 
     expect(reconstructLlmInput([entry], entry)).toBe(input);
+  });
+
+  it("clamps the timeline zoom to the supported range", () => {
+    expect(clampZoom(0.1)).toBe(0.5);
+    expect(clampZoom(1)).toBe(1);
+    expect(clampZoom(1000)).toBe(32);
+    expect(clampZoom(Number.NaN)).toBe(1);
+  });
+
+  it("maps wheel deltas to zoom factors and leaves Shift+scroll for panning", () => {
+    expect(wheelZoomFactor(0, false, false)).toBe(1);
+    expect(wheelZoomFactor(Number.NaN, false, false)).toBe(1);
+    expect(wheelZoomFactor(-100, false, false)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(100, false, false)).toBeLessThan(1);
+    // 未按 Ctrl 的 Shift 滚轮用于平移，不缩放；Ctrl 捏合（触控板）仍缩放。
+    expect(wheelZoomFactor(-100, true, false)).toBe(1);
+    expect(wheelZoomFactor(-100, true, true)).toBeGreaterThan(1);
+  });
+
+  it("keeps the time under the cursor anchored while zooming", () => {
+    // 视口 400px、滚动 0、光标在正中：放大两倍后锚点仍在正中。
+    expect(anchoredScrollLeft(0, 400, 200, 2)).toBe(200);
+    // 光标在最左侧时滚动位置保持不变。
+    expect(anchoredScrollLeft(0, 400, 0, 2)).toBe(0);
+    // 缩小不会产生负的滚动位置。
+    expect(anchoredScrollLeft(50, 400, 100, 0.5)).toBe(0);
+    // 视口无效时保持原值。
+    expect(anchoredScrollLeft(120, 0, 10, 2)).toBe(120);
+  });
+
+  it("grows the timeline tick count with zoom within bounds", () => {
+    expect(timelineTickCount(0.5)).toBe(5);
+    expect(timelineTickCount(1)).toBe(9);
+    expect(timelineTickCount(4)).toBe(33);
+    expect(timelineTickCount(32)).toBe(33);
+    expect(timelineTickCount(Number.NaN)).toBe(9);
   });
 });

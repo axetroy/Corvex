@@ -726,6 +726,12 @@ footer {
   text-align: center;
 }
 
+.trace-overview-hint {
+  margin: 2px 0 6px;
+  color: #7b8894;
+  font-size: 11px;
+}
+
 .trace-overview-scroll {
   max-width: 100%;
   overflow-x: auto;

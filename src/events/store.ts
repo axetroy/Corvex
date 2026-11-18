@@ -406,6 +406,29 @@ function mapEventSummary(row: EventRow): EventSummary {
   };
 }
 
+/** 归属重建时使用的表结构：保留外键级联，去掉旧库 NOT NULL 的 `event_id` 约束。 */
+/** 归属重建后需要恢复的索引名。 */
+const indexNames = {
+  event_trace: "event_trace_event_started_idx",
+  execution_steps: "execution_steps_event_started_idx",
+} as const;
+
+/** 归属重建时使用的表结构：保留外键级联，去掉旧库 NOT NULL 的 `event_id` 约束。 */
+const ownershipDdl = {
+  event_trace: `id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
+    turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
+    attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
+    started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
+    input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
+    raw_content TEXT, error_detail TEXT, request_started_at TEXT, response_headers_ms INTEGER,
+    first_token_ms INTEGER, generation_duration_ms INTEGER`,
+  execution_steps: `id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, webhook_event_id TEXT,
+    event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
+    turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
+    attempt INTEGER, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    duration_ms INTEGER, input_json TEXT, output_json TEXT, error_detail TEXT`,
+} as const;
+
 export class EventStore {
   private readonly db: DatabaseSync;
 
@@ -2048,6 +2071,7 @@ export class EventStore {
   }
 
   private migrate(): void {
+    this.migrateLegacyEventSchema();
     this.migrateLegacyConversationSchema();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
@@ -2172,6 +2196,10 @@ export class EventStore {
     for (const [name, definition] of Object.entries(traceAdditions)) {
       if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE event_trace ADD COLUMN ${name} ${definition}`);
     }
+    const stepColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!stepColumns.has("turn_id")) this.db.exec("ALTER TABLE execution_steps ADD COLUMN turn_id TEXT");
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));
@@ -2179,9 +2207,86 @@ export class EventStore {
       if (legacyConversationColumns.has(name)) this.db.exec(`ALTER TABLE conversations DROP COLUMN ${name}`);
     }
     this.backfillConversationTurns();
+    this.finalizeConversationMigration();
     // turn_id 可能由上面的 ALTER 补齐，索引必须等列存在后再创建。
     this.db.exec("CREATE INDEX IF NOT EXISTS event_trace_turn_started_idx ON event_trace(turn_id,started_at,id)");
     this.db.exec("CREATE INDEX IF NOT EXISTS execution_steps_turn_started_idx ON execution_steps(turn_id,started_at,id)");
+  }
+
+  /**
+   * 把旧版 `jobs` / `job_attempts` / `job_trace` / `execution_events` / `webhook_events`
+   * 重命名为事件（event）命名。SQLite 的 RENAME 会自动改写子表外键、索引与触发器，
+   * 因此保留既有数据；重命名后再由 `migrate()` 的建表语句补齐新列。
+   */
+  private migrateLegacyEventSchema(): void {
+    const tables = new Set(
+      (this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[])
+        .map((row) => row.name),
+    );
+    if (tables.has("jobs") && !tables.has("events")) {
+      this.db.exec("ALTER TABLE jobs RENAME TO events");
+    }
+    if (tables.has("job_attempts") && !tables.has("event_attempts")) {
+      this.db.exec("ALTER TABLE job_attempts RENAME TO event_attempts");
+      this.db.exec("ALTER TABLE event_attempts RENAME COLUMN job_id TO event_id");
+    }
+    if (tables.has("job_trace") && !tables.has("event_trace")) {
+      this.db.exec("ALTER TABLE job_trace RENAME TO event_trace");
+      this.db.exec("ALTER TABLE event_trace RENAME COLUMN job_id TO event_id");
+    }
+    if (tables.has("execution_events") && !tables.has("execution_steps")) {
+      this.db.exec("ALTER TABLE execution_events RENAME TO execution_steps");
+      // 旧表同时有 `event_id`（webhook 事件）与 `job_id`（任务）：先腾出列名再改名。
+      const stepColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((c) => c.name),
+      );
+      if (stepColumns.has("event_id") && !stepColumns.has("webhook_event_id")) {
+        this.db.exec("ALTER TABLE execution_steps RENAME COLUMN event_id TO webhook_event_id");
+      }
+      if (stepColumns.has("job_id")) {
+        this.db.exec("ALTER TABLE execution_steps RENAME COLUMN job_id TO event_id");
+      }
+    }
+    if (tables.has("webhook_events") && !tables.has("webhook_deliveries")) {
+      this.db.exec("ALTER TABLE webhook_events RENAME TO webhook_deliveries");
+      const deliveryColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(webhook_deliveries)").all() as { name: string }[]).map((c) => c.name),
+      );
+      if (deliveryColumns.has("event_id") && !deliveryColumns.has("webhook_event_id")) {
+        this.db.exec("ALTER TABLE webhook_deliveries RENAME COLUMN event_id TO webhook_event_id");
+      }
+    }
+    // 事件表的列重命名：旧库把 webhook 关联列叫 event_id，与新语义冲突。
+    if (tables.has("events") || tables.has("jobs")) {
+      const eventColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
+      );
+      if (eventColumns.has("event_id") && !eventColumns.has("webhook_event_id")) {
+        this.db.exec("ALTER TABLE events RENAME COLUMN event_id TO webhook_event_id");
+      }
+    }
+    // 对话消息的轮次列：旧版存的是任务 ID 列 `job_id`。
+    const messageTables = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((c) => c.name),
+    );
+    if (messageTables.has("job_id") && !messageTables.has("turn_id")) {
+      this.db.exec("ALTER TABLE conversation_messages RENAME COLUMN job_id TO turn_id");
+    }
+    // 模型调用统计：旧版把对话轮次记为 `session`，现统一为 `conversation`。
+    if (tables.has("model_call_metrics")) {
+      this.db.exec("UPDATE model_call_metrics SET task_type='conversation' WHERE task_type='session'");
+    }
+    // 事件类型：旧版把对话轮次记为 `session`，现统一为 `conversation`（随后会被清理）。
+    // 表名可能刚由 `jobs` 改名而来，需重新查询表是否存在。
+    const hasEvents = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
+      .get() !== undefined;
+    if (hasEvents) {
+      const eventColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
+      );
+      if (eventColumns.has("type")) this.db.exec("UPDATE events SET type='conversation' WHERE type='session'");
+    }
   }
 
   /**
@@ -2208,33 +2313,85 @@ export class EventStore {
     if (messageColumns.has("event_id") && !messageColumns.has("turn_id")) {
       this.db.exec("ALTER TABLE conversation_messages RENAME COLUMN event_id TO turn_id");
     }
-    // 旧版把对话轮次存成 `events.type='conversation'` 的事件；现在由 `conversation_turns`
-    // 承载，且这些行缺少新事件表所需的列，直接清理以免后续读取事件时校验失败。
-    if (tables.has("events")) this.db.exec("DELETE FROM events WHERE type='conversation'");
   }
 
-  /** 为旧库补齐对话轮次：按既有助手消息生成一轮，并补上轨迹与执行步骤的 `turn_id` 列。 */
+  /**
+   * 为旧库补齐对话轮次：按既有助手消息生成一轮，并把助手消息的轮次列指向该轮次。
+   * 轨迹与执行步骤的归属迁移放在 `finalizeConversationMigration()`，因为那时新列才齐全。
+   */
   private backfillConversationTurns(): void {
     const messageColumns = new Set(
       (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[])
         .map((column) => column.name),
     );
-    if (messageColumns.has("turn_id")) {
-      this.db.exec(`
-        INSERT INTO conversation_turns
-          (id,conversation_id,message_id,user_message_id,role,status,request,head_sha,actor_id,attempt_count,last_error,created_at,updated_at)
-        SELECT m.id, m.conversation_id, m.id, NULL, 'assistant',
-          CASE m.status WHEN 'queued' THEN 'queued' WHEN 'running' THEN 'running'
-               WHEN 'completed' THEN 'completed' ELSE 'failed' END,
-          m.content, m.head_sha, 0, 0, '', m.created_at, m.updated_at
-        FROM conversation_messages m
-        WHERE m.role='assistant' AND NOT EXISTS (SELECT 1 FROM conversation_turns t WHERE t.id=m.id)
-      `);
-    }
-    const stepColumns = new Set(
-      (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[])
-        .map((column) => column.name),
+    if (!messageColumns.has("turn_id")) return;
+    // 旧库的 `turn_id` 存的是对话任务 ID，沿用为轮次主键，轨迹与消息才能继续关联。
+    this.db.exec(`
+      INSERT INTO conversation_turns
+        (id,conversation_id,message_id,user_message_id,role,status,request,head_sha,actor_id,attempt_count,last_error,created_at,updated_at)
+      SELECT COALESCE(NULLIF(m.turn_id,''), m.id), m.conversation_id, m.id, NULL, 'assistant',
+        CASE m.status WHEN 'queued' THEN 'queued' WHEN 'running' THEN 'running'
+             WHEN 'completed' THEN 'completed' ELSE 'failed' END,
+        m.content, m.head_sha, 0, 0, '', m.created_at, m.updated_at
+      FROM conversation_messages m
+      WHERE m.role='assistant' AND NOT EXISTS (SELECT 1 FROM conversation_turns t WHERE t.id=COALESCE(NULLIF(m.turn_id,''), m.id))
+    `);
+    this.db.exec(`
+      UPDATE conversation_messages SET turn_id = (SELECT t.id FROM conversation_turns t WHERE t.message_id = conversation_messages.id)
+      WHERE role='assistant' AND (turn_id IS NULL OR turn_id='' OR turn_id NOT IN (SELECT id FROM conversation_turns))
+    `);
+  }
+
+  /**
+   * 迁移对话轨迹与执行步骤的归属，并清理旧版存成 `events.type='conversation'` 的事件。
+   * 必须在 `migrate()` 补全新列之后调用：旧库把对话任务的记录存在事件列里，且旧
+   * `job_trace.event_id` 为 NOT NULL，需要按新结构重建表才能把归属改到轮次列。
+   */
+  private finalizeConversationMigration(): void {
+    const turnIds = new Set(
+      (this.db.prepare("SELECT id FROM conversation_turns").all() as { id: string }[]).map((row) => row.id),
     );
-    if (!stepColumns.has("turn_id")) this.db.exec("ALTER TABLE execution_steps ADD COLUMN turn_id TEXT");
+    if (turnIds.size > 0) {
+      this.reassignTraceOwnership("event_trace", turnIds);
+      this.reassignTraceOwnership("execution_steps", turnIds);
+    }
+    const eventColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (eventColumns.has("type")) this.db.exec("DELETE FROM events WHERE type='conversation'");
+  }
+
+  /** 把表中指向对话轮次的 `event_id` 归属改到 `turn_id`，必要时按新结构重建以解除 NOT NULL。 */
+  private reassignTraceOwnership(table: "event_trace" | "execution_steps", turnIds: ReadonlySet<string>): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; notnull: number }[];
+    const names = columns.map((column) => column.name);
+    if (!names.includes("event_id") || !names.includes("turn_id")) return;
+    const eventIdNotNull = columns.find((column) => column.name === "event_id")?.notnull === 1;
+    if (!eventIdNotNull) {
+      this.db.exec(
+        `UPDATE ${table} SET turn_id=event_id WHERE turn_id IS NULL AND event_id IN (SELECT id FROM conversation_turns)`,
+      );
+      this.db.exec(`UPDATE ${table} SET event_id=NULL WHERE event_id IN (SELECT id FROM conversation_turns)`);
+      return;
+    }
+    // 旧 `job_trace` 的关联列是 NOT NULL，无法直接置空，按新结构重建表并保留外键级联。
+    const placeholders = [...turnIds].map(() => "?").join(",");
+    const isTurn = `event_id IN (${placeholders})`;
+    const passthrough = names.filter((name) => name !== "event_id" && name !== "turn_id");
+    const columnList = ["event_id", "turn_id", ...passthrough].join(",");
+    this.db.exec(`CREATE TABLE ${table}_ownership (${ownershipDdl[table]})`);
+    this.db
+      .prepare(
+        `INSERT INTO ${table}_ownership (${columnList})
+         SELECT CASE WHEN ${isTurn} THEN NULL ELSE event_id END,
+                CASE WHEN ${isTurn} THEN event_id ELSE turn_id END,
+                ${passthrough.join(",")}
+         FROM ${table}`,
+      )
+      .run(...[...turnIds, ...turnIds]);
+    this.db.exec(`DROP TABLE ${table}`);
+    this.db.exec(`ALTER TABLE ${table}_ownership RENAME TO ${table}`);
+    // 重建不带索引，按新结构补回（`migrate()` 只在首次建表时创建）。
+    this.db.exec(`CREATE INDEX IF NOT EXISTS ${indexNames[table]} ON ${table}(event_id,started_at,id)`);
   }
 }

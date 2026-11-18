@@ -14,6 +14,49 @@ export interface TraceInputEntry {
   rawContent?: string | null;
 }
 
+/** 时间轴缩放下限：足够看清长跨度轨迹的整体结构。 */
+export const minTraceZoom = 0.5;
+/** 时间轴缩放上限：足以分辨相邻事件的边界。 */
+export const maxTraceZoom = 32;
+
+/** 把缩放系数限制在时间轴允许的范围内；非有限值回退为 1。 */
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  return Math.min(maxTraceZoom, Math.max(minTraceZoom, zoom));
+}
+
+/**
+ * 滚轮事件的缩放系数。触控板在按住修饰键时会把缩放转为 `ctrlKey`，因此两者都按
+ * 缩放处理；未按修饰键的 Shift 滚轮用于平移，返回 1 表示不缩放。
+ */
+export function wheelZoomFactor(deltaY: number, shiftKey: boolean, ctrlKey: boolean): number {
+  if (shiftKey && !ctrlKey) return 1;
+  if (!Number.isFinite(deltaY) || deltaY === 0) return 1;
+  return Math.exp(-deltaY * 0.0015);
+}
+
+/**
+ * 缩放时保持光标下方的时间点不动：以锚点位置占可视宽度的比例，重新计算滚动偏移。
+ * `anchorX` 为光标相对可视区域左边缘的像素位置。
+ */
+export function anchoredScrollLeft(
+  scrollLeft: number,
+  viewportWidth: number,
+  anchorX: number,
+  ratio: number,
+): number {
+  if (viewportWidth <= 0 || !Number.isFinite(anchorX)) return scrollLeft;
+  return Math.max(0, (scrollLeft + anchorX) * ratio - anchorX);
+}
+
+/**
+ * 时间轴刻度数量：跟随缩放增加，让放大后仍能读出每一段的时间；最小 5 条、最大 33 条。
+ */
+export function timelineTickCount(zoom: number): number {
+  const safe = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return Math.max(5, Math.min(33, Math.round(safe * 8) + 1));
+}
+
 /** 轨迹字段保存的是 JSON 文本；解析失败时返回 undefined 而不是抛错。 */
 export function parseTraceValue(value: string | null | undefined): unknown {
   if (typeof value !== "string") return undefined;

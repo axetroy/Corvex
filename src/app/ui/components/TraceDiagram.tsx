@@ -1,12 +1,16 @@
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import {
+  anchoredScrollLeft,
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
+  clampZoom,
   reconstructLlmInput,
+  timelineTickCount,
+  wheelZoomFactor,
 } from "../trace.js";
 import type { EventTraceEntry, EventTraceKind } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
@@ -174,6 +178,9 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
   const [drag, setDrag] = useState<{ start: number; current: number; kind: EventTraceKind }>();
   const [activeTab, setActiveTab] = useState<InspectorTab>("overview");
   const plots = useRef<Partial<Record<EventTraceKind, HTMLDivElement | null>>>({});
+  const scroll = useRef<HTMLDivElement | null>(null);
+  // 滚轮事件必须在非 passive 监听器里 preventDefault，否则页面会跟着滚动。
+  const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
 
   // 时间轴几何只依赖轨迹内容：用 reduce 而非展开参数，避免超长轨迹触发参数上限。
   const { duration, basePlotWidth, positions } = useMemo(() => {
@@ -193,6 +200,62 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
     };
   }, [traces]);
   const plotWidth = Math.round(basePlotWidth * zoom);
+
+  // 保持光标下方的时间点不动：缩放前后用同一比例换算滚动位置。
+  const zoomAt = (nextZoom: number, viewport: HTMLDivElement, clientX?: number): void => {
+    const bounded = clampZoom(nextZoom);
+    const current = scroll.current;
+    if (!current) {
+      setZoom(bounded);
+      return;
+    }
+    const ratio = bounded / zoom;
+    const anchorX = clientX === undefined
+      ? viewport.clientWidth / 2
+      : clientX - viewport.getBoundingClientRect().left;
+    const target = anchoredScrollLeft(current.scrollLeft, viewport.clientWidth, anchorX, ratio);
+    setZoom(bounded);
+    // 布局完成后按新宽度校正滚动位置，避免落在中间态宽度上。
+    requestAnimationFrame(() => {
+      current.scrollLeft = target;
+    });
+  };
+
+  const applyWheel = (event: WheelEvent): void => {
+    const viewport = scroll.current;
+    if (!viewport) return;
+    // Shift 滚轮（未按 Ctrl）横向平移，触控板捏合与 Ctrl 滚轮缩放。
+    if (event.shiftKey && !event.ctrlKey) {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      viewport.scrollLeft += event.deltaY;
+      return;
+    }
+    const factor = wheelZoomFactor(event.deltaY, event.shiftKey, event.ctrlKey);
+    if (factor === 1) return;
+    event.preventDefault();
+    zoomAt(zoom * factor, viewport, event.clientX);
+  };
+  wheelRef.current = applyWheel;
+
+  useEffect(() => {
+    const viewport = scroll.current;
+    if (!viewport) return;
+    const handler = (event: WheelEvent) => wheelRef.current(event);
+    viewport.addEventListener("wheel", handler, { passive: false });
+    return () => viewport.removeEventListener("wheel", handler);
+  }, []);
+
+  // 缩放后若光标锚点落在两端，滚动位置会被夹紧；这里做一次收敛，避免越界空滚。
+  useLayoutEffect(() => {
+    const viewport = scroll.current;
+    if (!viewport) return;
+    const maxScroll = viewport.scrollWidth - viewport.clientWidth;
+    if (maxScroll <= 0) return;
+    viewport.scrollLeft = Math.min(viewport.scrollLeft, maxScroll);
+  }, [zoom]);
+
+  const ticks = timelineTickCount(zoom);
 
   const plotLocalX = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind): number => {
     const plot = plots.current[kind];
@@ -265,7 +328,10 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
               className="trace-zoom-button"
               aria-label={copy.traceZoomOut}
               title={copy.traceZoomOut}
-              onClick={() => setZoom((value) => Math.max(0.5, value / 1.25))}
+              onClick={() => {
+                const viewport = scroll.current;
+                if (viewport) zoomAt(zoom / 1.25, viewport);
+              }}
             >
               −
             </button>
@@ -275,7 +341,10 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
               className="trace-zoom-button"
               aria-label={copy.traceZoomIn}
               title={copy.traceZoomIn}
-              onClick={() => setZoom((value) => Math.min(4, value * 1.25))}
+              onClick={() => {
+                const viewport = scroll.current;
+                if (viewport) zoomAt(zoom * 1.25, viewport);
+              }}
             >
               +
             </button>
@@ -284,7 +353,8 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
             </button>
           </div>
         </div>
-        <div className="trace-overview-scroll">
+        <div className="trace-overview-hint">{copy.traceZoomHint}</div>
+        <div className="trace-overview-scroll" ref={scroll}>
           <div
             className="trace-overview-scene"
             role="group"
@@ -294,14 +364,14 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
             <div className="trace-overview-axis-row">
               <span className="trace-overview-label-spacer" />
               <div className="trace-overview-axis" style={{ width: `${plotWidth}px` }}>
-                {[0, 1, 2, 3, 4].map((index) => (
+                {Array.from({ length: ticks }, (_, index) => (
                   <span
                     key={index}
                     className="trace-overview-tick"
                     aria-hidden="true"
-                    style={{ left: `${(index / 4) * 100}%` }}
+                    style={{ left: `${(index / (ticks - 1)) * 100}%` }}
                   >
-                    {formatTraceDuration(Math.round(duration * (index / 4)), copy)}
+                    {formatTraceDuration(Math.round(duration * (index / (ticks - 1))), copy)}
                   </span>
                 ))}
               </div>
