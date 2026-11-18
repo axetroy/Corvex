@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
 import { Button, Select, Spin, Typography } from "antd";
 import "./RemotePicker.css";
+import { RepositoryIcon } from "./icons.js";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -99,6 +100,8 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
   return (
     <Select<number, ProjectSelectOption>
       className="remote-picker"
+      classNames={{ popup: { root: "remote-picker-popup" } }}
+      prefix={<RepositoryIcon className="remote-picker-icon" />}
       aria-label={copy.projectSearch}
       showSearch={{
         filterOption: false,
@@ -111,7 +114,6 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
       loading={loading}
       options={options}
       notFoundContent={notFoundContent}
-      popupMatchSelectWidth={420}
       onClear={() => onChange(undefined)}
       onChange={(id) => onChange(projects.find((item) => item.id === id))}
       onOpenChange={(next) => {

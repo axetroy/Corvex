@@ -1,49 +1,134 @@
-/* 远程选择器（仓库 / 分支）共享样式：两行展示，与对话页配色保持一致。 */
+/* 远程选择器（仓库 / 分支）共享样式。
+   触发器与下拉分处两棵 DOM 子树（下拉由 portal 挂到 body），所以配色变量在两处各自
+   声明一次，否则下拉读不到变量会退回 Ant Design 默认样式。 */
 
-.remote-picker {
+.remote-picker,
+.remote-picker-popup {
   --remote-picker-border: var(--conversation-border-strong, #d5dce3);
   --remote-picker-muted: var(--conversation-muted, #71808e);
   --remote-picker-ink: var(--conversation-ink, #17212b);
   --remote-picker-brand: var(--conversation-brand, #1769aa);
-
-  width: 100%;
-  min-width: 0;
+  --remote-picker-brand-soft: var(--conversation-brand-soft, #eaf2fa);
+  --remote-picker-hover: #f4f7fa;
 }
 
-.remote-picker .ant-select-content {
+/* ============================ 触发器 ============================ */
+
+/* 可见边框只画在 Select 根节点上；content 只负责布局，避免出现双层描边。 */
+.remote-picker {
+  display: flex;
   height: 58px;
-  padding: 0 12px;
-  border-color: var(--remote-picker-border);
-  border-radius: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--remote-picker-border);
+  border-radius: 12px;
   background: #fff;
   box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
+  line-height: normal;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.remote-picker.ant-select-focused .ant-select-content,
-.remote-picker:hover .ant-select-content {
+.remote-picker:hover:not(.ant-select-disabled) {
   border-color: var(--remote-picker-brand);
 }
 
-.remote-picker.ant-select-focused .ant-select-content {
-  box-shadow: 0 0 0 3px rgb(23 105 170 / 12%);
+.remote-picker.ant-select-focused:not(.ant-select-disabled),
+.remote-picker.ant-select-open:not(.ant-select-disabled) {
+  border-color: var(--remote-picker-brand);
+  box-shadow: 0 0 0 3px rgb(23 105 170 / 14%);
+}
+
+.remote-picker.ant-select-disabled {
+  background: #f4f6f8;
+  box-shadow: none;
+}
+
+/* 禁用态（例如尚未选择仓库时的分支选择器）：整体弱化，读起来像不可用。 */
+.remote-picker.ant-select-disabled .ant-select-placeholder,
+.remote-picker.ant-select-disabled .ant-select-prefix,
+.remote-picker.ant-select-disabled .ant-select-suffix {
+  color: #a7b1bb;
+}
+
+.remote-picker .ant-select-content {
+  height: 100%;
+  flex: 1;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 选中值后 Ant Design 用 `.ant-select-content-has-value{display:block}` 顶部对齐，
+   其选择器带三个类名，这里用四个类名覆盖回居中布局。 */
+.remote-picker.ant-select .ant-select-content.ant-select-content-has-value {
+  display: flex;
+  align-items: center;
+}
+
+.remote-picker .ant-select-content-has-value .ant-select-input {
+  width: 0;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .remote-picker .ant-select-selection-item,
 .remote-picker .ant-select-placeholder {
   display: flex;
-  height: 56px;
+  height: 100%;
   align-items: center;
   line-height: normal;
 }
 
-/* 收起状态：主标题 + 副标题两行。 */
+.remote-picker .ant-select-placeholder,
+.remote-picker .ant-select-input {
+  color: var(--remote-picker-muted);
+  font-size: 14px;
+}
+
+/* 箭头：跟随打开状态旋转，并统一为弱化色。 */
+.remote-picker .ant-select-suffix {
+  color: var(--remote-picker-muted);
+  font-size: 12px;
+  transition: transform 0.18s ease, color 0.16s ease;
+}
+
+.remote-picker.ant-select-open .ant-select-suffix {
+  color: var(--remote-picker-brand);
+  transform: rotate(180deg);
+}
+
+.remote-picker .ant-select-clear {
+  color: var(--remote-picker-muted);
+  font-size: 13px;
+}
+
+/* 前置图标：仓库 / 分支的视觉区分。 */
+.remote-picker .ant-select-prefix {
+  display: inline-flex;
+  align-items: center;
+  color: var(--remote-picker-muted);
+  transition: color 0.16s ease;
+}
+
+.remote-picker:hover .ant-select-prefix,
+.remote-picker.ant-select-focused .ant-select-prefix,
+.remote-picker.ant-select-open .ant-select-prefix {
+  color: var(--remote-picker-brand);
+}
+
+/* 收起状态：主标题 + 副标题两行。
+   选中值后 Ant Design 会把内容区改为顶部对齐，这里显式让标签在框内垂直居中。 */
 .remote-picker-value {
   display: flex;
   width: 100%;
   min-width: 0;
+  align-self: center;
   flex-direction: column;
-  gap: 2px;
+  justify-content: center;
+  gap: 1px;
 }
 
 .remote-picker-value-title,
@@ -57,6 +142,7 @@
 
 .remote-picker-value-title {
   font-size: 14px;
+  line-height: 1.3;
 }
 
 .remote-picker-value-subtitle,
@@ -68,6 +154,60 @@
   white-space: nowrap;
 }
 
+.remote-picker-value-subtitle {
+  line-height: 1.3;
+}
+
+/* ============================= 下拉 ============================= */
+
+.remote-picker-popup {
+  min-width: 360px;
+  padding: 6px;
+  border: 1px solid var(--remote-picker-border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 32px -8px rgb(23 33 43 / 22%), 0 2px 8px rgb(23 33 43 / 8%);
+}
+
+.remote-picker-popup .ant-select-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.remote-picker-popup .ant-select-item + .ant-select-item {
+  margin-top: 2px;
+}
+
+.remote-picker-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+  background: var(--remote-picker-hover);
+}
+
+.remote-picker-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: var(--remote-picker-brand-soft);
+}
+
+.remote-picker-popup .ant-select-item-option-selected .remote-picker-option-title {
+  color: var(--remote-picker-brand);
+}
+
+/* 下拉列表：统一滚动条外观。 */
+.remote-picker-popup .rc-virtual-list-holder,
+.remote-picker-popup .ant-select-dropdown-list {
+  scrollbar-color: #c4cdd6 transparent;
+  scrollbar-width: thin;
+}
+
+.remote-picker-popup .rc-virtual-list-holder::-webkit-scrollbar {
+  width: 8px;
+}
+
+.remote-picker-popup .rc-virtual-list-holder::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: #c4cdd6;
+  background-clip: content-box;
+}
+
 /* 下拉项：主标题 + 副标题两行，右侧可选的提交时间。 */
 .remote-picker-option {
   display: grid;
@@ -75,7 +215,6 @@
   align-items: center;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px 12px;
-  padding: 2px 0;
 }
 
 .remote-picker-option-main {
@@ -89,6 +228,10 @@
   font-size: 13px;
 }
 
+.remote-picker-option-subtitle {
+  font-size: 12px;
+}
+
 .remote-picker-option-meta {
   flex: 0 0 auto;
   align-self: center;
@@ -97,31 +240,16 @@
   white-space: nowrap;
 }
 
-.remote-picker .ant-select-item {
-  padding: 8px 10px;
-  border-radius: 8px;
-}
+/* ======================= 加载 / 空 / 错误 ======================= */
 
-.remote-picker .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
-  background: rgb(23 105 170 / 6%);
-}
-
-.remote-picker .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
-  background: rgb(23 105 170 / 10%);
-}
-
-.remote-picker .ant-select-item-option-selected .remote-picker-option-title {
-  color: var(--remote-picker-brand);
-}
-
-/* 加载、空结果与错误态。 */
 .remote-picker-status {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 8px;
+  padding: 16px 10px;
   color: var(--remote-picker-muted);
+  font-size: 13px;
   text-align: center;
 }
 
@@ -140,7 +268,9 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  margin-top: 4px;
   padding: 8px 0 4px;
+  border-top: 1px solid var(--remote-picker-border);
   color: var(--remote-picker-muted);
   font-size: 12px;
 }

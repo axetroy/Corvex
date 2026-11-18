@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
 import { Button, Select, Spin, Typography } from "antd";
 import "./RemotePicker.css";
+import { BranchIcon } from "./icons.js";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -118,6 +119,8 @@ export function BranchPicker({ copy, value, projectId, disabled, onChange }: Pro
   return (
     <Select<string, BranchSelectOption>
       className="remote-picker"
+      classNames={{ popup: { root: "remote-picker-popup" } }}
+      prefix={<BranchIcon className="remote-picker-icon" />}
       aria-label={copy.branch}
       showSearch={{
         filterOption: false,
@@ -130,7 +133,6 @@ export function BranchPicker({ copy, value, projectId, disabled, onChange }: Pro
       loading={loading}
       options={options}
       notFoundContent={notFoundContent}
-      popupMatchSelectWidth={420}
       onClear={() => onChange("")}
       onChange={(branch) => onChange(branch)}
       onOpenChange={(next) => {
