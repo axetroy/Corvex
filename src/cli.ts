@@ -161,6 +161,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
       store.pendingProjectIds(),
       new Date(Date.now() - olderThanDays * 24 * 60 * 60_000),
       apply,
+      store.activeConversationIds(),
     );
     console.info(JSON.stringify({ olderThanDays, ...plan }, null, 2));
   } finally {

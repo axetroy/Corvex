@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import { Worker } from "../../src/app/worker.js";
 import type { CorvexConfig } from "../../src/config/config.js";
-import { GitManager } from "../../src/git/manager.js";
+import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
 import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
 
@@ -554,6 +554,27 @@ describe("review task loop", () => {
       "workflow.read_only_conversation",
       "git.prepare_conversation_workspace",
     ]));
+    // 对话工作区跨轮次复用：第二轮不应再重建目录，也不应再出现清理步骤。
+    const conversationWorkspace = join(
+      config.storage.root,
+      "workspaces",
+      "1",
+      conversationWorkspaceName(createdConversation.conversationId),
+    );
+    await writeFile(join(conversationWorkspace, "reuse-marker.txt"), "keep\n");
+    modelActions.push({ content: "The value is assigned at the top of `input.ts`." });
+    const followUp = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization },
+      body: JSON.stringify({ message: "Where exactly is it assigned?" }),
+    });
+    expect(followUp.status).toBe(202);
+    const followUpTurn = await followUp.json() as { conversationId: string; turnId: string };
+    await waitFor(() => serverStore.getConversationTurn(followUpTurn.conversationId, followUpTurn.turnId)?.status === "completed");
+    await expect(readFile(join(conversationWorkspace, "reuse-marker.txt"), "utf8")).resolves.toBe("keep\n");
+    const followUpDetail = serverStore.getConversationTurn(followUpTurn.conversationId, followUpTurn.turnId);
+    expect(followUpDetail?.events.map(({ step }) => step)).toContain("git.prepare_conversation_workspace");
+    expect(followUpDetail?.events.map(({ step }) => step)).not.toContain("git.cleanup_conversation_workspace");
 
     let cancelModelStarted!: () => void;
     const cancelModelStartedPromise = new Promise<void>((resolvePromise) => {

@@ -121,7 +121,7 @@ pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1
 pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
 ```
 
-默认只做 dry-run；清理会跳过活动 worktree 以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止所有 Worker，避免与新领取的任务竞争。Compose 部署可在停止 Worker profile 后，从 Server 容器运行：
+默认只做 dry-run；清理会跳过活动 worktree、仍有排队或运行中轮次的对话，以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止所有 Worker，避免与新领取的任务竞争。Compose 部署可在停止 Worker profile 后，从 Server 容器运行：
 
 ```sh
 docker compose --env-file .env -f deploy/compose.yaml exec corvex \

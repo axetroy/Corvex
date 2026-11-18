@@ -432,6 +432,16 @@ export class Worker {
       (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
     );
     if (trace.mergeRequest) trace.mergeRequest.repositoryUrl = project.http_url_to_repo;
+    // 差异比较以 GitLab 报告的 base SHA 为基准，它不一定在抓取 head 时一并到达，
+    // 因此显式确保该快照存在；命中本地对象库时不联网。
+    await traceExecutionStep(
+      this.store,
+      stepContext,
+      "git.ensure_base_sha",
+      { projectId: event.projectId, baseSha },
+      () => this.repo.ensureCommitAvailable(event.projectId, project.http_url_to_repo, baseSha, signal),
+      () => ({ baseSha }),
+    );
     const workspace = await traceExecutionStep(
       this.store,
       stepContext,

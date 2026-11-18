@@ -1,14 +1,19 @@
 import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
-import { lstat, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DiffEngine } from "../../src/git/diff.js";
-import { GitManager } from "../../src/git/manager.js";
+import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
 import type { Workspace } from "../../src/git/types.js";
 
 const execFile = promisify(execFileCallback);
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const result = await execFile("git", args, { cwd, encoding: "utf8" });
+  return result.stdout.trim();
+}
 
 describe("Git workflows", () => {
   let directory = "";
@@ -443,5 +448,89 @@ describe("Git workflows", () => {
     await expect(lstat(oldMirror)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(activeWorkspace)).resolves.toBeDefined();
     await expect(lstat(protectedMirror)).resolves.toBeDefined();
+  });
+
+  it("reuses one conversation worktree across turns and realigns the snapshot", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-conversation-workspace-"));
+    const root = join(directory, "storage");
+    const source = join(directory, "source");
+    const bare = join(directory, "project.git");
+    await mkdir(source);
+    await git(source, "init", "--initial-branch=main");
+    await git(source, "config", "user.name", "Corvex Test");
+    await git(source, "config", "user.email", "corvex@example.test");
+    await writeFile(join(source, "a.txt"), "first\n");
+    await git(source, "add", "a.txt");
+    await git(source, "commit", "-m", "base");
+    const baseSha = await git(source, "rev-parse", "HEAD");
+    await writeFile(join(source, "a.txt"), "second\n");
+    await git(source, "commit", "-am", "advance");
+    const headSha = await git(source, "rev-parse", "HEAD");
+
+    await execFile("git", ["init", "--bare", bare]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "origin", "main"]);
+    // 预先准备镜像，并把 origin 指向不可达地址：一旦代码尝试联网抓取，测试即失败。
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "--mirror", bare, mirror]);
+    await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
+
+    const manager = new GitManager(root, "http://127.0.0.1:1", "read-token");
+    await manager.initialize();
+    const repositoryUrl = "http://127.0.0.1:1/project.git";
+    const conversationId = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+
+    const first = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+    expect(first.eventId).toBe(conversationWorkspaceName(conversationId));
+    expect(first.path).toBe(join(root, "workspaces", "7", conversationWorkspaceName(conversationId)));
+    expect(await git(first.path, "rev-parse", "HEAD")).toBe(baseSha);
+
+    // 未跟踪文件在复用期间必须保留：目录被重建时它会消失。
+    await writeFile(join(first.path, "marker.txt"), "keep\n");
+    const again = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+    expect(again.path).toBe(first.path);
+    await expect(lstat(join(again.path, "marker.txt"))).resolves.toBeDefined();
+
+    // 快照前进时在同一目录内对齐，而不是删除后重建。
+    const advanced = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, headSha);
+    expect(advanced.path).toBe(first.path);
+    expect(await git(advanced.path, "rev-parse", "HEAD")).toBe(headSha);
+    expect(await readFile(join(advanced.path, "a.txt"), "utf8")).toBe("second\n");
+    await expect(lstat(join(advanced.path, "marker.txt"))).resolves.toBeDefined();
+
+    await manager.removeConversationWorkspace(advanced);
+    await expect(lstat(advanced.path)).rejects.toMatchObject({ code: "ENOENT" });
+    // 幂等：目录已不存在时再次删除不应报错。
+    await manager.removeConversationWorkspace(advanced);
+  });
+
+  it("skips protected conversation workspaces during storage cleanup", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-conversation-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com", "");
+    await manager.initialize();
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    const conversationId = "11111111-2222-3333-4444-555555555555";
+    const conversationWorkspace = join(root, "workspaces", "7", conversationWorkspaceName(conversationId));
+    const idleWorkspace = join(root, "workspaces", "7", conversationWorkspaceName("99999999-8888-7777-6666-555555555555"));
+    await Promise.all([
+      mkdir(conversationWorkspace, { recursive: true }),
+      mkdir(idleWorkspace, { recursive: true }),
+    ]);
+    await Promise.all([conversationWorkspace, idleWorkspace].map((path) => utimes(path, old, old)));
+
+    const cutoff = new Date(Date.now() - 24 * 60 * 60_000);
+    const protectedPlan = await manager.cleanupStorage(new Set(), new Set(), cutoff, false, new Set([conversationId]));
+    expect(protectedPlan.workspaces).toEqual([idleWorkspace]);
+    const unprotectedPlan = await manager.cleanupStorage(new Set(), new Set(), cutoff, false);
+    expect(unprotectedPlan.workspaces.sort()).toEqual([conversationWorkspace, idleWorkspace].sort());
+  });
+
+  it("derives conversation workspace names only from safe identifiers", () => {
+    expect(conversationWorkspaceName("abc-123")).toBe("conversation-abc-123");
+    expect(() => conversationWorkspaceName("../escape")).toThrow("invalid path characters");
+    expect(() => conversationWorkspaceName("")).toThrow("invalid path characters");
+    expect(() => conversationWorkspaceName("a/b")).toThrow("invalid path characters");
   });
 });

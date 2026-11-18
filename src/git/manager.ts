@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DiffEngine } from "./diff.js";
@@ -20,6 +20,10 @@ const maxPatchBytes = 256 << 10;
 const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 /** 可安全用作工作区目录名的事件 ID 格式，并限制其最大长度。 */
 const eventIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+/** 对话工作区目录名前缀：一个对话常驻一个 worktree，跨轮次复用。 */
+const conversationWorkspacePrefix = "conversation-";
+/** 对话工作区目录名格式，长度与 `eventIdPattern` 对齐，确保清理时能被识别。 */
+const conversationWorkspacePattern = /^conversation-[0-9a-fA-F](?:[0-9a-fA-F-]{0,113}[0-9a-fA-F])?$/;
 
 interface GitResult {
   stdout: Buffer;
@@ -72,6 +76,18 @@ export interface GitStorageCleanupPlan {
   applied: boolean;
 }
 
+/**
+ * 由对话 ID 推导常驻工作区目录名。对话 ID 是 UUID，先做严格校验再拼进路径，
+ * 避免任何非受管名称落进 workspace 根目录，也让 `storage cleanup` 能识别并保护它。
+ */
+export function conversationWorkspaceName(conversationId: string): string {
+  const name = `${conversationWorkspacePrefix}${conversationId}`;
+  if (!conversationWorkspacePattern.test(name)) {
+    throw new Error("conversation ID contains invalid path characters");
+  }
+  return name;
+}
+
 export class GitManager {
   private readonly root: string;
   private readonly mirrorRoot: string;
@@ -119,6 +135,7 @@ export class GitManager {
     protectedProjectIds: ReadonlySet<number>,
     olderThan: Date,
     apply = false,
+    activeConversationIds: ReadonlySet<string> = new Set(),
   ): Promise<GitStorageCleanupPlan> {
     if (Number.isNaN(olderThan.valueOf())) throw new Error("storage cleanup cutoff is invalid");
     await this.initialize();
@@ -141,6 +158,12 @@ export class GitManager {
       }
       for (const eventId of await readdir(projectRoot)) {
         if (!eventIdPattern.test(eventId) || activeEventIds.has(eventId)) continue;
+        if (
+          conversationWorkspacePattern.test(eventId) &&
+          activeConversationIds.has(eventId.slice(conversationWorkspacePrefix.length))
+        ) {
+          continue;
+        }
         const workspacePath = join(projectRoot, eventId);
         const info = await lstat(workspacePath);
         if (info.isSymbolicLink()) {
@@ -209,13 +232,7 @@ export class GitManager {
     const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
     return this.withProjectLock(projectId, async () => {
       const mirror = join(this.mirrorRoot, `${projectId}.git`);
-      await this.updateMirror(mirror, canonicalUrl, signal);
-      try {
-        await this.run(mirror, ["--git-dir", mirror, "cat-file", "-e", `${expectedSha}^{commit}`], undefined, maxErrorOutput, signal);
-      } catch {
-        await this.runWithRetry(mirror, ["--git-dir", mirror, "fetch", "--no-tags", "origin", expectedSha], signal);
-        await this.run(mirror, ["--git-dir", mirror, "cat-file", "-e", `${expectedSha}^{commit}`], undefined, maxErrorOutput, signal);
-      }
+      await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal);
 
       const projectRoot = join(this.workspaceRoot, String(projectId));
       await mkdir(projectRoot, { recursive: true, mode: 0o750 });
@@ -316,6 +333,117 @@ export class GitManager {
         await this.run(mirror, ["--git-dir", mirror, "branch", "-D", issueSourceBranch], undefined, maxErrorOutput, signal);
       }
     });
+  }
+
+  /**
+   * 保证镜像里已有指定提交，供差异比较等需要额外快照的场景使用。命中本地对象库
+   * 时只做一次 `cat-file`，不联网；缺失时才按 SHA 定向抓取（会带上其全部祖先）。
+   */
+  async ensureCommitAvailable(
+    projectId: number,
+    repositoryUrl: string,
+    sha: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    if (!shaPattern.test(sha)) throw new Error("commit SHA must be a full 40- or 64-character hexadecimal SHA");
+    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
+    await this.withProjectLock(projectId, () => this.ensureCommit(join(this.mirrorRoot, `${projectId}.git`), canonicalUrl, sha, signal));
+  }
+
+  /**
+   * 获取一个对话的常驻只读 worktree：同一个对话跨轮次复用同一目录，避免每轮
+   * 重新 checkout 再整棵删除。固定快照不可变，因此 HEAD 命中时只做一次
+   * `rev-parse` 校验；快照变化时在同一目录内 `checkout --detach`，比重建 worktree 便宜。
+   * 传入的 `signal` 只约束本次获取，不会在轮次取消时删掉可复用的目录。
+   */
+  async prepareConversationWorkspace(
+    projectId: number,
+    conversationId: string,
+    repositoryUrl: string,
+    expectedSha: string,
+    signal?: AbortSignal,
+  ): Promise<Workspace> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    if (!shaPattern.test(expectedSha)) {
+      throw new Error("expected commit SHA must be a full 40- or 64-character hexadecimal SHA");
+    }
+    const eventId = conversationWorkspaceName(conversationId);
+    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
+    return this.withProjectLock(projectId, async () => {
+      const mirror = join(this.mirrorRoot, `${projectId}.git`);
+      await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal);
+
+      const projectRoot = join(this.workspaceRoot, String(projectId));
+      await mkdir(projectRoot, { recursive: true, mode: 0o750 });
+      const rootInfo = await lstat(projectRoot);
+      if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+        throw new Error("project workspace path is not a regular directory");
+      }
+      const workspacePath = join(projectRoot, eventId);
+      if (!(await this.pathExists(workspacePath)) || !(await this.alignConversationWorkspace(workspacePath, expectedSha, signal))) {
+        await this.removeWorktree(mirror, workspacePath);
+        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+      }
+      const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+      if (actual.toLowerCase() !== expectedSha.toLowerCase()) {
+        await this.removeWorktree(mirror, workspacePath);
+        throw new Error(`conversation workspace HEAD mismatch: got ${actual}, expected ${expectedSha}`);
+      }
+      await this.touch(workspacePath);
+      return { projectId, eventId, path: workspacePath, headSha: expectedSha };
+    });
+  }
+
+  /** 删除一个对话的常驻 worktree；目录不存在时视为已清理。 */
+  async removeConversationWorkspace(workspace: Workspace, signal?: AbortSignal): Promise<void> {
+    if (workspace.projectId <= 0 || !conversationWorkspacePattern.test(workspace.eventId)) {
+      throw new Error("invalid conversation workspace identity");
+    }
+    const expectedPath = join(this.workspaceRoot, String(workspace.projectId), workspace.eventId);
+    if (resolve(workspace.path) !== resolve(expectedPath)) {
+      throw new Error("conversation workspace path does not match its managed location");
+    }
+    await this.withProjectLock(workspace.projectId, async () => {
+      if (!(await this.pathExists(expectedPath))) return;
+      const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+      await this.removeWorktree(mirror, expectedPath, signal);
+    });
+  }
+
+  /**
+   * 尝试复用已有对话工作区：确认目录仍是受管 worktree，并把 HEAD 对齐到目标快照。
+   * 返回 false 表示目录不可复用（例如残留目录或镜像元数据已失效），调用方应重建。
+   */
+  private async alignConversationWorkspace(
+    workspacePath: string,
+    expectedSha: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      const head = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+      if (head.toLowerCase() !== expectedSha.toLowerCase()) {
+        await this.run(workspacePath, ["checkout", "--detach", "--force", expectedSha], undefined, maxErrorOutput, signal);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try {
+      await lstat(path);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+      throw error;
+    }
+  }
+
+  private async touch(path: string): Promise<void> {
+    const now = new Date();
+    await utimes(path, now, now);
   }
 
   async diff(
@@ -1132,7 +1260,7 @@ export class GitManager {
     return repository.toString();
   }
 
-  private async updateMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal): Promise<void> {
+  private async ensureMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal): Promise<void> {
     try {
       const info = await lstat(mirror);
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("project mirror path is not a regular directory");
@@ -1142,7 +1270,6 @@ export class GitManager {
       if (this.validateRepositoryUrl(origin) !== repositoryUrl) {
         throw new Error("project mirror origin does not match the authorized GitLab repository");
       }
-      await this.runWithRetry(mirror, ["--git-dir", mirror, "remote", "update", "--prune"], signal);
       return;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
@@ -1158,6 +1285,38 @@ export class GitManager {
     }
   }
 
+  /** 保证镜像存在且 origin 匹配；只有需要刷新分支指针时才联网。 */
+  private async updateMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal): Promise<void> {
+    await this.ensureMirror(mirror, repositoryUrl, signal);
+    await this.runWithRetry(mirror, ["--git-dir", mirror, "remote", "update", "--prune"], signal);
+  }
+
+  /**
+   * 保证镜像里已有指定提交：命中本地对象库时不联网，缺失时才按 SHA 定向抓取。
+   * 固定的提交快照是不可变的，因此重复请求同一 SHA（例如同一分支的后续对话轮次）
+   * 不需要每次刷新远端。
+   */
+  private async ensureCommit(mirror: string, repositoryUrl: string, sha: string, signal?: AbortSignal): Promise<void> {
+    await this.ensureMirror(mirror, repositoryUrl, signal);
+    if (await this.hasCommit(mirror, sha, signal)) return;
+    await this.runWithRetry(mirror, ["--git-dir", mirror, "fetch", "--no-tags", "origin", sha], signal);
+    if (!(await this.hasCommit(mirror, sha, signal))) {
+      throw new Error(`GitLab did not provide the expected commit ${sha}`);
+    }
+  }
+
+  private async hasCommit(mirror: string, sha: string, signal?: AbortSignal): Promise<boolean> {
+    const result = await this.run(
+      mirror,
+      ["--git-dir", mirror, "cat-file", "-e", `${sha}^{commit}`],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { allowExitCodes: [1, 128] },
+    );
+    return result.exitCode === 0;
+  }
+
   private async removeWorktree(mirror: string, workspacePath: string, signal?: AbortSignal): Promise<void> {
     try {
       await lstat(workspacePath);
@@ -1165,8 +1324,25 @@ export class GitManager {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
       throw new Error(`inspect workspace before cleanup: ${String(error)}`, { cause: error });
     }
-    await this.run(mirror, ["--git-dir", mirror, "worktree", "remove", "--force", workspacePath], undefined, maxErrorOutput, signal);
-    await this.run(mirror, ["--git-dir", mirror, "worktree", "prune"], undefined, maxErrorOutput, signal);
+    let mirrorExists = false;
+    try {
+      const info = await lstat(mirror);
+      mirrorExists = info.isDirectory() && !info.isSymbolicLink();
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (mirrorExists) {
+      try {
+        await this.run(mirror, ["--git-dir", mirror, "worktree", "remove", "--force", workspacePath], undefined, maxErrorOutput, signal);
+      } catch {
+        // 目录残留但已不是受管 worktree（例如镜像元数据被 prune 过）时直接删除。
+      }
+    }
+    // 无论上一步是否成功都确保目录消失，避免残留目录永久占用磁盘并阻塞后续复用。
+    await rm(workspacePath, { recursive: true, force: true });
+    if (mirrorExists) {
+      await this.run(mirror, ["--git-dir", mirror, "worktree", "prune"], undefined, maxErrorOutput, signal);
+    }
   }
 
   private async runWithRetry(cwd: string, args: string[], signal?: AbortSignal): Promise<void> {

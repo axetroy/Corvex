@@ -203,6 +203,7 @@ export class CorvexServer {
       } catch (error) {
         console.error("retention task ended unexpectedly", { error: errorMessage(error) });
       }
+      await this.conversations.releaseAll();
     }
   }
 
@@ -243,6 +244,11 @@ export class CorvexServer {
         this.store.pruneHistory(historyBefore, auditBefore);
       } catch (error) {
         console.error("prune persisted history failed", { error: errorMessage(error) });
+      }
+      try {
+        await this.conversations.releaseIdleWorkspaces();
+      } catch (error) {
+        console.error("evict idle conversation workspaces failed", { error: errorMessage(error) });
       }
       try {
         await sleep(24 * 60 * 60_000, undefined, { signal });

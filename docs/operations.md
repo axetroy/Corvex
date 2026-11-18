@@ -123,7 +123,7 @@ pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1
 pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
 ```
 
-Cleanup is dry-run by default, excludes active workspaces and projects with queued or active tasks, and removes only directories older than the selected age. Stop all Workers before applying a cleanup to avoid races with a newly claimed task. For Compose, run the command in the Server container after stopping the Worker profile:
+Cleanup is dry-run by default, excludes active workspaces, conversations with queued or running turns, and projects with queued or active tasks, and removes only directories older than the selected age. Stop all Workers before applying a cleanup to avoid races with a newly claimed task. For Compose, run the command in the Server container after stopping the Worker profile:
 
 ```sh
 docker compose --env-file .env -f deploy/compose.yaml exec corvex \

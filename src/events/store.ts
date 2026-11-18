@@ -1908,6 +1908,14 @@ export class EventStore {
     return new Set(rows.map((row) => row.project_id));
   }
 
+  /** 仍有排队或运行中轮次的对话 ID，用于保护其常驻工作区不被清理。 */
+  activeConversationIds(): Set<string> {
+    const rows = this.db
+      .prepare("SELECT DISTINCT conversation_id FROM conversation_turns WHERE status IN ('queued','running')")
+      .all() as { conversation_id: string }[];
+    return new Set(rows.map((row) => row.conversation_id));
+  }
+
   retryFailedEvent(eventId: string): EventSummary {
     if (!eventId.trim()) throw new Error("event ID is required");
     return this.transaction(() => {

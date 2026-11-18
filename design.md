@@ -138,6 +138,21 @@ SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助�
   下来，不因后续轮次或对话状态变化而改变。
 - 对话始终只读：不发布到 GitLab，不写入 worktree。轨迹内容在 `src/jobs/store.ts`
   统一脱敏并限长，不得绕过该路径。
+- 一个对话常驻一个只读 worktree 并跨轮次复用（目录名由对话 ID 推导，位于
+  `workspaces/<projectId>/conversation-<conversationId>`）。同一对话的轮次串行执行，
+  因此复用在并发上安全；复用在授权上也安全，因为对话只读且每次执行仍重新校验分支
+  快照。命中同一快照时只做一次 `rev-parse` 校验；快照前进时在同一目录内
+  `checkout --detach`，不重建目录。常驻工作区按空闲 TTL 与数量上限淘汰，Server
+  关闭时统一删除，`storage cleanup` 也会跳过仍有在途轮次的对话。
+
+## Git 快照的懒加载
+
+镜像（`mirrors/<projectId>.git`）是持久复用的对象库。固定提交不可变，因此只要镜像
+里已有目标 SHA，就不需要联网刷新远端：`prepareWorkspace` 与
+`prepareConversationWorkspace` 先做一次 `cat-file -e`，命中即跳过 fetch；缺失时才按
+SHA 定向抓取。需要比较差异基准（`git.ensure_base_sha`）等额外快照时，同样先查本地
+再联网。这既保留了「每个任务固定到不可变 SHA」的不变量，也去掉了每次执行一次多余
+的远端往返。
 
 ## 任务与失败语义
 
