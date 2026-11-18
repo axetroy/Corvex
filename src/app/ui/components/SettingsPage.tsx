@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Collapse, InputNumber, Switch, Typography } from "antd";
+import { Alert, Button, Collapse, Input, InputNumber, Select, Switch, Typography } from "antd";
 import "./SettingsPage.css";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -20,8 +20,9 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** 按字段单位格式化数字；token 用千分位，字节用可读单位。 */
-function formatFieldValue(field: SettingField, value: number | boolean): string {
+/** 按字段单位格式化数字；token 用千分位，字节用可读单位，字符串原样返回。 */
+function formatFieldValue(field: SettingField, value: number | boolean | string): string {
+  if (typeof value === "string") return value;
   if (typeof value === "boolean") return String(value);
   if (field.unit === "byte") return formatBytes(value);
   return value.toLocaleString("en-US");
@@ -34,8 +35,8 @@ interface Props {
   onRefresh: () => void;
 }
 
-/** 可编辑的草稿值：数字或布尔，键与设置键一致。 */
-type Draft = Record<string, number | boolean>;
+/** 可编辑的草稿值：数字、布尔或字符串，键与设置键一致。 */
+type Draft = Record<string, number | boolean | string>;
 
 /** 比较两份草稿是否完全一致，用于判断是否有未保存修改。 */
 function sameDraft(a: Draft, b: Draft): boolean {
@@ -46,9 +47,16 @@ function sameDraft(a: Draft, b: Draft): boolean {
   return true;
 }
 
-/** 校验单个数字字段；合法返回错误信息为空。 */
-function fieldError(field: SettingField, value: number | boolean | undefined, copy: Copy): string {
+/** 校验单个字段；合法返回错误信息为空。 */
+function fieldError(field: SettingField, value: number | boolean | string | undefined, copy: Copy): string {
   if (field.kind === "boolean") return "";
+  if (field.kind === "string") {
+    if (typeof value !== "string" || !value.trim()) return copy.settingsInvalidText;
+    if (field.maxLength !== undefined && value.length > field.maxLength) {
+      return copy.settingsInvalidTextMax.replace("{max}", String(field.maxLength));
+    }
+    return "";
+  }
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
     return copy.settingsInvalidNumber
       .replace("{min}", String(field.min ?? 0))
@@ -101,7 +109,7 @@ export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props
   if (error && !data) return <ErrorBanner message={error} />;
   if (!data) return <Loading>{copy.loading}</Loading>;
 
-  const setValue = (key: string, value: number | boolean) => {
+  const setValue = (key: string, value: number | boolean | string) => {
     setDraft((current) => ({ ...current, [key]: value }));
     setNotice("");
   };
@@ -109,7 +117,7 @@ export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props
   // 恢复单个字段到配置文件的值；base 缺失（读盘失败）时禁用该按钮。
   const resetField = (field: SettingField) => {
     if (!base) return;
-    setValue(field.key, base[field.key] as number | boolean);
+    setValue(field.key, base[field.key] as number | boolean | string);
   };
 
   const resetAll = () => {
@@ -150,8 +158,13 @@ export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props
     }
   };
 
+  // 只校验将要提交的字段：与配置文件基线相同的字段不会写入覆盖项，
+  // 例如未启用 Agent 时留空的模型名不应阻塞其它设置的保存。
   const problems = settingGroups.flatMap((group) =>
-    group.fields.map((field) => fieldError(field, draft[field.key], copy)).filter(Boolean),
+    group.fields
+      .filter((field) => !(base && draft[field.key] === base[field.key]))
+      .map((field) => fieldError(field, draft[field.key], copy))
+      .filter(Boolean),
   );
 
   /** 渲染一组字段；高级分组复用同一套控件。 */
@@ -179,6 +192,26 @@ export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props
                   disabled={!editable}
                   onChange={(checked) => setValue(field.key, checked)}
                 />
+              ) : field.kind === "string" ? (
+                field.values ? (
+                  <Select
+                    className="settings-select"
+                    value={typeof value === "string" ? value : undefined}
+                    options={field.values.map((option) => ({ value: option, label: option }))}
+                    disabled={!editable}
+                    status={invalid ? "error" : undefined}
+                    onChange={(next) => setValue(field.key, next)}
+                  />
+                ) : (
+                  <Input
+                    className="settings-text"
+                    value={typeof value === "string" ? value : ""}
+                    maxLength={field.maxLength}
+                    disabled={!editable}
+                    status={invalid ? "error" : undefined}
+                    onChange={(event) => setValue(field.key, event.target.value)}
+                  />
+                )
               ) : (
                 <InputNumber
                   className="settings-number"

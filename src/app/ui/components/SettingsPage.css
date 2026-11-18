@@ -66,6 +66,15 @@
   width: 180px;
 }
 
+.settings-text {
+  width: 320px;
+  max-width: 100%;
+}
+
+.settings-select {
+  min-width: 180px;
+}
+
 .settings-unit {
   color: #7a8593;
   font-size: 12px;

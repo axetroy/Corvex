@@ -22,9 +22,13 @@ export interface RuntimeSettingDefinition {
   key: string;
   section: RuntimeSettingSection;
   field: string;
-  type: "number" | "boolean";
+  type: "number" | "boolean" | "string";
   min?: number;
   max?: number;
+  /** 字符串类型允许的枚举候选值；省略表示任意非空文本。 */
+  values?: readonly string[];
+  /** 字符串类型允许的最大长度。 */
+  maxLength?: number;
   /**
    * 该键被 Worker 在构造阶段读取（例如审查文件上限）。变更后 Worker 需要重建
    * 依赖这些参数的组件，仅改内存配置不会生效。
@@ -33,6 +37,9 @@ export interface RuntimeSettingDefinition {
 }
 
 export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
+  // 模型与输出语言：PiAgent 与工作流在每次请求/轮次读取，覆盖后立即生效。
+  { key: "model", section: "agent", field: "model", type: "string", maxLength: 200 },
+  { key: "response_language", section: "agent", field: "responseLanguage", type: "string", values: ["en", "zh-CN"] },
   // 上下文预算
   { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000 },
   { key: "max_input_tokens", section: "agent", field: "maxInputTokens", type: "number", min: 0, max: 10_000_000 },
@@ -62,7 +69,7 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));
 
 export interface RuntimeSettingValues {
-  [key: string]: number | boolean;
+  [key: string]: number | boolean | string;
 }
 
 type MutableSection = Record<string, unknown>;
@@ -72,8 +79,19 @@ function sectionOf(config: CorvexConfig, section: RuntimeSettingSection): Mutabl
   return config[section] as unknown as MutableSection;
 }
 
-/** 把字符串形式的覆盖值解析为对应的数字或布尔值；类型非法时抛错。 */
-function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): number | boolean {
+/** 把字符串形式的覆盖值解析为对应的数字、布尔或字符串值；类型非法时抛错。 */
+function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): number | boolean | string {
+  if (definition.type === "string") {
+    const value = raw.trim();
+    if (!value) throw new Error(`${definition.key} must not be empty`);
+    if (definition.maxLength !== undefined && value.length > definition.maxLength) {
+      throw new Error(`${definition.key} must be at most ${definition.maxLength} characters`);
+    }
+    if (definition.values && !definition.values.includes(value)) {
+      throw new Error(`${definition.key} must be one of ${definition.values.join(", ")}`);
+    }
+    return value;
+  }
   if (definition.type === "boolean") {
     if (raw === "true") return true;
     if (raw === "false") return false;
@@ -178,7 +196,7 @@ export function applyRuntimeSettingRows(
 export function runtimeSettingsView(config: CorvexConfig): RuntimeSettingValues {
   const view: RuntimeSettingValues = {};
   for (const definition of runtimeSettingDefinitions) {
-    view[definition.key] = sectionOf(config, definition.section)[definition.field] as number | boolean;
+    view[definition.key] = sectionOf(config, definition.section)[definition.field] as number | boolean | string;
   }
   return view;
 }

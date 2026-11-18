@@ -53,9 +53,9 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `agent.enabled` | `false` | Boolean | Must be `true` to start a worker. |
-| `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, explanations, and Issue replies or implementation summaries. JSON keys, code, paths, and quoted evidence remain unchanged. |
+| `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, explanations, and Issue replies or implementation summaries. JSON keys, code, paths, and quoted evidence remain unchanged. Editable at runtime from the console. |
 | `agent.base_url` | `https://api.openai.com/v1` | Required when enabled; HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. |
-| `agent.model` | `your-model-name` | Required when enabled | Provider model name. `CORVEX_MODEL_NAME` overrides it. |
+| `agent.model` | `your-model-name` | Required when enabled | Provider model name. `CORVEX_MODEL_NAME` overrides it. Editable at runtime from the console. |
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |
 | `agent.session_timeout` | `30m` | Positive duration when enabled | Maximum time for one complete Pi agent session. |
 | `agent.max_output_tokens` | `4096` | 1–8192 when enabled | Maximum requested model output tokens. |
@@ -82,9 +82,9 @@ Pi sessions do not expose built-in shell, edit, or write tools. The custom `read
 
 A subset of the settings above can be changed from the agent console **Settings** page without editing the file or restarting. The Server stores only the overridden keys in the SQLite `runtime_settings` table (with `updated_at` and `updated_by`), applies them to new turns immediately, and records each change in `audit_events` (`update_settings`, actor = console username). The Worker reloads the table on every poll, so a queued event picks up a change on its next claim, and it rebuilds the components that read review and repair limits in their constructor. The Server reapplies stored overrides at startup, so a restart never silently reverts the values shown in the console.
 
-Editable keys: `agent.context_window`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.max_output_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, and `issue.implement_enabled`.
+Editable keys: `agent.model`, `agent.response_language`, `agent.context_window`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.max_output_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, and `issue.implement_enabled`. The model and response language are read on every request and turn, so a change takes effect on the next one without a restart.
 
-Credentials, URLs, tokens, `agent.model`, `agent.response_language`, `agent.enabled`, skill paths, blocked hosts, timeouts, retention and worker poll parameters stay file/environment-only and require a restart. The page shows the configured value next to the effective value: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
+Credentials, URLs, tokens, `agent.enabled`, `agent.base_url`, `agent.api_key`, skill paths, blocked hosts, timeouts, retention and worker poll parameters stay file/environment-only and require a restart. The page shows the configured value next to the effective value: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
 ## Chat context
 

@@ -55,9 +55,9 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `agent.enabled` | `false` | 布尔值 | 启动 Worker 时必须设为 `true`。 |
-| `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。 |
+| `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。可在控制台运行时修改。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 启用时必填；有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。 |
-| `agent.model` | `your-model-name` | 启用时必填 | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。 |
+| `agent.model` | `your-model-name` | 启用时必填 | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。可在控制台运行时修改。 |
 | `agent.request_timeout` | `120s` | 启用时必须为正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |
 | `agent.session_timeout` | `30m` | 启用时必须为正时长 | 单个 Pi Agent Session 的总运行时限。 |
 | `agent.max_output_tokens` | `4096` | 启用时为 1–8192 | 请求模型生成的最大输出 Token 数。 |
@@ -84,9 +84,9 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 上表中的一部分设置可以在 Agent 控制台的**设置**页面修改，无需编辑配置文件或重启。Server 只把被覆盖的键写入 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`），立即作用于后续轮次，并把每次修改记入 `audit_events`（`update_settings`，操作者取控制台用户名）。Worker 在每次轮询时重新读取该表，排队中的事件会在下一次领取时生效，并重建那些在构造函数里读取审查与修复上限的组件。Server 启动时也会重新应用已存储的覆盖项，因此重启不会悄悄退回界面显示之外的值。
 
-可编辑的键：`agent.context_window`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.max_output_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes` 与 `issue.implement_enabled`。
+可编辑的键：`agent.model`、`agent.response_language`、`agent.context_window`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.max_output_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes` 与 `issue.implement_enabled`。模型与回复语言在每次请求与轮次读取，修改后无需重启即可作用于下一次。
 
-凭据、地址、令牌、`agent.model`、`agent.response_language`、`agent.enabled`、Skill 路径、屏蔽主机、超时、保留天数与 Worker 轮询参数只能来自配置文件或环境变量，修改后需要重启。页面会同时展示配置值与生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+凭据、地址、令牌、`agent.enabled`、`agent.base_url`、`agent.api_key`、Skill 路径、屏蔽主机、超时、保留天数与 Worker 轮询参数只能来自配置文件或环境变量，修改后需要重启。页面会同时展示配置值与生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 

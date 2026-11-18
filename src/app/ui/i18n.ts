@@ -377,6 +377,14 @@ export const en = {
   settingsUnitTokens: "tokens",
   settingsUnitBytes: "bytes",
   settingsInvalidNumber: "Enter a whole number between {min} and {max}.",
+  settingsInvalidText: "Enter a non-empty value.",
+  settingsInvalidTextMax: "Enter at most {max} characters.",
+  settingsGroupModel: "Model and language",
+  settingsGroupModelHint: "The model the agent calls and the language of its replies. Both apply to the next request without a restart.",
+  settingsModel: "Model",
+  settingsModelHint: "Provider model name sent with every request. It must match a model the configured base URL serves.",
+  settingsResponseLanguage: "Response language",
+  settingsResponseLanguageHint: "Language for model-generated summaries, findings, fixes, explanations and Issue replies. Code, paths and quoted evidence stay unchanged.",
 };
 
 /** Agent 控制台界面文案结构，中英文共用同一套键。 */
@@ -737,4 +745,12 @@ export const zhCN: Copy = {
   settingsUnitTokens: "token",
   settingsUnitBytes: "字节",
   settingsInvalidNumber: "请输入 {min} 到 {max} 之间的整数。",
+  settingsInvalidText: "请输入非空内容。",
+  settingsInvalidTextMax: "最多输入 {max} 个字符。",
+  settingsGroupModel: "模型与语言",
+  settingsGroupModelHint: "Agent 调用的模型与回复语言。两者都会在无需重启的情况下作用于下一次请求。",
+  settingsModel: "模型",
+  settingsModelHint: "随每次请求发送的服务商模型名称，必须与所配置 base URL 提供的模型一致。",
+  settingsResponseLanguage: "回复语言",
+  settingsResponseLanguageHint: "模型生成的摘要、发现、修复、解释与 Issue 回复所用语言。代码、路径与引用证据保持不变。",
 };

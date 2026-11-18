@@ -68,6 +68,14 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ summary_enabled: "yes" })).toEqual(['summary_enabled must be "true" or "false"']);
   });
 
+  it("校验字符串类型的枚举与长度", () => {
+    expect(validateRuntimeSettings({ model: "gpt-4o" })).toEqual([]);
+    expect(validateRuntimeSettings({ response_language: "zh-CN" })).toEqual([]);
+    expect(validateRuntimeSettings({ model: "   " })).toEqual(["model must not be empty"]);
+    expect(validateRuntimeSettings({ response_language: "fr" })).toEqual(["response_language must be one of en, zh-CN"]);
+    expect(validateRuntimeSettings({ model: "x".repeat(201) })).toEqual(["model must be at most 200 characters"]);
+  });
+
   it("校验跨字段约束", () => {
     expect(validateRuntimeSettings({ context_window: "8000", max_input_tokens: "8000" }))
       .toEqual(["max_input_tokens must be 0 or less than context_window"]);
@@ -85,12 +93,16 @@ describe("applyRuntimeSettings", () => {
       max_output_tokens: "2048",
       review_max_files: "42",
       fix_enabled: "true",
+      model: "gpt-4o",
+      response_language: "zh-CN",
     });
     expect(config.agent.contextWindow).toBe(200_000);
     expect(config.agent.summaryEnabled).toBe(false);
     expect(config.agent.maxOutputTokens).toBe(2_048);
     expect(config.review.maxFiles).toBe(42);
     expect(config.fix.enabled).toBe(true);
+    expect(config.agent.model).toBe("gpt-4o");
+    expect(config.agent.responseLanguage).toBe("zh-CN");
   });
 
   it("忽略未知键与未覆盖的字段", () => {
@@ -173,7 +185,8 @@ describe("copyRuntimeSettings", () => {
 describe("isRuntimeSettingKey", () => {
   it("只识别已知设置键", () => {
     expect(isRuntimeSettingKey("context_window")).toBe(true);
-    expect(isRuntimeSettingKey("model")).toBe(false);
+    expect(isRuntimeSettingKey("model")).toBe(true);
+    expect(isRuntimeSettingKey("base_url")).toBe(false);
   });
 });
 

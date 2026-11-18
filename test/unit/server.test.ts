@@ -587,11 +587,13 @@ describe("CorvexServer", () => {
     vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
     const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
     const configPath = join(root, "config.yaml");
+    // agent.enabled=true 且模型密钥来自环境变量：Server 角色下合法，
+    // 保存设置时的校验必须按 Server 角色进行，否则会被误判为缺少密钥。
     await writeFile(configPath, JSON.stringify({
       server: { listen: "127.0.0.1:0" },
       gitlab: { base_url: "https://gitlab.example.com" },
       storage: { root, database: join(root, "state.db") },
-      agent: { enabled: false },
+      agent: { enabled: true },
     }), "utf8");
     const { loadConfig } = await import("../../src/config/config.js");
     const config = await loadConfig(configPath, "server");
@@ -622,10 +624,10 @@ describe("CorvexServer", () => {
       const initial = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
       expect(initial.status).toBe(200);
       const initialBody = await initial.json() as {
-        settings: Record<string, number | boolean>;
-        effective: Record<string, number | boolean>;
+        settings: Record<string, number | boolean | string>;
+        effective: Record<string, number | boolean | string>;
         adjusted: string[];
-        base: Record<string, number | boolean> | null;
+        base: Record<string, number | boolean | string> | null;
         overrides: Record<string, string>;
         overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
         editable: boolean;
@@ -633,7 +635,7 @@ describe("CorvexServer", () => {
       };
       expect(initialBody.editable).toBe(true);
       expect(initialBody.configPath).toBe(configPath);
-      expect(initialBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
+      expect(initialBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true, response_language: "en" });
       expect(initialBody.base).toMatchObject({ context_window: 131_072 });
       expect(initialBody.overrides).toEqual({});
       // 0 表示自动推导，界面必须拿到生效值，否则看起来像没保存。
@@ -644,16 +646,18 @@ describe("CorvexServer", () => {
       const saved = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({ settings: { context_window: 200_000, summary_enabled: false } }),
+        body: JSON.stringify({ settings: { context_window: 200_000, summary_enabled: false, model: "gpt-4o", response_language: "zh-CN" } }),
       });
       expect(saved.status).toBe(200);
       const savedBody = await saved.json() as typeof initialBody;
-      expect(savedBody.settings).toMatchObject({ context_window: 200_000, summary_enabled: false });
+      expect(savedBody.settings).toMatchObject({ context_window: 200_000, summary_enabled: false, model: "gpt-4o", response_language: "zh-CN" });
       expect(savedBody.effective).toMatchObject({ context_window: 200_000 });
-      expect(savedBody.overrides).toMatchObject({ context_window: "200000", summary_enabled: "false" });
+      expect(savedBody.overrides).toMatchObject({ context_window: "200000", summary_enabled: "false", model: "gpt-4o", response_language: "zh-CN" });
       expect(savedBody.overrideMeta.context_window?.updatedBy).toBe("operator");
       expect(config.agent.contextWindow).toBe(200_000);
       expect(config.agent.summaryEnabled).toBe(false);
+      expect(config.agent.model).toBe("gpt-4o");
+      expect(config.agent.responseLanguage).toBe("zh-CN");
 
       // 覆盖项是整份替换：未提交的键回退到配置文件值。
       const reset = await fetch(`${base}/api/ops/settings`, {

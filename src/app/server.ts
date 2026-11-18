@@ -634,11 +634,11 @@ export class CorvexServer {
    * 同时返回自动推导后的生效值，界面据此解释「填写的值为何与运行值不同」。
    */
   private async readSettings(): Promise<{
-    settings: Record<string, number | boolean>;
-    effective: Record<string, number | boolean>;
+    settings: Record<string, number | boolean | string>;
+    effective: Record<string, number | boolean | string>;
     adjusted: string[];
     derived: DerivedContextMetrics;
-    base: Record<string, number | boolean> | null;
+    base: Record<string, number | boolean | string> | null;
     overrides: Record<string, string>;
     overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
     editable: boolean;
@@ -651,7 +651,7 @@ export class CorvexServer {
     );
     // 配置文件的值用于「恢复默认」：重新读盘而不是复用启动时的配置，
     // 这样手工编辑配置文件后界面也能立即反映。
-    let base: Record<string, number | boolean> | null = null;
+    let base: Record<string, number | boolean | string> | null = null;
     if (this.configPath) {
       try {
         base = runtimeSettingsView(await reloadConfig(this.configPath));
@@ -692,10 +692,10 @@ export class CorvexServer {
     const overrides: Record<string, string> = {};
     for (const [key, value] of Object.entries(incoming as Record<string, unknown>)) {
       if (value === null || value === undefined) continue;
-      if (typeof value === "number" || typeof value === "boolean") {
+      if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
         overrides[key] = String(value);
       } else {
-        respondJson(response, 400, { error: `setting "${key}" must be a number or boolean` });
+        respondJson(response, 400, { error: `setting "${key}" must be a number, boolean or string` });
         return;
       }
     }
@@ -714,7 +714,9 @@ export class CorvexServer {
     // 覆盖项是整份替换：未提交的键回退到配置文件值，界面上的「恢复默认」据此生效。
     applyRuntimeSettings(base, overrides);
     try {
-      validateConfig(base);
+      // 按 Server 角色校验：Server 不调用模型，模型密钥与地址来自环境变量，
+      // 用全量校验会把合法配置误判为缺少密钥，导致任何保存都被拒绝。
+      validateConfig(base, "server");
     } catch (error) {
       respondJson(response, 400, { error: errorMessage(error) });
       return;
