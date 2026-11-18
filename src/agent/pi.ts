@@ -29,6 +29,12 @@ import {
 } from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
+import {
+  createToolResultBudgetExtension,
+  resolveCompactionKeepRecentTokens,
+  resolveCompactionReserveTokens,
+  resolveTurnToolResultBytes,
+} from "./tool-budget.js";
 import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createMergeRequestMetadataExtension } from "./mr-update.js";
@@ -368,6 +374,18 @@ export class PiAgent {
     const toolAccess = getAgentToolAccess(request.taskType, this.config.agent, request.conversationMode);
     const workspace = trace?.workspace;
     const mergeRequest = trace?.mergeRequest;
+    // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
+    // 预留必须覆盖这段最坏增量加上输出预留，否则估算偏低的请求仍会超窗。
+    const compactionReserveTokens = resolveCompactionReserveTokens(
+      this.config.agent.contextWindow,
+      this.config.agent.maxOutputTokens,
+      this.config.agent.compactionReserveTokens,
+    );
+    const compactionKeepRecentTokens = resolveCompactionKeepRecentTokens(
+      this.config.agent.contextWindow,
+      this.config.agent.compactionKeepRecentTokens,
+      compactionReserveTokens,
+    );
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -377,6 +395,9 @@ export class PiAgent {
       noPromptTemplates: true,
       additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
+        // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
+        // 在 SDK 下一次压缩检查之前把窗口顶爆。
+        createToolResultBudgetExtension(this.config.agent.contextWindow),
         createReadOnlyFileExtension(
           allowedRoots,
           workspace && this.git
@@ -500,8 +521,8 @@ export class PiAgent {
       settingsManager: SettingsManager.inMemory({
         compaction: {
           enabled: true,
-          reserveTokens: this.config.agent.compactionReserveTokens,
-          keepRecentTokens: this.config.agent.compactionKeepRecentTokens,
+          reserveTokens: compactionReserveTokens,
+          keepRecentTokens: compactionKeepRecentTokens,
         },
       }),
       sessionManager: SessionManager.inMemory(),
@@ -515,8 +536,12 @@ export class PiAgent {
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
     let currentRound = 0;
-    // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。
-    const toolResultByteLimit = this.config.agent.turnToolResultBytes;
+    // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。阈值收敛到
+    // 「四个单轮工具预算」，让提醒在压缩发生前就能到达模型。
+    const toolResultByteLimit = resolveTurnToolResultBytes(
+      this.config.agent.contextWindow,
+      this.config.agent.turnToolResultBytes,
+    );
     let toolResultBytes = 0;
     let toolBudgetWarningSent = false;
     const recordedContextEntryIds = new Set<string>();

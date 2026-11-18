@@ -116,7 +116,7 @@ const defaults: CorvexConfig = {
     contextWindow: 131_072,
     maxInputTokens: 0,
     historyTokenBudget: 24_000,
-    turnToolResultBytes: 2 << 20,
+    turnToolResultBytes: 256 << 10,
     compactionReserveTokens: 16_384,
     compactionKeepRecentTokens: 20_000,
     summaryEnabled: true,

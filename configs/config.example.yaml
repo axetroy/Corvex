@@ -31,12 +31,13 @@ agent:
   # 上下文预算：模型窗口、提示词预算与 SDK 压缩阈值。
   # context_window 是模型的真实窗口；请求超限时先按下面的预算在本地裁剪，
   # 而不是依赖服务端报错。max_input_tokens 为 0 时由窗口减输出预留推导。
-  # turn_tool_result_bytes 是软检查点：达到 75% 时提示模型收窄读取并继续，
-  # 不中止本轮，长任务因此能在同一会话内完成。
+  # 工具结果在进入会话历史前按单次/单轮硬性截断，因此 turn_tool_result_bytes
+  # 只是软检查点：达到阈值（最多四个单轮预算）时提示模型收窄读取并继续。
+  # compaction_reserve_tokens 低于工具预算推导的安全下限时会被运行时上调。
   context_window: 131072
   max_input_tokens: 0
   history_token_budget: 24000
-  turn_tool_result_bytes: 2097152
+  turn_tool_result_bytes: 262144
   compaction_reserve_tokens: 16384
   compaction_keep_recent_tokens: 20000
   summary_enabled: true

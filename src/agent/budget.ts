@@ -19,12 +19,24 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * 更保守的 token 估算：同时考虑字符数与 UTF-8 字节数。
+ *
+ * chars/4 对英文与代码大致准确，但对中文、压缩代码和 JSON 转义会明显低估——同一段
+ * 文本真实分词后的 token 数可能接近「字节数 / 3」。裁剪历史时使用这个上界，避免
+ * 估算通过的请求在服务端仍超窗。
+ */
+export function estimateConservativeTokens(text: string): number {
+  return Math.max(Math.ceil(text.length / 4), Math.ceil(Buffer.byteLength(text, "utf8") / 3));
+}
+
 /** 单次请求可用的输入 token 上限：优先取配置，否则由窗口减输出与固定开销推导。 */
 export function resolveMaxInputTokens(
   config: Pick<CorvexConfig["agent"], "maxInputTokens" | "contextWindow" | "maxOutputTokens">,
 ): number {
-  if (config.maxInputTokens > 0) return config.maxInputTokens;
-  const derived = config.contextWindow - config.maxOutputTokens - framingOverheadTokens;
+  if (Number.isFinite(config.maxInputTokens) && config.maxInputTokens > 0) return config.maxInputTokens;
+  const derived = (config.contextWindow ?? 0) - (config.maxOutputTokens ?? 0) - framingOverheadTokens;
+  if (!Number.isFinite(derived)) return 1_024;
   return Math.max(1_024, derived);
 }
 
@@ -52,6 +64,21 @@ export function isContextOverflowError(message: string): boolean {
   if (nonOverflowPatterns.some((pattern) => pattern.test(message))) return false;
   return sdkOverflowPatterns.some((pattern) => pattern.test(message)) ||
     extraOverflowPatterns.some((pattern) => pattern.test(message));
+}
+
+/**
+ * 对话历史可用的 token 预算：配置的历史预算与「单次请求输入上限」取较小值。
+ *
+ * `max_input_tokens` 因此不再只是展示用的配置：它会把 system 提示与当前请求之外的
+ * 剩余额度交给历史裁剪，超出部分进入滚动摘要。
+ */
+export function resolveHistoryBudgetTokens(
+  config: Pick<CorvexConfig["agent"], "maxInputTokens" | "contextWindow" | "maxOutputTokens" | "historyTokenBudget">,
+  fixedPromptTokens: number,
+): number {
+  const configured = Number.isFinite(config.historyTokenBudget) ? config.historyTokenBudget : 0;
+  const available = resolveMaxInputTokens(config) - Math.max(0, fixedPromptTokens);
+  return Math.max(0, Math.min(configured, available));
 }
 
 export interface HistoryMessage {
@@ -85,13 +112,44 @@ export function trimHistory<T extends HistoryMessage>(history: readonly T[], bud
   let cutIndex = normalized.length;
   for (let index = normalized.length - 1; index >= 0; index -= 1) {
     const message = normalized[index]!;
-    const cost = estimateTokens(message.content) + 4;
+    const cost = estimateConservativeTokens(message.content) + 4;
     if (kept.length > 0 && used + cost > budgetTokens) break;
     kept.unshift(message);
     used += cost;
     cutIndex = index;
   }
   return { messages: kept, dropped: normalized.slice(0, cutIndex) };
+}
+
+/**
+ * 把待摘要的历史切成若干块：每块连同滚动摘要保守估算不超过预算。
+ *
+ * 摘要请求同样受窗口限制：把全部被裁剪的历史塞进一次请求，长对话迟早会超窗，
+ * 而摘要失败会被吞掉、边界不再推进，早期上下文就永久丢失。分块后每块都能落在
+ * 窗口内，滚动摘要逐块累积。单条超预算消息独占一块，保证循环一定推进。
+ */
+export function chunkForSummary<T extends HistoryMessage>(
+  summary: string | null,
+  messages: readonly T[],
+  budgetTokens: number,
+): T[][] {
+  const budget = Math.max(1_024, budgetTokens);
+  const summaryCost = summary ? estimateConservativeTokens(summary) + 4 : 0;
+  const chunks: T[][] = [];
+  let index = 0;
+  while (index < messages.length) {
+    let used = summaryCost;
+    const chunk: T[] = [];
+    while (index < messages.length) {
+      const cost = estimateConservativeTokens(messages[index]!.content) + 4;
+      if (chunk.length > 0 && used + cost > budget) break;
+      chunk.push(messages[index]!);
+      used += cost;
+      index += 1;
+    }
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 /**

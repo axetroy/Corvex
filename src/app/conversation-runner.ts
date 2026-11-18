@@ -8,7 +8,7 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
-import { buildConversationPrompt, trimHistory } from "../agent/budget.js";
+import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 
 /** 常驻对话工作区的空闲存活时间，超时后由 Runner 或 storage cleanup 回收。 */
@@ -151,6 +151,10 @@ export class ConversationRunner {
 
   /**
    * 维护跨轮滚动摘要：把「上一份摘要 + 本轮被裁剪掉的历史」压缩成新摘要并持久化。
+   *
+   * 摘要本身也是模型请求，必须遵守同一个窗口预算，否则长对话的历史会越攒越多，
+   * 一次摘要请求超窗后失败被吞掉、边界不再推进，早期上下文就永久丢失。这里按预算
+   * 分块滚动摘要；任一环节失败都不保存，下一轮会从同一个边界重试。
    * 摘要失败不影响本轮结果——它只是优化，不能因为压缩出错就让已回答的轮次变失败。
    */
   private async updateSummary(
@@ -160,23 +164,32 @@ export class ConversationRunner {
     signal: AbortSignal,
   ): Promise<void> {
     if (!this.config.agent.summaryEnabled || dropped.length === 0) return;
-    const summaryMessageId = dropped.at(-1)?.id;
-    if (!summaryMessageId) return;
-    const transcript = [
-      ...(turn.summary ? [{ role: "assistant" as const, content: `[Existing summary]\n${turn.summary}` }] : []),
-      ...dropped.map((message) => ({ role: message.role, content: message.content })),
-    ];
+    if (!dropped.at(-1)?.id) return;
+    // 分块预算：与对话历史预算同源，并给摘要的系统提示预留固定开销。
+    const chunkBudget = Math.max(4_000, resolveHistoryBudgetTokens(this.config.agent, 4_000));
     try {
-      const summary = await this.agent.generate(
-        {
-          taskType: "conversation",
-          systemPrompt: getSummarySystemPrompt(this.config.agent.responseLanguage),
-          userPrompt: JSON.stringify({ conversation: transcript }),
-        },
-        workspacePath,
-        signal,
-      );
-      this.store.saveConversationSummary(turn.conversationId, summary.content, summaryMessageId);
+      let rolling = turn.summary;
+      let summarizedMessageId: string | undefined;
+      for (const chunk of chunkForSummary(turn.summary, dropped, chunkBudget)) {
+        const transcript = [
+          ...(rolling ? [{ role: "assistant" as const, content: `[Existing summary]\n${rolling}` }] : []),
+          ...chunk.map((message) => ({ role: message.role, content: message.content })),
+        ];
+        const summary = await this.agent.generate(
+          {
+            taskType: "conversation",
+            systemPrompt: getSummarySystemPrompt(this.config.agent.responseLanguage),
+            userPrompt: JSON.stringify({ conversation: transcript }),
+          },
+          workspacePath,
+          signal,
+        );
+        rolling = summary.content;
+        summarizedMessageId = chunk.at(-1)?.id ?? summarizedMessageId;
+      }
+      if (rolling && summarizedMessageId) {
+        this.store.saveConversationSummary(turn.conversationId, rolling, summarizedMessageId);
+      }
     } catch (error) {
       console.warn("conversation summary update failed", {
         conversationId: turn.conversationId,
@@ -265,19 +278,7 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
-      // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。
-      const { messages: history, dropped } = trimHistory(
-        turn.history,
-        this.config.agent.historyTokenBudget,
-      );
-      if (dropped.length > 0) {
-        console.info("conversation history trimmed to fit the token budget", {
-          turnId: turn.turnId,
-          dropped: dropped.length,
-          kept: history.length,
-        });
-      }
+      const systemPrompt = getConversationSystemPrompt(this.config.agent.responseLanguage, turn.mode);
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -287,6 +288,21 @@ export class ConversationRunner {
         summary: turn.summary,
         currentRequest: turn.request,
       });
+      // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
+      // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受
+      // `agent.max_input_tokens` 约束，使这个配置真正限制单次请求的输入。
+      const historyBudget = resolveHistoryBudgetTokens(
+        this.config.agent,
+        estimateConservativeTokens(systemPrompt) + estimateConservativeTokens(userPrompt),
+      );
+      const { messages: history, dropped } = trimHistory(turn.history, historyBudget);
+      if (dropped.length > 0) {
+        console.info("conversation history trimmed to fit the token budget", {
+          turnId: turn.turnId,
+          dropped: dropped.length,
+          kept: history.length,
+        });
+      }
       const started = Date.now();
       let answer: Awaited<ReturnType<PiAgent["generate"]>>;
       try {
@@ -304,7 +320,7 @@ export class ConversationRunner {
             {
               taskType: "conversation",
               conversationMode: turn.mode,
-              systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage, turn.mode),
+              systemPrompt,
               userPrompt,
               history,
             },

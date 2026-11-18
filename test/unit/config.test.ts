@@ -46,7 +46,7 @@ function validConfig(): CorvexConfig {
 }
 
 describe("validateConfig", () => {
-  it("defaults the per-turn tool result budget to 2 MiB", async () => {
+  it("defaults the per-turn tool result budget to 256 KiB", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-tool-budget-"));
     const configPath = join(root, "config.yaml");
     try {
@@ -55,7 +55,7 @@ describe("validateConfig", () => {
         storage: { root, database: join(root, "state.db") },
       }));
       await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        agent: { turnToolResultBytes: 2 << 20 },
+        agent: { turnToolResultBytes: 256 << 10 },
       });
     } finally {
       await rm(root, { recursive: true, force: true });
