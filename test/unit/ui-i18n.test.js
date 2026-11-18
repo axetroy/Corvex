@@ -16,8 +16,8 @@ describe("operations UI locale", () => {
 
   it("provides matching English and Simplified Chinese dashboard catalogs", () => {
     expect(zhCN.overviewTitle).toBe("概览");
-    expect(en.age).toBe("Task duration");
-    expect(zhCN.age).toBe("任务耗时");
+    expect(en.age).toBe("Event duration");
+    expect(zhCN.age).toBe("事件耗时");
     expect(zhCN.traceTabSession).toBe("会话");
     expect(zhCN.traceTabTrace).toBe("轨迹");
     expect(zhCN.traceSessionUser).toBe("用户");
@@ -31,7 +31,7 @@ describe("operations UI locale", () => {
     expect(zhCN.traceFirstTokenShort).toBe("TTFT");
     expect(zhCN.traceSessionSummaryTemplate).toContain("Avg. TTFT: {ttft}");
     expect(zhCN.traceSessionSummaryTemplate).toContain("Generation TPS: {tps}");
-    expect(zhCN.executionEvents).toBe("执行步骤");
+    expect(zhCN.executionSteps).toBe("执行步骤");
     expect(en.requester).toBe("Requester");
     expect(zhCN.requester).toBe("发起人");
     expect(en.triggerComment).toBe("Original comment");

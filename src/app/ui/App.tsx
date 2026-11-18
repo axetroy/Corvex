@@ -7,13 +7,13 @@ import { Loading } from "./components/common.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, conversationsHash } from "./routing.js";
-import type { JobQueue } from "./types.js";
+import { eventQueueFromParams, eventsBackHash, eventsHash, parseHash, conversationsHash } from "./routing.js";
+import type { EventQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
 const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((module) => ({ default: module.OverviewPage })));
-const JobsPage = lazy(() => import("./components/JobsPage.js").then((module) => ({ default: module.JobsPage })));
-const JobDetailPage = lazy(() => import("./components/JobDetailPage.js").then((module) => ({ default: module.JobDetailPage })));
+const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
+const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 
 /** localStorage 中保存运维台手动选择语言的键名。 */
@@ -22,7 +22,7 @@ const localePreferenceKey = "corvex-ops-locale";
 const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
 /** 运维台自动刷新间隔（毫秒）。 */
 const refreshIntervalMs = 15_000;
-/** 非任务列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
+/** 非事件列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
 const emptyParams = new URLSearchParams();
 /** Server 为当前 HTML 响应生成的 CSP nonce，供 Ant Design 样式标签使用。 */
 const cspNonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce;
@@ -65,7 +65,7 @@ export function App() {
   // 页面与筛选条件都来自 hash，刷新或分享链接后视图保持不变。
   const { page, params } = useMemo(() => parseHash(route), [route]);
   const queue = useMemo(
-    () => jobQueueFromParams(page.kind === "jobs" || page.kind === "job" ? params : emptyParams),
+    () => eventQueueFromParams(page.kind === "events" || page.kind === "event" ? params : emptyParams),
     [page.kind, params],
   );
   const [updated, setUpdated] = useState<string | null>(null);
@@ -82,15 +82,15 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 未知路由与非法任务 ID 统一回到对话页，避免停留在空白页。
+  // 未知路由与非法事件 ID 统一回到对话页，避免停留在空白页。
   useEffect(() => {
     if (page.kind === "unknown") window.location.hash = "conversations";
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
-  const updateQueue = useCallback((next: JobQueue) => {
-    const target = jobsHash(next);
+  const updateQueue = useCallback((next: EventQueue) => {
+    const target = eventsHash(next);
     // 条件未变化时 hash 不会触发 hashchange，改为直接刷新一次。
     if (window.location.hash === target) {
       setRefreshToken((value) => value + 1);
@@ -103,7 +103,7 @@ export function App() {
     if (window.location.hash !== target) window.location.hash = target;
   }, []);
 
-  const onJobs = page.kind === "jobs" || page.kind === "job";
+  const onEvents = page.kind === "events" || page.kind === "event";
 
   return (
     <ConfigProvider
@@ -133,17 +133,17 @@ export function App() {
           <Menu
             className="primary-nav"
             mode="horizontal"
-            selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "conversations"]}
+            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
-              window.location.hash = key === "jobs"
-                ? jobsHash(queue)
+              window.location.hash = key === "events"
+                ? eventsHash(queue)
                 : key === "conversations" && page.kind === "conversations"
                   ? conversationsHash(page.id)
                   : key;
             }}
             items={[
               { key: "conversations", label: copy.navConversations },
-              { key: "jobs", label: copy.navJobs },
+              { key: "events", label: copy.navEvents },
               { key: "overview", label: copy.navOverview },
             ]}
           />
@@ -176,8 +176,8 @@ export function App() {
               onRefresh={refresh}
             />
           ) : null}
-          {page.kind === "jobs" ? (
-            <JobsPage
+          {page.kind === "events" ? (
+            <EventsPage
               copy={copy}
               locale={locale}
               queue={queue}
@@ -187,10 +187,10 @@ export function App() {
               onRefresh={refresh}
             />
           ) : null}
-          {page.kind === "job" ? (
-            <JobDetailPage
-              jobId={page.id}
-              backHash={jobsBackHash(params)}
+          {page.kind === "event" ? (
+            <EventDetailPage
+              eventId={page.id}
+              backHash={eventsBackHash(params)}
               copy={copy}
               locale={locale}
               refreshToken={refreshToken}

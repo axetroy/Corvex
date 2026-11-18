@@ -186,7 +186,7 @@ describe("GitLab write receipts", () => {
         response.end(JSON.stringify({
           iid: 12,
           web_url: "https://gitlab.example.com/group/project/-/merge_requests/12",
-          source_branch: "corvex/issue-9-job1",
+          source_branch: "corvex/issue-9-event1",
           target_branch: "main",
         }));
       });
@@ -199,12 +199,12 @@ describe("GitLab write receipts", () => {
       await expect(client.createDraftMergeRequest(5, {
         title: "Implement issue #9",
         description: "Implementation summary",
-        sourceBranch: "corvex/issue-9-job1",
+        sourceBranch: "corvex/issue-9-event1",
         targetBranch: "main",
       })).resolves.toEqual({
         iid: 12,
         webUrl: "https://gitlab.example.com/group/project/-/merge_requests/12",
-        sourceBranch: "corvex/issue-9-job1",
+        sourceBranch: "corvex/issue-9-event1",
         targetBranch: "main",
       });
       expect(requests).toEqual([
@@ -215,7 +215,7 @@ describe("GitLab write receipts", () => {
       expect([...submittedFields.entries()]).toEqual([
         ["title", "Draft: Implement issue #9"],
         ["description", "Implementation summary"],
-        ["source_branch", "corvex/issue-9-job1"],
+        ["source_branch", "corvex/issue-9-event1"],
         ["target_branch", "main"],
       ]);
     } finally {

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { Tabs } from "antd";
 import type { Copy, Locale } from "../i18n.js";
-import type { JobTraceEntry } from "../types.js";
+import type { EventTraceEntry } from "../types.js";
 import { Empty } from "./common.js";
 import { TraceDiagram } from "./TraceDiagram.js";
 import { TraceSession } from "./TraceSession.js";
@@ -15,7 +15,7 @@ export const TraceExperience = memo(function TraceExperience({
   copy,
   locale,
 }: {
-  entries: readonly JobTraceEntry[];
+  entries: readonly EventTraceEntry[];
   userRequest: string;
   copy: Copy;
   locale: Locale;

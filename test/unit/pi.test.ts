@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
-import { JobStore } from "../../src/jobs/store.js";
+import { EventStore } from "../../src/events/store.js";
 
 describe("PiAgent", () => {
   let temporaryDirectory = "";
   let server: ReturnType<typeof createServer> | undefined;
-  let store: JobStore | undefined;
+  let store: EventStore | undefined;
 
   afterEach(async () => {
     if (server?.listening) {
@@ -176,20 +176,20 @@ describe("PiAgent", () => {
         skillPaths: [],
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-      worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
+      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
     } satisfies CorvexConfig;
 
     await writeFile(join(temporaryDirectory, "README.md"), "private repository content");
-    store = await JobStore.open(":memory:");
+    store = await EventStore.open(":memory:");
     store.createReview("event-1", "key-1", {
       projectId: 7,
       mrIid: 3,
       headSha: "a".repeat(40),
       actorId: 11,
     });
-    const job = store.claimNextWithLease(30_000);
-    if (!job) throw new Error("expected a queued job to be claimed");
+    const event = store.claimNextWithLease(30_000);
+    if (!event) throw new Error("expected a queued event to be claimed");
     const agent = new PiAgent(config, store);
     const requestCountBeforeOversizedPrompt = requestCount;
     await expect(agent.generate(
@@ -203,7 +203,7 @@ describe("PiAgent", () => {
       { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." },
       temporaryDirectory,
       undefined,
-      { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
+      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
     );
     expect(Date.now() - startedAt).toBeGreaterThan(config.agent.requestTimeout);
     expect(result.content).toContain('"summary":"ok"');
@@ -214,7 +214,7 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain('"name":"search_text"');
     expect(requestBodies[0]).toContain('"name":"web_fetch"');
     expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
-    const trajectory = store.getJobDetails(job.id)?.trajectory;
+    const trajectory = store.getEventDetails(event.id)?.trajectory;
     expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
       name: "read_file",
@@ -295,11 +295,11 @@ describe("PiAgent", () => {
         { taskType: "review", systemPrompt: "Wait.", userPrompt: "Wait." },
         temporaryDirectory,
         undefined,
-        { jobId: job.id, attempt: job.attemptCount, taskType: job.type },
+        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
       ),
     ).rejects.toThrow("Pi agent run failed");
     expect(Date.now() - timeoutStartedAt).toBeLessThan(4000);
-    expect(store.getJobDetails(job.id)?.trajectory[0]).toMatchObject({
+    expect(store.getEventDetails(event.id)?.trajectory[0]).toMatchObject({
       kind: "llm",
       status: "failed",
     });

@@ -11,7 +11,7 @@ import {
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import { asTraceRecord, calculateAverageFirstTokenMs, calculateGenerationTokensPerSecond, parseTraceValue } from "../trace.js";
-import type { JobTraceEntry } from "../types.js";
+import type { EventTraceEntry } from "../types.js";
 import { Empty, ExpandableText } from "./common.js";
 
 /** 会话中的一段角色消息。 */
@@ -40,7 +40,7 @@ function ToolDetails({
   onOpenChange,
   time,
 }: {
-  entry: JobTraceEntry;
+  entry: EventTraceEntry;
   copy: Copy;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -92,7 +92,7 @@ function ToolDetails({
 }
 
 /** 把轨迹条目格式化为「尝试 / 轮次」说明。 */
-function roundLabel(entry: JobTraceEntry, copy: Copy): string {
+function roundLabel(entry: EventTraceEntry, copy: Copy): string {
   return copy.traceAttemptRoundTemplate
     .replace("{attempt}", String(entry.attempt))
     .replace("{round}", entry.round === null ? copy.traceRoundUnknown : String(entry.round));
@@ -105,7 +105,7 @@ export const TraceSession = memo(function TraceSession({
   copy,
   locale,
 }: {
-  traces: readonly JobTraceEntry[];
+  traces: readonly EventTraceEntry[];
   userRequest: string;
   copy: Copy;
   locale: Locale;
@@ -137,7 +137,7 @@ export const TraceSession = memo(function TraceSession({
     return typeof prompt === "string" && prompt.trim() ? [prompt] : [];
   }))];
 
-  // 模型上下文含有注入的附件数据；用户气泡只展示任务保存的原始请求。
+  // 模型上下文含有注入的附件数据；用户气泡只展示事件保存的原始请求。
   const items = traces.map((entry) => {
     const started = Date.parse(entry.startedAt);
     const time = Number.isFinite(started)

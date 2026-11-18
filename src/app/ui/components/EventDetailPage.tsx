@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { Button, Space } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate, formatJobTarget } from "../format.js";
+import { formatDate, formatEventTarget } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
-import { isSameTerminalJobSnapshot } from "../snapshot.js";
-import type { JobDetails } from "../types.js";
+import { isSameTerminalEventSnapshot } from "../snapshot.js";
+import type { EventDetails } from "../types.js";
 import {
   DataTable,
   DetailItem,
@@ -19,12 +19,12 @@ import {
   Panel,
   StatusBadge,
 } from "./common.js";
-import { ExecutionEvents } from "./ExecutionEvents.js";
+import { ExecutionSteps } from "./ExecutionSteps.js";
 import { TraceExperience } from "./TraceExperience.js";
 
 interface Props {
-  jobId: string;
-  /** 返回任务列表的 hash，携带进入详情前的筛选条件。 */
+  eventId: string;
+  /** 返回事件列表的 hash，携带进入详情前的筛选条件。 */
   backHash: string;
   copy: Copy;
   locale: Locale;
@@ -33,20 +33,20 @@ interface Props {
   onRefresh: () => void;
 }
 
-/** 任务详情页：只读展示任务字段、生命周期、执行步骤、轨迹与尝试历史。 */
-export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
-  const [job, setJob] = useState<JobDetails>();
+/** 事件详情页：只读展示事件字段、生命周期、执行步骤、轨迹与尝试历史。 */
+export function EventDetailPage({ eventId, backHash, copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
+  const [event, setEvent] = useState<EventDetails>();
   const [error, setError] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let active = true;
     setRefreshing(true);
-    fetchJson<JobDetails>(`/api/ops/jobs/${encodeURIComponent(jobId)}`, copy)
+    fetchJson<EventDetails>(`/api/ops/events/${encodeURIComponent(eventId)}`, copy)
       .then((response) => {
         if (!active) return;
-        // 终态任务的轨迹不再变化，保留旧快照可跳过整棵详情树的重渲染。
-        setJob((current) => (current && isSameTerminalJobSnapshot(current, response) ? current : response));
+        // 终态事件的轨迹不再变化，保留旧快照可跳过整棵详情树的重渲染。
+        setEvent((current) => (current && isSameTerminalEventSnapshot(current, response) ? current : response));
         setError(undefined);
         onUpdated(new Date().toISOString());
       })
@@ -59,23 +59,23 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
     return () => {
       active = false;
     };
-  }, [copy, jobId, refreshToken, onUpdated]);
+  }, [copy, eventId, refreshToken, onUpdated]);
 
-  if (error && !job) {
+  if (error && !event) {
     return (
       <>
-        <a className="back-link" href={backHash}>{copy.backToJobs}</a>
+        <a className="back-link" href={backHash}>{copy.backToEvents}</a>
         <PageHeading
-          title={copy.jobDetailTitleTemplate.replace("{id}", jobId)}
-          description={copy.jobDetailDescription}
+          title={copy.eventDetailTitleTemplate.replace("{id}", eventId)}
+          description={copy.eventDetailDescription}
         />
         <ErrorBanner message={error} />
       </>
     );
   }
-  if (!job) return <Loading>{copy.loading}</Loading>;
+  if (!event) return <Loading>{copy.loading}</Loading>;
 
-  const timeline = [{ from: "created", to: "queued", at: job.createdAt }, ...job.timeline];
+  const timeline = [{ from: "created", to: "queued", at: event.createdAt }, ...event.timeline];
   const refresh = (
     <Button disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
       {refreshing ? copy.refreshing : copy.refresh}
@@ -85,44 +85,44 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
   return (
     <>
       {error ? <ErrorBanner message={error} /> : null}
-      <a className="back-link" href={backHash}>{copy.backToJobs}</a>
+      <a className="back-link" href={backHash}>{copy.backToEvents}</a>
       <PageHeading
-        title={copy.jobDetailTitleTemplate.replace("{id}", job.id)}
-        description={copy.jobDetailDescription}
+        title={copy.eventDetailTitleTemplate.replace("{id}", event.id)}
+        description={copy.eventDetailDescription}
         actions={(
           <Space className="page-heading-actions">
-            <StatusBadge status={job.status} label={translate(copy.statuses, job.status)} />
+            <StatusBadge status={event.status} label={translate(copy.statuses, event.status)} />
             {refresh}
           </Space>
         )}
       />
       <Panel title={copy.taskDetails}>
         <dl className="detail-grid">
-          <DetailItem label={copy.statusFilter} value={translate(copy.statuses, job.status)} />
-          <DetailItem label={copy.typeFilter} value={translate(copy.types, job.type)} />
-          <DetailItem label={copy.projectMrDetails} value={formatJobTarget(job, copy)} />
-          <DetailItem label={copy.requester} value={job.actorUsername || copy.none} />
-          <DetailItem label={copy.requesterId} value={job.actorId} />
-          <DetailItem label={copy.created} value={formatDate(job.createdAt, copy, locale)} />
-          <DetailItem label={copy.lastUpdated} value={formatDate(job.updatedAt, copy, locale)} />
-          <DetailItem label={copy.headSha} value={job.headSha} />
-          <DetailItem label={copy.attempts} value={job.attemptCount} />
+          <DetailItem label={copy.statusFilter} value={translate(copy.statuses, event.status)} />
+          <DetailItem label={copy.typeFilter} value={translate(copy.types, event.type)} />
+          <DetailItem label={copy.projectMrDetails} value={formatEventTarget(event, copy)} />
+          <DetailItem label={copy.requester} value={event.actorUsername || copy.none} />
+          <DetailItem label={copy.requesterId} value={event.actorId} />
+          <DetailItem label={copy.created} value={formatDate(event.createdAt, copy, locale)} />
+          <DetailItem label={copy.lastUpdated} value={formatDate(event.updatedAt, copy, locale)} />
+          <DetailItem label={copy.headSha} value={event.headSha} />
+          <DetailItem label={copy.attempts} value={event.attemptCount} />
           <DetailItem
             label={copy.failureStage}
-            value={job.failureStage ? translate(copy.statuses, job.failureStage) : copy.none}
+            value={event.failureStage ? translate(copy.statuses, event.failureStage) : copy.none}
           />
-          <DetailItem label={copy.cancellationRequested} value={job.cancellationRequested ? copy.yes : copy.no} />
-          {job.triggerComment ? (
+          <DetailItem label={copy.cancellationRequested} value={event.cancellationRequested ? copy.yes : copy.no} />
+          {event.triggerComment ? (
             <DetailNode label={copy.triggerComment}>
-              <ExpandableText label={copy.viewOriginalComment} value={job.triggerComment} />
+              <ExpandableText label={copy.viewOriginalComment} value={event.triggerComment} />
             </DetailNode>
           ) : (
             <DetailItem label={copy.triggerComment} value={copy.none} />
           )}
-          <DetailItem label={copy.request} value={job.request || copy.none} className="pre-wrap" />
-          {job.lastError ? (
+          <DetailItem label={copy.request} value={event.request || copy.none} className="pre-wrap" />
+          {event.lastError ? (
             <DetailNode label={copy.lastError}>
-              <ExpandableText label={copy.viewErrorDetails} value={job.lastError} />
+              <ExpandableText label={copy.viewErrorDetails} value={event.lastError} />
             </DetailNode>
           ) : (
             <DetailItem label={copy.lastError} value={copy.none} />
@@ -146,18 +146,18 @@ export function JobDetailPage({ jobId, backHash, copy, locale, refreshToken, onU
           ))}
         </DataTable>
       </Panel>
-      <Panel title={copy.executionEvents}>
-        <ExecutionEvents events={job.events} copy={copy} locale={locale} />
+      <Panel title={copy.executionSteps}>
+        <ExecutionSteps events={event.events} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.traceDiagram}>
-        <TraceExperience entries={job.trajectory} userRequest={job.request} copy={copy} locale={locale} />
+        <TraceExperience entries={event.trajectory} userRequest={event.request} copy={copy} locale={locale} />
       </Panel>
       <Panel title={copy.attemptHistory}>
-        {job.attempts.length === 0 ? (
+        {event.attempts.length === 0 ? (
           <Empty>{copy.noAttempts}</Empty>
         ) : (
           <DataTable headers={[copy.attempts, copy.started, copy.finished, copy.error]}>
-            {job.attempts.map((attempt) => (
+            {event.attempts.map((attempt) => (
               <tr key={attempt.attempt}>
                 <td>{attempt.attempt}</td>
                 <td>{formatDate(attempt.startedAt, copy, locale)}</td>

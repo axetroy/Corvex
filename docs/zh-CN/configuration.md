@@ -45,7 +45,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 |---|---:|---|---|
 | `storage.root` | `./data/corvex` | 非空 | 项目镜像和临时 worktree 根目录。`CORVEX_STORAGE_ROOT` 可覆盖。 |
 | `storage.database` | `./data/state/corvex.db` | 非空 | SQLite 数据库路径。`CORVEX_DATABASE` 可覆盖。 |
-| `storage.retention_days` | `90` | 1–36500 | 终态任务、尝试、Webhook 记录和每日 Token 用量的保留天数。 |
+| `storage.retention_days` | `90` | 1–36500 | 终态事件、尝试、Webhook 记录和每日 Token 用量的保留天数。 |
 | `storage.audit_retention_days` | `365` | 1–36500 | 审计记录的保留天数。 |
 
 启动时 Corvex 会创建数据库父目录、镜像目录和工作区目录；运行进程必须拥有写权限。数据库和 Git 存储需要分别备份。
@@ -93,9 +93,9 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
 | `worker.poll_interval` | `2s` | 正时长 | 无任务时两次轮询之间的等待时间。 |
-| `worker.job_timeout` | `30m` | 正时长 | 单个已领取任务的总执行超时。 |
+| `worker.event_timeout` | `30m` | 正时长 | 单个已领取事件的总执行超时。 |
 
-任务租约固定为 30 秒，执行期间会续租；当前不是 YAML 配置项。
+事件租约固定为 30 秒，执行期间会续租；当前不是 YAML 配置项。
 
 ## 修复提案
 

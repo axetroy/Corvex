@@ -7,20 +7,20 @@ import type {
   ConversationTurn,
   ConversationStats,
   ConversationTurnStats,
-  ExecutionEvent,
-  JobDetails,
-  JobOperationsSummary,
-  JobStatus,
-  JobTraceEntry,
-  JobTraceKind,
-  JobTraceStatus,
-  JobType,
+  ExecutionStep,
+  EventDetails,
+  EventOperationsSummary,
+  EventStatus,
+  EventTraceEntry,
+  EventTraceKind,
+  EventTraceStatus,
+  EventType,
   ModelCallMetric,
   OperationsOverview,
-} from "../../jobs/model.js";
+} from "../../events/model.js";
 
 /**
- * 运维台依赖的接口数据结构。字段形状与 `src/jobs/model.ts` 一致，
+ * 运维台依赖的接口数据结构。字段形状与 `src/events/model.ts` 一致，
  * 这里只做 HTTP 边界的重新导出，避免前端重复声明。
  */
 export type {
@@ -32,14 +32,14 @@ export type {
   ConversationTurn,
   ConversationStats,
   ConversationTurnStats,
-  ExecutionEvent,
-  JobDetails,
-  JobOperationsSummary,
-  JobStatus,
-  JobTraceEntry,
-  JobTraceKind,
-  JobTraceStatus,
-  JobType,
+  ExecutionStep,
+  EventDetails,
+  EventOperationsSummary,
+  EventStatus,
+  EventTraceEntry,
+  EventTraceKind,
+  EventTraceStatus,
+  EventType,
   ModelCallMetric,
 };
 
@@ -50,14 +50,14 @@ export interface OverviewResponse extends OperationsOverview {
   modelCalls: ModelCallMetric[];
 }
 
-/** `GET /api/ops/jobs` 的响应体。 */
-export interface JobPageResponse {
-  items: JobOperationsSummary[];
+/** `GET /api/ops/events` 的响应体。 */
+export interface EventPageResponse {
+  items: EventOperationsSummary[];
   total: number;
 }
 
-/** 运维台展示的任务生命周期状态，与服务端 `jobStatuses` 保持同一顺序。 */
-export const statuses: readonly JobStatus[] = [
+/** 运维台展示的事件生命周期状态，与服务端 `eventStatuses` 保持同一顺序。 */
+export const statuses: readonly EventStatus[] = [
   "queued",
   "preparing",
   "analyzing",
@@ -70,16 +70,16 @@ export const statuses: readonly JobStatus[] = [
   "cancelled",
 ];
 
-/** 任务列表筛选使用的任务类型，与服务端 `jobTypes` 保持一致。 */
-export const jobTypes: readonly JobType[] = ["review", "fix", "explain", "chat", "implement"];
+/** 事件列表筛选使用的事件类型，与服务端 `eventTypes` 保持一致。 */
+export const eventTypes: readonly EventType[] = ["review", "fix", "explain", "chat", "implement"];
 
-/** 任务列表筛选条件和分页位置。 */
-export interface JobQueue {
+/** 事件列表筛选条件和分页位置。 */
+export interface EventQueue {
   status: string;
   type: string;
   search: string;
   offset: number;
 }
 
-/** 任务列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
+/** 事件列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
 export const pageSize = 25;

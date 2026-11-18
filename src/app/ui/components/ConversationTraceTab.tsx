@@ -7,7 +7,7 @@ import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationMessage, ConversationTurn } from "../types.js";
 import { Empty, ErrorBanner, Loading, Panel, StatusBadge } from "./common.js";
-import { ExecutionEvents } from "./ExecutionEvents.js";
+import { ExecutionSteps } from "./ExecutionSteps.js";
 import { TraceExperience } from "./TraceExperience.js";
 
 interface Props {
@@ -20,10 +20,10 @@ interface Props {
   onUpdated: (value: string) => void;
 }
 
-/** 可查看轨迹的轮次：助手回复且已关联任务（含尚未产出轨迹的进行中轮次）。 */
+/** 可查看轨迹的轮次：助手回复且已关联事件（含尚未产出轨迹的进行中轮次）。 */
 interface TurnOption {
   messageId: string;
-  jobId: string;
+  turnId: string;
   label: string;
   status: ConversationMessage["status"];
   createdAt: string;
@@ -31,15 +31,15 @@ interface TurnOption {
 
 /**
  * 对话「轨迹」标签：从该对话的轮次里选择一轮，展示该轮的模型与工具轨迹，
- * 以及任务生命周期与执行步骤。数据按需从单轮记录端点拉取。
+ * 以及事件生命周期与执行步骤。数据按需从单轮记录端点拉取。
  */
 export function ConversationTraceTab({ conversationId, messages, copy, locale, refreshToken, onUpdated }: Props) {
   const turns = useMemo<TurnOption[]>(
     () => messages
-      .filter((message) => message.role === "assistant" && Boolean(message.jobId))
+      .filter((message) => message.role === "assistant" && Boolean(message.turnId))
       .map((message) => ({
         messageId: message.id,
-        jobId: message.jobId ?? "",
+        turnId: message.turnId ?? "",
         label: formatDate(message.createdAt, copy, locale),
         status: message.status,
         createdAt: message.createdAt,
@@ -48,17 +48,17 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
       .map((turn, index, all) => ({ ...turn, label: `#${all.length - index} · ${turn.label}` })),
     [messages, copy, locale],
   );
-  const [selectedJobId, setSelectedJobId] = useState("");
+  const [selectedTurnId, setSelectedTurnId] = useState("");
   const [turn, setTurn] = useState<ConversationTurn>();
   const [error, setError] = useState<string>();
 
   // 选中轮次在刷新后可能消失（例如被取消），回退到最新一轮。
   useEffect(() => {
-    setSelectedJobId((current) => (turns.some((option) => option.jobId === current) ? current : turns[0]?.jobId ?? ""));
+    setSelectedTurnId((current) => (turns.some((option) => option.turnId === current) ? current : turns[0]?.turnId ?? ""));
   }, [turns]);
 
   useEffect(() => {
-    if (!conversationId || !selectedJobId) {
+    if (!conversationId || !selectedTurnId) {
       setTurn(undefined);
       setError(undefined);
       return;
@@ -66,7 +66,7 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
     let active = true;
     setError(undefined);
     fetchJson<ConversationTurn>(
-      `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(selectedJobId)}`,
+      `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(selectedTurnId)}`,
       copy,
     )
       .then((value) => {
@@ -78,7 +78,7 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
     return () => {
       active = false;
     };
-  }, [conversationId, selectedJobId, copy, refreshToken, onUpdated]);
+  }, [conversationId, selectedTurnId, copy, refreshToken, onUpdated]);
 
   if (turns.length === 0) {
     return (
@@ -96,9 +96,9 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
           <Select
             className="conversation-turn-select"
             aria-label={copy.conversationTurnPicker}
-            value={selectedJobId || undefined}
-            options={turns.map((option) => ({ value: option.jobId, label: option.label }))}
-            onChange={(value) => setSelectedJobId(value)}
+            value={selectedTurnId || undefined}
+            options={turns.map((option) => ({ value: option.turnId, label: option.label }))}
+            onChange={(value) => setSelectedTurnId(value)}
           />
           {turn ? <StatusBadge status={turn.status} label={translate(copy.statuses, turn.status)} /> : null}
         </Space>
@@ -118,7 +118,7 @@ export function ConversationTraceTab({ conversationId, messages, copy, locale, r
           </div>
           <TraceExperience entries={turn.trajectory} userRequest={turn.request} copy={copy} locale={locale} />
           <Panel title={copy.traceRecords}>
-            <ExecutionEvents events={turn.events} copy={copy} locale={locale} />
+            <ExecutionSteps events={turn.events} copy={copy} locale={locale} />
           </Panel>
         </>
       ) : null}

@@ -55,7 +55,7 @@ export interface CorvexConfig {
   };
   worker: {
     pollInterval: number;
-    jobTimeout: number;
+    eventTimeout: number;
   };
   fix: {
     enabled: boolean;
@@ -102,7 +102,7 @@ const defaults: CorvexConfig = {
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
   chat: { historyComments: 20 },
-  worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
+  worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
   fix: { enabled: false, maxPatchBytes: 128 << 10 },
   issue: { implementEnabled: false, historyComments: 20 },
 };
@@ -255,7 +255,7 @@ function parseConfig(raw: unknown): CorvexConfig {
     },
     worker: {
       pollInterval: duration(worker.poll_interval, defaults.worker.pollInterval, "worker.poll_interval"),
-      jobTimeout: duration(worker.job_timeout, defaults.worker.jobTimeout, "worker.job_timeout"),
+      eventTimeout: duration(worker.event_timeout, defaults.worker.eventTimeout, "worker.event_timeout"),
     },
     fix: {
       enabled: boolean(fix.enabled, defaults.fix.enabled),
@@ -362,8 +362,8 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (!Number.isInteger(config.chat.historyComments) || config.chat.historyComments < 0 || config.chat.historyComments > 50) {
     problems.push("chat.history_comments must be between 0 and 50");
   }
-  if (config.worker.pollInterval <= 0 || config.worker.jobTimeout <= 0) {
-    problems.push("worker poll interval and job timeout must be positive");
+  if (config.worker.pollInterval <= 0 || config.worker.eventTimeout <= 0) {
+    problems.push("worker poll interval and event timeout must be positive");
   }
   if (config.fix.enabled && !config.agent.enabled) {
     problems.push("agent.enabled must be true when fix.enabled is true");

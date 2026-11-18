@@ -29,15 +29,15 @@ export function formatRelativeTime(value: string | null | undefined, copy: Copy,
   return copy.commitYearsTemplate.replace("{value}", String(Math.floor(months / 12)));
 }
 
-/** 把任务目标渲染为 `project:MR !iid` 或 `project:Issue #iid`。 */
-export function formatJobTarget(
-  job: { targetType: string; projectId: number; mrIid: number; targetIid: number },
+/** 把事件目标渲染为 `project:MR !iid` 或 `project:Issue #iid`。 */
+export function formatEventTarget(
+  event: { targetType: string; projectId: number; mrIid: number; targetIid: number },
   copy: Copy,
 ): string {
-  const issue = job.targetType === "issue";
+  const issue = event.targetType === "issue";
   return (issue ? copy.issueTargetTemplate : copy.mrTargetTemplate)
-    .replace("{project}", String(job.projectId))
-    .replace("{iid}", String(issue ? job.targetIid : job.mrIid));
+    .replace("{project}", String(event.projectId))
+    .replace("{iid}", String(issue ? event.targetIid : event.mrIid));
 }
 
 /** 按秒、分、小时三档格式化持续时长。 */

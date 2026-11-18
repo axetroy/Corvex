@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { getPromptTemplates } from "../agent/prompts.js";
-import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext, type ModelRequest, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { isRecord } from "../guards.js";
 import type { Change, DiffResult } from "../git/types.js";
 import type { MergeRequestComment } from "../gitlab/client.js";
-import type { JobTraceEntry } from "../jobs/model.js";
+import type { EventTraceEntry } from "../events/model.js";
 
 export interface ReviewContext {
   projectId: number;
@@ -75,7 +75,7 @@ function validText(value: unknown, min: number, max: number): value is string {
   );
 }
 
-function changedFileIsFullyRead(path: string, cwd: string, traces: JobTraceEntry[]): boolean {
+function changedFileIsFullyRead(path: string, cwd: string, traces: EventTraceEntry[]): boolean {
   const expectedPath = resolve(cwd, path);
   const ranges: { start: number; end: number; hasMore: boolean }[] = [];
 
@@ -125,7 +125,7 @@ function changedFileIsFullyRead(path: string, cwd: string, traces: JobTraceEntry
   return false;
 }
 
-function incompleteChangedFiles(changes: Change[], cwd: string, traces: JobTraceEntry[]): string[] {
+function incompleteChangedFiles(changes: Change[], cwd: string, traces: EventTraceEntry[]): string[] {
   return changes
     .filter((change) => !changedFileIsFullyRead(change.path, cwd, traces))
     .map((change) => change.path);
@@ -363,7 +363,7 @@ export class ReviewWorkflow {
     diff: DiffResult,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
     reviewRequest = "",
   ): Promise<ReviewOutcome> {
     this.validateSnapshot(context, diff);
@@ -489,7 +489,7 @@ export class ReviewWorkflow {
     diff: DiffResult,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
     coverageOmittedFiles = 0,
     allowEmptyWithoutTrace = false,
     reviewRequest = "",
@@ -585,7 +585,7 @@ export class ReviewWorkflow {
       const missingFiles = incompleteChangedFiles(
         input.changes,
         cwd,
-        this.agent.getTraceEntries(trace.jobId, trace.attempt),
+        this.agent.getTraceEntries(trace.scope, trace.attempt),
       );
       if (missingFiles.length > 0) {
         const coveragePrompt = `${userPrompt}\n\n${prompts.reviewCoverageFollowup(missingFiles)}`;
@@ -628,7 +628,7 @@ export class ReviewWorkflow {
           const remainingFiles = incompleteChangedFiles(
             input.changes,
             cwd,
-            this.agent.getTraceEntries(trace.jobId, trace.attempt),
+            this.agent.getTraceEntries(trace.scope, trace.attempt),
           );
           if (remainingFiles.length > 0) {
             if (findings.length === 0) {
@@ -661,7 +661,7 @@ export class ReviewWorkflow {
     content: Uint8Array,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<Explanation> {
     if (context.projectId <= 0 || context.mrIid <= 0 || !context.headSha) {
       throw new Error("merge request identity and exact head SHA are required");
@@ -702,7 +702,7 @@ export class ReviewWorkflow {
     request: string,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
     comments: MergeRequestComment[] = [],
   ): Promise<Explanation> {
     this.validateSnapshot(context, diff);

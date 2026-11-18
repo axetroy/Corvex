@@ -51,7 +51,7 @@ export function DataTable({ headers, children }: { headers: readonly string[]; c
   return <Table<TableRow> className="data-table" columns={columns} dataSource={rows} pagination={false} rowKey="key" scroll={{ x: "max-content" }} size="small" />;
 }
 
-/** 任务状态徽标，颜色由状态名对应的样式类决定。 */
+/** 事件状态徽标，颜色由状态名对应的样式类决定。 */
 export function StatusBadge({ status, label }: { status: string; label: string }) {
   const color = status === "completed" ? "success"
     : status === "failed" ? "error"

@@ -35,7 +35,7 @@ review:
 
 worker:
   poll_interval: 1s
-  job_timeout: 1m
+  event_timeout: 1m
 
 fix:
   enabled: false

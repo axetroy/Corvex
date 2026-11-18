@@ -13,9 +13,9 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { AssistantMessageEvent, StreamOptions } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
-import type { JobTraceEntry, JobType } from "../jobs/model.js";
-import type { JobStore } from "../jobs/store.js";
-import { traceExecutionStep } from "../jobs/execution.js";
+import type { EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
+import type { EventStore } from "../events/store.js";
+import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import {
@@ -37,13 +37,13 @@ export const maxAgentPromptBytes = 96 << 10;
 export const maxAgentUserPromptBytes = 80 << 10;
 
 export interface ModelRequest {
-  taskType: JobType;
+  taskType: ModelTaskType;
   systemPrompt: string;
   userPrompt: string;
 }
 
 export function getAgentToolAccess(
-  taskType: JobType,
+  taskType: ModelTaskType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
 ): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
   return {
@@ -68,10 +68,10 @@ export interface ModelResponse {
   usage: ModelUsage;
 }
 
-export interface JobTraceContext {
-  jobId: string;
+export interface EventTraceContext {
+  scope: TraceScope;
   attempt: number;
-  taskType: JobType;
+  taskType: ModelTaskType;
   workspace?: Workspace;
   mergeRequest?: {
     projectId: number;
@@ -124,7 +124,7 @@ export type UpdateMergeRequestMetadata = (
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store?: JobStore,
+    private readonly store?: EventStore,
     private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit" | "getWorkspaceDiff">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
     private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
@@ -134,15 +134,15 @@ export class PiAgent {
     >,
   ) {}
 
-  getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
-    return this.store?.getJobTraceEntries(jobId, attempt) ?? [];
+  getTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
+    return this.store?.getEventTraceEntries(scope, attempt) ?? [];
   }
 
   async generate(
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<ModelResponse> {
     if (!this.config.agent.enabled) throw new Error("Pi agent is disabled");
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
@@ -203,7 +203,7 @@ export class PiAgent {
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<ModelResponse> {
     const agentDir = resolve(join(this.config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
@@ -342,7 +342,7 @@ export class PiAgent {
                   if (!this.store) return operation();
                   return traceExecutionStep(
                     this.store,
-                    { jobId: trace.jobId, attempt: trace.attempt },
+                    stepContextFor(trace.scope, trace.attempt),
                     "gitlab.update_merge_request_metadata",
                     {
                       projectId: trace.mergeRequest!.projectId,
@@ -597,7 +597,7 @@ export class PiAgent {
   }
 
   private runGitWrite<T>(
-    trace: JobTraceContext,
+    trace: EventTraceContext,
     step: string,
     input: unknown,
     operation: () => Promise<T>,
@@ -607,7 +607,7 @@ export class PiAgent {
     if (!this.store) return operation();
     return traceExecutionStep(
       this.store,
-      { jobId: trace.jobId, attempt: trace.attempt },
+      stepContextFor(trace.scope, trace.attempt),
       step,
       input,
       operation,
@@ -617,7 +617,7 @@ export class PiAgent {
   }
 
   private startTrace(
-    trace: JobTraceContext,
+    trace: EventTraceContext,
     kind: "tool" | "llm",
     name: string,
     model = "",
@@ -626,8 +626,8 @@ export class PiAgent {
   ): number | undefined {
     if (!this.store) return undefined;
     try {
-      return this.store.startJobTrace(
-        trace.jobId,
+      return this.store.startEventTrace(
+        trace.scope,
         trace.attempt,
         kind,
         name.slice(0, 128),
@@ -636,8 +636,8 @@ export class PiAgent {
         details,
       );
     } catch (error) {
-      console.warn("record job trajectory start failed", {
-        jobId: trace.jobId,
+      console.warn("record event trajectory start failed", {
+        scope: trace.scope,
         kind,
         name: name.slice(0, 128),
         error: errorMessage(error),
@@ -661,7 +661,7 @@ export class PiAgent {
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishJobTrace(
+      this.store.finishEventTrace(
         traceId,
         status,
         durationMs,
@@ -675,7 +675,7 @@ export class PiAgent {
         responseHeadersMs,
       );
     } catch (error) {
-      console.warn("record job trajectory completion failed", {
+      console.warn("record event trajectory completion failed", {
         traceId,
         status,
         error: errorMessage(error),

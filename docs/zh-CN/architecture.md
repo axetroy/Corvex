@@ -4,32 +4,32 @@
 
 Corvex 将请求接入与模型、仓库处理分离：
 
-1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件和任务写入 SQLite，并回复 GitLab。运维控制台通过配置的 GitLab 只读 Token 发现项目和分支。
-2. **SQLite** 是持久化队列和状态存储，记录任务、Webhook 幂等/投递状态、执行尝试、审计事件、持久对话消息、模型调用指标以及可选的每日 Token 预留。
-3. **Worker** 轮询数据库，领取任务并续租，同时记录供运维监控使用的心跳，然后获取合并请求或对话分支快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。
+1. **Server** 提供 GitLab Note Hook 和经过认证的运维接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件写入 SQLite，并回复 GitLab。运维控制台通过配置的 GitLab 只读 Token 发现项目和分支。
+2. **SQLite** 是持久化队列和状态存储，记录事件、Webhook 幂等/投递状态、执行尝试、审计事件、对话及其消息/轮次、模型调用指标以及可选的每日 Token 预留。
+3. **Worker** 轮询数据库，领取事件并续租，同时记录供运维监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。启动 Worker 必须设置 `agent.enabled: true`。对话轮次不是事件，改由 Server 内联执行。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
-5. **OpenAI 兼容模型 API** 仅由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现任务。
+5. **OpenAI 兼容模型 API** 由 Worker 调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现，也由 Server 为内联对话轮次调用。
 
 GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、503、504 时，最多尝试三次并使用有界退避。POST 写请求不会自动重试，因为远端副作用可能无法确认。
 
-Worker 还会对发布前的瞬时 HTTP/网络故障和任务超时执行持久化重试。等待时间从 2 秒开始，每次尝试翻倍，最多 30 秒；任务总尝试次数仍不超过三次。鉴权、校验、取消、快照过期和 publishing 阶段错误不会自动重试。
+Worker 还会对发布前的瞬时 HTTP/网络故障和事件超时执行持久化重试。等待时间从 2 秒开始，每次尝试翻倍，最多 30 秒；单个事件的总尝试次数仍不超过三次。鉴权、校验、取消、快照过期和 publishing 阶段错误不会自动重试。
 
-没有 Worker 时 Server 仍会接收并保存命令，但模型任务会保持排队状态。拆分部署时，Server 和 Worker 必须共享同一个 SQLite 数据库和持久化 Git 存储根目录。
+没有 Worker 时 Server 仍会接收并保存命令，但模型事件会保持排队状态。拆分部署时，Server 和 Worker 必须共享同一个 SQLite 数据库和持久化 Git 存储根目录。
 
 ## 请求与入队流程
 
 1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
 2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，接受合并请求和 Issue 评论，限制请求体为 1 MiB，并忽略系统评论。
 3. Server 拒绝 `gitlab.blocked_user_ids` 中的用户。配置了共享 Webhook Secret 的项目中的其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本；部署者应仅在需要接受指令的项目中注册 Webhook。
-4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步任务）任务。重复 Webhook 投递具有幂等性。
+4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步工作对应的）事件本身。重复 Webhook 投递具有幂等性。
 5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
-6. Worker 按创建顺序领取排队的审查、解释、聊天、修复或实现任务，并在 30 秒可续期租约内更新任务状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
+6. Worker 按创建顺序领取排队的审查、解释、聊天、修复或实现事件，并在 30 秒可续期租约内更新事件状态和尝试记录；空闲轮询及执行期间也会更新 Worker 心跳。
 
 MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。Issue 中的普通提及会进入助手任务，模型可基于 Issue 和近期非系统评论进行回复、追问或提出实现。代码写入由默认关闭的 `issue.implement_enabled` 单独控制；`/implement [request]` 仍可显式请求实现。用法请参阅[快速开始](./guide)。
 
 ## 持久对话
 
-经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。每条助手回复对应一个 `conversation` 任务，因此各自拥有独立的轨迹与执行记录；控制台通过 `GET /api/ops/conversations/<id>/turns/<jobId>` 按轮读取，并校验该任务确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**轨迹**、**统计** 三个标签页分别呈现消息记录、所选轮次的轨迹与整段对话的汇总。对话 Worker 只提供只读仓库工具，不会向 GitLab 发布内容。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
+经过认证的运维控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。对话使用独立表（`conversations`、`conversation_messages`、`conversation_turns`），不进入事件队列：每轮由 Server 通过 `ConversationRunner` 内联执行，因此对话轮次不是事件，也不会出现在事件列表里。每轮仍各自拥有独立的轨迹与执行记录，按 `turn_id` 存储；控制台通过 `GET /api/ops/conversations/<id>/turns/<turnId>` 按轮读取，并校验该轮确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**轨迹**、**统计** 三个标签页分别呈现消息记录（含每条助手回复的工具调用）、所选轮次的轨迹与整段对话的汇总。内联执行只提供只读仓库工具，不会向 GitLab 发布内容；目前运行在 Server 进程内，后续可迁移到容器而无需改动该契约。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。
 
 ## 审查流程
 
@@ -54,7 +54,7 @@ Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创�
 
 **Issue 助手**遵循可选用户黑名单。配置了共享 Webhook Secret 的项目中，任何普通机器人提及都会排队；模型会收到 Issue 及最多 `issue.history_comments` 条近期非系统评论（默认 20，范围 0–50，另有分页和字节上限），可直接回复或请求澄清而不发布代码。`issue.implement_enabled` 是独立且默认关闭的写入开关：启用后，明确的实现请求才可生成有界 unified diff。目标分支默认为项目默认分支；只有当前请求明确命名另一个已存在分支时才会改投该分支，评论不能授权分支选择。Worker 固定目标基线 SHA，校验补丁（仅普通文本文件；拒绝路径穿越、Git 元数据路径、符号链接父目录、二进制、重命名和模式变更），并在推送前再次验证 Issue 与目标 SHA。随后创建新的 `corvex/issue-*` 分支和 Draft MR。不会运行项目脚本/测试、自动合并或关闭 Issue。远端结果不确定时不会自动重试。
 
-## 任务状态、租约、重试和取消
+## 事件状态、租约、重试和取消
 
 主要状态流程：
 
@@ -63,15 +63,15 @@ queued -> preparing -> analyzing -> publishing -> completed
                               \-> fixing -> verifying -/
 ```
 
-任务也可能以 `failed`、`stale` 或 `cancelled` 结束。Worker 按 `worker.poll_interval` 轮询，并受 `worker.job_timeout` 限制。
+事件也可能以 `failed`、`stale` 或 `cancelled` 结束。Worker 按 `worker.poll_interval` 轮询，并受 `worker.event_timeout` 限制。
 
-任务租约固定为 30 秒，Worker 执行期间会续租。若进程在发布前中断，租约过期后任务可重新排队；中断恢复最多尝试三次。已分类的瞬时故障和任务超时也会带持久化退避重新入队。其他处理错误会将任务记为 failed。若任务在 publishing 阶段失败或租约过期，评论结果可能不确定，因此 Corvex 不会自动重试，以免重复评论。
+任务租约固定为 30 秒，Worker 执行期间会续租。若进程在发布前中断，租约过期后事件可重新排队；中断恢复最多尝试三次。已分类的瞬时故障和事件超时也会带持久化退避重新入队。其他处理错误会将事件记为 failed。若事件在 publishing 阶段失败或租约过期，评论结果可能不确定，因此 Corvex 不会自动重试，以免重复评论。
 
-`@<gitlab.bot_username> /status` 显示该 MR 的最近任务。`@<gitlab.bot_username> /cancel` 会立即取消排队任务，或请求 Worker 停止正在执行的任务。只有任务发起者可以取消。任务进入 publishing 阶段后无法取消，因为 GitLab 可能已经接收评论。
+`@<gitlab.bot_username> /status` 显示该 MR 的最近事件。`@<gitlab.bot_username> /cancel` 会立即取消排队事件，或请求 Worker 停止正在执行的事件。只有发起者可以取消。事件进入 publishing 阶段后无法取消，因为 GitLab 可能已经接收评论。
 
 ## 持久化和数据保留
 
-SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库必须放在持久且可写的存储中。Server 每天清理超过 `storage.retention_days` 的终态任务、执行尝试、Webhook 事件和每日 Token 用量；审计记录按 `storage.audit_retention_days` 清理。排队和运行中的任务会保留。Git 镜像及 worktree 位于 `storage.root` 下，不由数据库清理逻辑管理，需要单独监控容量。
+SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库必须放在持久且可写的存储中。Server 每天清理超过 `storage.retention_days` 的终态事件、执行尝试、Webhook 事件和每日 Token 用量；审计记录按 `storage.audit_retention_days` 清理。排队和运行中的事件会保留。Git 镜像及 worktree 位于 `storage.root` 下，不由数据库清理逻辑管理，需要单独监控容量。
 
 ## 安全边界和限制
 

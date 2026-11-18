@@ -9,7 +9,7 @@ import { CorvexServer } from "../../src/app/server.js";
 import { Worker } from "../../src/app/worker.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { GitManager } from "../../src/git/manager.js";
-import { JobStore } from "../../src/jobs/store.js";
+import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
 
 const execFileAsync = promisify(execFile);
@@ -42,7 +42,7 @@ async function waitFor(check: () => boolean, timeoutMs = 25_000): Promise<void> 
     if (check()) return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   }
-  throw new Error("timed out waiting for the review job to complete");
+  throw new Error("timed out waiting for the review event to complete");
 }
 
 describe("review task loop", () => {
@@ -53,8 +53,8 @@ describe("review task loop", () => {
   let applicationRun: Promise<void> | undefined;
   let workerRun: Promise<void> | undefined;
   let controller: AbortController | undefined;
-  let serverStore: JobStore | undefined;
-  let workerStore: JobStore | undefined;
+  let serverStore: EventStore | undefined;
+  let workerStore: EventStore | undefined;
 
   afterEach(async () => {
     controller?.abort();
@@ -130,6 +130,14 @@ describe("review task loop", () => {
       if (url.pathname === "/api/v4/projects/1" && request.method === "GET") {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({ id: 1, http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`, default_branch: "main" }));
+        return;
+      }
+      const branchMatch = /^\/api\/v4\/projects\/1\/repository\/branches\/(.+)$/.exec(url.pathname);
+      if (branchMatch && request.method === "GET") {
+        const name = decodeURIComponent(branchMatch[1]!);
+        const branchHead = name === "feature" ? headSha : baseSha;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ name, commit: { id: branchHead } }));
         return;
       }
       if (url.pathname === "/api/v4/projects/1/merge_requests" && request.method === "POST") {
@@ -215,6 +223,8 @@ describe("review task loop", () => {
       delayMs?: number;
       onStarted?: () => void;
       beforeResponse?: () => void;
+      /** 提供后先返回一次工具调用，由模型循环执行工具再发起下一轮请求。 */
+      toolCall?: { name: string; args: string };
     };
     const reviewContent = JSON.stringify({
       summary: "Unchecked input is used without validation.",
@@ -248,14 +258,28 @@ describe("review task loop", () => {
             object: "chat.completion.chunk",
             created: 1,
             model: "test-model",
-            choices: [{ index: 0, delta: { role: "assistant", content: action.content }, finish_reason: null }],
+            choices: [{
+              index: 0,
+              delta: action.toolCall
+                ? {
+                    role: "assistant",
+                    tool_calls: [{
+                      index: 0,
+                      id: "call-conversation",
+                      type: "function",
+                      function: { name: action.toolCall.name, arguments: action.toolCall.args },
+                    }],
+                  }
+                : { role: "assistant", content: action.content },
+              finish_reason: null,
+            }],
           })}\n\n`);
           response.write(`data: ${JSON.stringify({
             id: "chatcmpl-review",
             object: "chat.completion.chunk",
             created: 1,
             model: "test-model",
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            choices: [{ index: 0, delta: {}, finish_reason: action.toolCall ? "tool_calls" : "stop" }],
             usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
           })}\n\n`);
           response.end("data: [DONE]\n\n");
@@ -271,7 +295,7 @@ describe("review task loop", () => {
 
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
-      operations: { username: "", password: "" },
+      operations: { username: "operator", password: "a secure password with 16 chars" },
       gitlab: {
         baseUrl: `http://127.0.0.1:${apiPort}`,
         readToken: "read-token",
@@ -303,12 +327,12 @@ describe("review task loop", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 20, jobTimeout: 15_000 },
+      worker: { pollInterval: 20, eventTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     };
-    serverStore = await JobStore.open(config.storage.database);
-    workerStore = await JobStore.open(config.storage.database);
+    serverStore = await EventStore.open(config.storage.database);
+    workerStore = await EventStore.open(config.storage.database);
     application = new CorvexServer(config, serverStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
     controller = new AbortController();
     applicationRun = application.run(controller.signal);
@@ -346,14 +370,14 @@ describe("review task loop", () => {
     );
     const webhookResponse = await sendNote(99, 3, "@corvex-bot /review");
     expect(webhookResponse.status).toBe(202);
-    const queued = serverStore.listJobs("queued", 10)[0];
-    if (!queued) throw new Error("webhook did not enqueue a review job");
+    const queued = serverStore.listEvents("queued", 10)[0];
+    if (!queued) throw new Error("webhook did not enqueue a review event");
 
     const worker = new Worker(config, workerStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
     workerRun = worker.run(controller.signal);
-    await waitFor(() => serverStore!.listJobs("completed", 10).some((job) => job.id === queued.id));
+    await waitFor(() => serverStore!.listEvents("completed", 10).some((event) => event.id === queued.id));
 
-    const details = serverStore.getJobDetails(queued.id);
+    const details = serverStore.getEventDetails(queued.id);
     expect(mergeRequestReads.get(3)).toBe(5);
     expect(details?.attempts).toMatchObject([
       { attempt: 1, error: expect.stringContaining("GitLab API returned 503") },
@@ -373,33 +397,33 @@ describe("review task loop", () => {
     expect(details?.trajectory.some((entry) => entry.kind === "llm" && entry.status === "succeeded")).toBe(true);
 
     const enqueue = async (noteId: number, mrIid: number, note: string) => {
-      const existingIds = new Set(serverStore!.listJobs(undefined, 200).map((job) => job.id));
+      const existingIds = new Set(serverStore!.listEvents(undefined, 200).map((event) => event.id));
       const response = await sendNote(noteId, mrIid, note);
       expect(response.status).toBe(202);
-      await waitFor(() => serverStore!.listJobs(undefined, 200).some((job) => !existingIds.has(job.id)));
-      const job = serverStore.listJobs(undefined, 200).find((candidate) => !existingIds.has(candidate.id));
-      if (!job) throw new Error("webhook did not create a task");
-      return job;
+      await waitFor(() => serverStore!.listEvents(undefined, 200).some((event) => !existingIds.has(event.id)));
+      const event = serverStore.listEvents(undefined, 200).find((candidate) => !existingIds.has(candidate.id));
+      if (!event) throw new Error("webhook did not create a task");
+      return event;
     };
-    const waitForStatus = (jobId: string, status: string) => waitFor(() =>
-      serverStore!.listJobs(undefined, 200).some((job) => job.id === jobId && job.status === status),
+    const waitForStatus = (eventId: string, status: string) => waitFor(() =>
+      serverStore!.listEvents(undefined, 200).some((event) => event.id === eventId && event.status === status),
     );
 
     modelActions.push({ content: "The file assigns an unchecked value to `value`." });
-    const explainJob = await enqueue(100, 4, "@corvex-bot /explain input.ts");
-    await waitForStatus(explainJob.id, "completed");
+    const explainEvent = await enqueue(100, 4, "@corvex-bot /explain input.ts");
+    await waitForStatus(explainEvent.id, "completed");
     expect(postedNotes.some((body) => body.includes("The file assigns an unchecked value"))).toBe(true);
-    expect(serverStore.getJobDetails(explainJob.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
+    expect(serverStore.getEventDetails(explainEvent.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
 
     const chatRequest = "Summarize this PR\n\nSuggest a concise title";
     modelActions.push({ content: "This PR introduces an unchecked value.\n\nSuggested title: Validate input values" });
-    const chatJob = await enqueue(106, 7, `@corvex-bot ${chatRequest}`);
-    expect(chatJob.type).toBe("chat");
-    expect(chatJob.request).toBe(chatRequest);
-    await waitForStatus(chatJob.id, "completed");
+    const chatEvent = await enqueue(106, 7, `@corvex-bot ${chatRequest}`);
+    expect(chatEvent.type).toBe("chat");
+    expect(chatEvent.request).toBe(chatRequest);
+    await waitForStatus(chatEvent.id, "completed");
     expect(postedNotes.some((body) => body.includes("Suggested title: Validate input values"))).toBe(true);
     expect(modelRequests.some((body) => body.includes("Please validate the new input."))).toBe(true);
-    expect(serverStore.getJobDetails(chatJob.id)?.events.map(({ step }) => step)).toEqual(
+    expect(serverStore.getEventDetails(chatEvent.id)?.events.map(({ step }) => step)).toEqual(
       expect.arrayContaining([
         "git.create_diff",
         "gitlab.get_merge_request_comments",
@@ -419,9 +443,9 @@ describe("review task loop", () => {
       "",
     ].join("\n");
     modelActions.push({ content: JSON.stringify({ summary: "Replace the unsafe value.", patch: fixPatch }) });
-    const fixJob = await enqueue(101, 5, "@corvex-bot /fix Validate this value");
-    await waitForStatus(fixJob.id, "completed");
-    const fixDetails = serverStore.getJobDetails(fixJob.id);
+    const fixEvent = await enqueue(101, 5, "@corvex-bot /fix Validate this value");
+    await waitForStatus(fixEvent.id, "completed");
+    const fixDetails = serverStore.getEventDetails(fixEvent.id);
     expect(fixDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["fixing", "verifying", "publishing", "completed"]));
     expect(fixDetails?.events.map(({ step }) => step)).toContain("gitlab.post_fix_proposal");
     expect(postedNotes.some((body) => body.includes("Replace the unsafe value"))).toBe(true);
@@ -461,10 +485,10 @@ describe("review task loop", () => {
       }),
     });
     expect(enabledIssueResponse.status).toBe(202);
-    const issueJob = serverStore.listJobs(undefined, 50).find((candidate) => candidate.type === "implement");
-    if (!issueJob) throw new Error("Issue webhook did not enqueue an implementation job");
-    await waitForStatus(issueJob.id, "completed");
-    const issueDetails = serverStore.getJobDetails(issueJob.id);
+    const issueEvent = serverStore.listEvents(undefined, 50).find((candidate) => candidate.type === "implement");
+    if (!issueEvent) throw new Error("Issue webhook did not enqueue an implementation event");
+    await waitForStatus(issueEvent.id, "completed");
+    const issueDetails = serverStore.getEventDetails(issueEvent.id);
     expect(issueDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["analyzing", "fixing", "verifying", "publishing", "completed"]));
     expect(issueDetails?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
       "gitlab.get_issue",
@@ -485,8 +509,8 @@ describe("review task loop", () => {
 
     rejectDiscussionFor = 6;
     modelActions.push({ content: reviewContent });
-    const fallbackJob = await enqueue(102, 6, "@corvex-bot /review");
-    await waitForStatus(fallbackJob.id, "completed");
+    const fallbackEvent = await enqueue(102, 6, "@corvex-bot /review");
+    await waitForStatus(fallbackEvent.id, "completed");
     const fallbackNote = postedNotes.find((body) => body.includes("1 validated finding(s); 0 posted inline."));
     expect(fallbackNote).toContain("<details>");
     expect(fallbackNote).toContain("<summary>Finding 1: HIGH - Validate the input before use</summary>");
@@ -498,22 +522,49 @@ describe("review task loop", () => {
 
     const staleSha = "c".repeat(40);
     modelActions.push({ content: reviewContent, beforeResponse: () => currentHeads.set(7, staleSha) });
-    const staleJob = await enqueue(103, 7, "@corvex-bot /review");
+    const staleEvent = await enqueue(103, 7, "@corvex-bot /review");
     const discussionsBeforeStale = discussionAttempts;
-    await waitForStatus(staleJob.id, "stale");
+    await waitForStatus(staleEvent.id, "stale");
     expect(discussionAttempts).toBe(discussionsBeforeStale);
-    expect(serverStore.getJobDetails(staleJob.id)?.events.map(({ step }) => step)).toContain("worker.verify_snapshot");
+    expect(serverStore.getEventDetails(staleEvent.id)?.events.map(({ step }) => step)).toContain("worker.verify_snapshot");
+
+    // 对话轮次由 Server 内联执行：不经 Worker、不进入事件队列，并逐条暴露工具调用。
+    modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
+    modelActions.push({ content: "`input.ts` assigns a value without validating it." });
+    const authorization = `Basic ${Buffer.from("operator:a secure password with 16 chars").toString("base64")}`;
+    const conversationResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization },
+      body: JSON.stringify({ projectId: 1, targetBranch: "main", message: "Where is the value assigned?" }),
+    });
+    expect(conversationResponse.status).toBe(202);
+    const createdConversation = await conversationResponse.json() as { conversationId: string; turnId: string };
+    expect(serverStore.listEvents(undefined, 200).some((event) => event.type === "conversation")).toBe(false);
+    await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
+    const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
+    expect(conversationDetail?.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "completed",
+      content: "`input.ts` assigns a value without validating it.",
+      toolCalls: [{ name: "read_file", status: "succeeded" }],
+    });
+    const conversationTurn = serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId);
+    expect(conversationTurn?.trajectory.some((entry) => entry.kind === "tool" && entry.name === "read_file")).toBe(true);
+    expect(conversationTurn?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
+      "workflow.read_only_conversation",
+      "git.prepare_conversation_workspace",
+    ]));
 
     let cancelModelStarted!: () => void;
     const cancelModelStartedPromise = new Promise<void>((resolvePromise) => {
       cancelModelStarted = resolvePromise;
     });
     modelActions.push({ content: reviewContent, delayMs: 15_000, onStarted: cancelModelStarted });
-    const cancelJob = await enqueue(104, 8, "@corvex-bot /review");
+    const cancelEvent = await enqueue(104, 8, "@corvex-bot /review");
     await cancelModelStartedPromise;
     const cancelResponse = await sendNote(105, 8, "@corvex-bot /cancel");
     expect(cancelResponse.status).toBe(202);
-    await waitForStatus(cancelJob.id, "cancelled");
-    expect(serverStore.getJobDetails(cancelJob.id)?.timeline.map(({ to }) => to)).toContain("cancelled");
+    await waitForStatus(cancelEvent.id, "cancelled");
+    expect(serverStore.getEventDetails(cancelEvent.id)?.timeline.map(({ to }) => to)).toContain("cancelled");
   }, 35_000);
 });

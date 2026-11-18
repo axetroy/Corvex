@@ -54,21 +54,21 @@ The read-only operations console is disabled unless both `CORVEX_OPS_USERNAME` a
 | `POST /webhooks/gitlab` | GitLab merge-request and Issue Note Hook endpoint. Requires the matching `X-Gitlab-Token`; only Note Hook events are supported. |
 | `GET /healthz` | Process liveness check; returns `200 ok`. |
 | `GET /readyz` | Readiness check that pings SQLite; returns `503` if the database is unavailable. |
-| `GET /metrics` | Prometheus text metrics for job counts and model call counts, duration, and token totals. |
+| `GET /metrics` | Prometheus text metrics for event counts and model call counts, duration, and token totals. |
 | `GET /ops` | Optional Basic Auth-protected read-only operations console. Disabled when operations credentials are unset. |
-| `GET /api/ops/overview` | Operations summary with job counts, oldest queued age, worker heartbeats, and model call metrics. |
-| `GET /api/ops/jobs` | Filtered and paginated job list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
-| `GET /api/ops/jobs/<id>` | Job details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output events for each execution step. |
+| `GET /api/ops/overview` | Operations summary with event counts, oldest queued age, worker heartbeats, and model call metrics. |
+| `GET /api/ops/events` | Filtered and paginated event list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
+| `GET /api/ops/events/<id>` | Event details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output records for each execution step. |
 | `GET /api/ops/projects` | Search projects visible to the configured GitLab read token. |
 | `GET /api/ops/projects/<id>/branches` | Search the branches of a project. |
 | `GET /api/ops/conversations` / `GET /api/ops/conversations/<id>` | List persistent conversations (with turn counts and the latest turn status) and their messages. |
-| `GET /api/ops/conversations/<id>/turns/<jobId>` | Read one turn's own trajectory, execution records, attempts, and lifecycle transitions. |
+| `GET /api/ops/conversations/<id>/turns/<turnId>` | Read one turn's own trajectory, execution records, attempts, and lifecycle transitions. Conversation turns are not events and never appear in the events list. |
 | `GET /api/ops/conversations/<id>/stats` | Aggregate usage and timing for the whole conversation, plus a per-turn breakdown. |
 | `POST /api/ops/conversations` / `POST /api/ops/conversations/<id>/messages` | Create a pinned read-only conversation or enqueue its next turn. |
 
 The operations endpoints require HTTP Basic Auth and return `404` when disabled. Job details include the requester username and ID, the triggering comment, the parsed request, and error text; protect operator credentials and use HTTPS. The triggering comment is sourced from the linked webhook execution event and follows its size limit and best-effort redaction. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
 
-The console is conversation-first: it opens on **Conversations**, which lists conversations with their turn counts and latest turn status. Overview, jobs, and job detail remain available. Starting a conversation uses a searchable repository picker that shows each project's full path and description, plus a searchable branch picker whose options show each branch's latest commit (short SHA, title, and relative time), and both can scroll through every project and branch visible to the GitLab read token; each turn is pinned to the server-resolved branch head SHA, persisted in SQLite, and runs with read-only repository tools. The page fills the viewport: a sidebar lists conversations, and the workspace shows a repository header with the pinned revision and three tabs — **Chat** for the Markdown transcript with a copy action and each assistant reply's tool calls (readable description, result, and duration), **Trace** to inspect any turn's own trajectory, execution records, and lifecycle transitions, and **Stats** for usage and timing totals with a per-turn breakdown. It does not modify repositories or publish replies to GitLab. The console refreshes queue views automatically; active conversation turns poll more frequently. Use a strong GitLab read token and strong Basic Auth credentials. It is a React bundle built into `dist/app/ui`; use `pnpm run ui:build` to build it locally, or `pnpm run ui:dev` for interface work against a local Server. The `ui:dev` server proxies `/api` to `http://127.0.0.1:8080`; set `CORVEX_OPS_API` to use another Server origin. Job list filters (`status`, `type`, `search`) are kept in the URL. `/ops` only answers `GET` and `HEAD`, and its responses carry a restrictive Content Security Policy and `X-Robots-Tag: noindex` so the console is not indexed or embedded.
+The console is conversation-first: it opens on **Conversations**, which lists conversations with their turn counts and latest turn status. Overview, events, and event detail remain available. Starting a conversation uses a searchable repository picker that shows each project's full path and description, plus a searchable branch picker whose options show each branch's latest commit (short SHA, title, and relative time), and both can scroll through every project and branch visible to the GitLab read token; each turn is pinned to the server-resolved branch head SHA, persisted in SQLite, and runs with read-only repository tools. The page fills the viewport: a sidebar lists conversations, and the workspace shows a repository header with the pinned revision and three tabs — **Chat** for the Markdown transcript with a copy action and each assistant reply's tool calls (readable description, result, and duration), **Trace** to inspect any turn's own trajectory, execution records, and lifecycle transitions, and **Stats** for usage and timing totals with a per-turn breakdown. It does not modify repositories or publish replies to GitLab. The console refreshes queue views automatically; active conversation turns poll more frequently. Use a strong GitLab read token and strong Basic Auth credentials. It is a React bundle built into `dist/app/ui`; use `pnpm run ui:build` to build it locally, or `pnpm run ui:dev` for interface work against a local Server. The `ui:dev` server proxies `/api` to `http://127.0.0.1:8080`; set `CORVEX_OPS_API` to use another Server origin. Event list filters (`status`, `type`, `search`) are kept in the URL. `/ops` only answers `GET` and `HEAD`, and its responses carry a restrictive Content Security Policy and `X-Robots-Tag: noindex` so the console is not indexed or embedded.
 The interface supports English and Simplified Chinese. On first visit it selects the best supported browser language; a manual selection is saved in browser storage for later visits.
 
 ## Logs and troubleshooting
@@ -80,7 +80,7 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
 docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f corvex-worker
 ```
 
-The Server logs webhook receipt, validation/rejection, ignored comments, recognized commands, task enqueue or deduplication, GitLab response publication, and the HTTP response status. The Worker logs claimed jobs and each status transition. These logs include event/job IDs and project/MR IDs, but not comment bodies or webhook credentials.
+The Server logs webhook receipt, validation/rejection, ignored comments, recognized commands, task enqueue or deduplication, GitLab response publication, and the HTTP response status. The Worker logs claimed events and each status transition. These logs include event IDs and project/MR IDs, but not comment bodies or webhook credentials.
 
 | Symptom | Checks |
 |---|---|
@@ -92,24 +92,24 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 | Task becomes stale | The MR was closed or its diff changed after the command was queued; submit a new command on the current revision. |
 | `readyz` returns `503` | Check the database path, persistent volume mount, and filesystem permissions. |
 
-## Job administration
+## Event administration
 
-List recent jobs or filter failures using the same SQLite database as the Server and Worker:
+List recent events or filter failures using the same SQLite database as the Server and Worker:
 
 ```sh
-pnpm start -- jobs list --database ./data/state/corvex.db --status failed
-pnpm start -- jobs list --database ./data/state/corvex.db --limit 100
+pnpm start -- events list --database ./data/state/corvex.db --status failed
+pnpm start -- events list --database ./data/state/corvex.db --limit 100
 ```
 
-An operator can requeue a failed job only when it failed before publishing and has automatic attempts remaining:
+An operator can requeue a failed event only when it failed before publishing and has automatic attempts remaining:
 
 ```sh
-pnpm start -- jobs retry <job-id> --database ./data/state/corvex.db
+pnpm start -- events retry <event-id> --database ./data/state/corvex.db
 ```
 
 Publishing failures cannot be retried because GitLab may already have accepted the comment. The CLI writes an operator retry audit event; run it on a host with access to the persistent database.
 
-If a job fails while publishing, treat the result as potentially partial. Open the job in the operations console and inspect its execution events for successful `gitlab.post_discussion`, `gitlab.post_review_summary`, or `gitlab.post_fix_proposal` steps; then compare them with the MR before taking action. Do not retry the failed job: publishing may have succeeded remotely even when Corvex did not receive the response, and retrying could duplicate comments. Corvex does not currently resume or reconcile individual publication steps. If work must be repeated, first determine which comments are already present and account for possible duplicates.
+If an event fails while publishing, treat the result as potentially partial. Open the event in the operations console and inspect its execution records for successful `gitlab.post_discussion`, `gitlab.post_review_summary`, or `gitlab.post_fix_proposal` steps; then compare them with the MR before taking action. Do not retry the failed event: publishing may have succeeded remotely even when Corvex did not receive the response, and retrying could duplicate comments. Corvex does not currently resume or reconcile individual publication steps. If work must be repeated, first determine which comments are already present and account for possible duplicates.
 
 Webhook command replies use a short database delivery lease to prevent concurrent redeliveries from posting the same response at once. This is not an exactly-once guarantee: if GitLab accepts a note but its response is lost, a later retry after the lease expires may post a duplicate. Inspect the event's `gitlab.post_note` and `webhook.mark_delivered` steps before investigating repeated command replies.
 
@@ -143,7 +143,7 @@ For a container deployment, run the backup command in an environment that can ac
 
 To restore, stop both Server and Worker, preserve the current database for rollback, replace it with a verified backup at the configured database path, and restart both processes. Do not overwrite a live database.
 
-The Server runs cleanup at startup and then approximately every 24 hours. Terminal jobs, attempts, linked execution-step events, agent trajectory entries, webhook delivery records, and daily token usage use `storage.retention_days` (90 days by default). Unlinked execution events use the same retention. Audit events use `storage.audit_retention_days` (365 days by default). Queued and active jobs are retained. Operations-console conversations that have been idle for longer than the retention window are deleted with their messages; a conversation that still has a queued or running reply is kept so an active conversation is never dropped. Execution-event inputs and outputs are bounded and credential-like values are redacted on a best-effort basis. Agent trajectories intentionally retain model prompts and context, tool arguments and results, and model outputs so the operations console can render the complete session; context entries are stored incrementally between model turns and reconstructed when an individual turn is inspected. Trajectories may contain repository source, diffs, webpage content, comments, or secrets, and are not covered by the execution-event redaction and size limits. Protect the database, backups, and operations console accordingly, use HTTPS, and restrict operator access. Git mirrors under `storage.root` are not covered by this database cleanup; monitor disk use and define a separate mirror maintenance policy.
+The Server runs cleanup at startup and then approximately every 24 hours. Terminal events, attempts, linked execution steps, agent trajectory entries, webhook delivery records, and daily token usage use `storage.retention_days` (90 days by default). Unlinked execution steps use the same retention. Audit events use `storage.audit_retention_days` (365 days by default). Queued and active events are retained. Operations-console conversations that have been idle for longer than the retention window are deleted with their messages; a conversation that still has a queued or running reply is kept so an active conversation is never dropped. Execution-event inputs and outputs are bounded and credential-like values are redacted on a best-effort basis. Agent trajectories intentionally retain model prompts and context, tool arguments and results, and model outputs so the operations console can render the complete session; context entries are stored incrementally between model turns and reconstructed when an individual turn is inspected. Trajectories may contain repository source, diffs, webpage content, comments, or secrets, and are not covered by the execution-event redaction and size limits. Protect the database, backups, and operations console accordingly, use HTTPS, and restrict operator access. Git mirrors under `storage.root` are not covered by this database cleanup; monitor disk use and define a separate mirror maintenance policy.
 
 ## Upgrades and development
 

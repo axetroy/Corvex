@@ -6,17 +6,16 @@ import { FixWorkflow } from "../fix/workflow.js";
 import { ImplementWorkflow } from "../implement/workflow.js";
 import { GitManager, GitPushError } from "../git/manager.js";
 import type { DiffResult, Workspace } from "../git/types.js";
-import type { Job, JobStatus } from "../jobs/model.js";
-import { JobStore } from "../jobs/store.js";
+import type { Event, EventStatus } from "../events/model.js";
+import { EventStore } from "../events/store.js";
 import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } from "../gitlab/client.js";
-import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
-import { traceExecutionStep } from "../jobs/execution.js";
-import { getConversationSystemPrompt } from "../agent/prompts.js";
+import { traceExecutionStep } from "../events/execution.js";
 
-/** Worker 任务租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
+/** Worker 事件租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
-/** 自动重试时按任务尝试序号递增的基础退避时长，单位为毫秒。 */
+/** 自动重试时按事件尝试序号递增的基础退避时长，单位为毫秒。 */
 const automaticRetryBaseDelayMs = 2_000;
 /** 自动重试退避的最大等待时长，单位为毫秒。 */
 const automaticRetryMaxDelayMs = 30_000;
@@ -37,10 +36,7 @@ const retryableNetworkCodes = new Set([
 ]);
 /** Git CLI 在远端网络故障时可能返回文本而非系统错误码。 */
 const retryableNetworkMessage = /network error|connection (?:reset|refused|timed out)|could not resolve host|failed to connect|remote end hung up unexpectedly|tls connection.*(?:timeout|terminated)/i;
-/** 单次对话请求注入模型上下文的历史消息条数上限，按最近优先截断。 */
-const conversationHistoryMessages = 30;
-
-function isRetryableJobFailure(error: unknown): boolean {
+function isRetryableEventFailure(error: unknown): boolean {
   const pending: unknown[] = [error];
   const seen = new Set<object>();
   while (pending.length > 0) {
@@ -100,7 +96,7 @@ export class Worker {
 
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: JobStore,
+    private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
   ) {
     if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
@@ -150,23 +146,23 @@ export class Worker {
       } catch (error) {
         console.error("update worker heartbeat failed", { error: errorMessage(error) });
       }
-      let job: Job | undefined;
+      let event: Event | undefined;
       try {
-        job = this.store.claimNextWithLease(leaseMs);
+        event = this.store.claimNextWithLease(leaseMs);
       } catch (error) {
-        console.error("claim worker job failed", { error: errorMessage(error) });
+        console.error("claim worker event failed", { error: errorMessage(error) });
       }
-      if (job) {
-        console.info("Corvex worker claimed job", {
-          jobId: job.id,
-          type: job.type,
-          projectId: job.projectId,
-          mrIid: job.mrIid,
-          targetType: job.targetType,
-          targetIid: job.targetIid,
-          status: job.status,
+      if (event) {
+        console.info("Corvex worker claimed event", {
+          eventId: event.id,
+          type: event.type,
+          projectId: event.projectId,
+          mrIid: event.mrIid,
+          targetType: event.targetType,
+          targetIid: event.targetIid,
+          status: event.status,
         });
-        await this.process(job, signal);
+        await this.process(event, signal);
         continue;
       }
       try {
@@ -177,30 +173,30 @@ export class Worker {
     }
   }
 
-  private async process(job: Job, shutdownSignal: AbortSignal): Promise<void> {
-    let stage: JobStatus = job.status;
+  private async process(event: Event, shutdownSignal: AbortSignal): Promise<void> {
+    let stage: EventStatus = event.status;
     const controller = new AbortController();
-    const jobSignal = AbortSignal.any([
+    const eventSignal = AbortSignal.any([
       controller.signal,
-      AbortSignal.timeout(this.config.worker.jobTimeout),
+      AbortSignal.timeout(this.config.worker.eventTimeout),
       shutdownSignal,
     ]);
     const onShutdown = () => controller.abort(new Error("worker shutting down"));
     shutdownSignal.addEventListener("abort", onShutdown, { once: true });
-    const heartbeat = this.maintainLease(job, jobSignal, controller);
+    const heartbeat = this.maintainLease(event, eventSignal, controller);
     let processingError: unknown;
     try {
-      await this.execute(job, jobSignal, (next) => {
+      await this.execute(event, eventSignal, (next) => {
         const previous = stage;
-        this.store.updateLeasedStatus(job.id, job.leaseToken, stage, next);
+        this.store.updateLeasedStatus(event.id, event.leaseToken, stage, next);
         stage = next;
-        console.info("Corvex worker job status changed", {
-          jobId: job.id,
-          type: job.type,
-          projectId: job.projectId,
-          mrIid: job.mrIid,
-          targetType: job.targetType,
-          targetIid: job.targetIid,
+        console.info("Corvex worker event status changed", {
+          eventId: event.id,
+          type: event.type,
+          projectId: event.projectId,
+          mrIid: event.mrIid,
+          targetType: event.targetType,
+          targetIid: event.targetIid,
           from: previous,
           to: next,
         });
@@ -213,73 +209,70 @@ export class Worker {
       await heartbeat;
     }
     if (!processingError) {
-      console.info("Corvex worker job completed", {
-        jobId: job.id,
-        type: job.type,
-        projectId: job.projectId,
-        mrIid: job.mrIid,
-        targetType: job.targetType,
-        targetIid: job.targetIid,
+      console.info("Corvex worker event completed", {
+        eventId: event.id,
+        type: event.type,
+        projectId: event.projectId,
+        mrIid: event.mrIid,
+        targetType: event.targetType,
+        targetIid: event.targetIid,
       });
       return;
     }
-    // 进程关闭时保留租约，由过期租约恢复任务，避免把中断误记为任务失败。
+    // 进程关闭时保留租约，由过期租约恢复事件，避免把中断误记为事件失败。
     if (shutdownSignal.aborted) {
-      console.warn("worker stopped during job; lease will recover it", {
-        jobId: job.id,
+      console.warn("worker stopped during event; lease will recover it", {
+        eventId: event.id,
         error: errorMessage(processingError),
       });
       return;
     }
-    // 任务已到达终态（stale / cancelled / failed / completed）时，
+    // 事件已到达终态（stale / cancelled / failed / completed）时，
     // 状态转换在 execute() 内已完成，无需再尝试标记失败，避免无效转换。
     if (stage === "stale" || stage === "cancelled" || stage === "failed" || stage === "completed") {
-      console.info("worker job already in terminal state after error; no further recovery needed", {
-        jobId: job.id,
+      console.info("worker event already in terminal state after error; no further recovery needed", {
+        eventId: event.id,
         stage,
         error: errorMessage(processingError),
       });
       return;
     }
     try {
-      if (this.store.cancellationRequested(job.id, job.leaseToken)) {
+      if (this.store.cancellationRequested(event.id, event.leaseToken)) {
         this.store.updateLeasedStatus(
-          job.id,
-          job.leaseToken,
+          event.id,
+          event.leaseToken,
           stage,
           "cancelled",
           `Cancellation requested by task owner: ${errorDetails(processingError)}`,
         );
-        if (job.type === "conversation") {
-          this.store.finishConversationResponse(job.id, "cancelled", "This turn was cancelled before it could finish.");
-        }
         return;
       }
     } catch (leaseError) {
       if (errorMessage(leaseError) !== errorMessage(processingError)) {
-        console.error("could not check cancellation after job failure", {
-          jobId: job.id,
+        console.error("could not check cancellation after event failure", {
+          eventId: event.id,
           error: errorMessage(leaseError),
         });
       }
     }
     if (
       stage !== "publishing" &&
-      (isRetryableJobFailure(processingError) || jobSignal.reason?.name === "TimeoutError")
+      (isRetryableEventFailure(processingError) || eventSignal.reason?.name === "TimeoutError")
     ) {
-      const delayMs = automaticRetryDelay(job.attemptCount);
+      const delayMs = automaticRetryDelay(event.attemptCount);
       const availableAt = Date.now() + delayMs;
       try {
-        if (this.store.retryLeasedJob(
-          job.id,
-          job.leaseToken,
+        if (this.store.retryLeasedEvent(
+          event.id,
+          event.leaseToken,
           stage,
           availableAt,
           errorDetails(processingError),
         )) {
-          console.warn("transient worker job failure; automatic retry scheduled", {
-            jobId: job.id,
-            attempt: job.attemptCount,
+          console.warn("transient worker event failure; automatic retry scheduled", {
+            eventId: event.id,
+            attempt: event.attemptCount,
             retryAt: new Date(availableAt).toISOString(),
             error: errorMessage(processingError),
           });
@@ -287,7 +280,7 @@ export class Worker {
         }
       } catch (retryError) {
         console.error("could not schedule automatic worker retry", {
-          jobId: job.id,
+          eventId: event.id,
           error: errorMessage(retryError),
         });
       }
@@ -295,29 +288,26 @@ export class Worker {
     // 发布请求可能已在 GitLab 生效，自动重试可能产生重复评论。
     const publishingStage = stage === "publishing";
     try {
-      this.store.updateLeasedStatus(job.id, job.leaseToken, stage, "failed", errorDetails(processingError));
-      if (!publishingStage && job.type === "conversation") {
-        this.store.finishConversationResponse(job.id, "failed", `This turn failed: ${errorMessage(processingError)}`);
-      }
+      this.store.updateLeasedStatus(event.id, event.leaseToken, stage, "failed", errorDetails(processingError));
     } catch (statusError) {
       if (publishingStage) {
         console.error("publishing outcome is uncertain; no automatic retry will be attempted", {
-          jobId: job.id,
+          eventId: event.id,
           error: errorMessage(statusError),
         });
       } else {
-        console.error("could not mark job failed", {
-          jobId: job.id,
+        console.error("could not mark event failed", {
+          eventId: event.id,
           error: errorMessage(statusError),
           processingError: errorMessage(processingError),
         });
       }
     }
-    console.error("process worker job failed", { jobId: job.id, error: errorMessage(processingError) });
+    console.error("process worker event failed", { eventId: event.id, error: errorMessage(processingError) });
   }
 
   private async maintainLease(
-    job: Job,
+    event: Event,
     signal: AbortSignal,
     controller: AbortController,
   ): Promise<void> {
@@ -330,57 +320,53 @@ export class Worker {
         throw new Error("worker heartbeat wait failed");
       }
       try {
-        if (this.store.cancellationRequested(job.id, job.leaseToken)) {
-          controller.abort(new Error("job cancellation requested"));
+        if (this.store.cancellationRequested(event.id, event.leaseToken)) {
+          controller.abort(new Error("event cancellation requested"));
           return;
         }
         elapsed += 1000;
         if (elapsed >= leaseMs / 3) {
-          // 提前续租，为调度延迟留出余量，避免其他 worker 抢占任务。
-          this.store.renewLease(job.id, job.leaseToken, leaseMs);
+          // 提前续租，为调度延迟留出余量，避免其他 worker 抢占事件。
+          this.store.renewLease(event.id, event.leaseToken, leaseMs);
           this.store.heartbeatWorker(this.workerId);
           elapsed = 0;
         }
       } catch (error) {
-        controller.abort(new Error(`maintain job lease: ${errorMessage(error)}`, { cause: error }));
+        controller.abort(new Error(`maintain event lease: ${errorMessage(error)}`, { cause: error }));
         return;
       }
     }
   }
 
   private async execute(
-    job: Job,
+    event: Event,
     signal: AbortSignal,
-    transition: (status: JobStatus) => void,
+    transition: (status: EventStatus) => void,
   ): Promise<void> {
-    const trace: JobTraceContext = {
-      jobId: job.id,
-      attempt: job.attemptCount,
-      taskType: job.type,
+    const trace: EventTraceContext = {
+      scope: { kind: "event", eventId: event.id },
+      attempt: event.attemptCount,
+      taskType: event.type,
     };
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    if (job.type === "conversation") {
-      await this.executeConversation(job, signal, transition);
-      return;
+    const stepContext = { eventId: event.id, attempt: event.attemptCount };
+    if (!["review", "fix", "explain", "chat", "implement"].includes(event.type)) {
+      throw new Error(`unsupported task type "${event.type}"`);
     }
-    if (!["review", "fix", "explain", "chat", "implement"].includes(job.type)) {
-      throw new Error(`unsupported task type "${job.type}"`);
-    }
-    if (job.type === "fix" && !this.config.fix.enabled) {
+    if (event.type === "fix" && !this.config.fix.enabled) {
       throw new Error("fix task cannot run because fix mode is disabled");
     }
-    if (job.type === "implement") {
-      if (job.targetType !== "issue") throw new Error("Issue task has an invalid target type");
-      await this.executeIssueImplementation(job, signal, transition);
+    if (event.type === "implement") {
+      if (event.targetType !== "issue") throw new Error("Issue task has an invalid target type");
+      await this.executeIssueImplementation(event, signal, transition);
       return;
     }
-    if (job.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
-    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
-      this.store.recordExecutionEvent({
+    if (event.targetType !== "merge_request") throw new Error("MR task has an invalid target type");
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(event.headSha)) {
+      this.store.recordExecutionStep({
         ...stepContext,
         step: "worker.validate_head_sha",
         status: "ignored",
-        input: { expectedHeadSha: job.headSha, actualHeadSha: job.headSha },
+        input: { expectedHeadSha: event.headSha, actualHeadSha: event.headSha },
         output: { accepted: false, reason: "invalid_head_sha" },
       });
       transition("stale");
@@ -390,8 +376,8 @@ export class Worker {
       this.store,
       stepContext,
       "gitlab.get_merge_request",
-      { projectId: job.projectId, mrIid: job.mrIid },
-      () => this.gitlab.getMergeRequest(job.projectId, job.mrIid, signal),
+      { projectId: event.projectId, mrIid: event.mrIid },
+      () => this.gitlab.getMergeRequest(event.projectId, event.mrIid, signal),
       (value) => ({
         iid: value.iid,
         state: value.state,
@@ -404,15 +390,15 @@ export class Worker {
       }),
     );
     trace.mergeRequest = {
-      projectId: job.projectId,
-      mrIid: job.mrIid,
+      projectId: event.projectId,
+      mrIid: event.mrIid,
       sourceProjectId: mergeRequest.source_project_id,
       targetProjectId: mergeRequest.target_project_id,
       sourceBranch: mergeRequest.source_branch,
-      expectedRemoteSha: job.headSha,
+      expectedRemoteSha: event.headSha,
     };
     if (mergeRequest.state !== "opened") {
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         ...stepContext,
         step: "worker.validate_mr_state",
         status: "ignored",
@@ -422,12 +408,12 @@ export class Worker {
       transition("stale");
       return;
     }
-    if (!sameSha(headSha(mergeRequest), job.headSha)) {
-      this.store.recordExecutionEvent({
+    if (!sameSha(headSha(mergeRequest), event.headSha)) {
+      this.store.recordExecutionStep({
         ...stepContext,
         step: "worker.validate_head_sha",
         status: "ignored",
-        input: { expectedHeadSha: job.headSha, actualHeadSha: headSha(mergeRequest) },
+        input: { expectedHeadSha: event.headSha, actualHeadSha: headSha(mergeRequest) },
         output: { accepted: false, reason: "head_sha_changed" },
       });
       transition("stale");
@@ -441,8 +427,8 @@ export class Worker {
       this.store,
       stepContext,
       "gitlab.get_project",
-      { projectId: job.projectId },
-      () => this.gitlab.getProject(job.projectId, signal),
+      { projectId: event.projectId },
+      () => this.gitlab.getProject(event.projectId, signal),
       (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
     );
     if (trace.mergeRequest) trace.mergeRequest.repositoryUrl = project.http_url_to_repo;
@@ -450,15 +436,15 @@ export class Worker {
       this.store,
       stepContext,
       "git.prepare_workspace",
-      { projectId: job.projectId, jobId: job.id, repositoryUrl: project.http_url_to_repo, expectedHeadSha: job.headSha },
+      { projectId: event.projectId, eventId: event.id, repositoryUrl: project.http_url_to_repo, expectedHeadSha: event.headSha },
       () => this.repo.prepareWorkspace(
-        job.projectId,
-        job.id,
+        event.projectId,
+        event.id,
         project.http_url_to_repo,
-        job.headSha,
+        event.headSha,
         signal,
       ),
-      (value) => ({ projectId: value.projectId, jobId: value.jobId, headSha: value.headSha }),
+      (value) => ({ projectId: value.projectId, eventId: value.eventId, headSha: value.headSha }),
     );
     trace.workspace = workspace;
     let cleaned = false;
@@ -468,23 +454,23 @@ export class Worker {
         this.store,
         stepContext,
         "git.cleanup_workspace",
-        { projectId: workspace.projectId, jobId: workspace.jobId },
+        { projectId: workspace.projectId, eventId: workspace.eventId },
         () => this.repo.cleanupWorkspace(workspace),
         () => ({ cleaned: true }),
       );
       cleaned = true;
     };
     try {
-      const context = createReviewContext(job, mergeRequest, baseSha);
-      if (job.type === "explain") {
+      const context = createReviewContext(event, mergeRequest, baseSha);
+      if (event.type === "explain") {
         const content = await traceExecutionStep(
           this.store,
           stepContext,
           "git.read_file",
-          { path: job.request, maxBytes: this.contextByteLimit, headSha: workspace.headSha },
+          { path: event.request, maxBytes: this.contextByteLimit, headSha: workspace.headSha },
           () => this.repo.readFile(
             workspace,
-            job.request,
+            event.request,
             this.contextByteLimit,
             signal,
           ),
@@ -498,10 +484,10 @@ export class Worker {
             this.store,
             stepContext,
             "workflow.explain",
-            { path: job.request, contentBytes: content.byteLength },
+            { path: event.request, contentBytes: content.byteLength },
             () => this.reviewer.explain(
               context,
-              job.request,
+              event.request,
               content,
               workspace.path,
               signal,
@@ -520,15 +506,15 @@ export class Worker {
           this.store.recordModelCall("explain", "failure", Date.now() - started, 0, 0);
           throw error;
         }
-        if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
+        if (!(await this.verifySnapshot(event, mergeRequest, signal, transition))) return;
         transition("publishing");
-        const body = `## Corvex explanation for \`${escapeMarkdown(job.request)}\`\n\n${escapeMarkdown(explanation.text)}`;
+        const body = `## Corvex explanation for \`${escapeMarkdown(event.request)}\`\n\n${escapeMarkdown(explanation.text)}`;
         await traceExecutionStep(
           this.store,
           stepContext,
           "gitlab.post_note",
-          { projectId: job.projectId, mrIid: job.mrIid, body },
-          () => this.gitlab.postNote(job.projectId, job.mrIid, body, signal),
+          { projectId: event.projectId, mrIid: event.mrIid, body },
+          () => this.gitlab.postNote(event.projectId, event.mrIid, body, signal),
           (receipt) => receipt,
           (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
         );
@@ -562,11 +548,11 @@ export class Worker {
           })),
         }),
       );
-      if (job.type === "fix") {
-        await this.executeFix(job, mergeRequest, workspace, diff, context, signal, transition, cleanup);
+      if (event.type === "fix") {
+        await this.executeFix(event, mergeRequest, workspace, diff, context, signal, transition, cleanup);
         return;
       }
-      if (job.type === "chat") {
+      if (event.type === "chat") {
         transition("analyzing");
         const started = Date.now();
         let answer;
@@ -576,10 +562,10 @@ export class Worker {
                 this.store,
                 stepContext,
                 "gitlab.get_merge_request_comments",
-                { projectId: job.projectId, mrIid: job.mrIid, limit: this.config.chat.historyComments },
+                { projectId: event.projectId, mrIid: event.mrIid, limit: this.config.chat.historyComments },
                 () => this.gitlab.getMergeRequestComments(
-                  job.projectId,
-                  job.mrIid,
+                  event.projectId,
+                  event.mrIid,
                   this.config.chat.historyComments,
                   signal,
                 ),
@@ -590,8 +576,8 @@ export class Worker {
             this.store,
             stepContext,
             "workflow.chat",
-            { baseSha, headSha: workspace.headSha, request: job.request },
-            () => this.reviewer.chat(context, diff, job.request, workspace.path, signal, trace, comments),
+            { baseSha, headSha: workspace.headSha, request: event.request },
+            () => this.reviewer.chat(context, diff, event.request, workspace.path, signal, trace, comments),
             (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.text) }),
           );
           this.store.recordModelCall(
@@ -606,8 +592,8 @@ export class Worker {
           throw error;
         }
         const chatSnapshotIsCurrent = trace.mergeRequest?.pushedSha
-          ? await this.verifyPushedHead(job, mergeRequest, trace.mergeRequest.pushedSha, signal, transition)
-          : await this.verifySnapshot(job, mergeRequest, signal, transition);
+          ? await this.verifyPushedHead(event, mergeRequest, trace.mergeRequest.pushedSha, signal, transition)
+          : await this.verifySnapshot(event, mergeRequest, signal, transition);
         if (!chatSnapshotIsCurrent) return;
         transition("publishing");
         const body = `## Corvex\n\n${answer.text}`;
@@ -615,8 +601,8 @@ export class Worker {
           this.store,
           stepContext,
           "gitlab.post_note",
-          { projectId: job.projectId, mrIid: job.mrIid, body },
-          () => this.gitlab.postNote(job.projectId, job.mrIid, body, signal),
+          { projectId: event.projectId, mrIid: event.mrIid, body },
+          () => this.gitlab.postNote(event.projectId, event.mrIid, body, signal),
           (receipt) => receipt,
           (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
         );
@@ -632,7 +618,7 @@ export class Worker {
           stepContext,
           "workflow.review",
           { baseSha, headSha: workspace.headSha, changedFiles: diff.changes.map((change) => change.path) },
-          () => this.reviewer.review(context, diff, workspace.path, signal, trace, job.request),
+          () => this.reviewer.review(context, diff, workspace.path, signal, trace, event.request),
           (value) => ({ model: value.model, usage: value.usage, findings: value.result.findings, rejected: value.rejected }),
         );
         this.store.recordModelCall(
@@ -647,7 +633,7 @@ export class Worker {
         throw error;
       }
       // 模型调用可能超过 MR 快照的有效期；发布前必须再次确认 diff refs 未变化。
-      if (!(await this.verifySnapshot(job, mergeRequest, signal, transition))) return;
+      if (!(await this.verifySnapshot(event, mergeRequest, signal, transition))) return;
       transition("publishing");
       let inlinePosted = 0;
       for (const finding of outcome.result.findings) {
@@ -656,7 +642,7 @@ export class Worker {
           const position = {
               baseSha: mergeRequest.diff_refs.base_sha,
               startSha: mergeRequest.diff_refs.start_sha,
-              headSha: job.headSha,
+              headSha: event.headSha,
               oldPath: finding.filePath,
               newPath: finding.filePath,
               newLine: finding.line,
@@ -665,28 +651,28 @@ export class Worker {
             this.store,
             stepContext,
             "gitlab.post_discussion",
-            { projectId: job.projectId, mrIid: job.mrIid, body, position },
-            () => this.gitlab.postDiscussion(job.projectId, job.mrIid, body, position, signal),
+            { projectId: event.projectId, mrIid: event.mrIid, body, position },
+            () => this.gitlab.postDiscussion(event.projectId, event.mrIid, body, position, signal),
             (receipt) => receipt,
             (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
           );
           inlinePosted++;
         } catch (error) {
           console.warn("inline review comment failed; using summary fallback", {
-            jobId: job.id,
+            eventId: event.id,
             path: finding.filePath,
             line: finding.line,
             error: errorMessage(error),
           });
         }
       }
-      const reviewBody = formatReview(job, outcome.result.summary, outcome.result.findings, inlinePosted);
+      const reviewBody = formatReview(event, outcome.result.summary, outcome.result.findings, inlinePosted);
       await traceExecutionStep(
         this.store,
         stepContext,
         "gitlab.post_review_summary",
-        { projectId: job.projectId, mrIid: job.mrIid, body: reviewBody },
-        () => this.gitlab.postNote(job.projectId, job.mrIid, reviewBody, signal),
+        { projectId: event.projectId, mrIid: event.mrIid, body: reviewBody },
+        () => this.gitlab.postNote(event.projectId, event.mrIid, reviewBody, signal),
         (receipt) => receipt,
         (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
       );
@@ -696,131 +682,23 @@ export class Worker {
     }
   }
 
-  private async executeConversation(
-    job: Job,
-    signal: AbortSignal,
-    transition: (status: JobStatus) => void,
-  ): Promise<void> {
-    if (!job.conversationId || !job.conversationResponseId) throw new Error("conversation job is missing its message association");
-    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(job.headSha)) {
-      transition("stale");
-      this.store.finishConversationResponse(job.id, "stale", "The branch did not have a valid commit snapshot.");
-      return;
-    }
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
-    const conversation = this.store.getConversation(job.conversationId);
-    if (!conversation) throw new Error(`conversation "${job.conversationId}" not found`);
-    if (conversation.projectId !== job.projectId || conversation.targetBranch !== job.targetBranch) {
-      throw new Error("conversation job branch does not match its stored conversation");
-    }
-
-    const branch = await traceExecutionStep(
-      this.store,
-      stepContext,
-      "gitlab.get_conversation_branch",
-      { projectId: job.projectId, branch: job.targetBranch },
-      () => this.gitlab.getBranch(job.projectId, job.targetBranch, signal),
-      (value) => ({ name: value.name, headSha: value.commit.id }),
-    );
-    const remoteHeadSha = branch.commit.id;
-    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(remoteHeadSha) || remoteHeadSha.toLowerCase() !== job.headSha.toLowerCase()) {
-      transition("stale");
-      this.store.finishConversationResponse(job.id, "stale", "The branch changed after this turn was queued; send a new message to use the current snapshot.");
-      return;
-    }
-    const project = await traceExecutionStep(
-      this.store,
-      stepContext,
-      "gitlab.get_conversation_project",
-      { projectId: job.projectId },
-      () => this.gitlab.getProject(job.projectId, signal),
-      (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
-    );
-    const workspace = await traceExecutionStep(
-      this.store,
-      stepContext,
-      "git.prepare_conversation_workspace",
-      { projectId: job.projectId, jobId: job.id, expectedHeadSha: job.headSha },
-      () => this.repo.prepareWorkspace(job.projectId, job.id, project.http_url_to_repo, job.headSha, signal),
-      (value) => ({ projectId: value.projectId, jobId: value.jobId, headSha: value.headSha }),
-    );
-    const trace: JobTraceContext = {
-      jobId: job.id,
-      attempt: job.attemptCount,
-      taskType: job.type,
-      workspace,
-    };
-    try {
-      transition("analyzing");
-      let lastUserIndex = -1;
-      for (let index = 0; index < conversation.messages.length; index++) {
-        if (conversation.messages[index]?.role === "user") lastUserIndex = index;
-      }
-      const history = conversation.messages
-        .slice(0, lastUserIndex)
-        .filter((item) => item.status === "completed")
-        .slice(-conversationHistoryMessages)
-        .map(({ role, content }) => ({ role, content }));
-      const userPrompt = JSON.stringify({
-        repository: {
-          project: conversation.projectName,
-          branch: job.targetBranch,
-          headSha: job.headSha,
-        },
-        conversation: history,
-        currentRequest: job.request,
-      });
-      const started = Date.now();
-      try {
-        const answer = await traceExecutionStep(
-          this.store,
-          stepContext,
-          "workflow.read_only_conversation",
-          { projectId: job.projectId, branch: job.targetBranch, headSha: job.headSha, requestCharacters: [...job.request].length },
-          () => this.agent.generate(
-            { taskType: "conversation", systemPrompt: getConversationSystemPrompt(this.config.agent.responseLanguage), userPrompt },
-            workspace.path,
-            signal,
-            trace,
-          ),
-          (value) => ({ model: value.model, usage: value.usage, textBytes: Buffer.byteLength(value.content) }),
-        );
-        this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
-        transition("completed");
-        this.store.finishConversationResponse(job.id, "completed", answer.content);
-      } catch (error) {
-        this.store.recordModelCall("conversation", "failure", Date.now() - started, 0, 0);
-        throw error;
-      }
-    } finally {
-      await traceExecutionStep(
-        this.store,
-        stepContext,
-        "git.cleanup_conversation_workspace",
-        { projectId: workspace.projectId, jobId: workspace.jobId },
-        () => this.repo.cleanupWorkspace(workspace),
-        () => ({ cleaned: true }),
-      );
-    }
-  }
-
   private async executeIssueImplementation(
-    job: Job,
+    event: Event,
     signal: AbortSignal,
-    transition: (status: JobStatus) => void,
+    transition: (status: EventStatus) => void,
   ): Promise<void> {
-    if (job.targetIid <= 0) throw new Error("Issue implementation job has an invalid Issue IID");
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    if (event.targetIid <= 0) throw new Error("Issue implementation event has an invalid Issue IID");
+    const stepContext = { eventId: event.id, attempt: event.attemptCount };
     const issue = await traceExecutionStep(
       this.store,
       stepContext,
       "gitlab.get_issue",
-      { projectId: job.projectId, issueIid: job.targetIid },
-      () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
+      { projectId: event.projectId, issueIid: event.targetIid },
+      () => this.gitlab.getIssue(event.projectId, event.targetIid, signal),
       (value) => ({ iid: value.iid, title: value.title, state: value.state, descriptionCharacters: [...value.description].length }),
     );
     if (issue.state !== "opened") {
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         ...stepContext,
         step: "worker.validate_issue_state",
         status: "ignored",
@@ -835,8 +713,8 @@ export class Worker {
           this.store,
           stepContext,
           "gitlab.get_issue_comments",
-          { projectId: job.projectId, issueIid: job.targetIid, limit: this.config.issue.historyComments },
-          () => this.gitlab.getIssueComments(job.projectId, job.targetIid, this.config.issue.historyComments, signal),
+          { projectId: event.projectId, issueIid: event.targetIid, limit: this.config.issue.historyComments },
+          () => this.gitlab.getIssueComments(event.projectId, event.targetIid, this.config.issue.historyComments, signal),
           (value) => ({ count: value.length, ids: value.map((comment) => comment.id), bytes: value.reduce((sum, comment) => sum + Buffer.byteLength(comment.body), 0) }),
         )
       : [];
@@ -844,31 +722,31 @@ export class Worker {
       this.store,
       stepContext,
       "gitlab.get_project",
-      { projectId: job.projectId },
-      () => this.gitlab.getProject(job.projectId, signal),
+      { projectId: event.projectId },
+      () => this.gitlab.getProject(event.projectId, signal),
       (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo, defaultBranch: value.default_branch }),
     );
     if (!project.default_branch?.trim()) throw new Error("GitLab project does not have a default branch");
-    let sourceBranch = `corvex/issue-${job.targetIid}-${job.id.slice(0, 8)}-a${job.attemptCount}`;
+    let sourceBranch = `corvex/issue-${event.targetIid}-${event.id.slice(0, 8)}-a${event.attemptCount}`;
     const prepareBranch = (targetBranch: string) => traceExecutionStep(
       this.store,
       stepContext,
       "git.prepare_issue_workspace",
-      { projectId: job.projectId, jobId: job.id, repositoryUrl: project.http_url_to_repo, targetBranch, sourceBranch },
-      () => this.repo.prepareIssueWorkspace(job.projectId, job.id, project.http_url_to_repo, targetBranch, sourceBranch, signal),
-      (value) => ({ projectId: value.workspace.projectId, jobId: value.workspace.jobId, baseSha: value.baseSha, sourceBranch, targetBranch }),
+      { projectId: event.projectId, eventId: event.id, repositoryUrl: project.http_url_to_repo, targetBranch, sourceBranch },
+      () => this.repo.prepareIssueWorkspace(event.projectId, event.id, project.http_url_to_repo, targetBranch, sourceBranch, signal),
+      (value) => ({ projectId: value.workspace.projectId, eventId: value.workspace.eventId, baseSha: value.baseSha, sourceBranch, targetBranch }),
     );
     let prepared = await prepareBranch(project.default_branch);
     let workspace = prepared.workspace;
     const cleanedWorkspaces = new Set<string>();
-    const trace: JobTraceContext = {
-      jobId: job.id,
-      attempt: job.attemptCount,
-      taskType: job.type,
+    const trace: EventTraceContext = {
+      scope: { kind: "event", eventId: event.id },
+      attempt: event.attemptCount,
+      taskType: event.type,
       workspace,
       issue: {
-        projectId: job.projectId,
-        issueIid: job.targetIid,
+        projectId: event.projectId,
+        issueIid: event.targetIid,
         sourceBranch,
         targetBranch: project.default_branch,
         repositoryUrl: project.http_url_to_repo,
@@ -882,7 +760,7 @@ export class Worker {
         this.store,
         stepContext,
         "git.cleanup_workspace",
-        { projectId: target.projectId, jobId: target.jobId, sourceBranch: issueSourceBranch },
+        { projectId: target.projectId, eventId: target.eventId, sourceBranch: issueSourceBranch },
         () => this.repo.cleanupWorkspace(target, undefined, issueSourceBranch),
         () => ({ cleaned: true }),
       );
@@ -898,9 +776,9 @@ export class Worker {
             this.store,
             stepContext,
             "workflow.issue_decision",
-            { issueIid: issue.iid, baseSha: prepared.baseSha, request: job.request, commentCount: comments.length },
+            { issueIid: issue.iid, baseSha: prepared.baseSha, request: event.request, commentCount: comments.length },
             () => this.implementer.implement({
-              projectId: job.projectId,
+              projectId: event.projectId,
               issueIid: issue.iid,
               title: issue.title,
               description: issue.description,
@@ -909,7 +787,7 @@ export class Worker {
               baseSha: prepared.baseSha,
               comments,
               implementationEnabled: this.config.issue.implementEnabled,
-            }, job.request, workspace.path, signal, trace),
+            }, event.request, workspace.path, signal, trace),
             (value) => value.action === "reply"
               ? { action: value.action, model: value.model, usage: value.usage, replyCharacters: [...value.reply].length }
               : { action: value.action, model: value.model, usage: value.usage, summaryCharacters: [...value.summary].length, patchBytes: Buffer.byteLength(value.patch), targetBranch: value.targetBranch ?? "" },
@@ -927,8 +805,8 @@ export class Worker {
           this.store,
           stepContext,
           "gitlab.post_issue_reply",
-          { projectId: job.projectId, issueIid: job.targetIid, bodyCharacters: [...body].length },
-          () => this.gitlab.postIssueNote(job.projectId, job.targetIid, body, signal),
+          { projectId: event.projectId, issueIid: event.targetIid, bodyCharacters: [...body].length },
+          () => this.gitlab.postIssueNote(event.projectId, event.targetIid, body, signal),
           (receipt) => receipt,
           (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
         );
@@ -994,8 +872,8 @@ export class Worker {
         this.store,
         stepContext,
         "gitlab.verify_issue_open",
-        { projectId: job.projectId, issueIid: job.targetIid },
-        () => this.gitlab.getIssue(job.projectId, job.targetIid, signal),
+        { projectId: event.projectId, issueIid: event.targetIid },
+        () => this.gitlab.getIssue(event.projectId, event.targetIid, signal),
         (value) => ({ iid: value.iid, state: value.state }),
       );
       if (latestIssue.state !== "opened") {
@@ -1007,7 +885,7 @@ export class Worker {
         this.store,
         stepContext,
         "git.push_issue_branch",
-        { projectId: job.projectId, sourceBranch, targetBranch, sha: commit.sha },
+        { projectId: event.projectId, sourceBranch, targetBranch, sha: commit.sha },
         () => this.repo.pushIssueWorkspace(
           workspace,
           sourceBranch,
@@ -1024,8 +902,8 @@ export class Worker {
         this.store,
         stepContext,
         "gitlab.create_draft_merge_request",
-        { projectId: job.projectId, sourceBranch, targetBranch, sha: pushed.sha },
-        () => this.gitlab.createDraftMergeRequest(job.projectId, {
+        { projectId: event.projectId, sourceBranch, targetBranch, sha: pushed.sha },
+        () => this.gitlab.createDraftMergeRequest(event.projectId, {
           title: titlePrefix + [...issue.title.trim()].slice(0, Math.max(1, 248 - [...titlePrefix].length)).join(""),
           description: `Relates to issue #${issue.iid}.\n\n${outcome.summary}`,
           sourceBranch,
@@ -1039,13 +917,13 @@ export class Worker {
           this.store,
           stepContext,
           "gitlab.post_issue_result",
-          { projectId: job.projectId, issueIid: job.targetIid, mergeRequestIid: mr.iid },
-          () => this.gitlab.postIssueNote(job.projectId, job.targetIid, `Draft merge request created: ${mr.webUrl}`, signal),
+          { projectId: event.projectId, issueIid: event.targetIid, mergeRequestIid: mr.iid },
+          () => this.gitlab.postIssueNote(event.projectId, event.targetIid, `Draft merge request created: ${mr.webUrl}`, signal),
           (receipt) => receipt,
           (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
         );
       } catch (error) {
-        console.warn("Issue result note failed after draft merge request creation", { jobId: job.id, mergeRequestIid: mr.iid, error: errorMessage(error) });
+        console.warn("Issue result note failed after draft merge request creation", { eventId: event.id, mergeRequestIid: mr.iid, error: errorMessage(error) });
       }
       transition("completed");
     } finally {
@@ -1054,18 +932,18 @@ export class Worker {
   }
 
   private async executeFix(
-    job: Job,
+    event: Event,
     original: MergeRequest,
     workspace: Workspace,
     diff: DiffResult,
     context: ReviewContext,
     signal: AbortSignal,
-    transition: (status: JobStatus) => void,
+    transition: (status: EventStatus) => void,
     cleanup: () => Promise<void>,
   ): Promise<void> {
     transition("analyzing");
     transition("fixing");
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const stepContext = { eventId: event.id, attempt: event.attemptCount };
     const started = Date.now();
     let outcome;
     try {
@@ -1073,11 +951,11 @@ export class Worker {
         this.store,
         stepContext,
         "workflow.fix",
-        { request: job.request, changedFiles: diff.changes.map((change) => change.path) },
-        () => this.fixer.fix(context, job.request, diff, workspace.path, signal, {
-          jobId: job.id,
-          attempt: job.attemptCount,
-          taskType: job.type,
+        { request: event.request, changedFiles: diff.changes.map((change) => change.path) },
+        () => this.fixer.fix(context, event.request, diff, workspace.path, signal, {
+          scope: { kind: "event", eventId: event.id },
+          attempt: event.attemptCount,
+          taskType: event.type,
           workspace,
         }),
         (value) => ({
@@ -1125,10 +1003,10 @@ export class Worker {
         )
       : "";
     await cleanup();
-    if (!(await this.verifySnapshot(job, original, signal, transition))) return;
+    if (!(await this.verifySnapshot(event, original, signal, transition))) return;
     transition("publishing");
     const note = [
-      `## Corvex fix proposal for \`${job.headSha.slice(0, 12)}\``,
+      `## Corvex fix proposal for \`${event.headSha.slice(0, 12)}\``,
       "",
       escapeMarkdown(outcome.summary),
       finalPatch
@@ -1140,8 +1018,8 @@ export class Worker {
       this.store,
       stepContext,
       "gitlab.post_fix_proposal",
-      { projectId: job.projectId, mrIid: job.mrIid, body: note },
-      () => this.gitlab.postNote(job.projectId, job.mrIid, note, signal),
+      { projectId: event.projectId, mrIid: event.mrIid, body: note },
+      () => this.gitlab.postNote(event.projectId, event.mrIid, note, signal),
       (receipt) => receipt,
       (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
     );
@@ -1149,26 +1027,26 @@ export class Worker {
   }
 
   private async verifySnapshot(
-    job: Job,
+    event: Event,
     original: MergeRequest,
     signal: AbortSignal,
-    transition: (status: JobStatus) => void,
+    transition: (status: EventStatus) => void,
   ): Promise<boolean> {
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const stepContext = { eventId: event.id, attempt: event.attemptCount };
     const latest = await traceExecutionStep(
       this.store,
       stepContext,
       "gitlab.get_merge_request_for_snapshot",
-      { projectId: job.projectId, mrIid: job.mrIid, expectedHeadSha: job.headSha },
-      () => this.gitlab.getMergeRequest(job.projectId, job.mrIid, signal),
+      { projectId: event.projectId, mrIid: event.mrIid, expectedHeadSha: event.headSha },
+      () => this.gitlab.getMergeRequest(event.projectId, event.mrIid, signal),
       (value) => ({ state: value.state, sha: value.sha, diffRefs: value.diff_refs }),
     );
-    const current = sameSnapshot(original, latest, job.headSha);
-    this.store.recordExecutionEvent({
+    const current = sameSnapshot(original, latest, event.headSha);
+    this.store.recordExecutionStep({
       ...stepContext,
       step: "worker.verify_snapshot",
       status: current ? "succeeded" : "ignored",
-      input: { expectedHeadSha: job.headSha, original: original.diff_refs },
+      input: { expectedHeadSha: event.headSha, original: original.diff_refs },
       output: { current, latest: latest.diff_refs, latestState: latest.state },
     });
     if (!current) {
@@ -1179,19 +1057,19 @@ export class Worker {
   }
 
   private async verifyPushedHead(
-    job: Job,
+    event: Event,
     original: MergeRequest,
     pushedSha: string,
     signal: AbortSignal,
-    transition: (status: JobStatus) => void,
+    transition: (status: EventStatus) => void,
   ): Promise<boolean> {
-    const stepContext = { jobId: job.id, attempt: job.attemptCount };
+    const stepContext = { eventId: event.id, attempt: event.attemptCount };
     const latest = await traceExecutionStep(
       this.store,
       stepContext,
       "gitlab.get_merge_request_after_push",
-      { projectId: job.projectId, mrIid: job.mrIid, pushedSha },
-      () => this.gitlab.getMergeRequest(job.projectId, job.mrIid, signal),
+      { projectId: event.projectId, mrIid: event.mrIid, pushedSha },
+      () => this.gitlab.getMergeRequest(event.projectId, event.mrIid, signal),
       (value) => ({ state: value.state, sha: value.sha, diffRefs: value.diff_refs }),
     );
     // GitLab 重算 MR diff refs 有延迟：diff_refs.head_sha 可能尚未更新为刚推送的
@@ -1201,7 +1079,7 @@ export class Worker {
       (sameSha(latest.diff_refs.head_sha, pushedSha) || sameSha(latest.sha, pushedSha)) &&
       sameSha(original.diff_refs.base_sha, latest.diff_refs.base_sha) &&
       sameSha(original.diff_refs.start_sha, latest.diff_refs.start_sha);
-    this.store.recordExecutionEvent({
+    this.store.recordExecutionStep({
       ...stepContext,
       step: "worker.verify_pushed_head",
       status: current ? "succeeded" : "ignored",
@@ -1234,16 +1112,16 @@ function sameSnapshot(original: MergeRequest, latest: MergeRequest, expectedHead
   );
 }
 
-function createReviewContext(job: Job, mr: MergeRequest, baseSha: string): ReviewContext {
+function createReviewContext(event: Event, mr: MergeRequest, baseSha: string): ReviewContext {
   return {
-    projectId: job.projectId,
-    mrIid: job.mrIid,
+    projectId: event.projectId,
+    mrIid: event.mrIid,
     title: mr.title,
     description: mr.description ?? "",
     sourceBranch: mr.source_branch,
     targetBranch: mr.target_branch,
     baseSha,
-    headSha: job.headSha,
+    headSha: event.headSha,
   };
 }
 
@@ -1257,13 +1135,13 @@ function formatFinding(finding: Finding): string {
 }
 
 function formatReview(
-  job: Job,
+  event: Event,
   summary: string,
   findings: Finding[],
   inlinePosted: number,
 ): string {
   const lines = [
-    `## Corvex review for \`${job.headSha.slice(0, 12)}\``,
+    `## Corvex review for \`${event.headSha.slice(0, 12)}\``,
     "",
     escapeMarkdown(summary),
     "",

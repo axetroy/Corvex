@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { maxAgentUserPromptBytes, type JobTraceContext, type PiAgent } from "../../src/agent/pi.js";
+import { maxAgentUserPromptBytes, type EventTraceContext, type PiAgent } from "../../src/agent/pi.js";
 import { getPromptTemplates } from "../../src/agent/prompts.js";
 import { FixWorkflow, parseFixResponse } from "../../src/fix/workflow.js";
 import type { DiffResult } from "../../src/git/types.js";
-import type { JobTraceEntry } from "../../src/jobs/model.js";
+import type { EventTraceEntry } from "../../src/events/model.js";
 import { parseAndValidateReview, ReviewWorkflow } from "../../src/review/workflow.js";
 
 const diff: DiffResult = {
@@ -22,9 +22,9 @@ const diff: DiffResult = {
   ],
 };
 
-const reviewTrace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+const reviewTrace: EventTraceContext = { eventId: "event-1", attempt: 1, taskType: "review" };
 
-function completeFileRead(path: string): JobTraceEntry {
+function completeFileRead(path: string): EventTraceEntry {
   return {
     id: 1,
     attempt: 1,
@@ -535,7 +535,7 @@ describe("review and fix response validation", () => {
       baseSha: diff.baseSha,
       headSha: diff.headSha,
     };
-    const trace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+    const trace: EventTraceContext = { eventId: "event-1", attempt: 1, taskType: "review" };
 
     await expect(workflow.review(context, diff, process.cwd(), undefined, trace)).rejects.toThrow(
       "review coverage is incomplete",
@@ -971,7 +971,7 @@ describe("review and fix response validation", () => {
   });
 
   it("accepts an empty review after contiguous ranges cover every changed file", async () => {
-    const traces: JobTraceEntry[] = [];
+    const traces: EventTraceEntry[] = [];
     const response = {
       content: JSON.stringify({ summary: "Review complete", findings: [] }),
       model: "test/model",
@@ -980,7 +980,7 @@ describe("review and fix response validation", () => {
     const generate = vi.fn<PiAgent["generate"]>()
       .mockResolvedValueOnce(response)
       .mockImplementationOnce(async () => {
-        const createReadTrace = (id: number, startLine: number, text: string): JobTraceEntry => ({
+        const createReadTrace = (id: number, startLine: number, text: string): EventTraceEntry => ({
           id,
           attempt: 1,
           round: id,
@@ -1020,7 +1020,7 @@ describe("review and fix response validation", () => {
       baseSha: diff.baseSha,
       headSha: diff.headSha,
     };
-    const trace: JobTraceContext = { jobId: "job-1", attempt: 1, taskType: "review" };
+    const trace: EventTraceContext = { eventId: "event-1", attempt: 1, taskType: "review" };
 
     const outcome = await workflow.review(context, diff, process.cwd(), undefined, trace);
 

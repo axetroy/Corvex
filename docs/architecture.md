@@ -4,15 +4,15 @@
 
 Corvex separates the request path from model and repository work:
 
-1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events and jobs in SQLite, and replies to GitLab. The operations console discovers projects and branches through the configured GitLab read token.
-2. **SQLite** is the durable queue and state store. It records jobs, webhook idempotency/delivery, attempts, audit events, persistent conversation messages, model call metrics, and optional daily token reservations.
-3. **Worker** polls the database, claims a job under a renewable lease, records heartbeats for operations monitoring, fetches the merge request head or conversation branch snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`.
+1. **Server** exposes a GitLab Note Hook and authenticated operations endpoints. It verifies webhook secrets, applies the optional user blocklist, records events in SQLite, and replies to GitLab. The operations console discovers projects and branches through the configured GitLab read token.
+2. **SQLite** is the durable queue and state store. It records events, webhook idempotency/delivery, attempts, audit events, conversations and their messages/turns, model call metrics, and optional daily token reservations.
+3. **Worker** polls the database, claims an event under a renewable lease, records heartbeats for operations monitoring, fetches the merge request head or Issue snapshot and repository, and runs the requested workflow. A worker requires `agent.enabled: true`. Conversation turns are not events and are executed inline by the Server instead.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
-5. **OpenAI-compatible model API** is called only by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks.
+5. **OpenAI-compatible model API** is called by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks, and by the Server for inline conversation turns.
 
 GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
 
-Worker jobs also persist retries for transient HTTP/network failures and job timeouts before publishing. The delay starts at 2 seconds, doubles per attempt, and is capped at 30 seconds; the three-attempt job limit still applies. Authentication, validation, cancellation, stale snapshots, and publishing failures are not automatically retried.
+Worker events also persist retries for transient HTTP/network failures and event timeouts before publishing. The delay starts at 2 seconds, doubles per attempt, and is capped at 30 seconds; the three-attempt event limit still applies. Authentication, validation, cancellation, stale snapshots, and publishing failures are not automatically retried.
 
 The server can run without a worker: commands are accepted and persisted, but model tasks remain queued. In a split deployment the server and worker must use the same SQLite database and persistent Git storage root.
 
@@ -21,15 +21,15 @@ The server can run without a worker: commands are accepted and persisted, but mo
 1. GitLab sends a `Note Hook` to `POST /webhooks/gitlab`.
 2. The server compares `X-Gitlab-Token` to the configured webhook secret using a constant-time comparison. It accepts merge-request and Issue notes, limits the body to 1 MiB, and ignores system notes.
 3. User IDs on `gitlab.blocked_user_ids` are rejected. Any other commenter on a project configured with the shared webhook secret can invoke a slash command or send plain text addressed to `@<gitlab.bot_username>`; register webhooks only where commands are intended.
-4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) job are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
+4. Supported commands are parsed. The event, response-delivery state, audit event, and (for asynchronous work) the event itself are written transactionally to SQLite. Duplicate webhook deliveries are idempotent.
 5. The server posts an immediate acknowledgement or validation response to the MR using the GitLab write token. Model inference does not run in the webhook request.
-6. A worker claims queued review, explain, chat, fix, or implement jobs in creation order. It updates job status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
+6. A worker claims queued review, explain, chat, fix, or implement events in creation order. It updates event status and attempt records while holding a renewable 30-second lease, and refreshes its heartbeat while idle and processing work.
 
 The currently supported commands are `/review`, `/explain <path>`, `/fix [request]`, `/status`, and `/cancel` on MRs. Plain text after the bot mention starts a chat about the current MR or an assistant task on an Issue. Issue tasks include recent non-system comments and let the model reply, ask for clarification, or propose implementation. Code writes require `issue.implement_enabled: true`; `/implement [request]` remains available as an explicit implementation request. See [Getting started](./guide) for examples.
 
 ## Persistent conversations
 
-The authenticated operations console uses the GitLab read token to search all visible projects and their branches. A conversation is a general chat bound to one repository branch; the server resolves and pins the branch head SHA when a turn is queued, and turns and assistant replies are persisted in SQLite and serialized per conversation. Each assistant reply is a `conversation` job and therefore keeps its own trajectory and execution records; the console reads them per turn through `GET /api/ops/conversations/<id>/turns/<jobId>`, which verifies the job belongs to that conversation, and aggregates usage and timing through `GET /api/ops/conversations/<id>/stats`. Conversations are the console's primary object: the page fills the viewport with a conversation sidebar and a workspace whose **Chat**, **Trace**, and **Stats** tabs show the transcript, a selected turn's trace, and the conversation totals. The conversation worker uses read-only repository tools and does not publish to GitLab. If the branch moves before a queued turn starts, that turn ends as `stale` instead of answering from a mismatched snapshot.
+The authenticated operations console uses the GitLab read token to search all visible projects and their branches. A conversation is a general chat bound to one repository branch; the server resolves and pins the branch head SHA when a turn is queued, and turns and assistant replies are persisted in SQLite and serialized per conversation. Conversations live in their own tables (`conversations`, `conversation_messages`, `conversation_turns`) and never enter the event queue: the Server executes each turn inline through `ConversationRunner`, so a conversation turn is not an event and does not appear in the events list. Each turn still keeps its own trajectory and execution records, stored against its `turn_id`; the console reads them per turn through `GET /api/ops/conversations/<id>/turns/<turnId>`, which verifies the turn belongs to that conversation, and aggregates usage and timing through `GET /api/ops/conversations/<id>/stats`. Conversations are the console's primary object: the page fills the viewport with a conversation sidebar and a workspace whose **Chat**, **Trace**, and **Stats** tabs show the transcript (including each assistant reply's tool calls), a selected turn's trace, and the conversation totals. Inline execution uses read-only repository tools and does not publish to GitLab; it runs in the Server process today and can later move to a container without changing this contract. If the branch moves before a queued turn starts, that turn ends as `stale` instead of answering from a mismatched snapshot.
 
 ## Review workflow
 
@@ -37,7 +37,7 @@ The authenticated operations console uses the GitLab read token to search all vi
 2. Update or create a per-project Git mirror, then create an isolated detached worktree at the exact Head SHA. The worker obtains the diff against the MR Base SHA and enforces the configured file and byte limits. Files within `review.max_files` are reviewed in batches of at most 10 files, further reduced as needed to fit `review.max_context_bytes`.
 3. Send bounded MR metadata and each diff batch to the configured model endpoint. Corvex expects one structured JSON response per batch and aggregates usage and findings across the review.
 4. Validate each response before publishing: findings must refer to an exact changed path and added line, include evidence found literally on that line, use a supported severity, pass size limits, and not duplicate an existing finding fingerprint. Findings are deduplicated and capped across all batches by `review.max_findings`. Corvex checks successful file-read traces for every batch, including batches with findings, and makes one targeted follow-up for unread files. If files remain unread, valid findings are published with a partial-coverage warning; a review with no findings fails rather than claiming complete coverage. Files omitted by configured limits are also reported as partial coverage.
-5. Fetch the MR again. If its state or relevant diff SHAs changed while the model was running, mark the job stale and do not publish its result.
+5. Fetch the MR again. If its state or relevant diff SHAs changed while the model was running, mark the event stale and do not publish its result.
 6. Publish supported findings as line discussions. If GitLab rejects an inline position, include that finding in the summary note instead. Clean up the worktree.
 
 The model is not told that tests were run; Corvex does not execute project tests or repository scripts.
@@ -54,7 +54,7 @@ Fix mode does not execute tests, scripts, hooks, or other repository code. It do
 
 **Issue assistance** follows the optional user blocklist. Any ordinary bot mention on a project configured with the shared webhook secret queues an assistant task; the model receives the Issue and up to `issue.history_comments` recent non-system comments (default 20, range 0–50; comment context also has page and byte caps). It can reply or request clarification without publishing code. `issue.implement_enabled` is a separate, default-off write gate: when enabled, an explicit implementation request can produce a bounded unified diff. The project default branch is the target unless the current request explicitly names another existing branch; comments cannot authorize a branch change. The worker pins that target's base SHA, validates the patch (regular text files only; no traversal, Git metadata paths, symlink parents, binary content, renames, or mode changes), and rechecks the Issue and target SHA before pushing a new `corvex/issue-*` branch and creating a Draft MR. It never runs project scripts/tests, auto-merges, or closes the Issue. Publishing is not automatically retried when the remote outcome may be uncertain.
 
-## Job states, leases, retries, and cancellation
+## Event states, leases, retries, and cancellation
 
 The main lifecycle is:
 
@@ -63,15 +63,15 @@ queued -> preparing -> analyzing -> publishing -> completed
                               \-> fixing -> verifying -/
 ```
 
-Jobs can also end as `failed`, `stale`, or `cancelled`. The worker polls at `worker.poll_interval` and bounds a job with `worker.job_timeout`.
+Events can also end as `failed`, `stale`, or `cancelled`. The worker polls at `worker.poll_interval` and bounds an event with `worker.event_timeout`.
 
-The 30-second lease is renewed while a worker is active. If a process disappears before publishing, an expired lease can return the job to the queue; interrupted jobs have at most three attempts. Classified transient failures and job timeouts are also returned to the queue with persisted backoff. Other processing errors are recorded as failed. If a job fails during publishing or its lease expires there, the outcome may be uncertain, so Corvex does not automatically retry and risk duplicating comments.
+The 30-second lease is renewed while a worker is active. If a process disappears before publishing, an expired lease can return the event to the queue; interrupted events have at most three attempts. Classified transient failures and event timeouts are also returned to the queue with persisted backoff. Other processing errors are recorded as failed. If an event fails during publishing or its lease expires there, the outcome may be uncertain, so Corvex does not automatically retry and risk duplicating comments.
 
 `@<gitlab.bot_username> /status` reports the latest task on the MR. `@<gitlab.bot_username> /cancel` immediately cancels a queued task or asks the worker to stop an active task. Only the task requester can cancel it. Cancellation is not available after the task has entered publishing, where GitLab may already have accepted a comment.
 
 ## Persistence and retention
 
-SQLite uses WAL mode, a single open connection, and a 5-second busy timeout. Keep the database on persistent writable storage. Daily cleanup removes old terminal jobs, their attempts, webhook event records, and token usage according to `storage.retention_days`; audit records use `storage.audit_retention_days`. Queued and in-progress jobs are retained. Git mirrors and worktrees are stored separately under `storage.root` and require their own capacity monitoring.
+SQLite uses WAL mode, a single open connection, and a 5-second busy timeout. Keep the database on persistent writable storage. Daily cleanup removes old terminal events, their attempts, webhook event records, and token usage according to `storage.retention_days`; audit records use `storage.audit_retention_days`. Queued and in-progress events are retained. Git mirrors and worktrees are stored separately under `storage.root` and require their own capacity monitoring.
 
 ## Security boundaries and limitations
 

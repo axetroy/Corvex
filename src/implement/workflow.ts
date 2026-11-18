@@ -1,5 +1,5 @@
 import { getPromptTemplates } from "../agent/prompts.js";
-import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import { isRecord } from "../guards.js";
 import type { IssueComment } from "../gitlab/client.js";
@@ -113,7 +113,7 @@ export class ImplementWorkflow {
     request: string,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<ImplementationOutcome> {
     if (context.projectId <= 0 || context.issueIid <= 0 || !context.defaultBranch || !context.baseSha) {
       throw new Error("Issue identity, target branch, and exact base SHA are required");

@@ -86,7 +86,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [selectedConversationId, setSelectedConversationId] = useState(conversationId);
   const selectedConversationIdRef = useRef(conversationId);
   const [conversation, setConversation] = useState<Conversation>();
-  const pendingReplyJobs = useRef(new Map<string, string>());
+  const pendingReplyTurns = useRef(new Map<string, string>());
   const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
@@ -138,9 +138,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       .then((value) => {
         if (!active) return;
         setConversation(value);
-        const pendingJobId = pendingReplyJobs.current.get(value.id);
-        if (pendingJobId && value.messages.some((message) => message.jobId === pendingJobId)) {
-          pendingReplyJobs.current.delete(value.id);
+        const pendingTurnId = pendingReplyTurns.current.get(value.id);
+        if (pendingTurnId && value.messages.some((message) => message.turnId === pendingTurnId)) {
+          pendingReplyTurns.current.delete(value.id);
           setPendingReplyConversations((current) => {
             const next = new Set(current);
             next.delete(value.id);
@@ -228,7 +228,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       if (!result.ok) {
         if (result.status === 409) {
           const body = await result.json() as { error?: unknown };
-          if (body.error === "chat conversation already has an active message") {
+          if (body.error === "conversation already has an active turn") {
             throw new Error(copy.conversationTurnActive);
           }
           throw new Error(copy.targetChanged);
@@ -237,8 +237,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      const queued = await result.json() as { jobId: string };
-      pendingReplyJobs.current.set(replyConversationId, queued.jobId);
+      const queued = await result.json() as { turnId: string };
+      pendingReplyTurns.current.set(replyConversationId, queued.turnId);
       setPendingReplyConversations((current) => new Set(current).add(replyConversationId));
       if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
       setPollToken((value) => value + 1);

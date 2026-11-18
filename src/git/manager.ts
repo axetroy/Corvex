@@ -18,8 +18,8 @@ const maxWorkspaceDiffBytes = 32 << 10;
 const maxPatchBytes = 256 << 10;
 /** Git commit 对象的完整 SHA-1 或 SHA-256 十六进制格式。 */
 const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
-/** 可安全用作工作区目录名的任务 ID 格式，并限制其最大长度。 */
-const jobIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+/** 可安全用作工作区目录名的事件 ID 格式，并限制其最大长度。 */
+const eventIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
 interface GitResult {
   stdout: Buffer;
@@ -115,7 +115,7 @@ export class GitManager {
   }
 
   async cleanupStorage(
-    activeJobIds: ReadonlySet<string>,
+    activeEventIds: ReadonlySet<string>,
     protectedProjectIds: ReadonlySet<number>,
     olderThan: Date,
     apply = false,
@@ -139,9 +139,9 @@ export class GitManager {
       if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) {
         throw new Error(`project workspace path "${projectRoot}" is not a regular directory`);
       }
-      for (const jobId of await readdir(projectRoot)) {
-        if (!jobIdPattern.test(jobId) || activeJobIds.has(jobId)) continue;
-        const workspacePath = join(projectRoot, jobId);
+      for (const eventId of await readdir(projectRoot)) {
+        if (!eventIdPattern.test(eventId) || activeEventIds.has(eventId)) continue;
+        const workspacePath = join(projectRoot, eventId);
         const info = await lstat(workspacePath);
         if (info.isSymbolicLink()) {
           throw new Error(`managed workspace "${workspacePath}" must not be a symbolic link`);
@@ -196,13 +196,13 @@ export class GitManager {
 
   async prepareWorkspace(
     projectId: number,
-    jobId: string,
+    eventId: string,
     repositoryUrl: string,
     expectedSha: string,
     signal?: AbortSignal,
   ): Promise<Workspace> {
     if (projectId <= 0) throw new Error("project ID must be positive");
-    if (!jobIdPattern.test(jobId)) throw new Error("job ID contains invalid path characters");
+    if (!eventIdPattern.test(eventId)) throw new Error("event ID contains invalid path characters");
     if (!shaPattern.test(expectedSha)) {
       throw new Error("expected commit SHA must be a full 40- or 64-character hexadecimal SHA");
     }
@@ -223,10 +223,10 @@ export class GitManager {
       if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
         throw new Error("project workspace path is not a regular directory");
       }
-      const workspacePath = join(projectRoot, jobId);
+      const workspacePath = join(projectRoot, eventId);
       try {
         await lstat(workspacePath);
-        throw new Error(`workspace "${jobId}" already exists`);
+        throw new Error(`workspace "${eventId}" already exists`);
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
@@ -236,20 +236,20 @@ export class GitManager {
         await this.removeWorktree(mirror, workspacePath);
         throw new Error(`workspace HEAD mismatch: got ${actual}, expected ${expectedSha}`);
       }
-      return { projectId, jobId, path: workspacePath, headSha: expectedSha };
+      return { projectId, eventId, path: workspacePath, headSha: expectedSha };
     });
   }
 
   async prepareIssueWorkspace(
     projectId: number,
-    jobId: string,
+    eventId: string,
     repositoryUrl: string,
     targetBranch: string,
     sourceBranch: string,
     signal?: AbortSignal,
   ): Promise<{ workspace: Workspace; baseSha: string }> {
     if (projectId <= 0) throw new Error("project ID must be positive");
-    if (!jobIdPattern.test(jobId)) throw new Error("job ID contains invalid path characters");
+    if (!eventIdPattern.test(eventId)) throw new Error("event ID contains invalid path characters");
     const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
     return this.withProjectLock(projectId, async () => {
       const mirror = join(this.mirrorRoot, `${projectId}.git`);
@@ -275,10 +275,10 @@ export class GitManager {
       if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
         throw new Error("project workspace path is not a regular directory");
       }
-      const workspacePath = join(projectRoot, jobId);
+      const workspacePath = join(projectRoot, eventId);
       try {
         await lstat(workspacePath);
-        throw new Error(`workspace "${jobId}" already exists`);
+        throw new Error(`workspace "${eventId}" already exists`);
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
@@ -293,18 +293,18 @@ export class GitManager {
         await this.removeWorktree(mirror, workspacePath);
         throw error;
       }
-      return { workspace: { projectId, jobId, path: workspacePath, headSha: baseSha }, baseSha };
+      return { workspace: { projectId, eventId, path: workspacePath, headSha: baseSha }, baseSha };
     });
   }
 
   async cleanupWorkspace(workspace: Workspace, signal?: AbortSignal, issueSourceBranch?: string): Promise<void> {
-    if (workspace.projectId <= 0 || !jobIdPattern.test(workspace.jobId)) {
+    if (workspace.projectId <= 0 || !eventIdPattern.test(workspace.eventId)) {
       throw new Error("invalid workspace identity");
     }
     if (issueSourceBranch && !issueSourceBranch.startsWith("corvex/issue-")) {
       throw new Error("invalid Issue source branch");
     }
-    const expectedPath = join(this.workspaceRoot, String(workspace.projectId), workspace.jobId);
+    const expectedPath = join(this.workspaceRoot, String(workspace.projectId), workspace.eventId);
     if (resolve(workspace.path) !== resolve(expectedPath)) {
       throw new Error("workspace path does not match its managed location");
     }
@@ -1086,10 +1086,10 @@ export class GitManager {
   }
 
   private validateWorkspace(workspace: Workspace): void {
-    if (workspace.projectId <= 0 || !jobIdPattern.test(workspace.jobId) || !shaPattern.test(workspace.headSha)) {
+    if (workspace.projectId <= 0 || !eventIdPattern.test(workspace.eventId) || !shaPattern.test(workspace.headSha)) {
       throw new Error("invalid workspace identity");
     }
-    const expected = join(this.workspaceRoot, String(workspace.projectId), workspace.jobId);
+    const expected = join(this.workspaceRoot, String(workspace.projectId), workspace.eventId);
     if (resolve(workspace.path) !== resolve(expected)) throw new Error("workspace path does not match its managed location");
   }
 

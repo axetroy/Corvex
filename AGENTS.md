@@ -6,12 +6,12 @@ Guidance for coding agents working in this repository. Read `design.md` before m
 
 Corvex is a self-hosted GitLab code review and repair agent. It is a single TypeScript application with two process modes that share one SQLite database and one Git storage root:
 
-- `server`: receives GitLab Note Hooks, verifies them, applies the optional user blocklist, parses commands and creates idempotent jobs; the authenticated ops console discovers projects visible to its read token.
-- `worker`: claims a job lease, pins the merge-request head SHA, prepares a detached Git worktree, runs one Pi SDK session for that job, validates the output, optionally checks a patch, and publishes notes back to GitLab.
+- `server`: receives GitLab Note Hooks, verifies them, applies the optional user blocklist, parses commands and creates idempotent events; it also executes conversation turns inline through `ConversationRunner` (never through the worker). The authenticated ops console discovers projects visible to its read token.
+- `worker`: claims an event lease, pins the merge-request head SHA, prepares a detached Git worktree, runs one Pi SDK session for that event, validates the output, optionally checks a patch, and publishes notes back to GitLab.
 
-The agent runtime is `@earendil-works/pi-coding-agent` (Pi SDK). Pi runs the model loop, tools and skills; Corvex owns authorization, job state, validation and publishing. Supported jobs: `review`, `chat`, `explain`, `fix` (proposal only, never committed or pushed), `implement` (Issue assistant; may open a Draft MR, never merges), and persistent read-only `conversation` turns initiated in the ops console.
+The agent runtime is `@earendil-works/pi-coding-agent` (Pi SDK). Pi runs the model loop, tools and skills; Corvex owns authorization, event state, validation and publishing. Supported events: `review`, `chat`, `explain`, `fix` (proposal only, never committed or pushed), `implement` (Issue assistant; may open a Draft MR, never merges). Persistent read-only `conversation` turns initiated in the ops console are not events: they live in their own `conversations` / `conversation_messages` / `conversation_turns` tables and run inline in the Server.
 
-Conversations are the ops console's primary object: a conversation binds one repository branch and each turn is a `conversation` job, so every turn keeps its own trajectory (`job_trace`) and execution records. The console opens on Conversations and reads a single turn's records through `GET /api/ops/conversations/:id/turns/:jobId`; the store verifies the job belongs to that conversation. Trajectory data stays redacted and size-capped in `src/jobs/store.ts`.
+Conversations are the ops console's primary object: a conversation binds one repository branch and each turn keeps its own trajectory (`event_trace` keyed by `turn_id`) and execution records. The console opens on Conversations, renders each assistant reply's tool calls in the Chat tab through `ConversationToolCalls`, and reads a single turn's records through `GET /api/ops/conversations/:id/turns/:turnId`; the store verifies the turn belongs to that conversation. Trajectory data stays redacted and size-capped in `src/events/store.ts`.
 
 ## Environment
 
@@ -38,7 +38,7 @@ CLI entry points (`node dist/cli.js ...`, or `pnpm start -- ...`):
 
 - `init --config <path>` writes a config template; `check-config --config <path> [--for server|worker]` validates per role.
 - `server` / `worker` start a mode.
-- `jobs list [--status <status>] [--limit n] --database <path>`, `jobs retry <job-id> --database <path>`.
+- `events list [--status <status>] [--limit n] --database <path>`, `events retry <event-id> --database <path>`.
 - `backup --database <path> --output <new-path>`; `storage cleanup [--older-than-days n] [--apply]` (dry run unless `--apply`).
 
 `Makefile` targets (`build`, `test`, `lint`, `typecheck`, `run`, `init`, `config-check`, `deploy`, `deploy-worker`) are thin wrappers around the same commands.
@@ -48,14 +48,14 @@ Before finishing a change, run `pnpm run lint`, `pnpm run typecheck` and `pnpm t
 ## Layout
 
 ```text
-src/cli.ts          argument parsing and process wiring (init/backup/jobs/storage/server/worker)
+src/cli.ts          argument parsing and process wiring (init/backup/events/storage/server/worker)
 src/config/         YAML loading, role-based validation, defaults
-src/app/            HTTP server, worker loop, leases/retries, readiness, metrics, ops console
+src/app/            HTTP server, inline conversation runner, worker loop, leases/retries, readiness, metrics, ops console
 src/app/ui/         React operations console, bundled by Vite into dist/app/ui and served under /ops
-src/jobs/           SQLite schema + migrations, job store, state machine, trace/metrics persistence
+src/events/         SQLite schema + migrations, event/conversation store, state machine, trace/metrics persistence
 src/gitlab/         webhook verification/parsing, command parsing, REST client
 src/git/            mirror clones, detached worktrees, diffs, path and patch checks
-src/agent/          Pi session factory, prompts, and the narrow per-job tools
+src/agent/          Pi session factory, prompts, and the narrow per-event/conversation tools
 src/review/         review workflow, finding validation, benchmark support
 src/fix/            fix-proposal workflow
 src/implement/      Issue assistant / Draft MR workflow
@@ -71,19 +71,19 @@ test/fixtures/      config fixtures used by CI docker smoke
 - Prefer Node built-ins (`node:fs/promises`, `node:crypto`, `node:sqlite`, `node:http`, `node:timers/promises`) and standard `fetch`. New runtime dependencies are an architecture decision: justify them in `design.md` and keep the dependency set minimal.
 - Source comments and JSDoc are written in Chinese; keep that convention and keep them true. Identifiers and user-visible log keys are English.
 - User-visible text follows the configured `agent.response_language` (`en` or `zh-CN`). Docs are bilingual: `docs/<page>.md` plus `docs/zh-CN/<page>.md`, and `README.md` plus `README.zh_CN.md`, with navigation in `docs/.vitepress/config.mts`. Update both languages when behavior, config, or operations change.
-- No secrets in code, configs, fixtures, logs, prompts or trace payloads. Trace data is redacted and size-capped in `src/jobs/store.ts`; do not bypass that path.
+- No secrets in code, configs, fixtures, logs, prompts or trace payloads. Trace data is redacted and size-capped in `src/events/store.ts`; do not bypass that path.
 
 ## Architecture and safety invariants
 
 These are deliberate constraints, not incidental behavior. Do not weaken them to make a change simpler.
 
 - Authorization lives in Corvex code: constant-time webhook secret comparison, request body limits, optional blocked-user checks, bot/system notes ignored, webhook events idempotent. Register webhooks only on projects where commands are intended; the ops console project scope is controlled by the GitLab read token, not a static allowlist. `fix` additionally requires `fix.enabled` (which requires `agent.enabled`); `implement` requires `issue.implement_enabled` (also gated on `agent.enabled`).
-- Every job records the MR head SHA and re-verifies that snapshot when fetching the diff, preparing the worktree and publishing. A stale snapshot ends in `stale`, not a partial publication.
-- The Pi session gets only the tools the job needs. No built-in `bash`, `edit` or `write` for review or fix jobs; custom tools confine paths to the task worktree and enforce byte limits themselves. Skills are instructions, never access control.
-- Conversation jobs pin their GitLab target SHA and expose read-only repository tools; they must not publish to GitLab or write to the worktree.
+- Every event records the MR head SHA and re-verifies that snapshot when fetching the diff, preparing the worktree and publishing. A stale snapshot ends in `stale`, not a partial publication.
+- The Pi session gets only the tools the task needs. No built-in `bash`, `edit` or `write` for review or fix events; custom tools confine paths to the task worktree and enforce byte limits themselves. Skills are instructions, never access control.
+- Conversation turns pin their GitLab target SHA and expose read-only repository tools; they must not publish to GitLab or write to the worktree.
 - Agent output is untrusted: findings must resolve to added diff lines; patches are limited to changed paths, size-capped, and checked with `git apply --check` and `git diff --check`. The agent never publishes directly — Corvex re-checks authorization, cancellation and revision before writing to GitLab.
 - Never execute repository code, scripts or tests. There is no shell executor by design; adding one requires a separate sandbox and authorization design.
-- Job state transitions are enforced in `JobStore` (`queued -> preparing -> analyzing -> [fixing -> verifying] -> publishing -> completed`, plus `failed`, `stale`, `cancelled`). Leases are renewed while a job runs; publishing failures are not retried automatically because the GitLab outcome may be uncertain.
+- Event state transitions are enforced in `EventStore` (`queued -> preparing -> analyzing -> [fixing -> verifying] -> publishing -> completed`, plus `failed`, `stale`, `cancelled`). Leases are renewed while an event runs; publishing failures are not retried automatically because the GitLab outcome may be uncertain. Conversation turns follow their own `queued -> running -> completed` lifecycle and never publish.
 - Configuration is validated per role: `server` needs no model key, `worker` needs no webhook secret, `storage` commands need only storage settings.
 
 ## Tests

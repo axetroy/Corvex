@@ -8,7 +8,7 @@ import {
   calculateGenerationTokensPerSecond,
   reconstructLlmInput,
 } from "../trace.js";
-import type { JobTraceEntry, JobTraceKind } from "../types.js";
+import type { EventTraceEntry, EventTraceKind } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
 
 type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing";
@@ -34,8 +34,8 @@ function InspectorContent({
   locale,
 }: {
   tab: InspectorTab;
-  selected: readonly JobTraceEntry[];
-  traces: readonly JobTraceEntry[];
+  selected: readonly EventTraceEntry[];
+  traces: readonly EventTraceEntry[];
   copy: Copy;
   locale: Locale;
 }) {
@@ -155,13 +155,13 @@ function InspectorContent({
 
 /** 时间轴上每条轨迹的横向位置比例。 */
 interface TracePosition {
-  entry: JobTraceEntry;
+  entry: EventTraceEntry;
   startRatio: number;
   widthRatio: number;
 }
 
 interface DiagramProps {
-  traces: readonly JobTraceEntry[];
+  traces: readonly EventTraceEntry[];
   copy: Copy;
   locale: Locale;
   selection: ReadonlySet<number>;
@@ -171,9 +171,9 @@ interface DiagramProps {
 /** 轨迹视图：时间轴概览、活动列表与事件详情面板。 */
 export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, selection, onSelectionChange }: DiagramProps) {
   const [zoom, setZoom] = useState(1);
-  const [drag, setDrag] = useState<{ start: number; current: number; kind: JobTraceKind }>();
+  const [drag, setDrag] = useState<{ start: number; current: number; kind: EventTraceKind }>();
   const [activeTab, setActiveTab] = useState<InspectorTab>("overview");
-  const plots = useRef<Partial<Record<JobTraceKind, HTMLDivElement | null>>>({});
+  const plots = useRef<Partial<Record<EventTraceKind, HTMLDivElement | null>>>({});
 
   // 时间轴几何只依赖轨迹内容：用 reduce 而非展开参数，避免超长轨迹触发参数上限。
   const { duration, basePlotWidth, positions } = useMemo(() => {
@@ -194,12 +194,12 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
   }, [traces]);
   const plotWidth = Math.round(basePlotWidth * zoom);
 
-  const plotLocalX = (event: ReactPointerEvent<HTMLDivElement>, kind: JobTraceKind): number => {
+  const plotLocalX = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind): number => {
     const plot = plots.current[kind];
     return plot ? event.clientX - plot.getBoundingClientRect().left : 0;
   };
 
-  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>, kind: JobTraceKind) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     const point = plotLocalX(event, kind);
     setDrag({ start: point, current: point, kind });
@@ -211,7 +211,7 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, copy, locale, s
     setDrag({ ...drag, current: plotLocalX(event, drag.kind) });
   };
 
-  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>, kind: JobTraceKind) => {
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>, kind: EventTraceKind) => {
     if (!drag || drag.kind !== kind) return;
     const endX = Math.max(0, Math.min(plotWidth, plotLocalX(event, kind)));
     const fromRatio = Math.min(drag.start, endX) / plotWidth;

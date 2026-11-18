@@ -2,32 +2,32 @@ import { useEffect, useState } from "react";
 import { Button, Input, Select } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate, formatDuration, formatJobTarget } from "../format.js";
+import { formatDate, formatDuration, formatEventTarget } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import { clampPageOffset, pageRange } from "../pagination.js";
-import { jobHash } from "../routing.js";
-import { calculateJobDurationSeconds } from "../time.js";
-import { jobTypes, pageSize, statuses } from "../types.js";
-import type { JobPageResponse, JobQueue } from "../types.js";
+import { eventHash } from "../routing.js";
+import { calculateEventDurationSeconds } from "../time.js";
+import { eventTypes, pageSize, statuses } from "../types.js";
+import type { EventPageResponse, EventQueue } from "../types.js";
 import { DataTable, Empty, ErrorBanner, Loading, PageHeading, StatusBadge } from "./common.js";
 
 interface Props {
   copy: Copy;
   locale: Locale;
-  queue: JobQueue;
+  queue: EventQueue;
   refreshToken: number;
-  onQueueChange: (queue: JobQueue) => void;
+  onQueueChange: (queue: EventQueue) => void;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
 }
 
-/** 任务列表页：按状态、类型与关键字筛选，并按固定页大小分页。 */
-export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onUpdated, onRefresh }: Props) {
+/** 事件列表页：按状态、类型与关键字筛选，并按固定页大小分页。 */
+export function EventsPage({ copy, locale, queue, refreshToken, onQueueChange, onUpdated, onRefresh }: Props) {
   const [status, setStatus] = useState(queue.status);
   const [type, setType] = useState(queue.type);
   const [search, setSearch] = useState(queue.search);
-  const [page, setPage] = useState<JobPageResponse>();
+  const [page, setPage] = useState<EventPageResponse>();
   const [error, setError] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,7 +44,7 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
     if (queue.search) params.set("search", queue.search);
     let active = true;
     setRefreshing(true);
-    fetchJson<JobPageResponse>(`/api/ops/jobs?${params}`, copy)
+    fetchJson<EventPageResponse>(`/api/ops/events?${params}`, copy)
       .then((response) => {
         if (!active) return;
         // 历史数据被保留策略清理后偏移可能越界，回到最后一页重新请求。
@@ -77,8 +77,8 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
     <>
       {error ? <ErrorBanner message={error} /> : null}
       <PageHeading
-        title={copy.jobsTitle}
-        description={copy.jobsDescription}
+        title={copy.eventsTitle}
+        description={copy.eventsDescription}
         actions={(
           <Button disabled={refreshing} aria-busy={refreshing} onClick={onRefresh}>
             {refreshing ? copy.refreshing : copy.refresh}
@@ -109,7 +109,7 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
             <Select
               value={type}
               onChange={setType}
-              options={[{ value: "", label: copy.allTypes }, ...jobTypes.map((value) => ({
+              options={[{ value: "", label: copy.allTypes }, ...eventTypes.map((value) => ({
                 value,
                 label: translate(copy.types, value),
               }))]}
@@ -128,30 +128,30 @@ export function JobsPage({ copy, locale, queue, refreshToken, onQueueChange, onU
           <Button type="primary" htmlType="submit">{copy.applyFilters}</Button>
         </form>
         {page.items.length === 0 ? (
-          <Empty>{copy.noMatchingJobs}</Empty>
+          <Empty>{copy.noMatchingEvents}</Empty>
         ) : (
           <DataTable
             headers={[
               copy.statusFilter,
               copy.typeFilter,
               copy.projectMr,
-              copy.jobId,
+              copy.eventId,
               copy.created,
               copy.age,
               copy.attempts,
               copy.updated,
             ]}
           >
-            {page.items.map((job) => (
-              <tr key={job.id}>
-                <td><StatusBadge status={job.status} label={translate(copy.statuses, job.status)} /></td>
-                <td>{translate(copy.types, job.type)}</td>
-                <td>{formatJobTarget(job, copy)}</td>
-                <td><a href={jobHash(job.id, queue)}>{job.id}</a></td>
-                <td>{formatDate(job.createdAt, copy, locale)}</td>
-                <td>{formatDuration(calculateJobDurationSeconds(job), copy)}</td>
-                <td>{job.attemptCount}</td>
-                <td>{formatDate(job.updatedAt, copy, locale)}</td>
+            {page.items.map((event) => (
+              <tr key={event.id}>
+                <td><StatusBadge status={event.status} label={translate(copy.statuses, event.status)} /></td>
+                <td>{translate(copy.types, event.type)}</td>
+                <td>{formatEventTarget(event, copy)}</td>
+                <td><a href={eventHash(event.id, queue)}>{event.id}</a></td>
+                <td>{formatDate(event.createdAt, copy, locale)}</td>
+                <td>{formatDuration(calculateEventDurationSeconds(event), copy)}</td>
+                <td>{event.attemptCount}</td>
+                <td>{formatDate(event.updatedAt, copy, locale)}</td>
               </tr>
             ))}
           </DataTable>

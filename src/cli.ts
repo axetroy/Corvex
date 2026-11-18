@@ -1,9 +1,9 @@
 import { initializeConfig, loadConfig, type ConfigRole } from "./config/config.js";
 import { CorvexServer } from "./app/server.js";
 import { Worker } from "./app/worker.js";
-import { JobStore } from "./jobs/store.js";
+import { EventStore } from "./events/store.js";
 import { errorMessage } from "./errors.js";
-import { isJobStatus, type JobStatus } from "./jobs/model.js";
+import { isEventStatus, type EventStatus } from "./events/model.js";
 import { GitLabClient } from "./gitlab/client.js";
 import { GitManager } from "./git/manager.js";
 
@@ -76,7 +76,7 @@ async function runBackup(args: string[]): Promise<void> {
   if (!database || !output) {
     throw new Error("usage: corvex backup --database <path> --output <new-path>");
   }
-  const store = await JobStore.open(database);
+  const store = await EventStore.open(database);
   try {
     await store.backup(output);
     console.info("SQLite backup created", { output });
@@ -85,15 +85,15 @@ async function runBackup(args: string[]): Promise<void> {
   }
 }
 
-async function runJobs(args: string[]): Promise<void> {
+async function runEvents(args: string[]): Promise<void> {
   const action = args[0];
   if (action !== "list" && action !== "retry") {
-    throw new Error("usage: corvex jobs [list|retry <job-id>] --database <path>");
+    throw new Error("usage: corvex events [list|retry <event-id>] --database <path>");
   }
-  const jobId = action === "retry" ? args[1] : undefined;
+  const eventId = action === "retry" ? args[1] : undefined;
   const optionStart = action === "retry" ? 2 : 1;
   let database = "";
-  let status: JobStatus | undefined;
+  let status: EventStatus | undefined;
   let limit = 50;
   for (let index = optionStart; index < args.length; index++) {
     const arg = args[index]!;
@@ -102,23 +102,23 @@ async function runJobs(args: string[]): Promise<void> {
     if (arg === "--database") {
       database = value;
     } else if (arg === "--status") {
-      if (!isJobStatus(value)) throw new Error(`unknown job status "${value}"`);
+      if (!isEventStatus(value)) throw new Error(`unknown event status "${value}"`);
       status = value;
     } else if (arg === "--limit") {
       limit = Number(value);
       if (!Number.isSafeInteger(limit)) throw new Error("--limit must be an integer");
     } else {
-      throw new Error(`unknown jobs option "${arg}"`);
+      throw new Error(`unknown events option "${arg}"`);
     }
   }
-  if (!database || (action === "retry" && !jobId)) {
-    throw new Error("usage: corvex jobs [list|retry <job-id>] --database <path>");
+  if (!database || (action === "retry" && !eventId)) {
+    throw new Error("usage: corvex events [list|retry <event-id>] --database <path>");
   }
-  const store = await JobStore.open(database);
+  const store = await EventStore.open(database);
   try {
     const result = action === "list"
-      ? store.listJobs(status, limit)
-      : store.retryFailedJob(jobId ?? "");
+      ? store.listEvents(status, limit)
+      : store.retryFailedEvent(eventId ?? "");
     console.info(JSON.stringify(result, null, 2));
   } finally {
     store.close();
@@ -149,7 +149,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
     }
   }
   const config = await loadConfig(configPath, "storage");
-  const store = await JobStore.open(config.storage.database);
+  const store = await EventStore.open(config.storage.database);
   try {
     const manager = new GitManager(
       config.storage.root,
@@ -157,7 +157,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
       config.gitlab.readToken,
     );
     const plan = await manager.cleanupStorage(
-      store.activeJobIds(),
+      store.activeEventIds(),
       store.pendingProjectIds(),
       new Date(Date.now() - olderThanDays * 24 * 60 * 60_000),
       apply,
@@ -180,8 +180,8 @@ async function run(): Promise<void> {
     await runBackup(args.slice(1));
     return;
   }
-  if (args[0] === "jobs") {
-    await runJobs(args.slice(1));
+  if (args[0] === "events") {
+    await runEvents(args.slice(1));
     return;
   }
   if (args[0] === "storage") {
@@ -197,7 +197,7 @@ async function run(): Promise<void> {
     console.info("Configuration is valid", { path: options.configPath });
     return;
   }
-  const store = await JobStore.open(config.storage.database);
+  const store = await EventStore.open(config.storage.database);
   const gitlab = new GitLabClient(
     config.gitlab.baseUrl,
     config.gitlab.readToken,

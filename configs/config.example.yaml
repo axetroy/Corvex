@@ -39,7 +39,7 @@ chat:
 
 worker:
   poll_interval: 2s
-  job_timeout: 130m
+  event_timeout: 130m
 
 fix:
   enabled: false

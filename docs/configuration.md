@@ -43,7 +43,7 @@ Credentials are mandatory environment variables:
 |---|---:|---|---|
 | `storage.root` | `./data/corvex` | Non-empty | Root for project mirrors and temporary worktrees. `CORVEX_STORAGE_ROOT` overrides it. |
 | `storage.database` | `./data/state/corvex.db` | Non-empty | SQLite database path. `CORVEX_DATABASE` overrides it. |
-| `storage.retention_days` | `90` | 1–36500 | Retention for terminal jobs, attempts, webhook records, and daily token usage. |
+| `storage.retention_days` | `90` | 1–36500 | Retention for terminal events, attempts, webhook records, and daily token usage. |
 | `storage.audit_retention_days` | `365` | 1–36500 | Retention for audit records. |
 
 Corvex creates the database parent directory, mirror directory, and workspace directory at startup. The process must have write access. Back up the database and Git storage separately.
@@ -91,9 +91,9 @@ Pi sessions do not expose built-in shell, edit, or write tools. The custom `read
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
 | `worker.poll_interval` | `2s` | Positive duration | Delay between polls when no task is available. |
-| `worker.job_timeout` | `30m` | Positive duration | Overall execution timeout for a claimed job. |
+| `worker.event_timeout` | `30m` | Positive duration | Overall execution timeout for a claimed event. |
 
-The job lease is currently fixed at 30 seconds and renewed during execution; it is not a YAML option.
+The event lease is currently fixed at 30 seconds and renewed during execution; it is not a YAML option.
 
 ## Fix proposals
 

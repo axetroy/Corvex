@@ -3,13 +3,14 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
-import { JobStore } from "../jobs/store.js";
-import { isJobStatus, isJobType } from "../jobs/model.js";
+import { EventStore } from "../events/store.js";
+import { isEventStatus, isEventType } from "../events/model.js";
 import { errorMessage } from "../errors.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
 import { GitLabApiError, GitLabClient, GitLabWriteError } from "../gitlab/client.js";
 import { decodeGitLabNoteEvent, isIssueNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
-import { traceExecutionStep } from "../jobs/execution.js";
+import { traceExecutionStep } from "../events/execution.js";
+import { ConversationRunner } from "./conversation-runner.js";
 
 const maxReviewRequestCharacters = 2000;
 const webhookDeliveryLeaseMs = 60_000;
@@ -101,7 +102,7 @@ function positiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
-function eventId(event: ReturnType<typeof decodeGitLabNoteEvent>): string {
+function webhookEventId(event: ReturnType<typeof decodeGitLabNoteEvent>): string {
   return `${event.project.id}:${event.object_attributes.id}`;
 }
 
@@ -120,12 +121,16 @@ function parseListenAddress(address: string): { host: string; port: number } {
 export class CorvexServer {
   private readonly server: Server;
   private readonly address: { host: string; port: number };
+  /** 对话轮次在 Server 进程内联执行，不进入 Worker 队列。 */
+  private readonly conversations: ConversationRunner;
+  private readonly conversationAbort = new AbortController();
 
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: JobStore,
+    private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
   ) {
+    this.conversations = new ConversationRunner(config, store, gitlab);
     this.address = parseListenAddress(config.server.listen);
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch((error: unknown) => {
@@ -135,6 +140,20 @@ export class CorvexServer {
       });
     });
     this.server.headersTimeout = config.server.readTimeout;
+  }
+
+  /**
+   * 在 Server 进程内联执行一轮对话；异常只记录日志，轮次状态由 store 落库。
+   * 关闭 `agent.enabled` 时保留排队轮次并给出告警，避免在没有模型配置时静默丢弃提问。
+   */
+  private startConversationTurn(turnId: string): void {
+    if (!this.config.agent.enabled) {
+      console.warn("conversation turn queued while the agent is disabled", { turnId });
+      return;
+    }
+    void this.conversations.runTurn(turnId, this.conversationAbort.signal).catch((error: unknown) => {
+      console.error("inline conversation turn failed", { turnId, error: errorMessage(error) });
+    });
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -148,8 +167,17 @@ export class CorvexServer {
     console.info("Corvex server listening", {
       address: `${this.address.host}:${this.address.port}`,
     });
+    // 对话轮次由本进程内联执行，没有跨进程队列；重启后把残留轮次显式标记失败，
+    // 避免界面永远停在「执行中」。
+    const interruptedTurns = this.store.recoverInterruptedConversationTurns();
+    if (interruptedTurns > 0) {
+      console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
+    }
     const retention = new AbortController();
-    const stopRetention = () => retention.abort();
+    const stopRetention = () => {
+      retention.abort();
+      this.conversationAbort.abort();
+    };
     const retentionTask = this.runRetention(retention.signal);
     signal.addEventListener("abort", stopRetention, { once: true });
     try {
@@ -189,17 +217,17 @@ export class CorvexServer {
     status: number,
     body: string,
     deliveryId: string,
-    eventId: string | null,
+    webhookEventId: string | null,
     details: Record<string, string | number | boolean> = {},
   ): void {
-    this.store.recordExecutionEvent({
+    this.store.recordExecutionStep({
       deliveryId,
-      eventId,
-      jobId: typeof details.jobId === "string" && details.jobId ? details.jobId : null,
+      webhookEventId,
+      eventId: typeof details.eventId === "string" && details.eventId ? details.eventId : null,
       step: "webhook.http_response",
       status: "succeeded",
       input: { status },
-      output: { status, body, reason: details.reason ?? null, jobId: details.jobId ?? null },
+      output: { status, body, reason: details.reason ?? null, eventId: details.eventId ?? null },
     });
     respondWebhook(response, status, body, details);
   }
@@ -339,6 +367,7 @@ export class CorvexServer {
           actorId: 0,
           request: message,
         });
+        this.startConversationTurn(created.turnId);
         respondJson(response, 202, created);
       } catch (error) {
         this.respondGitLabReadError(response, error);
@@ -360,22 +389,43 @@ export class CorvexServer {
       respondJson(response, 200, conversation);
       return;
     }
-    // 单轮对话记录：把该轮任务的状态、生命周期、轨迹与执行步骤一并返回，
-    // 供对话页「轨迹」标签查看某一轮的完整记录，无需跳到任务详情页。
+    // 单轮对话记录：把该轮的状态、生命周期、轨迹与执行步骤一并返回，
+    // 供对话页「轨迹」标签查看某一轮的完整记录，无需跳到事件详情页。
     const conversationTurnMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)$/.exec(url.pathname);
     if (request.method === "GET" && conversationTurnMatch) {
       const conversationId = this.decodePathSegment(conversationTurnMatch[1]!);
-      const jobId = this.decodePathSegment(conversationTurnMatch[2]!);
-      if (!conversationId || !jobId) {
+      const eventId = this.decodePathSegment(conversationTurnMatch[2]!);
+      if (!conversationId || !eventId) {
         respondJson(response, 400, { error: "invalid conversation turn ID" });
         return;
       }
-      const turn = this.store.getConversationTurn(conversationId, jobId);
+      const turn = this.store.getConversationTurn(conversationId, eventId);
       if (!turn) {
         respondJson(response, 404, { error: "conversation turn not found" });
         return;
       }
       respondJson(response, 200, turn);
+      return;
+    }
+    // 取消一轮正在内联执行的对话；已结束的轮次返回 409，由界面提示重新拉取。
+    const conversationTurnCancelMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)\/cancel$/.exec(url.pathname);
+    if (request.method === "POST" && conversationTurnCancelMatch) {
+      const conversationId = this.decodePathSegment(conversationTurnCancelMatch[1]!);
+      const turnId = this.decodePathSegment(conversationTurnCancelMatch[2]!);
+      if (!conversationId || !turnId) {
+        respondJson(response, 400, { error: "invalid conversation turn ID" });
+        return;
+      }
+      const turn = this.store.getConversationTurn(conversationId, turnId);
+      if (!turn) {
+        respondJson(response, 404, { error: "conversation turn not found" });
+        return;
+      }
+      if (!this.conversations.cancelTurn(turnId)) {
+        respondJson(response, 409, { error: "conversation turn is not running" });
+        return;
+      }
+      respondJson(response, 202, { conversationId, turnId, cancelled: true });
       return;
     }
     // 对话统计：把整个对话的用量与耗时汇总，以及逐轮明细，返回给「统计」标签。
@@ -418,9 +468,10 @@ export class CorvexServer {
           actorId: 0,
           request: message,
         });
-        respondJson(response, 202, { conversationId: conversation.id, jobId: queued.jobId });
+        this.startConversationTurn(queued.turnId);
+        respondJson(response, 202, { conversationId: conversation.id, turnId: queued.turnId });
       } catch (error) {
-        if (error instanceof Error && error.message.includes("active message")) {
+        if (error instanceof Error && error.message.includes("active turn")) {
           respondJson(response, 409, { error: error.message });
         } else {
           this.respondGitLabReadError(response, error);
@@ -450,12 +501,12 @@ export class CorvexServer {
       });
       return;
     }
-    if (url.pathname === "/api/ops/jobs") {
+    if (url.pathname === "/api/ops/events") {
       const params = url.searchParams;
       const statusValue = params.get("status");
       const typeValue = params.get("type");
-      const status = statusValue === null ? undefined : isJobStatus(statusValue) ? statusValue : false;
-      const type = typeValue === null ? undefined : isJobType(typeValue) ? typeValue : false;
+      const status = statusValue === null ? undefined : isEventStatus(statusValue) ? statusValue : false;
+      const type = typeValue === null ? undefined : isEventType(typeValue) ? typeValue : false;
       const projectId = optionalInteger(params.get("projectId"), 1, Number.MAX_SAFE_INTEGER);
       const mrIid = optionalInteger(params.get("mrIid"), 1, Number.MAX_SAFE_INTEGER);
       const limit = optionalInteger(params.get("limit"), 1, 100) ?? 25;
@@ -470,13 +521,13 @@ export class CorvexServer {
         offset === false ||
         (search?.trim().length ?? 0) > 100
       ) {
-        respondJson(response, 400, { error: "invalid job list filter" });
+        respondJson(response, 400, { error: "invalid event list filter" });
         return;
       }
       respondJson(
         response,
         200,
-        this.store.listOperationsJobs({
+        this.store.listOperationsEvents({
           status,
           type,
           projectId,
@@ -488,21 +539,21 @@ export class CorvexServer {
       );
       return;
     }
-    const jobMatch = /^\/api\/ops\/jobs\/([^/]+)$/.exec(url.pathname);
-    if (jobMatch) {
-      let jobId: string;
+    const eventMatch = /^\/api\/ops\/events\/([^/]+)$/.exec(url.pathname);
+    if (eventMatch) {
+      let eventId: string;
       try {
-        jobId = decodeURIComponent(jobMatch[1]!);
+        eventId = decodeURIComponent(eventMatch[1]!);
       } catch {
-        respondJson(response, 400, { error: "invalid job ID" });
+        respondJson(response, 400, { error: "invalid event ID" });
         return;
       }
-      const job = this.store.getJobDetails(jobId);
-      if (!job) {
-        respondJson(response, 404, { error: "job not found" });
+      const event = this.store.getEventDetails(eventId);
+      if (!event) {
+        respondJson(response, 404, { error: "event not found" });
         return;
       }
-      respondJson(response, 200, job);
+      respondJson(response, 200, event);
       return;
     }
     respondJson(response, 404, { error: "not found" });
@@ -595,11 +646,11 @@ export class CorvexServer {
 
   private metrics(response: ServerResponse): void {
     try {
-      const counts = this.store.jobCounts();
+      const counts = this.store.eventCounts();
       const calls = this.store.modelCallMetrics();
       const lines = [
-        "# HELP corvex_jobs Number of persisted tasks by lifecycle status.",
-        "# TYPE corvex_jobs gauge",
+        "# HELP corvex_events Number of persisted tasks by lifecycle status.",
+        "# TYPE corvex_events gauge",
       ];
       for (const status of [
         "queued",
@@ -613,7 +664,7 @@ export class CorvexServer {
         "stale",
         "cancelled",
       ]) {
-        lines.push(`corvex_jobs{status=${JSON.stringify(status)}} ${counts[status] ?? 0}`);
+        lines.push(`corvex_events{status=${JSON.stringify(status)}} ${counts[status] ?? 0}`);
       }
       lines.push(
         "# HELP corvex_model_calls_total Model API calls by task type and outcome.",
@@ -705,13 +756,13 @@ export class CorvexServer {
       );
       return;
     }
-    const id = eventId(event);
-    this.store.linkExecutionEventsToEvent(deliveryId, id);
+    const id = webhookEventId(event);
+    this.store.linkExecutionStepsToEvent(deliveryId, id);
     const isIssue = isIssueNoteEvent(event);
     const targetType = isIssue ? "issue" : "merge_request";
     const targetIid = isIssueNoteEvent(event) ? event.issue.iid : event.merge_request.iid;
     const details = {
-      eventId: id,
+      webhookEventId: id,
       projectId: event.project.id,
       targetType,
       targetIid,
@@ -727,9 +778,9 @@ export class CorvexServer {
     });
     if (event.object_attributes.system) {
       const reason = "system_note";
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         deliveryId,
-        eventId: id,
+        webhookEventId: id,
         step: "webhook.filter",
         status: "ignored",
         input: { actorId: event.user.id, actorUsername: event.user.username, system: event.object_attributes.system },
@@ -741,9 +792,9 @@ export class CorvexServer {
     }
     if (this.config.gitlab.blockedUserIds.includes(event.user.id)) {
       console.warn("GitLab webhook rejected", { ...details, reason: "user_blocked" });
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         deliveryId,
-        eventId: id,
+        webhookEventId: id,
         step: "webhook.filter",
         status: "failed",
         input: { actorId: event.user.id },
@@ -761,16 +812,16 @@ export class CorvexServer {
     try {
       command = await traceExecutionStep(
         this.store,
-        { deliveryId, eventId: id },
+        { deliveryId, webhookEventId: id },
         "webhook.parse_command",
         { note: event.object_attributes.note },
         () => parseCommand(event.object_attributes.note, this.config.gitlab.botUsername),
       );
     } catch (error) {
       if (error instanceof NotCorvexCommandError) {
-        this.store.recordExecutionEvent({
+        this.store.recordExecutionStep({
           deliveryId,
-          eventId: id,
+          webhookEventId: id,
           step: "webhook.command_filter",
           status: "ignored",
           input: { note: event.object_attributes.note },
@@ -799,9 +850,9 @@ export class CorvexServer {
     }
     if (command.name === "explain" && command.args.length === 0) {
       console.warn("GitLab command rejected", { ...details, command: command.name, reason: "missing_path" });
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         deliveryId,
-        eventId: id,
+        webhookEventId: id,
         step: "webhook.validate_command",
         status: "failed",
         input: { name: command.name, args: command.args },
@@ -815,9 +866,9 @@ export class CorvexServer {
     const reviewRequest = command.rawArgs.trim() ? command.rawArgs : "";
     const reviewRequestCharacters = [...reviewRequest].length;
     if ((command.name === "review" || command.name === "chat" || command.name === "implement") && reviewRequestCharacters > maxReviewRequestCharacters) {
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         deliveryId,
-        eventId: id,
+        webhookEventId: id,
         step: "webhook.validate_command",
         status: "failed",
         input: { name: command.name, requestCharacters: reviewRequestCharacters },
@@ -836,9 +887,9 @@ export class CorvexServer {
         command: command.name,
         reason: "unexpected_arguments",
       });
-      this.store.recordExecutionEvent({
+      this.store.recordExecutionStep({
         deliveryId,
-        eventId: id,
+        webhookEventId: id,
         step: "webhook.validate_command",
         status: "failed",
         input: { name: command.name, args: command.args },
@@ -849,9 +900,9 @@ export class CorvexServer {
       return;
     }
 
-    this.store.recordExecutionEvent({
+    this.store.recordExecutionStep({
       deliveryId,
-      eventId: id,
+      webhookEventId: id,
       step: "webhook.validate_command",
       status: "succeeded",
       input: { name: command.name, args: command.args },
@@ -865,7 +916,7 @@ export class CorvexServer {
       try {
         const result = await traceExecutionStep(
           this.store,
-          { deliveryId, eventId: id },
+          { deliveryId, webhookEventId: id },
           "webhook.process_issue_request",
           { command: command.name, projectId, issueIid, actorId },
           () => this.store.createIssueImplementation(
@@ -873,13 +924,13 @@ export class CorvexServer {
             `${projectId}:issue:${issueIid}:note:${event.object_attributes.id}`,
             { projectId, issueIid, actorId, request: reviewRequest.trim() },
           ),
-          (value) => ({ response: value.response, delivered: value.delivered, job: value.job ?? null }),
+          (value) => ({ response: value.response, delivered: value.delivered, event: value.event ?? null }),
         );
-        if (result.job) {
-          console.info(result.job.created ? "GitLab task enqueued" : "GitLab task already queued", {
+        if (result.event) {
+          console.info(result.event.created ? "GitLab task enqueued" : "GitLab task already queued", {
             ...details,
             type: "implement",
-            jobId: result.job.id,
+            eventId: result.event.id,
           });
         }
         if (!result.delivered) {
@@ -889,7 +940,7 @@ export class CorvexServer {
             projectId,
             issueIid,
             result.response,
-            result.job?.id,
+            result.event?.id,
             "issue",
           );
           if (delivery === "in_progress") {
@@ -903,10 +954,10 @@ export class CorvexServer {
         this.respondTrackedWebhook(response, 202, "", deliveryId, id, {
           ...details,
           command: command.name,
-          jobId: result.job?.id ?? "",
+          eventId: result.event?.id ?? "",
         });
       } catch (error) {
-        console.error("process GitLab issue command failed", { eventId: id, error: errorMessage(error) });
+        console.error("process GitLab issue command failed", { webhookEventId: id, error: errorMessage(error) });
         this.respondTrackedWebhook(response, 500, "failed to process issue command\n", deliveryId, id, { ...details });
       }
       return;
@@ -919,7 +970,7 @@ export class CorvexServer {
     try {
       const result = await traceExecutionStep(
         this.store,
-        { deliveryId, eventId: id },
+        { deliveryId, webhookEventId: id },
         "webhook.process_command",
         { command: command.name, args: command.args, projectId, mrIid, actorId, headSha },
         () => {
@@ -963,13 +1014,13 @@ export class CorvexServer {
               });
           }
         },
-        (value) => ({ response: value.response, delivered: value.delivered, job: value.job ?? null }),
+        (value) => ({ response: value.response, delivered: value.delivered, event: value.event ?? null }),
       );
-      if (result.job) {
-        console.info(result.job.created ? "GitLab task enqueued" : "GitLab task already queued", {
+      if (result.event) {
+        console.info(result.event.created ? "GitLab task enqueued" : "GitLab task already queued", {
           ...details,
           type: command.name,
-          jobId: result.job.id,
+          eventId: result.event.id,
         });
       } else if (result.delivered) {
         console.info("GitLab webhook duplicate delivery", { ...details, command: command.name });
@@ -991,7 +1042,7 @@ export class CorvexServer {
           projectId,
           mrIid,
           result.response,
-          result.job?.id,
+          result.event?.id,
         );
         if (delivery === "in_progress") {
           this.respondTrackedWebhook(response, 503, "webhook response delivery is in progress\n", deliveryId, id, {
@@ -1002,9 +1053,9 @@ export class CorvexServer {
         }
         console.info("GitLab command response published", { ...details, command: command.name });
       }
-      this.respondTrackedWebhook(response, 202, "", deliveryId, id, { ...details, command: command.name, jobId: result.job?.id ?? "" });
+      this.respondTrackedWebhook(response, 202, "", deliveryId, id, { ...details, command: command.name, eventId: result.event?.id ?? "" });
     } catch (error) {
-      console.error("process GitLab command failed", { eventId: id, error: errorMessage(error) });
+      console.error("process GitLab command failed", { webhookEventId: id, error: errorMessage(error) });
       this.respondTrackedWebhook(response, 500, "failed to process command\n", deliveryId, id, { ...details });
     }
   }
@@ -1015,14 +1066,14 @@ export class CorvexServer {
     message: string,
     deliveryId: string,
   ): Promise<void> {
-    const id = eventId(event);
+    const id = webhookEventId(event);
     const isIssue = isIssueNoteEvent(event);
     const targetType = isIssue ? "issue" : "merge_request";
     const targetIid = isIssue ? event.issue.iid : event.merge_request.iid;
     try {
       const result = await traceExecutionStep(
         this.store,
-        { deliveryId, eventId: id },
+        { deliveryId, webhookEventId: id },
         "webhook.record_response",
         {
           projectId: event.project.id,
@@ -1050,40 +1101,40 @@ export class CorvexServer {
           return;
         }
         console.info("GitLab command feedback published", {
-          eventId: id,
+          webhookEventId: id,
           projectId: event.project.id,
           targetIid,
         });
       } else {
         console.info("GitLab webhook duplicate delivery", {
-          eventId: id,
+          webhookEventId: id,
           projectId: event.project.id,
           targetIid,
         });
       }
       this.respondTrackedWebhook(response, 202, "", deliveryId, id, {
-        eventId: id,
+        webhookEventId: id,
         projectId: event.project.id,
         targetIid,
       });
     } catch (error) {
-      console.error("publish GitLab command response failed", { eventId: id, error: errorMessage(error) });
-      this.respondTrackedWebhook(response, 502, "failed to publish command response\n", deliveryId, id, { eventId: id });
+      console.error("publish GitLab command response failed", { webhookEventId: id, error: errorMessage(error) });
+      this.respondTrackedWebhook(response, 502, "failed to publish command response\n", deliveryId, id, { webhookEventId: id });
     }
   }
 
   private async publishWebhookResponse(
     deliveryId: string,
-    eventId: string,
+    webhookEventId: string,
     projectId: number,
     mrIid: number,
     body: string,
-    jobId?: string,
+    eventId?: string,
     targetType: "merge_request" | "issue" = "merge_request",
   ): Promise<"delivered" | "in_progress"> {
-    const claim = this.store.claimWebhookDelivery(eventId, webhookDeliveryLeaseMs);
+    const claim = this.store.claimWebhookDelivery(webhookEventId, webhookDeliveryLeaseMs);
     if (claim.status !== "claimed") return claim.status;
-    const context = { deliveryId, eventId, jobId: jobId ?? null };
+    const context = { deliveryId, webhookEventId, eventId: eventId ?? null };
     try {
       await traceExecutionStep(
         this.store,
@@ -1100,14 +1151,14 @@ export class CorvexServer {
         this.store,
         context,
         "webhook.mark_delivered",
-        { eventId },
-        () => this.store.markDelivered(eventId, claim.token),
+        { webhookEventId },
+        () => this.store.markDelivered(webhookEventId, claim.token),
         () => ({ delivered: true }),
       );
       return "delivered";
     } catch (error) {
       if (!(error instanceof GitLabWriteError && error.outcomeUnknown)) {
-        this.store.releaseWebhookDelivery(eventId, claim.token);
+        this.store.releaseWebhookDelivery(webhookEventId, claim.token);
       }
       throw error;
     }
