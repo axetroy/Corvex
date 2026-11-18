@@ -556,4 +556,103 @@ describe("PiAgent", () => {
     expect(requestBodies[1]).toContain("tool-output budget");
     expect(requestBodies[1]).toContain("continue until the task is complete");
   }, 10_000);
+
+  it("surfaces a provider error instead of returning the previous turn's reply", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-overflow-"));
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        requestCount++;
+        // 服务端拒绝超限请求时 prompt() 不会抛出：会话里最后一条助手消息是上一轮的历史回复，
+        // 若被当成结果就会把过期的答复当成本轮成功输出。
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          error: {
+            message: "This model's maximum context length is 131072 tokens. However, you requested about 999999 tokens.",
+          },
+        }));
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+
+    store = await EventStore.open(":memory:");
+    store.createReview("event-overflow", "key-overflow", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const event = store.claimNextWithLease(30_000);
+    if (!event) throw new Error("expected a queued event to be claimed");
+    const agent = new PiAgent({
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com",
+        readToken: "read",
+        writeToken: "write",
+        webhookSecret: "secret",
+        blockedUserIds: [],
+        botUsername: "",
+      },
+      storage: {
+        root: temporaryDirectory,
+        database: join(temporaryDirectory, "state.db"),
+        retentionDays: 90,
+        auditRetentionDays: 365,
+      },
+      agent: {
+        responseLanguage: "en",
+        enabled: true,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "test-model",
+        apiKey: "test-key",
+        requestTimeout: 5000,
+        sessionTimeout: 10_000,
+        maxOutputTokens: 4096,
+        dailyTokenBudget: 0,
+        mcpEnabled: false,
+        webEnabled: false,
+        webBlockedHosts: [],
+        skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      chat: { historyComments: 20 },
+      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    }, store);
+
+    await expect(
+      agent.generate(
+        {
+          taskType: "chat",
+          systemPrompt: "Answer.",
+          userPrompt: "Follow up question.",
+          history: [
+            { role: "user", content: "first question" },
+            { role: "assistant", content: "STALE PRIOR ANSWER" },
+          ],
+        },
+        temporaryDirectory,
+        undefined,
+        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+      ),
+    ).rejects.toThrow("maximum context length");
+    // 超限会去掉历史重试一次，因此服务端应收到两次请求。
+    expect(requestCount).toBe(2);
+  }, 10_000);
 });

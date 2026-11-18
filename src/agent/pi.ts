@@ -521,7 +521,15 @@ export class PiAgent {
     let toolBudgetWarningSent = false;
     const recordedContextEntryIds = new Set<string>();
     let hasRecordedContext = false;
+    // 最终助手消息的错误原因：`session.prompt()` 在服务端报错（如上下文超限）时仍会正常
+    // 返回，若不记录就会把上一条历史回复当成本轮成功结果，超限重试也就永远不会触发。
+    let lastAssistantError: string | undefined;
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        lastAssistantError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
+          ? event.message.errorMessage ?? `model request ${event.message.stopReason}`
+          : undefined;
+      }
       if (!trace) return;
       if (event.type === "message_start" && event.message.role === "assistant") {
         const round = ++currentRound;
@@ -641,6 +649,9 @@ export class PiAgent {
       await session.prompt(request.userPrompt);
       // 外部取消优先：中止后的半截文本不能当作完成结果。
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
+      // 服务端报错（含上下文超限）时 `prompt()` 不抛出，必须显式上抛，否则会返回历史回复
+      // 并让上层的「去掉历史重试一次」失效。
+      if (lastAssistantError) throw new Error(lastAssistantError);
       const content = session.getLastAssistantText()?.trim();
       if (!content) throw new Error("Pi returned an empty completion");
       const usage = session.getSessionStats().tokens;
