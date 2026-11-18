@@ -27,6 +27,7 @@ a:hover {
 
 /* 应用外壳：左侧可折叠导航栏，主区域占满剩余视口。 */
 .app-shell {
+  position: relative;
   display: flex;
   height: 100vh;
   overflow: hidden;
@@ -58,9 +59,9 @@ a:hover {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
-  min-height: 56px;
-  padding: 0 12px;
+  gap: 4px;
+  min-height: 48px;
+  padding: 0 10px;
   border-bottom: 1px solid #eef1f4;
 }
 
@@ -68,11 +69,12 @@ a:hover {
   flex-direction: column;
   gap: 4px;
   min-height: 0;
-  padding: 10px 0;
+  padding: 8px 0;
 }
 
 .brand {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 9px;
@@ -113,11 +115,12 @@ a:hover {
   border-radius: 8px;
 }
 
+/* 语言入口与侧边栏收起按钮共用同一图标按钮外观，置于顶栏右侧。 */
+.sidebar-language,
 .sidebar-toggle {
   display: grid;
-  width: 28px;
-  height: 28px;
-  margin-left: auto;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
   place-items: center;
   color: #5b6b79;
@@ -127,15 +130,22 @@ a:hover {
   cursor: pointer;
 }
 
-.sidebar-collapsed .sidebar-toggle {
+.sidebar-toggle {
+  margin-left: auto;
+}
+
+.sidebar-collapsed .sidebar-toggle,
+.sidebar-collapsed .sidebar-language {
   margin-left: 0;
 }
 
+.sidebar-language:hover,
 .sidebar-toggle:hover {
   color: #17212b;
   background: #f0f4f8;
 }
 
+.sidebar-language:focus-visible,
 .sidebar-toggle:focus-visible {
   outline: 2px solid #1769aa;
   outline-offset: 1px;
@@ -153,45 +163,18 @@ a:hover {
   padding: 8px 0;
 }
 
-.sidebar-foot {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid #eef1f4;
-}
-
-.sidebar-collapsed .sidebar-foot {
-  display: none;
-}
-
-.sidebar-language {
-  display: grid;
-  width: 100%;
-  height: 44px;
-  flex: 0 0 auto;
-  place-items: center;
-  color: #5b6b79;
-  background: transparent;
-  border: 0;
-  border-top: 1px solid #eef1f4;
-  cursor: pointer;
-}
-
-.sidebar-language:hover {
-  color: #17212b;
-  background: #f0f4f8;
-}
-
-.sidebar-language:focus-visible {
-  outline: 2px solid #1769aa;
-  outline-offset: -2px;
-}
-
+/* 刷新时间作为主区域右下角的浮层提示，不再占用固定的页脚高度。 */
 .updated {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 5;
+  padding: 2px 8px;
   color: #71808e;
-  font-size: 12px;
+  background: rgb(255 255 255 / 82%);
+  border-radius: 6px;
+  font-size: 11px;
+  pointer-events: none;
 }
 
 .content {
@@ -730,6 +713,11 @@ details summary {
 @media (max-width: 800px) {
   .sidebar {
     width: 200px;
+  }
+
+  /* 窄屏下把刷新时间藏起来，避免浮层压到对话输入框。 */
+  .updated {
+    display: none;
   }
 
   .sidebar-collapsed {

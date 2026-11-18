@@ -333,7 +333,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       <section className="conversations-layout" aria-label={copy.conversationsDescription}>
         <aside className="conversation-sidebar" aria-label={copy.conversationList}>
           <div className="conversation-sidebar-heading">
-            <Typography.Text strong className="conversation-sidebar-title">{copy.conversationsTitle}</Typography.Text>
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
               <span aria-hidden="true">+</span>
               {copy.newConversation}

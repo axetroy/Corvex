@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConfigProvider, Dropdown, Menu, Select } from "antd";
+import { ConfigProvider, Dropdown, Menu } from "antd";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
@@ -26,13 +26,13 @@ const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").the
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 const SettingsPage = lazy(() => import("./components/SettingsPage.js").then((module) => ({ default: module.SettingsPage })));
 
-/** localStorage 中保存运维台手动选择语言的键名。 */
+/** localStorage 中保存 Agent 控制台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
 /** localStorage 中保存侧边栏展开状态的键名。 */
 const navigationPreferenceKey = "corvex-ops-navigation-collapsed";
 /** 浏览器按偏好顺序提供的语言候选，用于首次访问时选择界面语言。 */
 const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
-/** 运维台自动刷新间隔（毫秒）。 */
+/** Agent 控制台自动刷新间隔（毫秒）。 */
 const refreshIntervalMs = 15_000;
 /** 非事件列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
 const emptyParams = new URLSearchParams();
@@ -44,7 +44,7 @@ function readSavedLocale(): string {
   try {
     return window.localStorage.getItem(localePreferenceKey) ?? "";
   } catch (error) {
-    window.console.warn("read operations UI language preference failed", error);
+    window.console.warn("read agent console language preference failed", error);
     return "";
   }
 }
@@ -54,7 +54,7 @@ function saveLocale(locale: Locale): void {
   try {
     window.localStorage.setItem(localePreferenceKey, locale);
   } catch (error) {
-    window.console.warn("save operations UI language preference failed", error);
+    window.console.warn("save agent console language preference failed", error);
   }
 }
 
@@ -64,7 +64,7 @@ function readNavigationCollapsed(): boolean {
     const saved = window.localStorage.getItem(navigationPreferenceKey);
     if (saved !== null) return saved === "true";
   } catch (error) {
-    window.console.warn("read operations UI navigation preference failed", error);
+    window.console.warn("read agent console navigation preference failed", error);
   }
   return window.innerWidth < 700;
 }
@@ -74,7 +74,7 @@ function saveNavigationCollapsed(collapsed: boolean): void {
   try {
     window.localStorage.setItem(navigationPreferenceKey, String(collapsed));
   } catch (error) {
-    window.console.warn("save operations UI navigation preference failed", error);
+    window.console.warn("save agent console navigation preference failed", error);
   }
 }
 
@@ -89,7 +89,7 @@ function useHashRoute(): string {
   return route;
 }
 
-/** 运维台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
+/** Agent 控制台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
   const copy = locale === "zh-CN" ? zhCN : en;
@@ -180,9 +180,22 @@ export function App() {
             <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
               <span className="brand-mark">C</span>
               <span className="brand-name">
-                Corvex <small>OPERATIONS</small>
+                Corvex <small>GITLAB AGENT</small>
               </span>
             </a>
+            <Dropdown
+              placement="bottomRight"
+              trigger={["click"]}
+              menu={{
+                selectedKeys: [locale],
+                items: languageMenuItems,
+                onClick: ({ key }) => changeLocale(key),
+              }}
+            >
+              <button type="button" className="sidebar-language" aria-label={copy.languageLabel} title={copy.languageLabel}>
+                <LanguageIcon />
+              </button>
+            </Dropdown>
             <button
               type="button"
               className="sidebar-toggle"
@@ -213,33 +226,8 @@ export function App() {
               { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
-          <div className="sidebar-foot">
-            <Select
-              id="language"
-              className="language-select"
-              aria-label={copy.languageLabel}
-              value={locale}
-              options={languageOptions}
-              onChange={changeLocale}
-            />
-            <span id="updated" className="updated">{updatedText}</span>
-          </div>
-          {navigationCollapsed ? (
-            <Dropdown
-              placement="topLeft"
-              trigger={["click"]}
-              menu={{
-                selectedKeys: [locale],
-                items: languageMenuItems,
-                onClick: ({ key }) => changeLocale(key),
-              }}
-            >
-              <button type="button" className="sidebar-language" aria-label={copy.languageLabel} title={copy.languageLabel}>
-                <LanguageIcon />
-              </button>
-            </Dropdown>
-          ) : null}
         </aside>
+        {updatedText ? <span id="updated" className="updated">{updatedText}</span> : null}
         <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
           <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>

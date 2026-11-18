@@ -31,21 +31,14 @@
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
-  padding: 18px 16px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--conversation-border);
-}
-
-.conversation-sidebar-title {
-  color: var(--conversation-muted);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .conversation-new-button.ant-btn {
   display: flex;
   width: 100%;
-  height: 40px;
+  height: 36px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -229,7 +222,7 @@
   min-height: 0;
   flex-direction: column;
   overflow: auto;
-  padding: 26px;
+  padding: 20px 24px;
 }
 
 /* 内容较矮时垂直居中；内容高于可视区时 margin:auto 归零，从顶部开始滚动，
@@ -463,10 +456,19 @@
   flex: 0 0 auto;
   align-items: center;
   margin: 0;
-  padding: 0 26px;
+  padding: 0 20px;
   background: rgb(255 255 255 / 90%);
   border-bottom: 1px solid var(--conversation-border);
   backdrop-filter: blur(8px);
+}
+
+/* 顶部标签栏保持紧凑，把纵向空间留给对话流。 */
+.conversation-tabs > .ant-tabs-nav .ant-tabs-tab {
+  padding: 9px 0;
+}
+
+.conversation-tabs > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 20px;
 }
 
 .conversation-tabs > .ant-tabs-nav .ant-tabs-nav-wrap {
@@ -587,7 +589,7 @@
   z-index: 2;
   width: min(720px, calc(100% - 52px));
   flex: 0 0 auto;
-  margin: 0 auto 20px;
+  margin: 0 auto 14px;
   border: 1px solid var(--conversation-border-strong);
   border-radius: 14px;
   background: #fff;
