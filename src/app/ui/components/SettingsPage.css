@@ -75,6 +75,12 @@
   min-width: 180px;
 }
 
+/* 列表项用标签输入框：需要更宽的空间展示已有条目。 */
+.settings-select-tags {
+  width: 360px;
+  max-width: 100%;
+}
+
 .settings-unit {
   color: #7a8593;
   font-size: 12px;
@@ -170,6 +176,52 @@
 
 .settings-tabs .ant-tabs-content-holder {
   padding-top: 4px;
+}
+
+.model-manager-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.model-provider {
+  padding: 12px 14px;
+  border: 1px solid #e3e8ee;
+  border-radius: 8px;
+}
+
+.model-provider + .model-provider {
+  margin-top: 12px;
+}
+
+.model-provider-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.model-provider-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.model-provider-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.model-provider-empty {
+  margin: 8px 0 0 !important;
+  font-size: 12px;
 }
 
 .model-manager-table {

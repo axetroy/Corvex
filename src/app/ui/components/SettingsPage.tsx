@@ -5,7 +5,7 @@ import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import { settingGroups } from "../types.js";
-import type { SettingField, SettingsResponse } from "../types.js";
+import type { SettingField, SettingValue, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
 import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
 import { ModelManager } from "./ModelManager.js";
@@ -22,8 +22,9 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** 按字段单位格式化数字；token 用千分位，字节用可读单位，字符串原样返回。 */
-function formatFieldValue(field: SettingField, value: number | boolean | string): string {
+/** 按字段单位格式化数字；token 用千分位，字节用可读单位，列表用逗号连接。 */
+function formatFieldValue(field: SettingField, value: SettingValue): string {
+  if (Array.isArray(value)) return value.join(", ");
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return String(value);
   if (field.unit === "byte") return formatBytes(value);
@@ -38,21 +39,31 @@ interface Props {
   onRefresh: () => void;
 }
 
-/** 可编辑的草稿值：数字、布尔或字符串，键与设置键一致。 */
-type Draft = Record<string, number | boolean | string>;
+/** 可编辑的草稿值：数字、布尔、字符串或字符串列表，键与设置键一致。 */
+type Draft = Record<string, SettingValue>;
 
 /** 比较两份草稿是否完全一致，用于判断是否有未保存修改。 */
 function sameDraft(a: Draft, b: Draft): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    if (a[key] !== b[key]) return false;
+    if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false;
   }
   return true;
 }
 
 /** 校验单个字段；合法返回错误信息为空。 */
-function fieldError(field: SettingField, value: number | boolean | string | undefined, copy: Copy): string {
+function fieldError(field: SettingField, value: SettingValue | undefined, copy: Copy): string {
   if (field.kind === "boolean") return "";
+  if (field.kind === "list") {
+    if (!Array.isArray(value)) return copy.settingsInvalidText;
+    if (value.some((item) => !item.trim())) return copy.settingsInvalidText;
+    if (field.item === "integer" && value.some((item) => !/^[1-9][0-9]*$/.test(item.trim()))) {
+      return copy.settingsInvalidNumber
+        .replace("{min}", String(field.min ?? 0))
+        .replace("{max}", String(field.max ?? 0));
+    }
+    return "";
+  }
   if (field.kind === "string") {
     if (typeof value !== "string" || !value.trim()) return copy.settingsInvalidText;
     if (field.maxLength !== undefined && value.length > field.maxLength) {
@@ -105,7 +116,6 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   }, [copy, refreshToken, onUpdated, settingsToken]);
 
   const editable = data?.editable ?? false;
-  const base = data?.base ?? null;
   const dirty = useMemo(
     () => (data ? !sameDraft(draft, data.settings) : false),
     [data, draft],
@@ -114,20 +124,8 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   if (error && !data) return <ErrorBanner message={error} />;
   if (!data) return <Loading>{copy.loading}</Loading>;
 
-  const setValue = (key: string, value: number | boolean | string) => {
+  const setValue = (key: string, value: SettingValue) => {
     setDraft((current) => ({ ...current, [key]: value }));
-    setNotice("");
-  };
-
-  // 恢复单个字段到配置文件的值；base 缺失（读盘失败）时禁用该按钮。
-  const resetField = (field: SettingField) => {
-    if (!base) return;
-    setValue(field.key, base[field.key] as number | boolean | string);
-  };
-
-  const resetAll = () => {
-    if (base) setDraft({ ...base });
-    else setDraft({ ...data.settings });
     setNotice("");
   };
 
@@ -136,14 +134,12 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       setNotice(copy.settingsNoChanges);
       return;
     }
-    // 只提交与配置文件不同的键：相同即视为「无覆盖」，服务端据此删除旧覆盖项。
+    // 提交全部可编辑键：数据库是这些设置的唯一来源，配置文件只提供初始值。
     const payload: Draft = {};
     for (const group of settingGroups) {
       for (const field of group.fields) {
         const value = draft[field.key];
-        const baseline = base ? base[field.key] : undefined;
-        if (base && value === baseline) continue;
-        payload[field.key] = value;
+        if (value !== undefined) payload[field.key] = value;
       }
     }
     setSaving(true);
@@ -163,11 +159,8 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     }
   };
 
-  // 只校验将要提交的字段：与配置文件基线相同的字段不会写入覆盖项，
-  // 例如未启用 Agent 时留空的模型名不应阻塞其它设置的保存。
   const problems = settingGroups.flatMap((group) =>
     group.fields
-      .filter((field) => !(base && draft[field.key] === base[field.key]))
       .map((field) => fieldError(field, draft[field.key], copy))
       .filter(Boolean),
   );
@@ -196,6 +189,17 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                   checked={value === true}
                   disabled={!editable}
                   onChange={(checked) => setValue(field.key, checked)}
+                />
+              ) : field.kind === "list" ? (
+                <Select
+                  className="settings-select settings-select-tags"
+                  mode="tags"
+                  tokenSeparators={[",", " ", "\n"]}
+                  value={Array.isArray(value) ? value : []}
+                  options={[]}
+                  disabled={!editable}
+                  status={invalid ? "error" : undefined}
+                  onChange={(next: string[]) => setValue(field.key, next)}
                 />
               ) : field.kind === "string" ? (
                 field.values ? (
@@ -233,13 +237,12 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
               )}
               {field.unit ? (
                 <span className="settings-unit">
-                  {field.unit === "byte" ? copy.settingsUnitBytes : copy.settingsUnitTokens}
+                  {field.unit === "byte"
+                    ? copy.settingsUnitBytes
+                    : field.unit === "second"
+                      ? copy.settingsUnitSeconds
+                      : copy.settingsUnitTokens}
                 </span>
-              ) : null}
-              {base ? (
-                <Button type="link" size="small" disabled={!editable} onClick={() => resetField(field)}>
-                  {copy.settingsReset}
-                </Button>
               ) : null}
             </div>
             {adjusted ? (
@@ -298,14 +301,12 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         description={copy.settingsDescription}
         actions={(
           <div className="settings-actions">
-            <Button onClick={resetAll} disabled={!editable || !dirty}>{copy.settingsResetAll}</Button>
             <Button type="primary" loading={saving} disabled={!editable || !dirty || problems.length > 0} onClick={() => void save()}>
               {saving ? copy.settingsSaving : copy.settingsSave}
             </Button>
           </div>
         )}
       />
-      {!editable ? <Alert className="settings-alert" type="warning" showIcon message={copy.settingsReadOnly} /> : null}
       {editable && data.configPath ? (
         <p className="settings-config-path">
           {copy.settingsConfigPath}: <code>{data.configPath}</code>
@@ -367,7 +368,12 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           {
             key: "advanced",
             label: copy.settingsTabAdvanced,
-            children: renderGroup("settingsGroupAdvanced"),
+            children: (
+              <>
+                {renderGroup("settingsGroupRuntime")}
+                {renderGroup("settingsGroupAdvanced")}
+              </>
+            ),
           },
         ]}
       />

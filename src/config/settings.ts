@@ -1,5 +1,6 @@
 import type { CorvexConfig } from "./config.js";
-import type { ModelProfile } from "../events/model.js";
+import type { ActiveModel } from "../events/model.js";
+import { isIP } from "node:net";
 import { resolveMaxInputTokens } from "../agent/budget.js";
 import {
   resolveCompactionKeepRecentTokens,
@@ -12,32 +13,38 @@ import {
 /**
  * Agent 控制台可在运行时覆盖的设置。
  *
- * 这些值影响模型上下文、审查流程与发布策略，改错会直接导致请求失败或行为异常，
- * 因此每个键都带类型与范围约束；写入前逐项校验，写入后立即作用于后续请求。
- * 凭据、地址、令牌与工作进程轮询参数不在此列，它们只从配置文件或环境变量读取，
- * 修改需要重启进程。
+ * 这些值影响模型上下文、审查流程、工具边界与发布策略，改错会直接导致请求失败或
+ * 行为异常，因此每个键都带类型与范围约束；写入前逐项校验，写入后立即作用于后续请求。
+ * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌、
+ * Webhook 密钥与 `agent.enabled`，这些仍从配置文件或环境变量读取。
  */
-export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage";
+export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "worker" | "gitlab";
 
 export interface RuntimeSettingDefinition {
   key: string;
   section: RuntimeSettingSection;
   field: string;
-  type: "number" | "boolean" | "string";
+  type: "number" | "boolean" | "string" | "list";
   min?: number;
   max?: number;
   /** 字符串类型允许的枚举候选值；省略表示任意非空文本。 */
   values?: readonly string[];
   /** 字符串类型允许的最大长度。 */
   maxLength?: number;
+  /** 输入单位换算：配置值 = 输入值 × scale（例如界面秒、配置毫秒）。 */
+  scale?: number;
+  /** 列表项的校验规则。 */
+  item?: "integer" | "hostname" | "path";
+  /** 允许提交空字符串（例如 bot 用户名留空）。 */
+  allowEmpty?: boolean;
   /**
    * 该键被 Worker 在构造阶段读取（例如审查文件上限）。变更后 Worker 需要重建
    * 依赖这些参数的组件，仅改内存配置不会生效。
    */
   workerScoped?: boolean;
   /**
-   * 不在运维台展示的旧键。模型名、地址、密钥、上下文窗口与输出上限已由模型列表
-   * （`model_profiles`）管理，这里保留读取是为了升级后旧覆盖项仍能生效。
+   * 不在运维台展示的旧键。模型名、地址、密钥、上下文窗口与输出上限已由
+   * 「模型 > 供应商与模型」管理，这里保留读取是为了升级后旧覆盖项仍能生效。
    */
   hidden?: boolean;
 }
@@ -45,10 +52,11 @@ export interface RuntimeSettingDefinition {
 export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // 模型与输出语言：PiAgent 与工作流在每次请求/轮次读取，覆盖后立即生效。
   // 前五项是模型列表出现之前的旧键，保留只为升级兼容，控制台不再展示；
-  // 模型列表（见 applyModelProfile）选中时优先级更高。
+  // 供应商下的模型（见 applyActiveModel）选中时优先级更高。
   { key: "model", section: "agent", field: "model", type: "string", maxLength: 200, hidden: true },
   { key: "model_base_url", section: "agent", field: "baseUrl", type: "string", maxLength: 500, hidden: true },
-  { key: "model_api_key", section: "agent", field: "apiKey", type: "string", maxLength: 2_000, hidden: true },
+  // 本地模型服务可以没有密钥，因此允许留空。
+  { key: "model_api_key", section: "agent", field: "apiKey", type: "string", maxLength: 2_000, allowEmpty: true, hidden: true },
   { key: "response_language", section: "agent", field: "responseLanguage", type: "string", values: ["en", "zh-CN"] },
   // 上下文预算
   { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000, hidden: true },
@@ -60,9 +68,20 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
-  // 工具开关
+  // 工具开关与联网白名单
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
   { key: "mcp_enabled", section: "agent", field: "mcpEnabled", type: "boolean" },
+  { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },
+  // 运行时长与 Worker 轮询：秒为界面单位，配置内部仍用毫秒。
+  { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
+  { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
+  { key: "worker_poll_interval", section: "worker", field: "pollInterval", type: "number", min: 1, max: 3_600, scale: 1_000 },
+  { key: "worker_event_timeout", section: "worker", field: "eventTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
+  // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
+  { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
+  // GitLab Webhook 行为：Server 每次处理 Note Hook 时读取。
+  { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
+  { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
   // 审查与历史评论
   { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, workerScoped: true },
   { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, workerScoped: true },
@@ -86,8 +105,11 @@ const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [
 /** 写入 SQLite 但绝不回显或写入审计日志的设置键。 */
 export const secretRuntimeSettingKeys = new Set(["model_api_key"]);
 
+/** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */
+export type RuntimeSettingValue = number | boolean | string | string[];
+
 export interface RuntimeSettingValues {
-  [key: string]: number | boolean | string;
+  [key: string]: RuntimeSettingValue;
 }
 
 type MutableSection = Record<string, unknown>;
@@ -97,11 +119,47 @@ function sectionOf(config: CorvexConfig, section: RuntimeSettingSection): Mutabl
   return config[section] as unknown as MutableSection;
 }
 
-/** 把字符串形式的覆盖值解析为对应的数字、布尔或字符串值；类型非法时抛错。 */
-function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): number | boolean | string {
+/** 校验列表项；返回统一为字符串，整型项在写回配置时再转成数字。 */
+function parseListItem(definition: RuntimeSettingDefinition, item: unknown): string {
+  if (definition.item === "integer") {
+    const value = typeof item === "number" ? item : typeof item === "string" ? Number(item.trim()) : Number.NaN;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`${definition.key} items must be positive integers`);
+    }
+    return String(value);
+  }
+  if (typeof item !== "string") throw new Error(`${definition.key} items must be strings`);
+  const value = item.trim();
+  if (!value) throw new Error(`${definition.key} items must not be empty`);
+  if (definition.item === "hostname") {
+    if (value.length > 253 || value.includes("/") || value.includes(":") || /\s/.test(value)) {
+      throw new Error(`${definition.key} items must be bare hostnames`);
+    }
+    if (!isIP(value) && !value.split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) {
+      throw new Error(`${definition.key} items must be bare hostnames`);
+    }
+  }
+  if (definition.item === "path" && value.length > 1_024) {
+    throw new Error(`${definition.key} items must be at most 1024 characters`);
+  }
+  return value;
+}
+
+/** 把字符串形式的覆盖值解析为对应的数字、布尔、字符串或列表；类型非法时抛错。 */
+function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): RuntimeSettingValue {
+  if (definition.type === "list") {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(`${definition.key} must be a JSON array`);
+    }
+    if (!Array.isArray(parsed)) throw new Error(`${definition.key} must be a JSON array`);
+    return parsed.map((item) => parseListItem(definition, item));
+  }
   if (definition.type === "string") {
     const value = raw.trim();
-    if (!value) throw new Error(`${definition.key} must not be empty`);
+    if (!value && !definition.allowEmpty) throw new Error(`${definition.key} must not be empty`);
     if (definition.maxLength !== undefined && value.length > definition.maxLength) {
       throw new Error(`${definition.key} must be at most ${definition.maxLength} characters`);
     }
@@ -116,8 +174,9 @@ function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): n
     throw new Error(`${definition.key} must be "true" or "false"`);
   }
   const value = Number(raw);
-  if (!Number.isSafeInteger(value)) {
-    throw new Error(`${definition.key} must be an integer`);
+  // 带 scale 的字段（秒 → 毫秒）允许小数，其余整型设置必须是安全整数。
+  if (!Number.isFinite(value) || (definition.scale === undefined && !Number.isSafeInteger(value))) {
+    throw new Error(`${definition.key} must be ${definition.scale === undefined ? "an integer" : "a number"}`);
   }
   if (definition.min !== undefined && value < definition.min) {
     throw new Error(`${definition.key} must be at least ${definition.min}`);
@@ -187,15 +246,20 @@ export function validateRuntimeSettings(overrides: Record<string, string>): stri
   return problems;
 }
 
-/** 把选中的模型配置应用到运行时配置；Web 模型列表是这些字段的唯一来源。 */
-export function applyModelProfile(config: CorvexConfig, profile: ModelProfile): void {
-  config.agent.model = profile.name;
-  config.agent.baseUrl = profile.baseUrl;
-  config.agent.apiKey = profile.apiKey;
-  config.agent.contextWindow = profile.contextWindow;
-  config.agent.maxOutputTokens = profile.maxOutputTokens;
-  if (config.agent.maxInputTokens >= profile.contextWindow) config.agent.maxInputTokens = 0;
-  if (config.agent.historyTokenBudget > profile.contextWindow) config.agent.historyTokenBudget = profile.contextWindow;
+/**
+ * 把选中的模型应用到运行时配置。连接参数来自供应商，窗口与输出上限来自模型；
+ * 控制台的供应商/模型目录是这些字段的唯一来源。
+ */
+export function applyActiveModel(config: CorvexConfig, active: ActiveModel): void {
+  config.agent.model = active.model.name;
+  config.agent.baseUrl = active.provider.baseUrl;
+  config.agent.apiKey = active.provider.apiKey;
+  config.agent.contextWindow = active.model.contextWindow;
+  config.agent.maxOutputTokens = active.model.maxOutputTokens;
+  if (config.agent.maxInputTokens >= active.model.contextWindow) config.agent.maxInputTokens = 0;
+  if (config.agent.historyTokenBudget > active.model.contextWindow) {
+    config.agent.historyTokenBudget = active.model.contextWindow;
+  }
 }
 
 /**
@@ -206,7 +270,17 @@ export function applyRuntimeSettings(config: CorvexConfig, overrides: Record<str
   for (const [key, raw] of Object.entries(overrides)) {
     const definition = definitionsByKey.get(key);
     if (!definition) continue;
-    sectionOf(config, definition.section)[definition.field] = parseSettingValue(definition, raw);
+    const value = parseSettingValue(definition, raw);
+    const target = sectionOf(config, definition.section);
+    if (definition.type === "list") {
+      target[definition.field] = definition.item === "integer"
+        ? (value as string[]).map(Number)
+        : value;
+    } else if (definition.scale !== undefined && typeof value === "number") {
+      target[definition.field] = value * definition.scale;
+    } else {
+      target[definition.field] = value;
+    }
   }
 }
 
@@ -239,7 +313,15 @@ export function applyRuntimeSettingRows(
 export function runtimeSettingsView(config: CorvexConfig): RuntimeSettingValues {
   const view: RuntimeSettingValues = {};
   for (const definition of runtimeSettingDefinitions) {
-    view[definition.key] = sectionOf(config, definition.section)[definition.field] as number | boolean | string;
+    const raw = sectionOf(config, definition.section)[definition.field];
+    if (definition.type === "list") {
+      view[definition.key] = Array.isArray(raw) ? raw.map(String) : [];
+    } else if (definition.scale !== undefined && typeof raw === "number") {
+      // 配置内部用毫秒，界面按秒展示。
+      view[definition.key] = raw / definition.scale;
+    } else {
+      view[definition.key] = raw as number | boolean | string;
+    }
   }
   return view;
 }

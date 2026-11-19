@@ -266,13 +266,28 @@ export interface ConversationTurn {
   events: ExecutionStep[];
 }
 
-/** Web 端维护的一个模型配置；选中项会覆盖配置里的模型连接参数。 */
-export interface ModelProfile {
+/** Web 端维护的模型供应商：一个 Base URL 与凭据，下面挂多个模型。 */
+export interface ModelProvider {
   id: string;
   name: string;
   baseUrl: string;
   /** 仅用于内部连接与保存；接口一律不回显原文。 */
   apiKey: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelProviderInput {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+/** 供应商下的一个模型；全局只有一个处于使用中。 */
+export interface ProviderModel {
+  id: string;
+  providerId: string;
+  name: string;
   contextWindow: number;
   maxOutputTokens: number;
   active: boolean;
@@ -280,12 +295,21 @@ export interface ModelProfile {
   updatedAt: string;
 }
 
-export interface ModelProfileInput {
+export interface ProviderModelInput {
   name: string;
-  baseUrl: string;
-  apiKey: string;
   contextWindow: number;
   maxOutputTokens: number;
+}
+
+/** 供应商及其模型，供控制台一次读取完整列表。 */
+export interface ModelProviderDetails extends ModelProvider {
+  models: ProviderModel[];
+}
+
+/** 当前使用的模型及其供应商连接参数。 */
+export interface ActiveModel {
+  provider: ModelProvider;
+  model: ProviderModel;
 }
 
 /** 一次 Git 存储清理（CLI、Server 保留任务或启动清扫）的结果记录。 */

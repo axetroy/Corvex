@@ -72,10 +72,12 @@ The read-only agent console is disabled unless both `CORVEX_OPS_USERNAME` and `C
 | `DELETE /api/ops/conversations/<id>` | Delete a conversation with its turns, messages and process records; rejected while a turn is running. |
 | `GET /api/ops/storage/cleanups` | Recent Git storage cleanup records from the CLI, daily retention and the console. |
 | `POST /api/ops/storage/cleanup` | Preview (`apply: false`) or run (`apply: true`) cleanup of workspaces older than `olderThanDays`; running and queued turns are protected. |
-| `GET /api/ops/models` / `POST /api/ops/models` | List or add model profiles; API keys are never returned. |
-| `PUT /api/ops/models/<id>` / `DELETE /api/ops/models/<id>` | Edit or remove a model profile; an empty `apiKey` keeps the saved value. |
-| `POST /api/ops/models/<id>/activate` | Select the active model; the first added model is active by default. |
-| `GET /api/ops/settings` / `PUT /api/ops/settings` | Read the effective runtime settings and whether they are editable, or override them at runtime. `PUT` stores the submitted overrides in SQLite (applied on top of the config file) and returns the new effective values. It answers `409` when the Server was started without `--config`. |
+| `GET /api/ops/model-providers` / `POST /api/ops/model-providers` | List providers with their models, or add a provider; API keys are never returned. |
+| `PUT /api/ops/model-providers/<id>` / `DELETE /api/ops/model-providers/<id>` | Edit or remove a provider and its models; an empty `apiKey` keeps the saved value. |
+| `POST /api/ops/model-providers/<id>/models` | Add a model under a provider. |
+| `PUT`/`DELETE /api/ops/model-providers/<id>/models/<modelId>` | Edit or remove one model. |
+| `POST /api/ops/model-providers/<id>/models/<modelId>/activate` | Select the active model; the first model added is active by default. |
+| `GET /api/ops/settings` / `PUT /api/ops/settings` | Read the effective runtime settings, or replace them. `PUT` stores the submitted settings in SQLite (the source of truth after the first save) and returns the new effective values; it works with or without `--config`. |
 
 The agent console endpoints require HTTP Basic Auth and return `404` when disabled. Job details include the requester username and ID, the triggering comment, the parsed request, and error text; protect operator credentials and use HTTPS. The triggering comment is sourced from the linked webhook execution event and follows its size limit and best-effort redaction. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.
 

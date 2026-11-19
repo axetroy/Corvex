@@ -41,8 +41,12 @@ import {
   type EventType,
   type ConversationTurnSegment,
   type StorageCleanupRecord,
-  type ModelProfile,
-  type ModelProfileInput,
+  type ActiveModel,
+  type ModelProvider,
+  type ModelProviderDetails,
+  type ModelProviderInput,
+  type ProviderModel,
+  type ProviderModelInput,
   type ConversationTurnTransition,
   type ConversationTurns,
   type ModelCallMetric,
@@ -130,6 +134,15 @@ function numberColumn(row: Record<string, unknown>, name: string): number {
     throw new Error(`SQLite column "${name}" is not a safe integer`);
   }
   return value;
+}
+
+/** 从 Base URL 推导供应商标识，用于迁移旧配置或分类时给供应商起名。 */
+function providerName(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }
 
 /** 轨迹归属对应的 owner 列名：事件轨迹用 `event_id`，对话轨迹用 `turn_id`。 */
@@ -2198,73 +2211,114 @@ export class EventStore {
     }));
   }
 
-  listModelProfiles(): ModelProfile[] {
-    const rows = this.db.prepare("SELECT * FROM model_profiles ORDER BY created_at,id").all() as Record<string, unknown>[];
-    return rows.map((row) => this.readModelProfile(row));
+  listModelProviders(): ModelProviderDetails[] {
+    const providers = (this.db.prepare("SELECT * FROM model_providers ORDER BY created_at,id").all() as Record<string, unknown>[])
+      .map((row) => this.readModelProvider(row));
+    const models = (this.db.prepare("SELECT * FROM provider_models ORDER BY created_at,id").all() as Record<string, unknown>[])
+      .map((row) => this.readProviderModel(row));
+    return providers.map((provider) => ({
+      ...provider,
+      models: models.filter((model) => model.providerId === provider.id),
+    }));
   }
 
-  getActiveModelProfile(): ModelProfile | undefined {
-    const row = this.db.prepare("SELECT * FROM model_profiles WHERE active=1 LIMIT 1").get() as Record<string, unknown> | undefined;
-    return row ? this.readModelProfile(row) : undefined;
+  getModelProvider(id: string): ModelProvider | undefined {
+    const row = this.db.prepare("SELECT * FROM model_providers WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.readModelProvider(row) : undefined;
   }
 
-  createModelProfile(input: ModelProfileInput): ModelProfile {
+  createModelProvider(input: ModelProviderInput): ModelProvider {
     const now = new Date().toISOString();
     const id = randomUUID();
-    const first = (this.db.prepare("SELECT COUNT(*) AS count FROM model_profiles").get() as { count: number }).count === 0;
     this.db.prepare(
-      `INSERT INTO model_profiles (id,name,base_url,api_key,context_window,max_output_tokens,active,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(id, input.name, input.baseUrl, input.apiKey, input.contextWindow, input.maxOutputTokens, first ? 1 : 0, now, now);
-    return this.getModelProfile(id)!;
+      "INSERT INTO model_providers (id,name,base_url,api_key,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+    ).run(id, input.name, input.baseUrl, input.apiKey, now, now);
+    return this.getModelProvider(id)!;
   }
 
-  getModelProfile(id: string): ModelProfile | undefined {
-    const row = this.db.prepare("SELECT * FROM model_profiles WHERE id=?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.readModelProfile(row) : undefined;
-  }
-
-  updateModelProfile(id: string, input: ModelProfileInput): ModelProfile | undefined {
+  updateModelProvider(id: string, input: ModelProviderInput): ModelProvider | undefined {
     const result = this.db.prepare(
-      `UPDATE model_profiles SET name=?,base_url=?,api_key=?,context_window=?,max_output_tokens=?,updated_at=? WHERE id=?`,
-    ).run(input.name, input.baseUrl, input.apiKey, input.contextWindow, input.maxOutputTokens, new Date().toISOString(), id);
-    return result.changes === 1 ? this.getModelProfile(id) : undefined;
+      "UPDATE model_providers SET name=?,base_url=?,api_key=?,updated_at=? WHERE id=?",
+    ).run(input.name, input.baseUrl, input.apiKey, new Date().toISOString(), id);
+    return result.changes === 1 ? this.getModelProvider(id) : undefined;
   }
 
-  deleteModelProfile(id: string): boolean {
+  deleteModelProvider(id: string): boolean {
     return this.transaction(() => {
-      const removed = this.db.prepare("DELETE FROM model_profiles WHERE id=?").run(id).changes === 1;
-      // 删除当前使用的模型后提升剩余的第一个，避免列表里有模型却没有选中项。
-      const active = this.db.prepare("SELECT id FROM model_profiles WHERE active=1 LIMIT 1").get();
-      if (removed && !active) {
-        this.db.prepare(
-          "UPDATE model_profiles SET active=1,updated_at=? WHERE id=(SELECT id FROM model_profiles ORDER BY created_at,id LIMIT 1)",
-        ).run(new Date().toISOString());
-      }
+      const removed = this.db.prepare("DELETE FROM model_providers WHERE id=?").run(id).changes === 1;
+      // 删除供应商会级联删除其模型；若删掉的是当前模型，提升剩余的第一个。
+      if (removed) this.promoteFirstProviderModel();
       return removed;
     });
   }
 
-  activateModelProfile(id: string): boolean {
-    if (!this.getModelProfile(id)) return false;
-    this.transaction(() => {
-      this.db.prepare("UPDATE model_profiles SET active=0 WHERE active=1").run();
-      this.db.prepare("UPDATE model_profiles SET active=1,updated_at=? WHERE id=?").run(new Date().toISOString(), id);
+  getProviderModel(providerId: string, id: string): ProviderModel | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM provider_models WHERE provider_id=? AND id=?")
+      .get(providerId, id) as Record<string, unknown> | undefined;
+    return row ? this.readProviderModel(row) : undefined;
+  }
+
+  createProviderModel(providerId: string, input: ProviderModelInput): ProviderModel | undefined {
+    return this.transaction(() => {
+      if (!this.getModelProvider(providerId)) return undefined;
+      const now = new Date().toISOString();
+      const id = randomUUID();
+      const first = (this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number }).count === 0;
+      this.db.prepare(
+        `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,active,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(id, providerId, input.name, input.contextWindow, input.maxOutputTokens, first ? 1 : 0, now, now);
+      return this.getProviderModel(providerId, id);
     });
-    return true;
+  }
+
+  updateProviderModel(providerId: string, id: string, input: ProviderModelInput): ProviderModel | undefined {
+    const result = this.db.prepare(
+      "UPDATE provider_models SET name=?,context_window=?,max_output_tokens=?,updated_at=? WHERE provider_id=? AND id=?",
+    ).run(input.name, input.contextWindow, input.maxOutputTokens, new Date().toISOString(), providerId, id);
+    return result.changes === 1 ? this.getProviderModel(providerId, id) : undefined;
+  }
+
+  deleteProviderModel(providerId: string, id: string): boolean {
+    return this.transaction(() => {
+      const removed = this.db
+        .prepare("DELETE FROM provider_models WHERE provider_id=? AND id=?")
+        .run(providerId, id).changes === 1;
+      if (removed) this.promoteFirstProviderModel();
+      return removed;
+    });
+  }
+
+  activateProviderModel(providerId: string, id: string): ProviderModel | undefined {
+    if (!this.getProviderModel(providerId, id)) return undefined;
+    this.transaction(() => {
+      this.db.prepare("UPDATE provider_models SET active=0 WHERE active=1").run();
+      this.db.prepare("UPDATE provider_models SET active=1,updated_at=? WHERE id=?").run(new Date().toISOString(), id);
+    });
+    return this.getProviderModel(providerId, id);
+  }
+
+  /** 当前使用的模型及其供应商；没有模型时返回空。 */
+  getActiveModel(): ActiveModel | undefined {
+    const row = this.db.prepare("SELECT * FROM provider_models WHERE active=1 LIMIT 1").get() as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const model = this.readProviderModel(row);
+    const provider = this.getModelProvider(model.providerId);
+    return provider ? { provider, model } : undefined;
   }
 
   /**
-   * 升级兼容：把旧版写在运行时设置里的模型连接参数迁移为一条模型配置，
+   * 升级兼容：把旧版写在运行时设置里的模型连接参数迁移为供应商 + 模型，
    * 避免升级后已保存的 Base URL 与 API Key 失效。Server 与 Worker 启动时都会调用，
    * 用写事务把「检查 + 插入」锁在一起，先到者生效，后者直接跳过。
    */
-  migrateLegacyModelProfile(
+  migrateLegacyModelSettings(
     fallback: { contextWindow: number; maxOutputTokens: number },
     actorId: number,
-  ): ModelProfile | undefined {
+  ): ActiveModel | undefined {
     return this.transaction(() => {
-      const existing = this.db.prepare("SELECT COUNT(*) AS count FROM model_profiles").get() as { count: number };
+      const existing = this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number };
       if (existing.count > 0) return undefined;
       const rows = this.db
         .prepare(
@@ -2280,39 +2334,114 @@ export class EventStore {
         return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallbackValue;
       };
       const now = new Date().toISOString();
-      const id = randomUUID();
+      const providerId = randomUUID();
+      const modelId = randomUUID();
+      this.db
+        .prepare("INSERT INTO model_providers (id,name,base_url,api_key,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+        .run(providerId, providerName(baseUrl), baseUrl, values.model_api_key ?? "", now, now);
       this.db
         .prepare(
-          `INSERT INTO model_profiles (id,name,base_url,api_key,context_window,max_output_tokens,active,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,1,?,?)`,
+          `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,active,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,?,?)`,
         )
         .run(
-          id,
+          modelId,
+          providerId,
           name,
-          baseUrl,
-          values.model_api_key ?? "",
           positive(values.context_window, fallback.contextWindow),
           positive(values.max_output_tokens, fallback.maxOutputTokens),
           now,
           now,
         );
-      // 迁移后清掉旧键：模型列表成为唯一来源，避免两处配置互相矛盾。
+      // 迁移后清掉旧键：模型目录成为唯一来源，避免两处配置互相矛盾。
       this.db
         .prepare(
           "DELETE FROM runtime_settings WHERE key IN ('model','model_base_url','model_api_key','context_window','max_output_tokens')",
         )
         .run();
-      this.insertAudit(actorId, "model_profile", id, "migrated", now);
-      return this.getModelProfile(id);
+      this.insertAudit(actorId, "model_provider", providerId, "migrated", now);
+      return this.getActiveModel();
     }, true);
   }
 
-  private readModelProfile(row: Record<string, unknown>): ModelProfile {
+  /** 删除或停用模型后保证仍有一个使用中的模型；没有任何模型时保持为空。 */
+  private promoteFirstProviderModel(): void {
+    const active = this.db.prepare("SELECT id FROM provider_models WHERE active=1 LIMIT 1").get();
+    if (active) return;
+    this.db.prepare(
+      "UPDATE provider_models SET active=1,updated_at=? WHERE id=(SELECT id FROM provider_models ORDER BY created_at,id LIMIT 1)",
+    ).run(new Date().toISOString());
+  }
+
+  /** 旧版 `model_profiles` 表（供应商与模型混在一起）拆分为供应商与模型两张表。 */
+  private migrateLegacyModelProfiles(): void {
+    const tables = new Set(
+      (this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[])
+        .map((row) => row.name),
+    );
+    if (!tables.has("model_profiles")) return;
+    this.transaction(() => {
+      const total = (this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number }).count;
+      if (total === 0) {
+        const rows = this.db.prepare("SELECT * FROM model_profiles ORDER BY created_at,id").all() as Record<string, unknown>[];
+        const providers = new Map<string, { id: string; name: string; baseUrl: string; apiKey: string; createdAt: string; updatedAt: string }>();
+        for (const row of rows) {
+          const baseUrl = stringColumn(row, "base_url");
+          const apiKey = stringColumn(row, "api_key");
+          const key = `${baseUrl}\u0000${apiKey}`;
+          let provider = providers.get(key);
+          if (!provider) {
+            provider = {
+              id: randomUUID(),
+              name: providerName(baseUrl),
+              baseUrl,
+              apiKey,
+              createdAt: stringColumn(row, "created_at"),
+              updatedAt: stringColumn(row, "updated_at"),
+            };
+            providers.set(key, provider);
+            this.db
+              .prepare("INSERT INTO model_providers (id,name,base_url,api_key,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+              .run(provider.id, provider.name, provider.baseUrl, provider.apiKey, provider.createdAt, provider.updatedAt);
+          }
+          this.db
+            .prepare(
+              `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,active,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)`,
+            )
+            .run(
+              randomUUID(),
+              provider.id,
+              stringColumn(row, "name"),
+              numberColumn(row, "context_window"),
+              numberColumn(row, "max_output_tokens"),
+              numberColumn(row, "active") === 1 ? 1 : 0,
+              stringColumn(row, "created_at"),
+              stringColumn(row, "updated_at"),
+            );
+        }
+        this.promoteFirstProviderModel();
+      }
+      this.db.exec("DROP TABLE model_profiles");
+    }, true);
+  }
+
+  private readModelProvider(row: Record<string, unknown>): ModelProvider {
     return {
       id: stringColumn(row, "id"),
       name: stringColumn(row, "name"),
       baseUrl: stringColumn(row, "base_url"),
       apiKey: stringColumn(row, "api_key"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
+  }
+
+  private readProviderModel(row: Record<string, unknown>): ProviderModel {
+    return {
+      id: stringColumn(row, "id"),
+      providerId: stringColumn(row, "provider_id"),
+      name: stringColumn(row, "name"),
       contextWindow: numberColumn(row, "context_window"),
       maxOutputTokens: numberColumn(row, "max_output_tokens"),
       active: numberColumn(row, "active") === 1,
@@ -2582,11 +2711,16 @@ export class EventStore {
         error TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS storage_cleanup_log_order_idx ON storage_cleanup_log(started_at DESC,id DESC);
-      CREATE TABLE IF NOT EXISTS model_profiles (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '',
-        context_window INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL,
+      CREATE TABLE IF NOT EXISTS model_providers (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL,
+        api_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS provider_models (
+        id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL, context_window INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL,
         active INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS provider_models_provider_idx ON provider_models(provider_id,created_at,id);
       CREATE TABLE IF NOT EXISTS webhook_deliveries (
         webhook_event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL
@@ -2632,6 +2766,8 @@ export class EventStore {
         output_tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(task_type,outcome)
       );
     `);
+    // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
+    this.migrateLegacyModelProfiles();
     const webhookColumns = this.db.prepare("PRAGMA table_info(webhook_deliveries)").all() as { name: string }[];
     const existingWebhookColumns = new Set(webhookColumns.map((column) => column.name));
     const webhookAdditions: Record<string, string> = {

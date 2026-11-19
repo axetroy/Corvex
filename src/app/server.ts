@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
-import { reloadConfig, validateConfig } from "../config/config.js";
+import { validateConfig } from "../config/config.js";
 import {
-  applyModelProfile,
+  applyActiveModel,
   applyRuntimeSettingRows,
   applyRuntimeSettings,
   copyRuntimeSettings,
@@ -15,6 +15,7 @@ import {
   secretRuntimeSettingKeys,
   validateRuntimeSettings,
   type DerivedContextMetrics,
+  type RuntimeSettingValue,
 } from "../config/settings.js";
 import { getConversationSystemPrompt } from "../agent/prompts.js";
 import { EventStore } from "../events/store.js";
@@ -32,7 +33,7 @@ const webhookDeliveryLeaseMs = 60_000;
 const secretSettingPlaceholder = "••••••";
 
 /** 设置接口不回显密钥原文；有值时只给占位符，UI 据此显示「已配置」。 */
-function redactSettingValues(values: Record<string, number | boolean | string>): Record<string, number | boolean | string> {
+function redactSettingValues(values: Record<string, RuntimeSettingValue>): Record<string, RuntimeSettingValue> {
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [
       key,
@@ -158,6 +159,8 @@ export class CorvexServer {
   private readonly conversationAbort = new AbortController();
   /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `server.close()`。 */
   private readonly conversationStreams = new Set<ServerResponse>();
+  /** 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。 */
+  private readonly baseline: CorvexConfig;
 
   constructor(
     private readonly config: CorvexConfig,
@@ -166,6 +169,7 @@ export class CorvexServer {
     /** 配置文件路径；提供时 Agent 控制台可在运行时覆盖上下文设置并持久化。 */
     private readonly configPath?: string,
   ) {
+    this.baseline = structuredClone(config);
     this.conversations = new ConversationRunner(config, store, gitlab);
     this.address = parseListenAddress(config.server.listen);
     this.server = createServer((request, response) => {
@@ -735,72 +739,119 @@ export class CorvexServer {
       }
       return;
     }
-    // Web 模型列表：接口不回显 API Key，保存后只显示占位符。
-    const modelsPath = url.pathname === "/api/ops/models";
-    const modelItemMatch = /^\/api\/ops\/models\/([^/]+)$/.exec(url.pathname);
-    const modelActionMatch = /^\/api\/ops\/models\/([^/]+)\/(activate)$/.exec(url.pathname);
-    const redactProfile = (profile: { apiKey: string }) => ({ ...profile, apiKey: profile.apiKey ? secretSettingPlaceholder : "" });
-    const parseProfileBody = (body: Record<string, unknown>) => {
+    // Web 模型目录：供应商持有连接参数，供应商下挂模型；接口不回显 API Key。
+    const providersPath = url.pathname === "/api/ops/model-providers";
+    const providerItemMatch = /^\/api\/ops\/model-providers\/([^/]+)$/.exec(url.pathname);
+    const providerModelsMatch = /^\/api\/ops\/model-providers\/([^/]+)\/models$/.exec(url.pathname);
+    const providerModelItemMatch = /^\/api\/ops\/model-providers\/([^/]+)\/models\/([^/]+)$/.exec(url.pathname);
+    const providerModelActionMatch = /^\/api\/ops\/model-providers\/([^/]+)\/models\/([^/]+)\/(activate)$/.exec(url.pathname);
+    const redactProvider = <T extends { apiKey: string }>(provider: T): Omit<T, "apiKey"> & { apiKey: string } => ({
+      ...provider,
+      apiKey: provider.apiKey ? secretSettingPlaceholder : "",
+    });
+    const httpUrl = (raw: string): boolean => {
+      try {
+        const parsed = new URL(raw);
+        return (
+          (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+          !parsed.username && !parsed.password && !parsed.search && !parsed.hash
+        );
+      } catch {
+        return false;
+      }
+    };
+    const parseProviderBody = (body: Record<string, unknown>) => {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
       const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+      if (!name || name.length > 200 || !baseUrl || baseUrl.length > 500 || apiKey.length > 2_000) return undefined;
+      if (!httpUrl(baseUrl)) return undefined;
+      return { name, baseUrl, apiKey };
+    };
+    const parseModelBody = (body: Record<string, unknown>) => {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
       const contextWindow = body.contextWindow;
       const maxOutputTokens = body.maxOutputTokens;
-      if (!name || !baseUrl || name.length > 200 || baseUrl.length > 500 || apiKey.length > 2_000) return undefined;
-      if (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow < 1024 || contextWindow > 10_000_000) return undefined;
-      if (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) return undefined;
-      try {
-        const parsed = new URL(baseUrl);
-        if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
-      } catch {
-        return undefined;
-      }
-      return { name, baseUrl, apiKey, contextWindow, maxOutputTokens };
+      if (!name || name.length > 200) return undefined;
+      if (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow < 1_024 || contextWindow > 10_000_000) return undefined;
+      if (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8_192) return undefined;
+      return { name, contextWindow, maxOutputTokens };
     };
-    if (modelsPath || modelItemMatch || modelActionMatch) {
-      if (request.method === "GET" && modelsPath) {
-        respondJson(response, 200, { items: this.store.listModelProfiles().map(redactProfile) });
+    if (providersPath || providerItemMatch || providerModelsMatch || providerModelItemMatch || providerModelActionMatch) {
+      const providerId = this.decodePathSegment(
+        providerItemMatch?.[1] ?? providerModelsMatch?.[1] ?? providerModelItemMatch?.[1] ?? providerModelActionMatch?.[1] ?? "",
+      );
+      const modelId = this.decodePathSegment(providerModelItemMatch?.[2] ?? providerModelActionMatch?.[2] ?? "");
+      if (request.method === "GET" && providersPath) {
+        respondJson(response, 200, { items: this.store.listModelProviders().map((provider) => redactProvider(provider)) });
         return;
       }
-      if (request.method === "POST" && modelsPath) {
+      if (request.method === "POST" && providersPath) {
         const body = await this.readOperationsBody(request, response);
         if (!body) return;
-        const input = parseProfileBody(body);
-        if (!input) { respondJson(response, 400, { error: "invalid model profile" }); return; }
-        const profile = this.store.createModelProfile(input);
-        if (profile.active) applyModelProfile(this.config, profile);
-        respondJson(response, 201, redactProfile(profile));
+        const input = parseProviderBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model provider" }); return; }
+        const provider = this.store.createModelProvider(input);
+        respondJson(response, 201, redactProvider(provider));
         return;
       }
-      const itemId = modelItemMatch ? this.decodePathSegment(modelItemMatch[1]!) : "";
-      const actionId = modelActionMatch ? this.decodePathSegment(modelActionMatch[1]!) : "";
-      if (!itemId && !actionId) { respondJson(response, 405, { error: "method not allowed" }); return; }
-      if (request.method === "PUT" && itemId) {
+      if (!providerId) { respondJson(response, 405, { error: "method not allowed" }); return; }
+      if (request.method === "PUT" && providerItemMatch) {
         const body = await this.readOperationsBody(request, response);
         if (!body) return;
-        const input = parseProfileBody(body);
-        if (!input) { respondJson(response, 400, { error: "invalid model profile" }); return; }
-        const existing = this.store.getModelProfile(itemId);
-        if (!existing) { respondJson(response, 404, { error: "model profile not found" }); return; }
+        const input = parseProviderBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model provider" }); return; }
+        const existing = this.store.getModelProvider(providerId);
+        if (!existing) { respondJson(response, 404, { error: "model provider not found" }); return; }
         // API Key 留空表示保留原值。
         if (!input.apiKey) input.apiKey = existing.apiKey;
-        const updated = this.store.updateModelProfile(itemId, input);
-        if (updated?.active) applyModelProfile(this.config, updated);
-        respondJson(response, 200, redactProfile(updated!));
+        const updated = this.store.updateModelProvider(providerId, input);
+        if (!updated) { respondJson(response, 404, { error: "model provider not found" }); return; }
+        this.applyActiveModelToConfig();
+        respondJson(response, 200, redactProvider(updated));
         return;
       }
-      if (request.method === "DELETE" && itemId) {
-        if (!this.store.deleteModelProfile(itemId)) { respondJson(response, 404, { error: "model profile not found" }); return; }
-        const active = this.store.getActiveModelProfile();
-        if (active) applyModelProfile(this.config, active);
+      if (request.method === "DELETE" && providerItemMatch) {
+        if (!this.store.deleteModelProvider(providerId)) { respondJson(response, 404, { error: "model provider not found" }); return; }
+        this.applyActiveModelToConfig();
         respondJson(response, 200, { deleted: true });
         return;
       }
-      if (request.method === "POST" && actionId) {
-        const profile = this.store.activateModelProfile(actionId) ? this.store.getModelProfile(actionId) : undefined;
-        if (!profile) { respondJson(response, 404, { error: "model profile not found" }); return; }
-        applyModelProfile(this.config, profile);
-        respondJson(response, 200, redactProfile(profile));
+      if (!this.store.getModelProvider(providerId)) { respondJson(response, 404, { error: "model provider not found" }); return; }
+      if (request.method === "POST" && providerModelsMatch) {
+        const body = await this.readOperationsBody(request, response);
+        if (!body) return;
+        const input = parseModelBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model" }); return; }
+        const model = this.store.createProviderModel(providerId, input);
+        if (!model) { respondJson(response, 404, { error: "model provider not found" }); return; }
+        if (model.active) this.applyActiveModelToConfig();
+        respondJson(response, 201, model);
+        return;
+      }
+      if (!modelId) { respondJson(response, 405, { error: "method not allowed" }); return; }
+      if (request.method === "PUT" && providerModelItemMatch) {
+        const body = await this.readOperationsBody(request, response);
+        if (!body) return;
+        const input = parseModelBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model" }); return; }
+        const updated = this.store.updateProviderModel(providerId, modelId, input);
+        if (!updated) { respondJson(response, 404, { error: "model not found" }); return; }
+        if (updated.active) this.applyActiveModelToConfig();
+        respondJson(response, 200, updated);
+        return;
+      }
+      if (request.method === "DELETE" && providerModelItemMatch) {
+        if (!this.store.deleteProviderModel(providerId, modelId)) { respondJson(response, 404, { error: "model not found" }); return; }
+        this.applyActiveModelToConfig();
+        respondJson(response, 200, { deleted: true });
+        return;
+      }
+      if (request.method === "POST" && providerModelActionMatch) {
+        const model = this.store.activateProviderModel(providerId, modelId);
+        if (!model) { respondJson(response, 404, { error: "model not found" }); return; }
+        this.applyActiveModelToConfig();
+        respondJson(response, 200, model);
         return;
       }
       respondJson(response, 405, { error: "method not allowed" });
@@ -964,32 +1015,41 @@ export class CorvexServer {
    */
   private applyStoredSettings(): void {
     try {
-      const migrated = this.store.migrateLegacyModelProfile(
+      const migrated = this.store.migrateLegacyModelSettings(
         { contextWindow: this.config.agent.contextWindow, maxOutputTokens: this.config.agent.maxOutputTokens },
         0,
       );
-      if (migrated) console.info("migrated legacy model settings", { id: migrated.id, name: migrated.name });
+      if (migrated) {
+        console.info("migrated legacy model settings", {
+          provider: migrated.provider.name,
+          model: migrated.model.name,
+        });
+      }
       const applied = applyRuntimeSettingRows(this.config, this.store.listRuntimeSettings());
       if (applied.length > 0) {
         console.info("applied stored runtime settings", { keys: applied });
       }
-      const activeProfile = this.store.getActiveModelProfile();
-      if (activeProfile) applyModelProfile(this.config, activeProfile);
+      this.applyActiveModelToConfig();
     } catch (error) {
       console.error("apply stored runtime settings failed", { error: errorMessage(error) });
     }
   }
 
+  /** 把当前选中的模型写回内存配置；目录为空时保持配置文件的值。 */
+  private applyActiveModelToConfig(): void {
+    const active = this.store.getActiveModel();
+    if (active) applyActiveModel(this.config, active);
+  }
+
   /**
-   * 读取 Agent 控制台可编辑的设置：以配置文件为基准，叠加运行时覆盖项。
-   * 同时返回自动推导后的生效值，界面据此解释「填写的值为何与运行值不同」。
+   * 读取 Agent 控制台可编辑的设置。这些值以 SQLite 为准，配置文件只在首次启动时
+   * 充当初始值；同时返回自动推导后的生效值，界面据此解释「填写的值为何与运行值不同」。
    */
   private async readSettings(): Promise<{
-    settings: Record<string, number | boolean | string>;
-    effective: Record<string, number | boolean | string>;
+    settings: Record<string, RuntimeSettingValue>;
+    effective: Record<string, RuntimeSettingValue>;
     adjusted: string[];
     derived: DerivedContextMetrics;
-    base: Record<string, number | boolean | string> | null;
     overrides: Record<string, string>;
     overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
     editable: boolean;
@@ -1000,16 +1060,6 @@ export class CorvexServer {
     const overrideMeta = Object.fromEntries(
       rows.map((row) => [row.key, { updatedAt: row.updatedAt, updatedBy: row.updatedBy }]),
     );
-    // 配置文件的值用于「恢复默认」：重新读盘而不是复用启动时的配置，
-    // 这样手工编辑配置文件后界面也能立即反映。
-    let base: Record<string, number | boolean | string> | null = null;
-    if (this.configPath) {
-      try {
-        base = runtimeSettingsView(await reloadConfig(this.configPath));
-      } catch (error) {
-        console.warn("read config file for settings view failed", { error: errorMessage(error) });
-      }
-    }
     const view = runtimeSettingsEffective(this.config);
     const redactedOverrides = Object.fromEntries(
       Object.entries(overrides).map(([key, value]) => [
@@ -1022,23 +1072,19 @@ export class CorvexServer {
       effective: redactSettingValues(view.effective),
       adjusted: view.adjusted,
       derived: view.derived,
-      base: base ? redactSettingValues(base) : null,
       overrides: redactedOverrides,
       overrideMeta,
-      editable: Boolean(this.configPath),
+      // 设置保存在 SQLite，配置文件只提供初始值，因此始终可编辑。
+      editable: true,
       configPath: this.configPath ?? null,
     };
   }
 
   /**
-   * 写入运行时设置：先校验，再重新读取配置文件作为基准，应用全部覆盖项，
-   * 用配置文件的原生校验器验证最终结果。只有校验通过才落库并生效。
+   * 写入运行时设置：先校验，再以读取到的配置文件为基准应用全部覆盖项，
+   * 用配置的原生校验器验证最终结果。只有校验通过才落库并生效。
    */
   private async writeSettings(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (!this.configPath) {
-      respondJson(response, 409, { error: "runtime settings require the server to run with --config" });
-      return;
-    }
     const body = await this.readOperationsBody(request, response);
     if (!body) return;
     const incoming = body.settings;
@@ -1051,8 +1097,11 @@ export class CorvexServer {
       if (value === null || value === undefined) continue;
       if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
         overrides[key] = String(value);
+      } else if (Array.isArray(value) && value.every((item) => typeof item === "string" || typeof item === "number")) {
+        // 列表设置（域名、路径、用户 ID）以 JSON 数组存库，读回时再按定义解析。
+        overrides[key] = JSON.stringify(value);
       } else {
-        respondJson(response, 400, { error: `setting "${key}" must be a number, boolean or string` });
+        respondJson(response, 400, { error: `setting "${key}" must be a number, boolean, string or array` });
         return;
       }
     }
@@ -1067,19 +1116,13 @@ export class CorvexServer {
       respondJson(response, 400, { error: problems.join("; ") });
       return;
     }
-    let base: CorvexConfig;
+    // 以启动快照为基准叠加本次覆盖项；未提交的键回到配置文件的初始值。
+    const candidate = structuredClone(this.baseline);
+    applyRuntimeSettings(candidate, overrides);
     try {
-      base = await reloadConfig(this.configPath);
-    } catch (error) {
-      respondJson(response, 500, { error: errorMessage(error) });
-      return;
-    }
-    // 覆盖项是整份替换：未提交的键回退到配置文件值，界面上的「恢复默认」据此生效。
-    applyRuntimeSettings(base, overrides);
-    try {
-      // 按 Server 角色校验：Server 不调用模型，模型密钥与地址来自环境变量，
+      // 按 Server 角色校验：Server 不调用模型，模型密钥与地址来自供应商目录，
       // 用全量校验会把合法配置误判为缺少密钥，导致任何保存都被拒绝。
-      validateConfig(base, "server");
+      validateConfig(candidate, "server");
     } catch (error) {
       respondJson(response, 400, { error: errorMessage(error) });
       return;
@@ -1090,7 +1133,7 @@ export class CorvexServer {
       .listRuntimeSettings()
       .filter((row) => isRuntimeSettingKey(row.key));
     const previous = new Map(previousRows.map((row) => [row.key, row.value]));
-    // 审计只记录真正变化的键：旧值与新值都省略时为「回到配置文件值」。
+    // 审计只记录真正变化的键：省略表示该键回到配置文件的初始值。
     const changes: Record<string, string> = {};
     for (const key of new Set([...previous.keys(), ...Object.keys(overrides)])) {
       const before = previous.get(key);
@@ -1098,8 +1141,8 @@ export class CorvexServer {
       if (before === after) continue;
       const secret = secretRuntimeSettingKeys.has(key);
       const describe = (value: string | undefined) => secret
-        ? (value ? "[REDACTED]" : "(config)")
-        : value ?? "(config)";
+        ? (value ? "[REDACTED]" : "(initial)")
+        : value ?? "(initial)";
       changes[key] = `${describe(before)} -> ${describe(after)}`;
     }
     try {
@@ -1120,11 +1163,9 @@ export class CorvexServer {
       console.error("record runtime settings audit failed", { error: errorMessage(error) });
     }
     // 内存配置以「配置文件 + 覆盖项」重建：先复位可编辑字段再应用覆盖，避免残留旧值。
-    copyRuntimeSettings(base, this.config);
-    applyRuntimeSettings(this.config, overrides);
-    // 模型连接参数由模型列表管理，复位后必须重新应用选中项，否则保存任何设置都会退回文件值。
-    const activeProfile = this.store.getActiveModelProfile();
-    if (activeProfile) applyModelProfile(this.config, activeProfile);
+    copyRuntimeSettings(candidate, this.config);
+    // 模型连接参数由模型目录管理，复位后必须重新应用选中项，否则保存任何设置都会退回文件值。
+    this.applyActiveModelToConfig();
     console.info("runtime settings updated", { keys: Object.keys(overrides), actor, updatedAt: now });
     respondJson(response, 200, await this.readSettings());
   }

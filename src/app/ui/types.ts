@@ -22,7 +22,8 @@ import type {
   EventTraceStatus,
   EventType,
   ModelCallMetric,
-  ModelProfile,
+  ModelProviderDetails,
+  ProviderModel,
   OperationsOverview,
   RepositoryDetails,
   StorageCleanupRecord,
@@ -56,7 +57,8 @@ export type {
   EventTraceStatus,
   EventType,
   ModelCallMetric,
-  ModelProfile,
+  ModelProviderDetails,
+  ProviderModel,
   RepositoryDetails,
   StorageCleanupRecord,
 };
@@ -102,17 +104,18 @@ export interface EventQueue {
 /** 事件列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
 export const pageSize = 25;
 
+/** 运行时设置值：列表项以字符串数组回显，数字项以秒或毫秒为单位。 */
+export type SettingValue = number | boolean | string | string[];
+
 /** `GET/PUT /api/ops/settings` 的响应体：当前值、生效值、覆盖项与是否可写。 */
 export interface SettingsResponse {
-  settings: Record<string, number | boolean | string>;
+  settings: Record<string, SettingValue>;
   /** 自动推导后的实际生效值；与 `settings` 不同时以这里为准。 */
-  effective: Record<string, number | boolean | string>;
+  effective: Record<string, SettingValue>;
   /** 被运行时自动调整的键，界面据此提示「已自动调整」。 */
   adjusted: string[];
   /** 由窗口与工具预算推导出的只读指标。 */
   derived: DerivedContextMetrics;
-  /** 配置文件中的原始值，用于「恢复默认」；无法读盘时为空。 */
-  base: Record<string, number | boolean | string> | null;
   /** 仅包含被运行时覆盖的键，值以字符串形式存储。 */
   overrides: Record<string, string>;
   /** 每个覆盖项的修改时间与操作者。 */
@@ -131,8 +134,8 @@ export interface DerivedContextMetrics {
   turnToolResultBytes: number;
 }
 
-/** 设置项的输入类型；布尔项渲染为开关，数字项渲染为输入框，字符串项渲染为文本框或下拉。 */
-export type SettingKind = "number" | "boolean" | "string";
+/** 设置项的输入类型；列表项渲染为可增删的标签输入框。 */
+export type SettingKind = "number" | "boolean" | "string" | "list";
 
 /** Agent 控制台展示的上下文设置元数据，键名与 `src/config/settings.ts` 一致。 */
 export interface SettingField {
@@ -145,6 +148,8 @@ export interface SettingField {
   values?: readonly string[];
   /** 字符串项的最大长度。 */
   maxLength?: number;
+  /** 列表项的元素类型：用户 ID 为整数，其余按文本处理。 */
+  item?: "integer" | "hostname" | "path";
   /** 输入单位提示，例如 token。 */
   unit?: string;
   /** 文案键：字段标签与说明。 */
@@ -195,6 +200,21 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
       { key: "mcp_enabled", kind: "boolean", labelKey: "settingsMcpEnabled", hintKey: "settingsMcpEnabledHint" },
+      { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
+      { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
+      { key: "gitlab_bot_username", kind: "string", maxLength: 200, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
+      { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupRuntime",
+    hintKey: "settingsGroupRuntimeHint",
+    advanced: true,
+    fields: [
+      { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
+      { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
+      { key: "worker_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsWorkerPollInterval", hintKey: "settingsWorkerPollIntervalHint" },
+      { key: "worker_event_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsWorkerEventTimeout", hintKey: "settingsWorkerEventTimeoutHint" },
     ],
   },
   {

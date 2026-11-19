@@ -41,7 +41,7 @@ describe("EventStore", () => {
     expect(conversationColumns).not.toContain("model");
   });
 
-  it("管理模型配置并迁移旧的模型运行时设置", async () => {
+  it("管理模型供应商与模型，并迁移旧的模型运行时设置", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await EventStore.open(join(directory, "state.db"));
     store.setRuntimeSetting("model", "legacy-model", "ops");
@@ -49,35 +49,62 @@ describe("EventStore", () => {
     store.setRuntimeSetting("model_api_key", "legacy-key", "ops");
     store.setRuntimeSetting("context_window", "65536", "ops");
 
-    // 升级后第一次启动：旧覆盖项变成一条激活的模型配置，旧键被清掉。
-    const migrated = store.migrateLegacyModelProfile({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0);
+    // 升级后第一次启动：旧覆盖项变成「供应商 + 模型」，旧键被清掉。
+    const migrated = store.migrateLegacyModelSettings({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0);
     expect(migrated).toMatchObject({
-      name: "legacy-model",
-      baseUrl: "https://legacy.example.com/v1",
-      apiKey: "legacy-key",
-      contextWindow: 65_536,
-      maxOutputTokens: 4_096,
-      active: true,
+      provider: { name: "legacy.example.com", baseUrl: "https://legacy.example.com/v1", apiKey: "legacy-key" },
+      model: { name: "legacy-model", contextWindow: 65_536, maxOutputTokens: 4_096, active: true },
     });
-    expect(store.migrateLegacyModelProfile({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0)).toBeUndefined();
+    expect(store.migrateLegacyModelSettings({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0)).toBeUndefined();
     expect(store.listRuntimeSettings().some((row) => row.key === "model")).toBe(false);
 
-    // 第一个新增的模型自动激活，之后可以显式切换；删除当前项会提升剩余项。
-    const second = store.createModelProfile({
+    // 供应商下新增模型：第一个全局模型已是当前项时，新模型默认不激活，可显式切换。
+    const provider = store.createModelProvider({ name: "example", baseUrl: "https://api.example.com/v1", apiKey: "" });
+    const second = store.createProviderModel(provider.id, {
       name: "second-model",
-      baseUrl: "https://api.example.com/v1",
-      apiKey: "",
       contextWindow: 200_000,
       maxOutputTokens: 8_192,
     });
-    expect(second.active).toBe(false);
-    expect(store.activateModelProfile(second.id)).toBe(true);
-    expect(store.getActiveModelProfile()?.id).toBe(second.id);
-    expect(store.deleteModelProfile(second.id)).toBe(true);
-    expect(store.getActiveModelProfile()?.id).toBe((migrated as { id: string }).id);
-    expect(store.deleteModelProfile((migrated as { id: string }).id)).toBe(true);
-    expect(store.listModelProfiles()).toEqual([]);
-    expect(store.getActiveModelProfile()).toBeUndefined();
+    expect(second).toMatchObject({ providerId: provider.id, active: false });
+    expect(store.activateProviderModel(provider.id, second!.id)?.active).toBe(true);
+    expect(store.getActiveModel()?.provider.id).toBe(provider.id);
+    expect(store.getActiveModel()?.model.id).toBe(second!.id);
+
+    // 删除当前模型会提升剩余的第一个；删除供应商会级联删除其模型。
+    expect(store.deleteProviderModel(provider.id, second!.id)).toBe(true);
+    expect(store.getActiveModel()?.model.id).toBe(migrated!.model.id);
+    expect(store.deleteModelProvider(migrated!.provider.id)).toBe(true);
+    expect(store.listModelProviders()).toHaveLength(1);
+    expect(store.listModelProviders()[0]?.models).toEqual([]);
+  });
+
+  it("把旧的 model_profiles 表拆分为供应商与模型", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    const databasePath = join(directory, "state.db");
+    store = await EventStore.open(databasePath);
+    store.close();
+    // 模拟上一版：供应商与模型混在一张表。
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("DROP TABLE provider_models");
+    raw.exec("DROP TABLE model_providers");
+    raw.exec(`CREATE TABLE model_profiles (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '',
+      context_window INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`);
+    const insert = raw.prepare(
+      "INSERT INTO model_profiles (id,name,base_url,api_key,context_window,max_output_tokens,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    );
+    insert.run("p1", "model-a", "https://api.example.com/v1", "key", 32_768, 4_096, 0, "2025-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z");
+    insert.run("p2", "model-b", "https://api.example.com/v1", "key", 131_072, 8_192, 1, "2025-01-02T00:00:00.000Z", "2025-01-02T00:00:00.000Z");
+    raw.close();
+
+    store = await EventStore.open(databasePath);
+    const providers = store.listModelProviders();
+    // 同一个 Base URL 与密钥合并成一个供应商，模型全部保留。
+    expect(providers).toHaveLength(1);
+    expect(providers[0]?.models.map((model) => model.name)).toEqual(["model-a", "model-b"]);
+    expect(store.getActiveModel()?.model.name).toBe("model-b");
   });
 
   it("persists idempotent events and enforces leased status transitions", async () => {

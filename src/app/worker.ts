@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
-import { applyModelProfile, applyRuntimeSettingRows, copyRuntimeSettings } from "../config/settings.js";
+import { applyActiveModel, applyRuntimeSettingRows, copyRuntimeSettings } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import { FixWorkflow } from "../fix/workflow.js";
 import { ImplementWorkflow } from "../implement/workflow.js";
@@ -159,16 +159,16 @@ export class Worker {
   private refreshRuntimeSettings(): void {
     try {
       const rows = this.store.listRuntimeSettings();
-      const profile = this.store.getActiveModelProfile();
-      const profileSignature = profile
-        ? `${profile.id}:${profile.name}:${profile.baseUrl}:${profile.apiKey}:${profile.contextWindow}:${profile.maxOutputTokens}`
+      const active = this.store.getActiveModel();
+      const modelSignature = active
+        ? `${active.provider.id}:${active.provider.baseUrl}:${active.provider.apiKey}:${active.model.id}:${active.model.name}:${active.model.contextWindow}:${active.model.maxOutputTokens}`
         : "";
-      const signature = `${rows.map((row) => `${row.key}=${row.value}`).join("\n")}\n${profileSignature}`;
+      const signature = `${rows.map((row) => `${row.key}=${row.value}`).join("\n")}\n${modelSignature}`;
       if (signature === this.runtimeSignature) return;
       // 先复位到配置文件基线，再叠加覆盖：删除的键因此立即回到文件值。
       copyRuntimeSettings(this.baseline, this.config);
       const applied = applyRuntimeSettingRows(this.config, rows);
-      if (profile) applyModelProfile(this.config, profile);
+      if (active) applyActiveModel(this.config, active);
       this.runtimeSignature = signature;
       this.buildWorkflows();
       console.info("worker applied runtime settings", { keys: applied });
@@ -180,11 +180,16 @@ export class Worker {
   async run(signal: AbortSignal): Promise<void> {
     await this.repo.initialize();
     try {
-      const migrated = this.store.migrateLegacyModelProfile(
+      const migrated = this.store.migrateLegacyModelSettings(
         { contextWindow: this.config.agent.contextWindow, maxOutputTokens: this.config.agent.maxOutputTokens },
         0,
       );
-      if (migrated) console.info("worker migrated legacy model settings", { id: migrated.id, name: migrated.name });
+      if (migrated) {
+        console.info("worker migrated legacy model settings", {
+          provider: migrated.provider.name,
+          model: migrated.model.name,
+        });
+      }
     } catch (error) {
       console.error("migrate legacy model settings failed", { error: errorMessage(error) });
     }

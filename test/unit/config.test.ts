@@ -102,8 +102,10 @@ describe("validateConfig", () => {
       await initializeConfig(configPath);
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).not.toContain("allowed_project_ids");
-      expect(contents).toContain("blocked_user_ids");
-      expect(contents).toMatch(/session_timeout: \d+m/u);
+      // 模板只保留启动必需项；可调项改由控制台写入 SQLite。
+      expect(contents).toContain("base_url");
+      expect(contents).not.toContain("session_timeout");
+      expect(contents).not.toContain("retention_days");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

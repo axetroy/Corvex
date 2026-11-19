@@ -1,3 +1,8 @@
+# 启动必需项：监听地址、存储路径、GitLab 地址与令牌、Webhook 密钥、控制台凭据。
+# 其余可调项（模型供应商与模型、上下文预算、工具开关、审查/修复上限、超时、
+# 保留策略、屏蔽主机与用户等）都在运维台「设置」页维护，保存在 SQLite，
+# 首次保存后即为唯一来源，不需要再写进本文件。
+
 server:
   listen: "0.0.0.0:8080"
   read_timeout: 5s
@@ -5,68 +10,15 @@ server:
 
 gitlab:
   base_url: "https://gitlab.example.com"
-  blocked_user_ids: []
-  bot_username: "corvex-bot"
 
 storage:
   root: "./data/corvex"
   database: "./data/state/corvex.db"
-  retention_days: 90
-  audit_retention_days: 365
-  # 对话常驻 worktree 的空闲时长与数量上限，也可在运维台「设置」页运行时修改
-  conversation_workspace_ttl_minutes: 60
-  conversation_workspace_max: 8
 
 agent:
   enabled: false
-  # 模型列表在运维台「设置 > 模型」中维护（名称、Base URL、API Key、
-  # 上下文窗口、最大输出），存 SQLite 且无需重启；下面 base_url / model /
-  # max_output_tokens / context_window 只是列表为空时的回退值。
-  # API Key 不会在接口中回显；数据库文件及备份需妥善保护。
-  response_language: "en" # en or zh-CN
+  # 模型供应商与模型在运维台「设置 > 模型」中维护（名称、Base URL、API Key、
+  # 上下文窗口、最大输出），存 SQLite 且无需重启；下面 base_url / model 只是
+  # 模型目录为空时的兜底值。API Key 不会在接口中回显，数据库文件及备份需妥善保护。
   base_url: "https://api.openai.com/v1"
   model: "your-model-name"
-  request_timeout: 10m
-  session_timeout: 120m
-  max_output_tokens: 8192
-  daily_token_budget: 0
-  mcp_enabled: false
-  web_enabled: true
-  web_blocked_hosts: []
-  skill_paths: []
-
-  # 上下文预算：模型窗口、提示词预算与 SDK 压缩阈值。
-  # context_window 是模型的真实窗口；请求超限时先按下面的预算在本地裁剪，
-  # 而不是依赖服务端报错。max_input_tokens 为 0 时由窗口减输出预留推导。
-  # 选择了模型列表中的模型时，以模型自己的窗口与输出上限为准，这里是回退值。
-  # 工具结果在进入会话历史前按单次/单轮硬性截断，因此 turn_tool_result_bytes
-  # 只是软检查点：达到阈值（最多四个单轮预算）时提示模型收窄读取并继续。
-  # compaction_reserve_tokens 低于工具预算推导的安全下限时会被运行时上调。
-  context_window: 131072
-  max_input_tokens: 0
-  history_token_budget: 24000
-  turn_tool_result_bytes: 262144
-  compaction_reserve_tokens: 16384
-  compaction_keep_recent_tokens: 20000
-  summary_enabled: true
-
-review:
-  max_files: 100
-  max_findings: 30
-  max_context_bytes: 2097152
-  batch_concurrency: 2
-
-chat:
-  history_comments: 20
-
-worker:
-  poll_interval: 2s
-  event_timeout: 130m
-
-fix:
-  enabled: false
-  max_patch_bytes: 131072
-
-issue:
-  implement_enabled: false
-  history_comments: 20

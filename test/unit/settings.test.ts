@@ -54,6 +54,15 @@ function settingsConfig(): CorvexConfig {
       conversationWorkspaceTtlMinutes: 60,
       conversationWorkspaceMax: 8,
     },
+    worker: { pollInterval: 2_000, eventTimeout: 30 * 60_000 },
+    gitlab: {
+      baseUrl: "https://gitlab.example.com",
+      readToken: "read",
+      writeToken: "write",
+      webhookSecret: "secret",
+      blockedUserIds: [7],
+      botUsername: "corvex-bot",
+    },
   } as CorvexConfig;
 }
 
@@ -64,6 +73,11 @@ describe("validateRuntimeSettings", () => {
 
   it("拒绝未知键", () => {
     expect(validateRuntimeSettings({ nope: "1" })).toEqual(['unknown setting "nope"']);
+  });
+
+  it("允许没有密钥的本地模型", () => {
+    expect(validateRuntimeSettings({ model_api_key: "" })).toEqual([]);
+    expect(validateRuntimeSettings({ response_language: "" })).toEqual(["response_language must not be empty"]);
   });
 
   it("拒绝越界与类型错误的数字", () => {
@@ -82,6 +96,30 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ model: "   " })).toEqual(["model must not be empty"]);
     expect(validateRuntimeSettings({ response_language: "fr" })).toEqual(["response_language must be one of en, zh-CN"]);
     expect(validateRuntimeSettings({ model: "x".repeat(201) })).toEqual(["model must be at most 200 characters"]);
+  });
+
+  it("校验列表项", () => {
+    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[7,8]" })).toEqual([]);
+    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[]" })).toEqual([]);
+    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: '["7"]' })).toEqual([]);
+    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[7.5]" })).toEqual([
+      "gitlab_blocked_user_ids items must be positive integers",
+    ]);
+    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "7,8" })).toEqual([
+      "gitlab_blocked_user_ids must be a JSON array",
+    ]);
+    expect(validateRuntimeSettings({ web_blocked_hosts: '["https://example.com/a"]' })).toEqual([
+      "web_blocked_hosts items must be bare hostnames",
+    ]);
+    expect(validateRuntimeSettings({ web_blocked_hosts: '["example.com"]' })).toEqual([]);
+  });
+
+  it("校验带单位的时长", () => {
+    expect(validateRuntimeSettings({ agent_request_timeout: "600" })).toEqual([]);
+    expect(validateRuntimeSettings({ agent_request_timeout: "0" })).toEqual([
+      "agent_request_timeout must be at least 1",
+    ]);
+    expect(validateRuntimeSettings({ worker_poll_interval: "1.5" })).toEqual([]);
   });
 
   it("校验跨字段约束", () => {
@@ -103,6 +141,10 @@ describe("applyRuntimeSettings", () => {
       fix_enabled: "true",
       model: "gpt-4o",
       response_language: "zh-CN",
+      agent_request_timeout: "300",
+      gitlab_blocked_user_ids: "[7,8]",
+      web_blocked_hosts: '["example.com","example.org"]',
+      skill_paths: '["/opt/skills"]',
     });
     expect(config.agent.contextWindow).toBe(200_000);
     expect(config.agent.summaryEnabled).toBe(false);
@@ -111,6 +153,11 @@ describe("applyRuntimeSettings", () => {
     expect(config.fix.enabled).toBe(true);
     expect(config.agent.model).toBe("gpt-4o");
     expect(config.agent.responseLanguage).toBe("zh-CN");
+    // 界面单位是秒，配置内部仍是毫秒。
+    expect(config.agent.requestTimeout).toBe(300_000);
+    expect(config.gitlab.blockedUserIds).toEqual([7, 8]);
+    expect(config.agent.webBlockedHosts).toEqual(["example.com", "example.org"]);
+    expect(config.agent.skillPaths).toEqual(["/opt/skills"]);
   });
 
   it("忽略未知键与未覆盖的字段", () => {
@@ -144,6 +191,10 @@ describe("runtimeSettingsView", () => {
       summary_enabled: true,
       review_max_files: 100,
       fix_max_patch_bytes: 128 << 10,
+      agent_request_timeout: 120,
+      worker_poll_interval: 2,
+      gitlab_blocked_user_ids: ["7"],
+      web_blocked_hosts: [],
     });
   });
 });

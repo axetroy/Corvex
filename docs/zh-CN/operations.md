@@ -72,10 +72,12 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `DELETE /api/ops/conversations/<id>` | 删除对话及其轮次、消息与过程记录；轮次运行中拒绝删除。 |
 | `GET /api/ops/storage/cleanups` | 最近的 Git 存储清理记录，包含 CLI、每日保留任务和控制台触发的清理。 |
 | `POST /api/ops/storage/cleanup` | 预览（`apply: false`）或执行（`apply: true`）清理早于 `olderThanDays` 的目录；运行中及排队中的轮次受保护。 |
-| `GET /api/ops/models`、`POST /api/ops/models` | 列出或新增模型配置；接口不回显 API Key。 |
-| `PUT /api/ops/models/<id>`、`DELETE /api/ops/models/<id>` | 修改或删除模型；`apiKey` 留空表示保留原值。 |
-| `POST /api/ops/models/<id>/activate` | 选择当前使用的模型；第一个新增的模型默认激活。 |
-| `GET /api/ops/settings`、`PUT /api/ops/settings` | 读取运行时设置的生效值与是否可编辑，或在运行时覆盖它们。`PUT` 把提交的覆盖项存入 SQLite（叠加在配置文件之上）并返回新的生效值；Server 启动时未提供 `--config` 会返回 `409`。 |
+| `GET /api/ops/model-providers`、`POST /api/ops/model-providers` | 列出供应商及其模型，或新增供应商；接口不回显 API Key。 |
+| `PUT /api/ops/model-providers/<id>`、`DELETE /api/ops/model-providers/<id>` | 修改或删除供应商及其模型；`apiKey` 留空表示保留原值。 |
+| `POST /api/ops/model-providers/<id>/models` | 在供应商下新增模型。 |
+| `PUT`/`DELETE /api/ops/model-providers/<id>/models/<modelId>` | 修改或删除单个模型。 |
+| `POST /api/ops/model-providers/<id>/models/<modelId>/activate` | 选择当前使用的模型；第一个新增的模型默认激活。 |
+| `GET /api/ops/settings`、`PUT /api/ops/settings` | 读取运行时设置的生效值，或整份替换。`PUT` 把提交的设置存入 SQLite（首次保存后即为唯一来源）并返回新的生效值；无论是否提供 `--config` 都可用。 |
 
 Agent 控制台接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护控制台凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。
 

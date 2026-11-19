@@ -706,10 +706,9 @@ describe("CorvexServer", () => {
       const initial = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
       expect(initial.status).toBe(200);
       const initialBody = await initial.json() as {
-        settings: Record<string, number | boolean | string>;
-        effective: Record<string, number | boolean | string>;
+        settings: Record<string, number | boolean | string | string[]>;
+        effective: Record<string, number | boolean | string | string[]>;
         adjusted: string[];
-        base: Record<string, number | boolean | string> | null;
         overrides: Record<string, string>;
         overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
         editable: boolean;
@@ -718,13 +717,12 @@ describe("CorvexServer", () => {
       expect(initialBody.editable).toBe(true);
       expect(initialBody.configPath).toBe(configPath);
       expect(initialBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true, response_language: "en" });
-      expect(initialBody.base).toMatchObject({ context_window: 131_072 });
       expect(initialBody.overrides).toEqual({});
       // 0 表示自动推导，界面必须拿到生效值，否则看起来像没保存。
       expect(initialBody.effective.max_input_tokens).toBe(131_072 - 4_096 - 2_000);
       expect(initialBody.adjusted).toContain("max_input_tokens");
 
-      // 只提交与配置文件不同的键：服务端据此记录覆盖项。
+      // 控制台保存时会提交全部可编辑键；接口也接受部分键，未提交的键保持原值。
       const saved = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { authorization, "content-type": "application/json" },
@@ -753,7 +751,6 @@ describe("CorvexServer", () => {
       const secretBody = await secretWrite.json() as typeof initialBody;
       expect(secretBody.settings.model_api_key).toBe("");
       expect(secretBody.effective.model_api_key).toBe("");
-      expect(secretBody.base?.model_api_key).toBe("");
       expect(secretBody.overrides.model_api_key).toBe("••••••");
       expect(config.agent.apiKey).toBe("super-secret-key");
 
@@ -765,7 +762,7 @@ describe("CorvexServer", () => {
       expect(keepSecret.status).toBe(200);
       expect(config.agent.apiKey).toBe("super-secret-key");
 
-      // 覆盖项是整份替换：未提交的键回退到配置文件值。
+      // 覆盖项是整份替换：显式提交空对象时，未提交的键回退到配置文件的初始值。
       const reset = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { authorization, "content-type": "application/json" },
@@ -773,7 +770,7 @@ describe("CorvexServer", () => {
       });
       expect(reset.status).toBe(200);
       const resetBody = await reset.json() as typeof initialBody;
-      // 密钥没有“恢复配置文件值”：留空始终沿用已保存值，其它覆盖项被清空。
+      // 密钥留空始终沿用已保存值，其它覆盖项被清空。
       expect(resetBody.overrides).toMatchObject({ model_api_key: "••••••" });
       expect(Object.keys(resetBody.overrides).filter((key) => key !== "model_api_key")).toEqual([]);
       expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
@@ -803,45 +800,58 @@ describe("CorvexServer", () => {
       const audit = store.listAuditEvents().filter((entry) => entry.action === "update_settings");
       expect(audit.length).toBeGreaterThanOrEqual(3);
       expect(audit[0]).toMatchObject({ actorId: 0, resource: "settings:operator" });
-      expect(audit.some((entry) => entry.result?.includes("context_window: (config) -> 200000"))).toBe(true);
-      expect(audit.some((entry) => entry.result?.includes("context_window: 200000 -> (config)"))).toBe(true);
+      expect(audit.some((entry) => entry.result?.includes("context_window: (initial) -> 200000"))).toBe(true);
+      expect(audit.some((entry) => entry.result?.includes("context_window: 200000 -> (initial)"))).toBe(true);
       expect(audit.some((entry) => entry.result?.includes("model_api_key:"))).toBe(true);
       expect(audit.every((entry) => !entry.result?.includes("super-secret-key"))).toBe(true);
 
-      // Web 模型列表：第一个模型自动激活，密钥不回显，留空更新不会清掉原密钥。
-      expect((await (await fetch(`${base}/api/ops/models`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
-      const createModel = await fetch(`${base}/api/ops/models`, {
+      // 模型目录：供应商保存连接参数，其下挂模型；密钥不回显，留空更新不会清掉原密钥。
+      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
+      const createProvider = await fetch(`${base}/api/ops/model-providers`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({
-          name: "gpt-test",
-          baseUrl: "https://api.example.com/v1",
-          apiKey: "profile-secret",
-          contextWindow: 131_072,
-          maxOutputTokens: 8_192,
-        }),
+        body: JSON.stringify({ name: "example", baseUrl: "https://api.example.com/v1", apiKey: "profile-secret" }),
+      });
+      expect(createProvider.status).toBe(201);
+      const createdProvider = await createProvider.json() as { id: string; apiKey: string };
+      expect(createdProvider.apiKey).toBe("••••••");
+
+      // 第一个模型自动激活，并立即覆盖内存配置里的模型连接参数。
+      const createModel = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ name: "gpt-test", contextWindow: 131_072, maxOutputTokens: 8_192 }),
       });
       expect(createModel.status).toBe(201);
-      const createdModel = await createModel.json() as { id: string; active: boolean; apiKey: string };
+      const createdModel = await createModel.json() as { id: string; active: boolean };
       expect(createdModel.active).toBe(true);
-      expect(createdModel.apiKey).toBe("••••••");
+      expect(config.agent.model).toBe("gpt-test");
       expect(config.agent.apiKey).toBe("profile-secret");
-      const listedModels = await (await fetch(`${base}/api/ops/models`, { headers: { authorization } })).json() as { items: { apiKey: string }[] };
-      expect(listedModels.items[0]?.apiKey).toBe("••••••");
-      const editModel = await fetch(`${base}/api/ops/models/${createdModel.id}`, {
+
+      const listedProviders = await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as {
+        items: { apiKey: string; models: { name: string }[] }[];
+      };
+      expect(listedProviders.items[0]?.apiKey).toBe("••••••");
+      expect(listedProviders.items[0]?.models.map((model) => model.name)).toEqual(["gpt-test"]);
+
+      // 编辑模型只改模型自己的窗口；密钥留在供应商上，不因留空被清掉。
+      const editModel = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models/${createdModel.id}`, {
         method: "PUT",
         headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({
-          name: "gpt-test-2",
-          baseUrl: "https://api.example.com/v1",
-          apiKey: "",
-          contextWindow: 200_000,
-          maxOutputTokens: 8_192,
-        }),
+        body: JSON.stringify({ name: "gpt-test-2", contextWindow: 200_000, maxOutputTokens: 8_192 }),
       });
       expect(editModel.status).toBe(200);
-      expect(config.agent.apiKey).toBe("profile-secret");
+      expect(config.agent.model).toBe("gpt-test-2");
       expect(config.agent.contextWindow).toBe(200_000);
+      expect(config.agent.apiKey).toBe("profile-secret");
+      const editProvider = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ name: "example-2", baseUrl: "https://api.example.com/v1", apiKey: "" }),
+      });
+      expect(editProvider.status).toBe(200);
+      expect((await editProvider.json() as { apiKey: string }).apiKey).toBe("••••••");
+      expect(config.agent.apiKey).toBe("profile-secret");
 
       // 保存其它设置时不能把模型连接参数退回配置文件值。
       const languageWrite = await fetch(`${base}/api/ops/settings`, {
@@ -854,10 +864,16 @@ describe("CorvexServer", () => {
       expect(config.agent.contextWindow).toBe(200_000);
       expect(config.agent.apiKey).toBe("profile-secret");
 
-      expect((await fetch(`${base}/api/ops/models/${createdModel.id}`, {
+      // 删除模型后自动提升剩余模型；删掉最后一个模型后目录为空。
+      expect((await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models/${createdModel.id}`, {
         method: "DELETE",
         headers: { authorization },
       })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/model-providers/${createdProvider.id}`, {
+        method: "DELETE",
+        headers: { authorization },
+      })).status).toBe(200);
+      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
     } finally {
       controller.abort();
       await running;
@@ -869,7 +885,7 @@ describe("CorvexServer", () => {
     }
   });
 
-  it("reports runtime settings as read-only when the server runs without a config file", async () => {
+  it("stores runtime settings in SQLite even when the server runs without a config file", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const store = await EventStore.open(":memory:");
     const config: CorvexConfig = {
@@ -931,13 +947,25 @@ describe("CorvexServer", () => {
       ).toString("base64")}`;
       const response = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ editable: false, configPath: null, base: null });
+      expect(await response.json()).toMatchObject({ editable: true, configPath: null });
+      // 没有配置文件时设置仍写进 SQLite，并立即作用于内存配置。
       const write = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({ settings: { context_window: 200_000 } }),
+        body: JSON.stringify({
+          settings: {
+            context_window: 200_000,
+            agent_request_timeout: 240,
+            gitlab_blocked_user_ids: [7, 8],
+          },
+        }),
       });
-      expect(write.status).toBe(409);
+      expect(write.status).toBe(200);
+      expect(config.agent.contextWindow).toBe(200_000);
+      expect(config.agent.requestTimeout).toBe(240_000);
+      expect(config.gitlab.blockedUserIds).toEqual([7, 8]);
+      expect(store.listRuntimeSettings().find((row) => row.key === "gitlab_blocked_user_ids")?.value)
+        .toBe("[7,8]");
     } finally {
       controller.abort();
       await running;
