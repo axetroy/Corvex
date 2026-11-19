@@ -16,7 +16,7 @@ import {
  * 凭据、地址、令牌与工作进程轮询参数不在此列，它们只从配置文件或环境变量读取，
  * 修改需要重启进程。
  */
-export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix";
+export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage";
 
 export interface RuntimeSettingDefinition {
   key: string;
@@ -64,6 +64,11 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "fix_enabled", section: "fix", field: "enabled", type: "boolean" },
   { key: "fix_max_patch_bytes", section: "fix", field: "maxPatchBytes", type: "number", min: 1, max: 256 << 10, workerScoped: true },
   { key: "issue_implement_enabled", section: "issue", field: "implementEnabled", type: "boolean" },
+  // 存储与对话工作区：Server 每次回收工作区/执行保留任务时读取，改后无需重启。
+  { key: "storage_retention_days", section: "storage", field: "retentionDays", type: "number", min: 1, max: 36_500 },
+  { key: "storage_audit_retention_days", section: "storage", field: "auditRetentionDays", type: "number", min: 1, max: 36_500 },
+  { key: "conversation_workspace_ttl_minutes", section: "storage", field: "conversationWorkspaceTtlMinutes", type: "number", min: 1, max: 14_400 },
+  { key: "conversation_workspace_max", section: "storage", field: "conversationWorkspaceMax", type: "number", min: 1, max: 200 },
 ];
 
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));

@@ -40,6 +40,7 @@ import {
   type EventTraceStatus,
   type EventType,
   type ConversationTurnSegment,
+  type StorageCleanupRecord,
   type ConversationTurnTransition,
   type ConversationTurns,
   type ModelCallMetric,
@@ -2152,6 +2153,42 @@ export class EventStore {
     return new Set(rows.map((row) => row.project_id));
   }
 
+  /** 记录一次存储清理的结果，供控制台查看历史。 */
+  recordStorageCleanup(entry: Omit<StorageCleanupRecord, "id">): void {
+    this.db.prepare(
+      `INSERT INTO storage_cleanup_log
+       (started_at, finished_at, source, applied, older_than_days, removed_workspaces, removed_mirrors, error)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run(
+      entry.startedAt,
+      entry.finishedAt,
+      entry.source.slice(0, 40),
+      entry.applied ? 1 : 0,
+      entry.olderThanDays,
+      entry.removedWorkspaces,
+      entry.removedMirrors,
+      entry.error.slice(0, 8_000),
+    );
+  }
+
+  /** 最近的存储清理记录，最新的在前。 */
+  listStorageCleanups(limit = 30): StorageCleanupRecord[] {
+    const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 30;
+    const rows = this.db.prepare("SELECT * FROM storage_cleanup_log ORDER BY started_at DESC,id DESC LIMIT ?")
+      .all(safeLimit) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: numberColumn(row, "id"),
+      startedAt: stringColumn(row, "started_at"),
+      finishedAt: stringColumn(row, "finished_at"),
+      source: stringColumn(row, "source"),
+      applied: numberColumn(row, "applied") === 1,
+      olderThanDays: numberColumn(row, "older_than_days"),
+      removedWorkspaces: numberColumn(row, "removed_workspaces"),
+      removedMirrors: numberColumn(row, "removed_mirrors"),
+      error: stringColumn(row, "error"),
+    }));
+  }
+
   /** 仍有排队或运行中轮次的对话 ID，用于保护其常驻工作区不被清理。 */
   activeConversationIds(): Set<string> {
     const rows = this.db
@@ -2405,6 +2442,14 @@ export class EventStore {
         head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_messages_order_idx ON conversation_messages(conversation_id,created_at,id);
+      CREATE TABLE IF NOT EXISTS storage_cleanup_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL,
+        applied INTEGER NOT NULL, older_than_days INTEGER NOT NULL,
+        removed_workspaces INTEGER NOT NULL DEFAULT 0, removed_mirrors INTEGER NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS storage_cleanup_log_order_idx ON storage_cleanup_log(started_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS webhook_deliveries (
         webhook_event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL

@@ -197,10 +197,31 @@ export class CorvexServer {
       console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
     }
     // 重启后没有在途轮次，清掉上次进程留下的对话 worktree，避免磁盘占用只增不减。
+    const sweepStarted = new Date().toISOString();
     try {
-      await this.conversations.cleanupStaleWorkspaces();
+      const removed = await this.conversations.cleanupStaleWorkspaces();
+      this.store.recordStorageCleanup({
+        startedAt: sweepStarted,
+        finishedAt: new Date().toISOString(),
+        source: "startup",
+        applied: true,
+        olderThanDays: 0,
+        removedWorkspaces: removed,
+        removedMirrors: 0,
+        error: "",
+      });
     } catch (error) {
       console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
+      this.store.recordStorageCleanup({
+        startedAt: sweepStarted,
+        finishedAt: new Date().toISOString(),
+        source: "startup",
+        applied: true,
+        olderThanDays: 0,
+        removedWorkspaces: 0,
+        removedMirrors: 0,
+        error: errorMessage(error),
+      });
     }
     const retention = new AbortController();
     const stopRetention = () => {
@@ -274,11 +295,24 @@ export class CorvexServer {
       historyBefore.setUTCDate(historyBefore.getUTCDate() - this.config.storage.retentionDays);
       const auditBefore = new Date(now);
       auditBefore.setUTCDate(auditBefore.getUTCDate() - this.config.storage.auditRetentionDays);
+      const retentionStarted = new Date().toISOString();
+      let retentionError = "";
       try {
         this.store.pruneHistory(historyBefore, auditBefore);
       } catch (error) {
-        console.error("prune persisted history failed", { error: errorMessage(error) });
+        retentionError = errorMessage(error);
+        console.error("prune persisted history failed", { error: retentionError });
       }
+      this.store.recordStorageCleanup({
+        startedAt: retentionStarted,
+        finishedAt: new Date().toISOString(),
+        source: "retention",
+        applied: true,
+        olderThanDays: this.config.storage.retentionDays,
+        removedWorkspaces: 0,
+        removedMirrors: 0,
+        error: retentionError,
+      });
       try {
         await this.conversations.releaseIdleWorkspaces();
       } catch (error) {
@@ -684,6 +718,62 @@ export class CorvexServer {
         } else {
           this.respondGitLabReadError(response, error);
         }
+      }
+      return;
+    }
+    // Git 存储清理：可预览计划，也可执行；每次都落一条记录供控制台查看。
+    if (request.method === "GET" && url.pathname === "/api/ops/storage/cleanups") {
+      const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 30;
+      if (limit === false) {
+        respondJson(response, 400, { error: "invalid limit" });
+        return;
+      }
+      respondJson(response, 200, { items: this.store.listStorageCleanups(limit) });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/ops/storage/cleanup") {
+      const body = await this.readOperationsBody(request, response);
+      if (!body) return;
+      const olderThanDays = body.olderThanDays;
+      const apply = body.apply;
+      if (
+        typeof olderThanDays !== "number" || !Number.isSafeInteger(olderThanDays) ||
+        olderThanDays < 1 || olderThanDays > 36_500 || typeof apply !== "boolean"
+      ) {
+        respondJson(response, 400, { error: "olderThanDays must be 1..36500 and apply must be boolean" });
+        return;
+      }
+      const startedAt = new Date().toISOString();
+      try {
+        const plan = await this.conversations.cleanupStorage(olderThanDays, apply);
+        this.store.recordStorageCleanup({
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          source: "ops-console",
+          applied: apply,
+          olderThanDays,
+          removedWorkspaces: plan.workspaces.length,
+          removedMirrors: plan.mirrors.length,
+          error: "",
+        });
+        respondJson(response, 200, {
+          olderThanDays,
+          applied: plan.applied,
+          workspaces: plan.workspaces.length,
+          mirrors: plan.mirrors.length,
+        });
+      } catch (cause) {
+        this.store.recordStorageCleanup({
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          source: "ops-console",
+          applied: apply,
+          olderThanDays,
+          removedWorkspaces: 0,
+          removedMirrors: 0,
+          error: errorMessage(cause).slice(0, 8_000),
+        });
+        respondJson(response, 500, { error: errorMessage(cause) });
       }
       return;
     }

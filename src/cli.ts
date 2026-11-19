@@ -1,4 +1,5 @@
 import { initializeConfig, loadConfig, type ConfigRole } from "./config/config.js";
+import { applyRuntimeSettingRows } from "./config/settings.js";
 import { CorvexServer } from "./app/server.js";
 import { Worker } from "./app/worker.js";
 import { EventStore } from "./events/store.js";
@@ -151,11 +152,14 @@ async function runStorageCleanup(args: string[]): Promise<void> {
   const config = await loadConfig(configPath, "storage");
   const store = await EventStore.open(config.storage.database);
   try {
+    // 控制台里改过的运行时设置存在同一个 SQLite 里，CLI 也要遵守。
+    applyRuntimeSettingRows(config, store.listRuntimeSettings());
     const manager = new GitManager(
       config.storage.root,
       config.gitlab.baseUrl,
       config.gitlab.readToken,
     );
+    const startedAt = new Date().toISOString();
     const plan = await manager.cleanupStorage(
       store.activeEventIds(),
       store.pendingProjectIds(),
@@ -163,6 +167,16 @@ async function runStorageCleanup(args: string[]): Promise<void> {
       apply,
       store.activeConversationIds(),
     );
+    store.recordStorageCleanup({
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      source: "cli",
+      applied: apply,
+      olderThanDays,
+      removedWorkspaces: plan.workspaces.length,
+      removedMirrors: plan.mirrors.length,
+      error: "",
+    });
     console.info(JSON.stringify({ olderThanDays, ...plan }, null, 2));
   } finally {
     store.close();

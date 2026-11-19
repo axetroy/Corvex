@@ -70,6 +70,8 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `POST /api/ops/conversations`、`POST /api/ops/conversations/<id>/messages` | 创建固定版本的只读对话或排入下一轮对话。 |
 | `POST /api/ops/conversations/<id>/archive` | 用 `{ "archived": true|false }` 归档或取消归档；列表接口支持 `archived=true|false`。 |
 | `DELETE /api/ops/conversations/<id>` | 删除对话及其轮次、消息与过程记录；轮次运行中拒绝删除。 |
+| `GET /api/ops/storage/cleanups` | 最近的 Git 存储清理记录，包含 CLI、每日保留任务和控制台触发的清理。 |
+| `POST /api/ops/storage/cleanup` | 预览（`apply: false`）或执行（`apply: true`）清理早于 `olderThanDays` 的目录；运行中及排队中的轮次受保护。 |
 | `GET /api/ops/settings`、`PUT /api/ops/settings` | 读取运行时设置的生效值与是否可编辑，或在运行时覆盖它们。`PUT` 把提交的覆盖项存入 SQLite（叠加在配置文件之上）并返回新的生效值；Server 启动时未提供 `--config` 会返回 `409`。 |
 
 Agent 控制台接口使用 HTTP Basic Auth；未启用时返回 `404`。任务详情包含发起人用户名和 ID、触发评论、解析后的请求及错误信息，应保护控制台凭据并使用 HTTPS。触发评论来自关联的 Webhook 执行事件，并沿用其大小限制和尽力脱敏策略。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。

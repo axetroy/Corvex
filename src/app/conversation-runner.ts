@@ -11,11 +11,6 @@ import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 
-/** 常驻对话工作区的空闲存活时间，超时后由 Runner 或 storage cleanup 回收。 */
-const conversationWorkspaceTtlMs = 60 * 60_000;
-/** 常驻对话工作区的数量上限，超出时按最近最少使用淘汰。 */
-const maxCachedConversationWorkspaces = 8;
-
 interface CachedConversationWorkspace {
   workspace: Workspace;
   lastUsedAt: number;
@@ -88,6 +83,17 @@ export class ConversationRunner {
       await this.releaseIdleWorkspaces();
     }
     return true;
+  }
+
+  /** 从控制台触发一次 Git 存储清理（可先 dry-run）。 */
+  async cleanupStorage(olderThanDays: number, apply: boolean) {
+    return this.repo.cleanupStorage(
+      this.store.activeEventIds(),
+      this.store.pendingProjectIds(),
+      new Date(Date.now() - olderThanDays * 86_400_000),
+      apply,
+      this.store.activeConversationIds(),
+    );
   }
 
   /** 启动时清理上次进程遗留的对话 worktree（不触碰项目镜像）。 */
@@ -186,8 +192,16 @@ export class ConversationRunner {
 
   /** 定期回收空闲超时的常驻工作区，由 Server 的保留任务调用。 */
   async releaseIdleWorkspaces(now = Date.now()): Promise<void> {
+    const ttlMs = this.config.storage.conversationWorkspaceTtlMinutes * 60_000;
+    const maxWorkspaces = this.config.storage.conversationWorkspaceMax;
+    // 正在执行或已排队但尚未领取的轮次都必须保护：它们下一刻就要用到这个目录。
+    // 被淘汰的工作区只删目录，下次提问会按需重建，不会让轮次失败。
+    const busy = new Set(this.store.activeConversationIds());
+    for (const running of this.running.values()) busy.add(running.conversationId);
+    const isProtected = (conversationId: string) => busy.has(conversationId) || this.hasActiveTurn(conversationId);
+
     const stale = [...this.workspaces.entries()].filter(
-      ([conversationId, entry]) => !this.hasActiveTurn(conversationId) && now - entry.lastUsedAt >= conversationWorkspaceTtlMs,
+      ([conversationId, entry]) => !isProtected(conversationId) && now - entry.lastUsedAt >= ttlMs,
     );
     for (const [conversationId, entry] of stale) {
       this.workspaces.delete(conversationId);
@@ -200,20 +214,25 @@ export class ConversationRunner {
         });
       }
     }
-    while (this.workspaces.size > maxCachedConversationWorkspaces) {
+    let evicted = 0;
+    while (this.workspaces.size > maxWorkspaces) {
       const candidate = [...this.workspaces.entries()]
-        .filter(([conversationId]) => !this.hasActiveTurn(conversationId))
+        .filter(([conversationId]) => !isProtected(conversationId))
         .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)[0];
       if (!candidate) break;
       this.workspaces.delete(candidate[0]);
       try {
         await this.repo.removeConversationWorkspace(candidate[1].workspace);
+        evicted += 1;
       } catch (error) {
         console.warn("evict least recently used conversation workspace failed", {
           conversationId: candidate[0],
           error: errorMessage(error),
         });
       }
+    }
+    if (evicted > 0) {
+      console.info("evicted conversation workspaces by capacity", { evicted, maxWorkspaces });
     }
   }
 

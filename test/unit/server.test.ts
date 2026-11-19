@@ -372,6 +372,24 @@ describe("CorvexServer", () => {
       expect(deleteResponse.status).toBe(200);
       expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: { authorization } })).status).toBe(404);
       const queuedConversations = store.eventCounts().queued ?? 0;
+      // 存储清理：预览不删文件，但会留下一条可查询的记录。
+      const cleanupPreview = await fetch(`${base}/api/ops/storage/cleanup`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ olderThanDays: 1, apply: false }),
+      });
+      expect(cleanupPreview.status).toBe(200);
+      expect(await cleanupPreview.json()).toMatchObject({ applied: false, olderThanDays: 1 });
+      expect((await fetch(`${base}/api/ops/storage/cleanup`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ olderThanDays: 0, apply: false }),
+      })).status).toBe(400);
+      const cleanupRecords = await fetch(`${base}/api/ops/storage/cleanups`, { headers: { authorization } });
+      expect((await cleanupRecords.json() as { items: { source: string; applied: boolean; olderThanDays: number }[] }).items)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ source: "ops-console", applied: false, olderThanDays: 1 }),
+        ]));
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);

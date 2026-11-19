@@ -46,6 +46,14 @@ function settingsConfig(): CorvexConfig {
     chat: { historyComments: 20 },
     issue: { implementEnabled: false, historyComments: 20 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
+    storage: {
+      root: "",
+      database: "",
+      retentionDays: 90,
+      auditRetentionDays: 365,
+      conversationWorkspaceTtlMinutes: 60,
+      conversationWorkspaceMax: 8,
+    },
   } as CorvexConfig;
 }
 

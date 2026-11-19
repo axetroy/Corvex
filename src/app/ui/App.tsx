@@ -276,6 +276,7 @@ export function App() {
             {page.kind === "settings" ? (
               <SettingsPage
                 copy={copy}
+                locale={locale}
                 refreshToken={refreshToken}
                 onUpdated={handleUpdated}
                 onRefresh={refresh}

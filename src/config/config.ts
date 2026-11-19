@@ -28,6 +28,10 @@ export interface CorvexConfig {
     database: string;
     retentionDays: number;
     auditRetentionDays: number;
+    /** 对话常驻 worktree 的空闲存活时间（分钟）。 */
+    conversationWorkspaceTtlMinutes: number;
+    /** 对话常驻 worktree 的数量上限（按最近使用淘汰）。 */
+    conversationWorkspaceMax: number;
   };
   agent: {
     responseLanguage: ResponseLanguage;
@@ -98,7 +102,7 @@ const defaults: CorvexConfig = {
     blockedUserIds: [],
     botUsername: "",
   },
-  storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365 },
+  storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365, conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8 },
   agent: {
     responseLanguage: "en",
     enabled: false,
@@ -240,6 +244,14 @@ function parseConfig(raw: unknown): CorvexConfig {
         storage.audit_retention_days,
         defaults.storage.auditRetentionDays,
       ),
+      conversationWorkspaceTtlMinutes: number(
+        storage.conversation_workspace_ttl_minutes,
+        defaults.storage.conversationWorkspaceTtlMinutes,
+      ),
+      conversationWorkspaceMax: number(
+        storage.conversation_workspace_max,
+        defaults.storage.conversationWorkspaceMax,
+      ),
     },
     agent: {
       responseLanguage: responseLanguage(agent.response_language, defaults.agent.responseLanguage),
@@ -374,6 +386,12 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.storage.auditRetentionDays < 1 || config.storage.auditRetentionDays > 36_500) {
     problems.push("storage.audit_retention_days must be between 1 and 36500");
+  }
+  if (config.storage.conversationWorkspaceTtlMinutes < 1 || config.storage.conversationWorkspaceTtlMinutes > 14_400) {
+    problems.push("storage.conversation_workspace_ttl_minutes must be between 1 and 14400");
+  }
+  if (config.storage.conversationWorkspaceMax < 1 || config.storage.conversationWorkspaceMax > 200) {
+    problems.push("storage.conversation_workspace_max must be between 1 and 200");
   }
   if (config.review.maxFiles <= 0 || config.review.maxFiles > 1000) {
     problems.push("review.max_files must be between 1 and 1000");

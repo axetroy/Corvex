@@ -24,6 +24,7 @@ import type {
   ModelCallMetric,
   OperationsOverview,
   RepositoryDetails,
+  StorageCleanupRecord,
 } from "../../events/model.js";
 
 /**
@@ -55,6 +56,7 @@ export type {
   EventType,
   ModelCallMetric,
   RepositoryDetails,
+  StorageCleanupRecord,
 };
 
 /** `GET /api/ops/overview` 的响应体。 */
@@ -193,6 +195,16 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
       { key: "mcp_enabled", kind: "boolean", labelKey: "settingsMcpEnabled", hintKey: "settingsMcpEnabledHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupStorage",
+    hintKey: "settingsGroupStorageHint",
+    fields: [
+      { key: "conversation_workspace_ttl_minutes", kind: "number", min: 1, max: 14_400, step: 10, labelKey: "settingsWorkspaceTtl", hintKey: "settingsWorkspaceTtlHint" },
+      { key: "conversation_workspace_max", kind: "number", min: 1, max: 200, step: 1, labelKey: "settingsWorkspaceMax", hintKey: "settingsWorkspaceMaxHint" },
+      { key: "storage_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsRetentionDays", hintKey: "settingsRetentionDaysHint" },
+      { key: "storage_audit_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsAuditRetentionDays", hintKey: "settingsAuditRetentionDaysHint" },
     ],
   },
   {

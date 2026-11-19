@@ -264,6 +264,20 @@ export interface ConversationTurn {
   events: ExecutionStep[];
 }
 
+/** 一次 Git 存储清理（CLI、Server 保留任务或启动清扫）的结果记录。 */
+export interface StorageCleanupRecord {
+  id: number;
+  startedAt: string;
+  finishedAt: string;
+  /** 触发来源：cli / retention / startup。 */
+  source: string;
+  applied: boolean;
+  olderThanDays: number;
+  removedWorkspaces: number;
+  removedMirrors: number;
+  error: string;
+}
+
 /** 控制台「仓库信息」用到的只读项目详情，字段来自 GitLab 项目接口。 */
 export interface RepositoryDetails {
   id: number;

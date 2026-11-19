@@ -70,6 +70,8 @@ The read-only agent console is disabled unless both `CORVEX_OPS_USERNAME` and `C
 | `POST /api/ops/conversations` / `POST /api/ops/conversations/<id>/messages` | Create a pinned read-only conversation or enqueue its next turn. |
 | `POST /api/ops/conversations/<id>/archive` | Archive or unarchive a conversation with `{ "archived": true|false }`; the list endpoint accepts `archived=true|false`. |
 | `DELETE /api/ops/conversations/<id>` | Delete a conversation with its turns, messages and process records; rejected while a turn is running. |
+| `GET /api/ops/storage/cleanups` | Recent Git storage cleanup records from the CLI, daily retention and the console. |
+| `POST /api/ops/storage/cleanup` | Preview (`apply: false`) or run (`apply: true`) cleanup of workspaces older than `olderThanDays`; running and queued turns are protected. |
 | `GET /api/ops/settings` / `PUT /api/ops/settings` | Read the effective runtime settings and whether they are editable, or override them at runtime. `PUT` stores the submitted overrides in SQLite (applied on top of the config file) and returns the new effective values. It answers `409` when the Server was started without `--config`. |
 
 The agent console endpoints require HTTP Basic Auth and return `404` when disabled. Job details include the requester username and ID, the triggering comment, the parsed request, and error text; protect operator credentials and use HTTPS. The triggering comment is sourced from the linked webhook execution event and follows its size limit and best-effort redaction. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer.

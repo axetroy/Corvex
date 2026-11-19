@@ -3,10 +3,11 @@ import { Alert, Button, Collapse, Input, InputNumber, Select, Switch, Typography
 import "./SettingsPage.css";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy, CopyTextKey } from "../i18n.js";
+import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import { settingGroups } from "../types.js";
 import type { SettingField, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
+import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
 
 /** 设置元数据里的文案键是普通字符串，查表时收窄为 Copy 的文案键。 */
 function text(copy: Copy, key: string): string {
@@ -30,6 +31,7 @@ function formatFieldValue(field: SettingField, value: number | boolean | string)
 
 interface Props {
   copy: Copy;
+  locale: Locale;
   refreshToken: number;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
@@ -76,7 +78,7 @@ function fieldError(field: SettingField, value: number | boolean | string | unde
 }
 
 /** 设置页：调整上下文预算、工具开关、审查上限与修复权限。 */
-export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props) {
+export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
   const [data, setData] = useState<SettingsResponse>();
   const [draft, setDraft] = useState<Draft>({});
   const [error, setError] = useState("");
@@ -305,6 +307,12 @@ export function SettingsPage({ copy, refreshToken, onUpdated, onRefresh }: Props
           {renderFields(group.fields)}
         </Panel>
       ))}
+
+      <StorageCleanupPanel
+        copy={copy}
+        locale={locale}
+        retentionDays={Number(data.effective.storage_retention_days ?? 30)}
+      />
 
       {advancedGroup ? (
         <Collapse

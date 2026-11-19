@@ -13,6 +13,9 @@ storage:
   database: "./data/state/corvex.db"
   retention_days: 90
   audit_retention_days: 365
+  # 对话常驻 worktree 的空闲时长与数量上限，也可在运维台「设置」页运行时修改
+  conversation_workspace_ttl_minutes: 60
+  conversation_workspace_max: 8
 
 agent:
   enabled: false
