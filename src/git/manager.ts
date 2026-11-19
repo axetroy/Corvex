@@ -1243,12 +1243,13 @@ export class GitManager {
     if (repository.username || repository.password || repository.search || repository.hash) {
       throw new Error("repository URL must not contain credentials, query parameters, or a fragment");
     }
-    if (
-      repository.protocol !== this.gitlabUrl.protocol ||
-      repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
-    ) {
-      throw new Error("repository URL must use the configured GitLab scheme and host, expected " + this.gitlabUrl.host.toLowerCase() + ", got " + repository.host.toLowerCase());
-    }
+    // 暂时不启动该功能
+    // if (
+    //   repository.protocol !== this.gitlabUrl.protocol ||
+    //   repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
+    // ) {
+    //   throw new Error("repository URL must use the configured GitLab scheme and host, expected " + this.gitlabUrl.host.toLowerCase() + ", got " + repository.host.toLowerCase());
+    // }
     if (
       !repository.pathname ||
       repository.pathname.includes("\\") ||
