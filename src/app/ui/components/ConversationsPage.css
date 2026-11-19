@@ -69,10 +69,10 @@
 
 .conversation-summary-label {
   position: relative;
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
   min-width: 0;
-  padding: 6px 12px 6px 2px;
+  padding: 5px 12px 5px 4px;
 }
 
 .conversation-summary-label > * {
@@ -84,8 +84,9 @@
 /* 运行中的会话：列表项右侧一个呼吸的蓝点，比文字标签更轻量。 */
 .conversation-summary-active {
   position: absolute;
-  top: 9px;
+  top: 50%;
   right: 2px;
+  transform: translateY(-50%);
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -106,14 +107,38 @@
   }
 }
 
-/* 仓库分组标题：压低高度，把纵向空间留给会话本身。 */
+/* 仓库分组标题：浅色吸顶条 + 色点 + 分隔线，跨仓库时一眼可辨。 */
 .conversations-layout .conversation-sidebar-list .ant-conversations .ant-conversations-group-title {
-  height: 26px;
-  min-height: 26px;
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  height: 30px;
+  min-height: 30px;
+  margin-top: 4px;
+  padding-inline: 12px;
+  border-top: 1px solid var(--conversation-border);
+  background: #f6f8fa;
   color: var(--conversation-muted);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.conversation-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-group-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
 }
 
 .conversation-sidebar-list .ant-conversations {
@@ -123,9 +148,9 @@
 
 .conversation-sidebar-list .ant-conversations-item {
   width: 100%;
-  min-height: 56px;
+  min-height: 40px;
   margin-bottom: 2px;
-  border-radius: 9px;
+  border-radius: 8px;
 }
 
 .conversation-sidebar-list .ant-conversations-item:hover {
@@ -362,70 +387,121 @@
   line-height: 1.6;
 }
 
-/* 一整块「过程」：运行期间强制展开、结束后整体收起，用户可自行展开回看。 */
+/* 参照 OpenCode 的时间线：过程行用轻量排版和左侧细轴，而不是整块卡片。 */
 .conversation-process {
-  margin-bottom: 10px;
-  border: 1px solid var(--conversation-border);
-  border-radius: 8px;
-  background: #f7f9fb;
+  margin-bottom: 12px;
   font-size: 12px;
 }
 
 .conversation-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
   color: var(--conversation-muted);
-  font-weight: 550;
+  font-weight: 600;
+  list-style: none;
+}
+
+.conversation-process-summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversation-process-summary::before {
+  content: "›";
+  color: var(--conversation-muted);
+  font-weight: 700;
+}
+
+.conversation-process[open] > .conversation-process-summary::before {
+  content: "⌄";
 }
 
 /* 执行中不响应收起点击：过程必须持续可见。 */
-.conversation-process.is-active .conversation-process-summary {
+.conversation-process.is-active > .conversation-process-summary {
   cursor: default;
   pointer-events: none;
+}
+
+.conversation-process-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--conversation-brand);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: conversation-process-spin 0.8s linear infinite;
+}
+
+@keyframes conversation-process-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-process-spinner { animation: none; }
 }
 
 .conversation-process-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 8px;
+  margin: 10px 0 0 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--conversation-border);
 }
 
-/* 模型在调用工具之间给出的中间回复：直接按正文展示，不折叠。 */
-.conversation-process-text {
-  padding: 2px 9px;
-  color: var(--conversation-ink);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+.conversation-process-body > * {
+  position: relative;
 }
 
+.conversation-process-body > *::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: -18px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--conversation-border-strong);
+}
+
+.conversation-process-body > .conversation-thinking::before {
+  background: #2f7fe0;
+}
+
+/* 思考：OpenCode 式的小写标题 + 弱化正文，不占卡片。 */
 .conversation-thinking {
-  padding: 7px 9px;
-  border-left: 2px solid var(--conversation-brand);
-  border-radius: 4px;
-  background: #f8fafc;
+  padding: 1px 0;
 }
 
 .conversation-thinking-label {
   color: var(--conversation-muted);
-  font-weight: 550;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .conversation-thinking-content {
   max-height: 14em;
-  margin-top: 4px;
+  margin-top: 3px;
   overflow: auto;
-  color: #4b5a68;
-  line-height: 1.6;
+  color: #6b7784;
+  line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
+/* 中间回复按正文直接展示，与最终回答保持同一套排版。 */
+.conversation-process-text {
+  color: var(--conversation-ink);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 工具调用：默认只占一行，参数折在行内展开。 */
 .conversation-tool-call {
-  padding: 7px 9px;
-  border: 1px solid var(--conversation-border);
-  border-radius: 6px;
-  background: #fff;
+  padding: 1px 0;
 }
 
 .conversation-tool-call-summary {
@@ -448,16 +524,34 @@
   font-weight: 700;
 }
 
-.conversation-tool-call[open] .conversation-tool-call-summary::before {
+.conversation-tool-call[open] > .conversation-tool-call-summary::before {
   content: "⌄";
+}
+
+.conversation-tool-call-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--conversation-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-tool-call-status,
+.conversation-tool-call-duration {
+  flex: 0 0 auto;
+  color: var(--conversation-muted);
+  font-size: 11px;
 }
 
 .conversation-tool-call-params-hint {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 0 6px;
-  border: 1px solid var(--conversation-border);
-  border-radius: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #eef3f8;
   color: var(--conversation-muted);
   font-size: 11px;
   white-space: nowrap;
@@ -465,8 +559,11 @@
 
 .conversation-tool-call-input {
   max-height: 12em;
-  margin: 8px 0 0 12px;
+  margin: 6px 0 0 12px;
+  padding: 8px;
   overflow: auto;
+  border-radius: 6px;
+  background: #f7f9fb;
   color: #4a5866;
   font-size: 11px;
   white-space: pre-wrap;
@@ -520,21 +617,6 @@
   }
 }
 
-.conversation-tool-call-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--conversation-ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-tool-call-status {
-  flex: 0 0 auto;
-  color: var(--conversation-muted);
-}
-
 .conversation-tool-call-status-succeeded {
   color: #1f8a4c;
 }
@@ -545,11 +627,6 @@
 
 .conversation-tool-call-status-failed {
   color: #b42318;
-}
-
-.conversation-tool-call-duration {
-  flex: 0 0 auto;
-  color: var(--conversation-muted);
 }
 
 .conversation-message-actions {

@@ -49,6 +49,14 @@ function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): s
   return translate(copy.conversationModes, mode);
 }
 
+/** 按仓库 ID 取一个稳定的分组色，让相邻仓库在视觉上立刻能区分。 */
+const conversationGroupColors = ["#4f8ef7", "#27a37a", "#b977e0", "#e0923a", "#e46a6a", "#38a8b8"];
+function conversationGroupColor(key: string): string {
+  let hash = 0;
+  for (const character of key) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return conversationGroupColors[hash % conversationGroupColors.length]!;
+}
+
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
 function MessageContent({
   message,
@@ -410,8 +418,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       group,
       label: (
         <div className="conversation-summary-label">
-          <Typography.Text strong ellipsis>{item.title || item.projectName}</Typography.Text>
-          <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
+          <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
           {running ? <span className="conversation-summary-active" aria-label={copy.statuses.analyzing} /> : null}
         </div>
       ),
@@ -504,7 +511,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 activeKey={selectedConversationId || undefined}
                 onActiveChange={(key) => openConversation(key)}
                 groupable={{
-                  label: (group) => projectNames.get(String(group)) ?? String(group),
+                  label: (group) => (
+                    <span className="conversation-group-label">
+                      <span
+                        className="conversation-group-dot"
+                        style={{ backgroundColor: conversationGroupColor(String(group)) }}
+                        aria-hidden="true"
+                      />
+                      {projectNames.get(String(group)) ?? String(group)}
+                    </span>
+                  ),
                   collapsible: false,
                 }}
               />

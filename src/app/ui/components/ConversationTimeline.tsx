@@ -8,7 +8,7 @@ import type { ConversationToolCall } from "../types.js";
 /**
  * 一轮对话中按发生顺序排列的展示项：模型每次开始新一轮输出时新增一条思考，
  * 接着是这一轮实际执行的工具调用，最后才是落库回答（由对话页单独渲染）。
- * 思考不落库，只在本次页面会话里保留；工具事件带调用 ID，重连后按 ID 合并。
+ * 过程会脱敏落库，刷新后仍可还原；工具事件带调用 ID，重连后按 ID 合并。
  */
 export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
@@ -44,6 +44,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
       }}
     >
       <summary className="conversation-process-summary">
+        {active ? <span className="conversation-process-spinner" aria-hidden="true" /> : null}
         {copy.conversationProcessTemplate.replace("{count}", String(segments.length))}
       </summary>
       <div className="conversation-process-body">
