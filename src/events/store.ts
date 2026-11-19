@@ -1279,14 +1279,14 @@ export class EventStore {
     });
   }
 
-  listConversations(limit = 50, offset = 0): ConversationPage {
+  listConversations(limit = 50, offset = 0, archived = false): ConversationPage {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("conversation list limit must be between 1 and 100");
     }
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
       throw new Error("conversation list offset must be between 0 and 1000000");
     }
-    const count = this.db.prepare("SELECT COUNT(*) AS count FROM conversations").get() as Record<string, unknown>;
+    const count = this.db.prepare("SELECT COUNT(*) AS count FROM conversations WHERE archived=?").get(archived ? 1 : 0) as Record<string, unknown>;
     const rows = this.db.prepare(
       `SELECT conversations.*,
          (SELECT COUNT(*) FROM conversation_turns
@@ -1294,8 +1294,8 @@ export class EventStore {
          (SELECT status FROM conversation_turns
           WHERE conversation_id=conversations.id AND role='assistant'
           ORDER BY created_at DESC,rowid DESC LIMIT 1) AS last_turn_status
-       FROM conversations ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
-    ).all(limit, offset);
+       FROM conversations WHERE archived=? ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
+    ).all(archived ? 1 : 0, limit, offset);
     return { items: rows.map((row) => this.readConversationSummary(row as Record<string, unknown>)), total: numberColumn(count, "count") };
   }
 
@@ -1719,6 +1719,29 @@ export class EventStore {
     this.insertAudit(0, "update_settings", `settings:${actor || "ops-console"}`, summary);
   }
 
+  /** 归档或取消归档一个对话；已归档的对话仍可通过详情接口读取。 */
+  setConversationArchived(conversationId: string, archived: boolean): boolean {
+    const result = this.db.prepare("UPDATE conversations SET archived=?,updated_at=? WHERE id=?")
+      .run(archived ? 1 : 0, new Date().toISOString(), conversationId);
+    return result.changes === 1;
+  }
+
+  /** 删除一个对话及其轮次、消息与轨迹（显式删除，不依赖连接级外键开关）。 */
+  deleteConversation(conversationId: string): boolean {
+    return this.transaction(() => {
+      const turnIds = (this.db.prepare("SELECT id FROM conversation_turns WHERE conversation_id=?")
+        .all(conversationId) as { id: string }[]).map((row) => row.id);
+      if (turnIds.length > 0) {
+        const placeholders = turnIds.map(() => "?").join(",");
+        this.db.prepare(`DELETE FROM event_trace WHERE turn_id IN (${placeholders})`).run(...turnIds);
+        this.db.prepare(`DELETE FROM execution_steps WHERE turn_id IN (${placeholders})`).run(...turnIds);
+      }
+      this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_turns WHERE conversation_id=?").run(conversationId);
+      return this.db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId).changes === 1;
+    });
+  }
+
   /** 保存一轮对话的过程快照（思考、中间回复、工具调用），与落库回答分开存放。 */
   saveConversationTurnProcess(turnId: string, entries: readonly ConversationProcessEntry[]): void {
     const serialized = JSON.stringify(sanitizeConversationProcess(entries));
@@ -1848,6 +1871,7 @@ export class EventStore {
       updatedAt: stringColumn(row, "updated_at"),
       turnCount: numberColumn(row, "turn_count"),
       lastTurnStatus: (lastTurnStatus ?? null) as ConversationSummary["lastTurnStatus"],
+      archived: row.archived === 1 || row.archived === true,
     };
   }
 
@@ -2358,7 +2382,8 @@ export class EventStore {
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only',
         title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT ''
+        summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT '',
+        archived INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS conversations_updated_idx ON conversations(updated_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -2503,6 +2528,8 @@ export class EventStore {
       mode: "TEXT NOT NULL DEFAULT 'read_only'",
       // 模型生成的标题：旧库留空，首次生成后写入。
       title: "TEXT NOT NULL DEFAULT ''",
+      // 归档标记：旧库默认未归档。
+      archived: "INTEGER NOT NULL DEFAULT 0",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);

@@ -152,6 +152,8 @@ export interface ConversationSummary {
   turnCount: number;
   /** 最近一轮的状态；尚无轮次时为空。 */
   lastTurnStatus: ConversationTurnStatus | null;
+  /** 是否已归档；归档的对话默认不出现在列表里。 */
+  archived: boolean;
 }
 
 /**

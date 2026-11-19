@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Space, Tabs, Tag, Typography } from "antd";
+import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -117,6 +117,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [draftMessage, setDraftMessage] = useState("");
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -140,7 +141,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   useEffect(() => {
     let active = true;
-    fetchJson<ConversationPage>(`/api/ops/conversations?limit=${conversationPageSize}&offset=${conversationOffset}`, copy)
+    fetchJson<ConversationPage>(
+      `/api/ops/conversations?limit=${conversationPageSize}&offset=${conversationOffset}&archived=${showArchived}`,
+      copy,
+    )
       .then((page) => {
         if (!active) return;
         setConversations((current) => {
@@ -156,7 +160,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => {
       active = false;
     };
-  }, [copy, conversationOffset, refreshToken, onUpdated]);
+  }, [copy, conversationOffset, refreshToken, onUpdated, showArchived]);
 
   useEffect(() => {
     if (!selectedConversationId) {
@@ -369,6 +373,65 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
+  async function changeArchived(item: ConversationSummary, archived: boolean) {
+    setError("");
+    try {
+      const result = await fetch(`/api/ops/conversations/${encodeURIComponent(item.id)}/archive`, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ archived }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!result.ok) {
+        throw new Error(copy.requestFailedTemplate
+          .replace("{status}", String(result.status))
+          .replace("{message}", (await result.text()).trim() || result.statusText));
+      }
+      setConversationOffset(0);
+      setPollToken((value) => value + 1);
+      onRefresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  function confirmDelete(item: ConversationSummary) {
+    Modal.confirm({
+      title: copy.conversationDeleteConfirm,
+      content: copy.conversationDeleteConfirmDescription,
+      okType: "danger",
+      onOk: async () => {
+        setError("");
+        try {
+          const result = await fetch(`/api/ops/conversations/${encodeURIComponent(item.id)}`, {
+            method: "DELETE",
+            headers: { accept: "application/json" },
+            cache: "no-store",
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!result.ok) {
+            throw new Error(copy.requestFailedTemplate
+              .replace("{status}", String(result.status))
+              .replace("{message}", (await result.text()).trim() || result.statusText));
+          }
+          if (selectedConversationIdRef.current === item.id) {
+            onConversationChange("");
+            setSelectedConversationId("");
+            selectedConversationIdRef.current = "";
+            setConversation(undefined);
+            setShowCreate(true);
+            setDraftMessage("");
+          }
+          setPollToken((value) => value + 1);
+          onRefresh();
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      },
+    });
+  }
+
   function startNewConversation() {
     setSelectedConversationId("");
     selectedConversationIdRef.current = "";
@@ -419,10 +482,30 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       key: item.id,
       group,
       label: (
-        <div className="conversation-summary-label">
-          <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
-          {running ? <span className="conversation-summary-active" aria-label={copy.statuses.analyzing} /> : null}
-        </div>
+        <Dropdown
+          trigger={["contextMenu"]}
+          menu={{
+            items: [
+              {
+                key: "archive",
+                label: item.archived ? copy.conversationMenuUnarchive : copy.conversationMenuArchive,
+              },
+              { key: "delete", label: copy.conversationMenuDelete, danger: true },
+            ],
+            onClick: ({ key }) => {
+              if (key === "archive") void changeArchived(item, !item.archived);
+              else confirmDelete(item);
+            },
+          }}
+        >
+          <div
+            className={`conversation-summary-label${item.archived ? " is-archived" : ""}`}
+            title={item.archived ? copy.conversationArchived : undefined}
+          >
+            <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
+            {running ? <span className="conversation-summary-active" aria-label={copy.statuses.analyzing} /> : null}
+          </div>
+        </Dropdown>
       ),
     };
   });
@@ -504,6 +587,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
               <span aria-hidden="true">+</span>
               {copy.newConversation}
+            </Button>
+            <Button
+              className="conversation-archived-toggle"
+              type="text"
+              size="small"
+              onClick={() => {
+                setShowArchived((value) => !value);
+                setConversationOffset(0);
+              }}
+            >
+              {copy.conversationShowArchived}
             </Button>
           </div>
           <div className="conversation-sidebar-list">

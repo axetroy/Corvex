@@ -32,8 +32,16 @@
   display: flex;
   min-height: 41px;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--conversation-border);
+}
+
+.conversation-archived-toggle.ant-btn {
+  padding: 0 4px;
+  color: var(--conversation-muted);
+  font-size: 11px;
 }
 
 .conversation-new-button.ant-btn {
@@ -83,6 +91,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-summary-label.is-archived {
+  opacity: 0.55;
+  font-style: italic;
 }
 
 /* 运行中的会话：列表项右侧一个呼吸的蓝点，比文字标签更轻量。 */

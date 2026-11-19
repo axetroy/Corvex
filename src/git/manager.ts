@@ -395,6 +395,22 @@ export class GitManager {
     });
   }
 
+  /** 按对话 ID 删除常驻 worktree，供会话删除接口在缓存之外也能清理目录。 */
+  async removeConversationWorkspaceById(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const eventId = conversationWorkspaceName(conversationId);
+    await this.withProjectLock(projectId, async () => {
+      const workspacePath = join(this.workspaceRoot, String(projectId), eventId);
+      if (!(await this.pathExists(workspacePath))) return;
+      const mirror = join(this.mirrorRoot, `${projectId}.git`);
+      await this.removeWorktree(mirror, workspacePath, signal);
+    });
+  }
+
   /** 删除一个对话的常驻 worktree；目录不存在时视为已清理。 */
   async removeConversationWorkspace(workspace: Workspace, signal?: AbortSignal): Promise<void> {
     if (workspace.projectId <= 0 || !conversationWorkspacePattern.test(workspace.eventId)) {

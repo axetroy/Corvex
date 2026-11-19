@@ -338,6 +338,39 @@ describe("CorvexServer", () => {
       const streamBody = await streamResponse.text();
       expect(streamBody).toContain('"type":"done"');
       expect(streamBody).toContain('"status":"completed"');
+      // 归档：列表按归档状态过滤，详情仍可读；删除后对话详情返回 404。
+      const archiveResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      expect(archiveResponse.status).toBe(200);
+      expect(await archiveResponse.json()).toMatchObject({ archived: true });
+      const archivedList = await fetch(`${base}/api/ops/conversations?archived=true`, { headers: { authorization } });
+      expect(await archivedList.json()).toMatchObject({
+        items: [{ id: secondConversation.conversationId, archived: true }],
+      });
+      const activeList = await fetch(`${base}/api/ops/conversations?archived=false`, { headers: { authorization } });
+      expect((await activeList.json() as { items: { id: string }[] }).items.map((item) => item.id))
+        .not.toContain(secondConversation.conversationId);
+      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: { authorization } })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({}),
+      })).status).toBe(400);
+      const archiveOffResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ archived: false }),
+      });
+      expect(archiveOffResponse.status).toBe(200);
+      const deleteResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, {
+        method: "DELETE",
+        headers: { authorization },
+      });
+      expect(deleteResponse.status).toBe(200);
+      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: { authorization } })).status).toBe(404);
       const queuedConversations = store.eventCounts().queued ?? 0;
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);

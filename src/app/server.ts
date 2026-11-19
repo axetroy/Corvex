@@ -394,11 +394,13 @@ export class CorvexServer {
     if (request.method === "GET" && url.pathname === "/api/ops/conversations") {
       const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 50;
       const offset = optionalInteger(url.searchParams.get("offset"), 0, 1_000_000) ?? 0;
-      if (limit === false || offset === false) {
+      const archivedParam = url.searchParams.get("archived");
+      const archived = archivedParam === null ? false : archivedParam === "true" || archivedParam === "1";
+      if (limit === false || offset === false || (archivedParam !== null && archivedParam !== "true" && archivedParam !== "false" && archivedParam !== "1" && archivedParam !== "0")) {
         respondJson(response, 400, { error: "invalid conversation list filter" });
         return;
       }
-      respondJson(response, 200, this.store.listConversations(limit, offset));
+      respondJson(response, 200, this.store.listConversations(limit, offset, archived));
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/ops/conversations") {
@@ -431,6 +433,45 @@ export class CorvexServer {
       } catch (error) {
         this.respondGitLabReadError(response, error);
       }
+      return;
+    }
+    // 归档/取消归档：只改列表可见性，详情与轨迹依旧可读。
+    const conversationArchiveMatch = /^\/api\/ops\/conversations\/([^/]+)\/archive$/.exec(url.pathname);
+    if (request.method === "POST" && conversationArchiveMatch) {
+      const conversationId = this.decodePathSegment(conversationArchiveMatch[1]!);
+      const body = await this.readOperationsBody(request, response);
+      if (!conversationId || !body) return;
+      if (typeof body.archived !== "boolean") {
+        respondJson(response, 400, { error: "archived must be a boolean" });
+        return;
+      }
+      if (!this.store.setConversationArchived(conversationId, body.archived)) {
+        respondJson(response, 404, { error: "conversation not found" });
+        return;
+      }
+      respondJson(response, 200, { conversationId, archived: body.archived });
+      return;
+    }
+    // 删除对话：先清理常驻工作区，再删除数据库记录。
+    const conversationDeleteMatch = /^\/api\/ops\/conversations\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "DELETE" && conversationDeleteMatch) {
+      const conversationId = this.decodePathSegment(conversationDeleteMatch[1]!);
+      if (!conversationId) {
+        respondJson(response, 400, { error: "invalid conversation ID" });
+        return;
+      }
+      const conversation = this.store.getConversation(conversationId);
+      if (!conversation) {
+        respondJson(response, 404, { error: "conversation not found" });
+        return;
+      }
+      if (conversation.messages.some((message) => message.turnStatus === "queued" || message.turnStatus === "running")) {
+        respondJson(response, 409, { error: "a turn is still running for this conversation" });
+        return;
+      }
+      await this.conversations.removeConversationWorkspace(conversationId, conversation.projectId);
+      this.store.deleteConversation(conversationId);
+      respondJson(response, 200, { deleted: true });
       return;
     }
     const conversationMatch = /^\/api\/ops\/conversations\/([^/]+)$/.exec(url.pathname);

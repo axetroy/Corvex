@@ -90,6 +90,14 @@ export class ConversationRunner {
     return true;
   }
 
+  /** 删除一个对话的常驻工作区；正在执行的对话不能删除。 */
+  async removeConversationWorkspace(conversationId: string, projectId: number): Promise<boolean> {
+    if (this.running.has(conversationId)) return false;
+    this.workspaces.delete(conversationId);
+    await this.repo.removeConversationWorkspaceById(projectId, conversationId);
+    return true;
+  }
+
   /** 请求取消正在执行的轮次；轮次不在运行时忽略。 */
   cancelTurn(turnId: string): boolean {
     const running = this.running.get(turnId);
