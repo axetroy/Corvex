@@ -22,6 +22,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--conversation-border);
   background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fa 100%);
 }
@@ -57,9 +58,12 @@
 .conversation-sidebar-list {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: auto;
+  /* 列表只做纵向滚动：分组标题、长标题都不应产生横向滚动条。 */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .conversation-sidebar-list > .ant-empty {
@@ -129,6 +133,7 @@
   align-items: center;
   gap: 7px;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -143,7 +148,9 @@
 
 .conversation-sidebar-list .ant-conversations {
   width: 100%;
+  max-width: 100%;
   padding: 10px;
+  box-sizing: border-box;
 }
 
 .conversation-sidebar-list .ant-conversations-item {
@@ -903,7 +910,8 @@
 
   .conversation-sidebar-list .ant-conversations {
     max-height: 108px;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   /* 窄屏下仓库信息换到第二行，标签页保持完整不被滚动裁切。 */
