@@ -129,7 +129,12 @@ describe("review task loop", () => {
       }
       if (url.pathname === "/api/v4/projects/1" && request.method === "GET") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ id: 1, http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`, default_branch: "main" }));
+        response.end(JSON.stringify({
+          id: 1,
+          path_with_namespace: "project",
+          http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`,
+          default_branch: "main",
+        }));
         return;
       }
       const branchMatch = /^\/api\/v4\/projects\/1\/repository\/branches\/(.+)$/.exec(url.pathname);

@@ -28,6 +28,30 @@ export interface Project {
   default_branch?: string;
 }
 
+/**
+ * 用配置的 `gitlab.base_url` 和 GitLab 项目路径派生仓库地址，不信任 GitLab
+ * 返回的 `http_url_to_repo` / `web_url`：它们由实例的 external_url 生成，
+ * 可能仍指向无法从 Corvex 访问的内网或旧域名。
+ */
+function projectRepositoryPath(project: Pick<Project, "path_with_namespace">): string {
+  const path = (project.path_with_namespace ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (
+    !path ||
+    path.split("/").some((part) => !part || part === "." || part === ".." || /[\\?#@]/.test(part))
+  ) {
+    throw new Error("GitLab project path_with_namespace is missing or invalid");
+  }
+  return path;
+}
+
+export function repositoryCloneUrl(baseUrl: string, project: Pick<Project, "path_with_namespace">): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${projectRepositoryPath(project)}.git`;
+}
+
+export function repositoryWebUrl(baseUrl: string, project: Pick<Project, "path_with_namespace">): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${projectRepositoryPath(project)}`;
+}
+
 /** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
 export interface GitLabBranchCommit {
   id: string;

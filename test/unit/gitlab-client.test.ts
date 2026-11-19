@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { GitLabApiError, GitLabClient, GitLabWriteError } from "../../src/gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, repositoryCloneUrl, repositoryWebUrl } from "../../src/gitlab/client.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -517,5 +517,27 @@ describe("GitLab read retries", () => {
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+});
+
+describe("repository URLs from configured base URL", () => {
+  const project = {
+    id: 254,
+    path_with_namespace: "digimaple/cloudoc_sync_drive",
+    // GitLab 自己报告的地址故意放旧地址，派生函数必须忽略它。
+    http_url_to_repo: "http://192.168.0.69:8092/digimaple/cloudoc_sync_drive.git",
+  };
+
+  it("derives clone and web URLs from gitlab.base_url", () => {
+    expect(repositoryCloneUrl("https://xafg.qdzk3000.com:8092", project))
+      .toBe("https://xafg.qdzk3000.com:8092/digimaple/cloudoc_sync_drive.git");
+    expect(repositoryWebUrl("https://xafg.qdzk3000.com:8092/", project))
+      .toBe("https://xafg.qdzk3000.com:8092/digimaple/cloudoc_sync_drive");
+  });
+
+  it("rejects missing or unsafe project paths", () => {
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "" })).toThrow();
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "../secret" })).toThrow();
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "group/repo?x=1" })).toThrow();
   });
 });

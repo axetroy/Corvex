@@ -10,6 +10,8 @@ Corvex separates the request path from model and repository work:
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called by the worker for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks, and by the Server for inline conversation turns.
 
+Clone and web URLs are derived from the configured `gitlab.base_url` plus the project's `path_with_namespace`; GitLab's own `http_url_to_repo`/`web_url` values are ignored because they follow the instance `external_url` and may point at an address Corvex cannot reach. The Git manager still requires the resulting URL to match the configured scheme and host.
+
 GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500, 502, 503, or 504 responses up to three attempts with bounded backoff. POST writes are never automatically retried because their remote outcome may be uncertain.
 
 Worker events also persist retries for transient HTTP/network failures and event timeouts before publishing. The delay starts at 2 seconds, doubles per attempt, and is capped at 30 seconds; the three-attempt event limit still applies. Authentication, validation, cancellation, stale snapshots, and publishing failures are not automatically retried.

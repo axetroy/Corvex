@@ -1243,13 +1243,16 @@ export class GitManager {
     if (repository.username || repository.password || repository.search || repository.hash) {
       throw new Error("repository URL must not contain credentials, query parameters, or a fragment");
     }
-    // 暂时不启动该功能
-    // if (
-    //   repository.protocol !== this.gitlabUrl.protocol ||
-    //   repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
-    // ) {
-    //   throw new Error("repository URL must use the configured GitLab scheme and host, expected " + this.gitlabUrl.host.toLowerCase() + ", got " + repository.host.toLowerCase());
-    // }
+    // 仓库地址由配置的 gitlab.base_url 派生，这里仍然强制主机一致：
+    // 只从配置允许的 GitLab 主机克隆，避免被外部数据带去访问其它远端。
+    if (
+      repository.protocol !== this.gitlabUrl.protocol ||
+      repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
+    ) {
+      throw new Error(
+        `repository URL must use the configured GitLab scheme and host, expected ${this.gitlabUrl.host.toLowerCase()}, got ${repository.host.toLowerCase()}`,
+      );
+    }
     if (
       !repository.pathname ||
       repository.pathname.includes("\\") ||
@@ -1269,7 +1272,20 @@ export class GitManager {
         await this.run(mirror, ["--git-dir", mirror, "config", "--get", "remote.origin.url"], undefined, maxErrorOutput, signal)
       ).stdout.toString().trim();
       if (this.validateRepositoryUrl(origin) !== repositoryUrl) {
-        throw new Error("project mirror origin does not match the authorized GitLab repository");
+        // 配置的 GitLab 地址变更后，旧镜像仍指向之前的主机。路径一致时只更新
+        // origin（新地址由配置派生、主机可信），避免为每个仓库重新克隆一遍。
+        const previous = new URL(origin);
+        const current = new URL(repositoryUrl);
+        if (previous.pathname.replace(/\/+$/, "") !== current.pathname.replace(/\/+$/, "")) {
+          throw new Error("project mirror origin does not match the authorized GitLab repository");
+        }
+        await this.run(
+          mirror,
+          ["--git-dir", mirror, "config", "remote.origin.url", repositoryUrl],
+          undefined,
+          maxErrorOutput,
+          signal,
+        );
       }
       return;
     } catch (error) {

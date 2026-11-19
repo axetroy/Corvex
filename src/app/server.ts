@@ -20,7 +20,7 @@ import { isEventStatus, isEventType } from "../events/model.js";
 import type { ConversationStreamEvent } from "../events/model.js";
 import { errorMessage } from "../errors.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
-import { GitLabApiError, GitLabClient, GitLabWriteError } from "../gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, repositoryCloneUrl, repositoryWebUrl } from "../gitlab/client.js";
 import { decodeGitLabNoteEvent, isIssueNoteEvent, MAX_WEBHOOK_BODY_BYTES, validateWebhookToken } from "../gitlab/webhook.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { ConversationRunner } from "./conversation-runner.js";
@@ -366,8 +366,9 @@ export class CorvexServer {
           path_with_namespace: project.path_with_namespace ?? null,
           description: project.description ?? null,
           default_branch: project.default_branch ?? null,
-          web_url: project.web_url ?? null,
-          http_url_to_repo: project.http_url_to_repo,
+          // 不暴露 GitLab 自己生成的 external_url 地址，统一用配置的地址派生。
+          web_url: repositoryWebUrl(this.config.gitlab.baseUrl, project),
+          http_url_to_repo: repositoryCloneUrl(this.config.gitlab.baseUrl, project),
         });
       } catch (error) {
         this.respondGitLabReadError(response, error);

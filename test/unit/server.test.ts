@@ -205,7 +205,8 @@ describe("CorvexServer", () => {
         id: 2,
         path_with_namespace: "group/project",
         description: "Test project",
-        web_url: "https://gitlab.example.com/group/project",
+        web_url: `http://127.0.0.1:${gitlabPort}/group/project`,
+        http_url_to_repo: `http://127.0.0.1:${gitlabPort}/group/project.git`,
         default_branch: "main",
       });
       expect((await fetch(`${base}/api/ops/projects/0`, { headers: { authorization } })).status).toBe(400);

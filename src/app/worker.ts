@@ -9,7 +9,7 @@ import { GitManager, GitPushError } from "../git/manager.js";
 import type { DiffResult, Workspace } from "../git/types.js";
 import type { Event, EventStatus } from "../events/model.js";
 import { EventStore } from "../events/store.js";
-import { GitLabApiError, GitLabClient, GitLabWriteError, type MergeRequest } from "../gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, repositoryCloneUrl, type MergeRequest } from "../gitlab/client.js";
 import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../events/execution.js";
@@ -465,9 +465,9 @@ export class Worker {
       "gitlab.get_project",
       { projectId: event.projectId },
       () => this.gitlab.getProject(event.projectId, signal),
-      (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
+      (value) => ({ id: value.id, repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, value) }),
     );
-    if (trace.mergeRequest) trace.mergeRequest.repositoryUrl = project.http_url_to_repo;
+    if (trace.mergeRequest) trace.mergeRequest.repositoryUrl = repositoryCloneUrl(this.config.gitlab.baseUrl, project);
     // 差异比较以 GitLab 报告的 base SHA 为基准，它不一定在抓取 head 时一并到达，
     // 因此显式确保该快照存在；命中本地对象库时不联网。
     await traceExecutionStep(
@@ -475,18 +475,18 @@ export class Worker {
       stepContext,
       "git.ensure_base_sha",
       { projectId: event.projectId, baseSha },
-      () => this.repo.ensureCommitAvailable(event.projectId, project.http_url_to_repo, baseSha, signal),
+      () => this.repo.ensureCommitAvailable(event.projectId, repositoryCloneUrl(this.config.gitlab.baseUrl, project), baseSha, signal),
       () => ({ baseSha }),
     );
     const workspace = await traceExecutionStep(
       this.store,
       stepContext,
       "git.prepare_workspace",
-      { projectId: event.projectId, eventId: event.id, repositoryUrl: project.http_url_to_repo, expectedHeadSha: event.headSha },
+      { projectId: event.projectId, eventId: event.id, repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, project), expectedHeadSha: event.headSha },
       () => this.repo.prepareWorkspace(
         event.projectId,
         event.id,
-        project.http_url_to_repo,
+        repositoryCloneUrl(this.config.gitlab.baseUrl, project),
         event.headSha,
         signal,
       ),
@@ -770,7 +770,11 @@ export class Worker {
       "gitlab.get_project",
       { projectId: event.projectId },
       () => this.gitlab.getProject(event.projectId, signal),
-      (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo, defaultBranch: value.default_branch }),
+      (value) => ({
+        id: value.id,
+        repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, value),
+        defaultBranch: value.default_branch,
+      }),
     );
     if (!project.default_branch?.trim()) throw new Error("GitLab project does not have a default branch");
     let sourceBranch = `corvex/issue-${event.targetIid}-${event.id.slice(0, 8)}-a${event.attemptCount}`;
@@ -778,8 +782,8 @@ export class Worker {
       this.store,
       stepContext,
       "git.prepare_issue_workspace",
-      { projectId: event.projectId, eventId: event.id, repositoryUrl: project.http_url_to_repo, targetBranch, sourceBranch },
-      () => this.repo.prepareIssueWorkspace(event.projectId, event.id, project.http_url_to_repo, targetBranch, sourceBranch, signal),
+      { projectId: event.projectId, eventId: event.id, repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, project), targetBranch, sourceBranch },
+      () => this.repo.prepareIssueWorkspace(event.projectId, event.id, repositoryCloneUrl(this.config.gitlab.baseUrl, project), targetBranch, sourceBranch, signal),
       (value) => ({ projectId: value.workspace.projectId, eventId: value.workspace.eventId, baseSha: value.baseSha, sourceBranch, targetBranch }),
     );
     let prepared = await prepareBranch(project.default_branch);
@@ -795,7 +799,7 @@ export class Worker {
         issueIid: event.targetIid,
         sourceBranch,
         targetBranch: project.default_branch,
-        repositoryUrl: project.http_url_to_repo,
+        repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, project),
         expectedTargetSha: prepared.baseSha,
       },
     };
@@ -936,7 +940,7 @@ export class Worker {
           workspace,
           sourceBranch,
           targetBranch,
-          project.http_url_to_repo,
+          repositoryCloneUrl(this.config.gitlab.baseUrl, project),
           prepared.baseSha,
           signal,
         ),

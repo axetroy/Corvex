@@ -6,7 +6,7 @@ import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
-import { GitLabClient } from "../gitlab/client.js";
+import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
@@ -366,7 +366,7 @@ export class ConversationRunner {
         "gitlab.get_conversation_project",
         { projectId: turn.projectId },
         () => this.gitlab.getProject(turn.projectId, signal),
-        (value) => ({ id: value.id, httpUrlToRepo: value.http_url_to_repo }),
+        (value) => ({ id: value.id, repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, value) }),
       );
       const workspace = await traceExecutionStep(
         this.store,
@@ -376,7 +376,7 @@ export class ConversationRunner {
         () => this.repo.prepareConversationWorkspace(
           turn.projectId,
           turn.conversationId,
-          project.http_url_to_repo,
+          repositoryCloneUrl(this.config.gitlab.baseUrl, project),
           turn.headSha,
         ),
         (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha }),

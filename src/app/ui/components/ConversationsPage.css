@@ -151,6 +151,14 @@
   max-width: 100%;
   padding: 10px;
   box-sizing: border-box;
+  /* 浏览器实际出现横向滚动条的是这个内层列表，必须在这里也限制横向溢出。 */
+  overflow-x: hidden;
+}
+
+.conversation-sidebar-list .ant-conversations-item,
+.conversation-sidebar-list .ant-conversations-group-title {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .conversation-sidebar-list .ant-conversations-item {
