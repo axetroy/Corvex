@@ -434,11 +434,39 @@
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.conversation-tool-call-summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversation-tool-call-summary::before {
+  content: "›";
+  flex: 0 0 auto;
+  color: var(--conversation-muted);
+  font-weight: 700;
+}
+
+.conversation-tool-call[open] .conversation-tool-call-summary::before {
+  content: "⌄";
+}
+
+.conversation-tool-call-params-hint {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  color: var(--conversation-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .conversation-tool-call-input {
   max-height: 12em;
-  margin: 6px 0 0;
+  margin: 8px 0 0 12px;
   overflow: auto;
   color: #4a5866;
   font-size: 11px;

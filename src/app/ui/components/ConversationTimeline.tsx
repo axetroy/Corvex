@@ -55,8 +55,8 @@ export const ConversationTimeline = memo(function ConversationTimeline({
         ) : segment.kind === "text" ? (
           <div className="conversation-process-text" key={segment.key}>{segment.text}</div>
         ) : (
-          <div className="conversation-tool-call" key={segment.key}>
-            <div className="conversation-tool-call-summary">
+          <details className="conversation-tool-call" key={segment.key}>
+            <summary className="conversation-tool-call-summary">
               <span className="conversation-tool-call-name">
                 {describeSessionTool(segment.call.name, parseTraceValue(segment.call.input), null, copy)}
               </span>
@@ -68,9 +68,12 @@ export const ConversationTimeline = memo(function ConversationTimeline({
                   {formatTraceDuration(segment.call.durationMs, copy)}
                 </span>
               )}
-            </div>
+              {segment.call.input ? (
+                <span className="conversation-tool-call-params-hint">{copy.conversationToolParameters}</span>
+              ) : null}
+            </summary>
             {segment.call.input ? <pre className="conversation-tool-call-input">{segment.call.input}</pre> : null}
-          </div>
+          </details>
         ))}
       </div>
     </details>

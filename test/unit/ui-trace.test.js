@@ -43,9 +43,12 @@ describe("operations UI trace reconstruction", () => {
     expect(markup).toContain("Running");
     expect(markup).toContain("42 ms");
     expect(markup).toContain("7 ms");
-    // 思考与工具调用属于同一个过程块：只有一个折叠容器，运行期间强制展开。
-    expect(markup.match(/<details /g)).toHaveLength(1);
+    // 思考与工具调用属于同一个过程块：过程块强制展开，工具参数各自默认收起。
+    expect(markup.match(/class="conversation-process is-active"/g)).toHaveLength(1);
     expect(markup).toContain('class="conversation-process is-active" open=""');
+    expect(markup.match(/<details class="conversation-tool-call"/g)).toHaveLength(3);
+    expect(markup).not.toMatch(/<details class="conversation-tool-call" open/);
+    expect(markup).toContain("Parameters");
     expect(markup).toContain("4 steps");
     expect(markup).toContain("Thinking");
   });
