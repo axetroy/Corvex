@@ -10,11 +10,11 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationSummary } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamTool, ConversationSummary } from "../types.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
+import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
-import { ConversationToolCalls } from "./ConversationToolCalls.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import type { ProjectOption } from "../projectPicker.js";
@@ -58,7 +58,17 @@ function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): s
 }
 
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
-function MessageContent({ message, copy, streaming }: { message: ConversationMessage; copy: Copy; streaming?: boolean }) {
+function MessageContent({
+  message,
+  copy,
+  streaming,
+  timeline,
+}: {
+  message: ConversationMessage;
+  copy: Copy;
+  streaming?: boolean;
+  timeline: readonly ConversationTimelineSegment[];
+}) {
   if (message.role === "user") {
     return <div className="conversation-message-text">{message.content}</div>;
   }
@@ -66,9 +76,10 @@ function MessageContent({ message, copy, streaming }: { message: ConversationMes
   const settled = message.status === "completed" || message.status === "failed";
   return (
     <div className={`conversation-message-markdown${streaming && message.content ? " is-streaming" : ""}`}>
+      {/* 先按发生顺序展示每次思考与工具调用，再展示最终回答。 */}
+      <ConversationTimeline segments={timeline} active={Boolean(streaming)} copy={copy} />
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
       {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
-      <ConversationToolCalls calls={message.toolCalls} copy={copy} />
       {settled ? (
         <div className="conversation-message-actions">
           <Actions
@@ -107,6 +118,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
+  /** 逐条思考与工具调用按轮次留在本次页面会话里，结束后仍可展开查看。 */
+  const [timelineByTurn, setTimelineByTurn] = useState<Record<string, ConversationTimelineSegment[]>>({});
+  /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
+  const transcriptPaneRef = useRef<HTMLDivElement>(null);
+  const pinnedToBottom = useRef(true);
 
   useEffect(() => {
     selectedConversationIdRef.current = conversationId;
@@ -116,6 +132,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setDraftMessage("");
     setDetailTab("chat");
     setError("");
+    setTimelineByTurn({});
+    pinnedToBottom.current = true;
   }, [conversationId]);
 
   useEffect(() => {
@@ -186,24 +204,54 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
     const controller = new AbortController();
     let closed = false;
-    let latest = "";
+    let latestText = "";
+    const segments: ConversationTimelineSegment[] = [];
     let flushTimer: number | undefined;
     const flush = () => {
       flushTimer = undefined;
-      if (!closed) setStreamedReply({ turnId: activeTurnId, text: latest });
+      if (!closed) {
+        setStreamedReply({ turnId: activeTurnId, text: latestText });
+        setTimelineByTurn((current) => ({ ...current, [activeTurnId]: [...segments] }));
+      }
     };
     // 合并高频 token 事件：约 60ms 刷新一次，保持逐字观感的同时避免整段
     // Markdown 被每个 token 重新解析。
-    const schedule = (text: string) => {
-      latest = text;
+    const schedule = () => {
       if (flushTimer === undefined) flushTimer = window.setTimeout(flush, 60);
+    };
+    const onThinking = (text: string, reset: boolean) => {
+      if (reset) {
+        // 新一轮模型输出：新增一条思考；工具事件会插在它后面。
+        segments.push({ kind: "thinking", key: `thinking-${segments.length}`, text });
+      } else {
+        for (let index = segments.length - 1; index >= 0; index -= 1) {
+          const segment = segments[index];
+          if (segment?.kind === "thinking") {
+            segment.text = text;
+            break;
+          }
+        }
+      }
+      schedule();
+    };
+    const onTool = (tool: ConversationStreamTool) => {
+      const call = { name: tool.name, input: tool.input, status: tool.status, durationMs: tool.durationMs };
+      const existing = segments.find((segment) => segment.kind === "tool" && segment.id === tool.id);
+      if (existing?.kind === "tool") existing.call = call;
+      else segments.push({ kind: "tool", key: `tool-${tool.id}`, id: tool.id, call });
+      schedule();
     };
     setStreamedReply({ turnId: activeTurnId, text: "" });
     void streamConversationTurn(
       selectedConversationId,
       activeTurnId,
       {
-        onText: (text) => schedule(text),
+        onText: (text, reset) => {
+          latestText = reset ? "" : text;
+          schedule();
+        },
+        onThinking,
+        onTool,
         onDone: () => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;
@@ -331,6 +379,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setConversation(undefined);
     setDraftMessage("");
     setError("");
+    setTimelineByTurn({});
+    pinnedToBottom.current = true;
     onConversationChange(key);
     setShowCreate(false);
   }
@@ -371,28 +421,50 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       ? { ...message, content: streamedReply.text }
       : message,
   );
-  const bubbleItems: BubbleItemType[] = transcriptMessages.map((message) => ({
-    key: message.id,
-    role: message.role === "user" ? "user" : "ai",
-    header: (
-      <Space size={8} wrap>
-        <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
-        <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
-        {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
-      </Space>
-    ),
-    content: (
-      <MessageContent
-        message={message}
-        copy={copy}
-        streaming={message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId}
-      />
-    ),
-    // 有工具调用记录后改为展示调用列表，避免 loading 覆盖掉正在进行的读取过程。
-    loading: message.role === "assistant" && !message.content && message.toolCalls.length === 0 &&
-      (message.status === "queued" || message.status === "running"),
-    status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
-  }));
+  const bubbleItems: BubbleItemType[] = transcriptMessages.map((message) => {
+    const streaming = message.role === "assistant" && message.status === "running" &&
+      streamedReply?.turnId === message.turnId;
+    const streamedSegments = message.turnId ? timelineByTurn[message.turnId] ?? [] : [];
+    // 页面刷新后思考不再可得，至少把落库的每次工具调用单独折叠呈现。
+    const persistedSegments: ConversationTimelineSegment[] = message.toolCalls.map((call, index) => ({
+      kind: "tool",
+      key: `persisted-${index}`,
+      id: `persisted-${index}`,
+      call,
+    }));
+    const timeline = (streamedSegments.length ? streamedSegments : persistedSegments)
+      .filter((segment) => segment.kind !== "thinking" || segment.text.trim().length > 0);
+    return {
+      key: message.id,
+      role: message.role === "user" ? "user" : "ai",
+      header: (
+        <Space size={8} wrap>
+          <Typography.Text strong>{message.role === "user" ? copy.userRole : copy.assistantRole}</Typography.Text>
+          <Typography.Text type="secondary">{formatDate(message.createdAt, copy, locale)}</Typography.Text>
+          {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
+        </Space>
+      ),
+      content: <MessageContent message={message} copy={copy} streaming={streaming} timeline={timeline} />,
+      // 有思考、正文或工具记录后改为展示内容，避免 loading 覆盖正在进行的读取过程。
+      loading: message.role === "assistant" && !message.content && timeline.length === 0 &&
+        (message.status === "queued" || message.status === "running"),
+      status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
+    };
+  });
+
+  function handleTranscriptScroll() {
+    const pane = transcriptPaneRef.current;
+    if (!pane) return;
+    pinnedToBottom.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 72;
+  }
+
+  // Bubble.List 关闭内置滚动后由整个对话窗格统一滚动：新消息/新 token 到达时只有
+  // 用户还在底部附近才跟随，向上翻阅历史不会被强行拉回。
+  useEffect(() => {
+    const pane = transcriptPaneRef.current;
+    if (!pane || !pinnedToBottom.current) return;
+    pane.scrollTop = pane.scrollHeight;
+  }, [selectedConversationId, detailTab, currentConversation?.messages.length, streamedReply?.text, timelineByTurn]);
 
   return (
     <>
@@ -456,7 +528,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 label: copy.conversationTabChat,
                 children: (
                   <div className="conversation-chat">
-                    <div className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}>
+                    <div
+                      className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}
+                      ref={transcriptPaneRef}
+                      onScroll={handleTranscriptScroll}
+                    >
                       {!showCreate && currentConversation?.systemPrompt ? (
                         <ExpandableText
                           label={copy.traceSystemPrompt}
@@ -500,7 +576,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         <Bubble.List
                           className="conversation-transcript"
                           items={bubbleItems}
-                          autoScroll
                           role={{
                             user: { placement: "end", variant: "filled" },
                             ai: { placement: "start", variant: "outlined" },

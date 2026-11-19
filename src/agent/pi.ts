@@ -11,11 +11,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { AssistantMessageEvent, AssistantMessage, StreamOptions, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
-import type { ConversationMode, EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
+import type { ConversationMode, ConversationStreamTool, EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
@@ -109,6 +109,17 @@ export interface ModelRequest {
    * 其余任务省略即可。
    */
   onTextDelta?: (update: { reset: boolean; text: string }) => void;
+  /**
+   * 助手思考过程的流式回调，语义与 `onTextDelta` 相同：每轮开始先 `reset: true`，
+   * 之后是该轮累计的思考文本。思考内容只用于展示，不落库、不参与输出校验；
+   * 被服务端安全策略遮蔽的思考块不会推送。
+   */
+  onThinkingDelta?: (update: { reset: boolean; text: string }) => void;
+  /**
+   * 工具开始/结束的流式回调，用于把每次工具调用按发生顺序穿插在思考过程之间。
+   * 参数沿用轨迹的脱敏与限长结果；与正文、思考一样只用于展示，不影响执行。
+   */
+  onToolDelta?: (tool: ConversationStreamTool) => void;
 }
 
 export function getAgentToolAccess(
@@ -173,6 +184,14 @@ function assistantText(message: AssistantMessage): string {
   return message.content
     .filter((part) => part.type === "text")
     .map((part) => part.text)
+    .join("");
+}
+
+/** 取助手消息中的思考文本；被安全过滤遮蔽的内容没有可读正文，直接跳过。 */
+function assistantThinking(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is ThinkingContent => part.type === "thinking" && !part.redacted)
+    .map((part) => part.thinking)
     .join("");
 }
 
@@ -566,26 +585,71 @@ export class PiAgent {
     // 最终助手消息的错误原因：`session.prompt()` 在服务端报错（如上下文超限）时仍会正常
     // 返回，若不记录就会把上一条历史回复当成本轮成功结果，超限重试也就永远不会触发。
     let lastAssistantError: string | undefined;
-    // 流式正文只做展示，不参与判定；回调异常不能影响模型执行。
+    // 流式正文、思考与工具调用只做展示，不参与判定；回调异常不能影响模型执行。
     let streamedAssistantText = "";
-    const emitAssistantText = (reset: boolean, text: string) => {
-      if (!request.onTextDelta) return;
+    let streamedAssistantThinking = "";
+    const streamToolInputs = new Map<string, string | null>();
+    const emitStream = (
+      callback: ((update: { reset: boolean; text: string }) => void) | undefined,
+      label: string,
+      reset: boolean,
+      text: string,
+    ) => {
+      if (!callback) return;
       try {
-        request.onTextDelta({ reset, text });
+        callback({ reset, text });
       } catch (error) {
-        console.warn("assistant text stream callback failed", { error: errorMessage(error) });
+        console.warn(`${label} stream callback failed`, { error: errorMessage(error) });
+      }
+    };
+    const emitToolStream = (tool: ConversationStreamTool) => {
+      if (!request.onToolDelta) return;
+      try {
+        request.onToolDelta(tool);
+      } catch (error) {
+        console.warn("tool stream callback failed", { error: errorMessage(error) });
       }
     };
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_start" && event.message.role === "assistant") {
         streamedAssistantText = "";
-        emitAssistantText(true, "");
+        streamedAssistantThinking = "";
+        emitStream(request.onTextDelta, "assistant text", true, "");
+        emitStream(request.onThinkingDelta, "assistant thinking", true, "");
       } else if (event.type === "message_update" && event.message.role === "assistant") {
+        // 同一条增量里同时带思考与正文时先推思考，保持流里「先思考、后回答」的顺序。
+        const thinking = assistantThinking(event.message);
+        if (thinking !== streamedAssistantThinking) {
+          streamedAssistantThinking = thinking;
+          emitStream(request.onThinkingDelta, "assistant thinking", false, thinking);
+        }
         const text = assistantText(event.message);
         if (text !== streamedAssistantText) {
           streamedAssistantText = text;
-          emitAssistantText(false, text);
+          emitStream(request.onTextDelta, "assistant text", false, text);
         }
+      }
+      // 工具事件发生在两轮模型输出之间，先于轨迹落库推送，界面才能按
+      // 「思考 → 工具 → 下一轮思考」的真实顺序逐条渲染。
+      if (event.type === "tool_execution_start") {
+        const input = JSON.stringify(event.args) ?? null;
+        streamToolInputs.set(event.toolCallId, input);
+        emitToolStream({
+          id: event.toolCallId,
+          name: event.toolName,
+          input,
+          status: "running",
+          durationMs: null,
+        });
+      } else if (event.type === "tool_execution_end") {
+        emitToolStream({
+          id: event.toolCallId,
+          name: event.toolName,
+          input: streamToolInputs.get(event.toolCallId) ?? null,
+          status: event.isError ? "failed" : "succeeded",
+          durationMs: event.durationMs ?? null,
+        });
+        streamToolInputs.delete(event.toolCallId);
       }
       if (event.type === "message_end" && event.message.role === "assistant") {
         lastAssistantError = event.message.stopReason === "error" || event.message.stopReason === "aborted"

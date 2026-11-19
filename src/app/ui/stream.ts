@@ -1,5 +1,5 @@
 import { isConversationTurnStatus } from "../../events/model.js";
-import type { ConversationTurnStatus } from "../../events/model.js";
+import type { ConversationStreamTool, ConversationTurnStatus } from "../../events/model.js";
 import type { ConversationStreamEvent } from "./types.js";
 
 /**
@@ -34,8 +34,30 @@ export function parseSseFrames(buffer: string): {
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
     const event = parsed as Record<string, unknown>;
-    if (event.type === "text" && typeof event.text === "string" && typeof event.reset === "boolean") {
-      events.push({ type: "text", reset: event.reset, text: event.text });
+    if (
+      (event.type === "text" || event.type === "thinking") &&
+      typeof event.text === "string" &&
+      typeof event.reset === "boolean"
+    ) {
+      events.push({ type: event.type, reset: event.reset, text: event.text });
+    } else if (event.type === "tool" && event.tool && typeof event.tool === "object" && !Array.isArray(event.tool)) {
+      const tool = event.tool as Record<string, unknown>;
+      if (
+        typeof tool.id === "string" &&
+        typeof tool.name === "string" &&
+        (tool.status === "running" || tool.status === "succeeded" || tool.status === "failed")
+      ) {
+        events.push({
+          type: "tool",
+          tool: {
+            id: tool.id,
+            name: tool.name,
+            input: typeof tool.input === "string" ? tool.input : null,
+            status: tool.status as ConversationStreamTool["status"],
+            durationMs: typeof tool.durationMs === "number" ? tool.durationMs : null,
+          },
+        });
+      }
     } else if (event.type === "done" && typeof event.status === "string" && isConversationTurnStatus(event.status)) {
       events.push({
         type: "done",
@@ -50,6 +72,10 @@ export function parseSseFrames(buffer: string): {
 export interface ConversationStreamHandlers {
   /** 当前轮已累计的正文；`reset` 为真时表示模型开始了新一轮输出。 */
   onText: (text: string, reset: boolean) => void;
+  /** 当前轮已累计的思考过程，语义与 `onText` 相同。 */
+  onThinking?: (text: string, reset: boolean) => void;
+  /** 工具开始/结束事件，按发生顺序与思考事件交替出现。 */
+  onTool?: (tool: ConversationStreamTool) => void;
   /** 轮次结束；服务端保证只发送一次。 */
   onDone: (status: ConversationTurnStatus, error?: string) => void;
 }
@@ -89,6 +115,10 @@ export async function streamConversationTurn(
       for (const event of parsed.events) {
         if (event.type === "text") {
           handlers.onText(event.text, event.reset);
+        } else if (event.type === "thinking") {
+          handlers.onThinking?.(event.text, event.reset);
+        } else if (event.type === "tool") {
+          handlers.onTool?.(event.tool);
         } else {
           handlers.onDone(event.status, event.error);
           await reader.cancel().catch(() => undefined);

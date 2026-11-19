@@ -227,6 +227,8 @@ describe("review task loop", () => {
       toolCall?: { name: string; args: string };
       /** 提供后把正文拆成多个 SSE 内容块，模拟逐字输出；省略时一次给出全文。 */
       chunks?: string[];
+      /** 与 `chunks` 对齐的思考内容块，模拟模型的 reasoning 输出。 */
+      reasoningChunks?: string[];
     };
     const reviewContent = JSON.stringify({
       summary: "Unchecked input is used without validation.",
@@ -292,10 +294,12 @@ describe("review task loop", () => {
           }
           const chunks = action.chunks?.length ? action.chunks : [action.content];
           for (const [index, content] of chunks.entries()) {
+            const delta: Record<string, unknown> = { content };
+            if (action.reasoningChunks?.[index]) delta.reasoning_content = action.reasoningChunks[index];
             if (index === 0) {
-              writeDelta({ role: "assistant", content });
+              writeDelta({ role: "assistant", ...delta });
             } else {
-              setTimeout(() => writeDelta({ content }), index * 40);
+              setTimeout(() => writeDelta(delta), index * 40);
             }
           }
           setTimeout(finish, chunks.length * 40);
@@ -554,9 +558,11 @@ describe("review task loop", () => {
     // 对话轮次由 Server 内联执行：不经 Worker、不进入事件队列，并逐条暴露工具调用。
     modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
     const streamedAnswer = "`input.ts` assigns a value without validating it.";
+    const streamedThinking = "先读取文件，再确认赋值附近没有校验。";
     modelActions.push({
       content: streamedAnswer,
       chunks: ["`input.ts` assigns ", "a value without ", "validating it."],
+      reasoningChunks: ["先读取文件，", "再确认赋值附近", "没有校验。"],
       // 稍作延迟，确保 SSE 已建连后再开始输出正文，断言才不依赖调度顺序。
       delayMs: 100,
     });
@@ -587,13 +593,34 @@ describe("review task loop", () => {
       streamBody += streamDecoder.decode(value, { stream: true });
     }
     const streamEvents = [...streamBody.matchAll(/^data: (.+)$/gm)]
-      .map((match) => JSON.parse(match[1]!) as { type: string; text?: string; reset?: boolean; status?: string });
+      .map((match) => JSON.parse(match[1]!) as {
+        type: string;
+        text?: string;
+        reset?: boolean;
+        status?: string;
+        tool?: { id: string; name: string; status: string; durationMs?: number | null };
+      });
     const streamedTexts = streamEvents
       .filter((event) => event.type === "text" && event.reset === false && event.text)
       .map((event) => event.text);
     expect(streamedTexts.length).toBeGreaterThan(1);
     expect(streamedTexts[0]).toBe("`input.ts` assigns ");
     expect(streamedTexts.at(-1)).toBe(streamedAnswer);
+    // 思考过程与正文分别推送，按累计值逐段增长，且不混入落库的回答正文。
+    const streamedThinkingTexts = streamEvents
+      .filter((event) => event.type === "thinking" && event.reset === false && event.text)
+      .map((event) => event.text);
+    expect(streamedThinkingTexts.length).toBeGreaterThan(1);
+    expect(streamedThinkingTexts.at(-1)).toBe(streamedThinking);
+    expect(streamEvents.findIndex((event) => event.type === "thinking" && event.text))
+      .toBeLessThan(streamEvents.findIndex((event) => event.type === "text" && event.text));
+    // 工具调用在两次思考之间单独推送，先 running 后 succeeded，不混进回答正文。
+    const streamedTools = streamEvents.filter((event) => event.type === "tool").map((event) => event.tool!);
+    expect(streamedTools.map((tool) => tool.status)).toEqual(["running", "succeeded"]);
+    expect(streamedTools[0]?.name).toBe("read_file");
+    expect(streamedTools[0]?.id).toBeTruthy();
+    expect(streamEvents.findIndex((event) => event.type === "tool" && event.tool?.status === "succeeded"))
+      .toBeLessThan(streamEvents.findIndex((event) => event.type === "thinking" && event.text));
     expect(streamEvents.at(-1)).toMatchObject({ type: "done", status: "completed" });
     await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
     const conversationDetail = serverStore.getConversation(createdConversation.conversationId);

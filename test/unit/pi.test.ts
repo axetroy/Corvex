@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
 import { EventStore } from "../../src/events/store.js";
+import type { ConversationStreamTool } from "../../src/events/model.js";
 
 describe("PiAgent", () => {
   let temporaryDirectory = "";
@@ -113,7 +114,7 @@ describe("PiAgent", () => {
               object: "chat.completion.chunk",
               created: 1,
               model: "test-model",
-              choices: [{ index: 0, delta: { role: "assistant", content: '{"summary":"ok",' }, finish_reason: null }],
+              choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "先核对输入。", content: '{"summary":"ok",' }, finish_reason: null }],
             })}\n\n`,
           );
           setTimeout(() => {
@@ -124,7 +125,7 @@ describe("PiAgent", () => {
                 object: "chat.completion.chunk",
                 created: 1,
                 model: "test-model",
-                choices: [{ index: 0, delta: { content: '"findings":[]}' }, finish_reason: null }],
+                choices: [{ index: 0, delta: { reasoning_content: "再确认 JSON 结构。", content: '"findings":[]}' }, finish_reason: null }],
               })}\n\n`,
             );
           }, 20);
@@ -223,12 +224,16 @@ describe("PiAgent", () => {
     responseDelayMs = 1400;
     const startedAt = Date.now();
     const streamUpdates: { reset: boolean; text: string }[] = [];
+    const thinkingUpdates: { reset: boolean; text: string }[] = [];
+    const toolUpdates: ConversationStreamTool[] = [];
     const result = await agent.generate(
       {
         taskType: "review",
         systemPrompt: "Return JSON.",
         userPrompt: "Say ok.",
         onTextDelta: (update) => streamUpdates.push(update),
+        onThinkingDelta: (update) => thinkingUpdates.push(update),
+        onToolDelta: (tool) => toolUpdates.push(tool),
       },
       temporaryDirectory,
       undefined,
@@ -242,6 +247,21 @@ describe("PiAgent", () => {
     const streamedTexts = streamUpdates.filter((update) => !update.reset).map((update) => update.text);
     expect(streamedTexts[0]).toBe('{"summary":"ok",');
     expect(streamedTexts.at(-1)).toBe('{"summary":"ok","findings":[]}');
+    // 思考与正文分开推送：每次开始新一轮都先 reset，正文到达时思考按累计值独立给出。
+    expect(thinkingUpdates.filter((update) => update.reset)).toHaveLength(2);
+    expect(thinkingUpdates.filter((update) => !update.reset).map((update) => update.text)).toEqual([
+      "先核对输入。",
+      "先核对输入。再确认 JSON 结构。",
+    ]);
+    // 工具调用在思考之外单独推送，开始与结束各一条，带调用 ID 与脱敏参数。
+    expect(toolUpdates).toHaveLength(4);
+    expect(toolUpdates.every((tool) => tool.name === "read_file")).toBe(true);
+    expect(new Set(toolUpdates.map((tool) => tool.id)).size).toBe(2);
+    expect(toolUpdates.filter((tool) => tool.status === "running")).toHaveLength(2);
+    const finishedTools = toolUpdates.filter((tool) => tool.status !== "running");
+    expect(finishedTools.map((tool) => tool.status).sort()).toEqual(["failed", "succeeded"]);
+    expect(toolUpdates.some((tool) => tool.input?.includes("README.md"))).toBe(true);
+    expect(finishedTools.every((tool) => typeof tool.durationMs === "number")).toBe(true);
     expect(result.model).toContain("test-model");
     expect(requestBodies[0]).toContain('"model":"test-model"');
     expect(requestBodies[0]).toContain('"stream":true');

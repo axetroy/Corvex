@@ -196,9 +196,22 @@ export interface Conversation extends ConversationSummary {
  * 助手正文在落库之前先按增量推送：`reset` 表示模型开始新一轮输出（工具调用之后
  * 可能重新生成正文），界面应丢弃上一轮的临时文本；`text` 是该轮**已累计**的正文，
  * 而不是本次新增的片段，因此客户端漏掉若干事件后仍能凭最新一条自愈。
+ * `thinking` 与 `tool` 事件按真实发生顺序穿插推送，界面据此把每次思考与紧接着的
+ * 工具调用排成一条时间线，而不是把所有工具调用堆在最终回答下面。
  */
+/** 流式工具调用：与落库的摘要同形，但带调用 ID，供界面按发生顺序穿插展示。 */
+export interface ConversationStreamTool {
+  id: string;
+  name: string;
+  input: string | null;
+  status: EventTraceStatus;
+  durationMs: number | null;
+}
+
 export type ConversationStreamEvent =
   | { type: "text"; reset: boolean; text: string }
+  | { type: "thinking"; reset: boolean; text: string }
+  | { type: "tool"; tool: ConversationStreamTool }
   | { type: "done"; status: ConversationTurnStatus; error?: string };
 
 /**

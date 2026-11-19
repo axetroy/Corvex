@@ -42,8 +42,11 @@ export class ConversationRunner {
   private readonly workspaces = new Map<string, CachedConversationWorkspace>();
   /** 每轮对话的流式订阅者；轮次结束后立即清理，避免连接与内存泄漏。 */
   private readonly streamListeners = new Map<string, Set<(event: ConversationStreamEvent) => void>>();
-  /** 最近一条正文快照：界面晚于轮次启动才建连时先补发，避免丢掉开头内容。 */
-  private readonly streamSnapshots = new Map<string, ConversationStreamEvent>();
+  /**
+   * 每轮已推送事件的有序快照：界面晚于轮次启动才建连时按顺序补发，
+   * 思考与工具调用的相对次序因此不会因重连而改变。
+   */
+  private readonly streamSnapshots = new Map<string, ConversationStreamEvent[]>();
 
   constructor(
     private readonly config: CorvexConfig,
@@ -103,16 +106,15 @@ export class ConversationRunner {
   /**
    * 订阅一轮对话的流式输出，返回取消订阅函数。
    *
-   * 订阅时补发最近一条正文快照：轮次通常由 POST 触发、界面随后才建立连接，
-   * 直接只转发之后的增量会丢掉开头几段。快照是累计正文而不是增量，重连后
-   * 覆盖展示即可，不需要客户端拼接。
+   * 订阅时按顺序补发已发生的事件：轮次通常由 POST 触发、界面随后才建立连接，
+   * 直接只转发之后的增量会丢掉开头几段。文本是累计值，工具带调用 ID，
+   * 重连后按同一套规则回放即可得到完整时间线。
    */
   subscribeTurn(turnId: string, listener: (event: ConversationStreamEvent) => void): () => void {
     const listeners = this.streamListeners.get(turnId) ?? new Set<(event: ConversationStreamEvent) => void>();
     listeners.add(listener);
     this.streamListeners.set(turnId, listeners);
-    const snapshot = this.streamSnapshots.get(turnId);
-    if (snapshot) listener(snapshot);
+    for (const event of this.streamSnapshots.get(turnId) ?? []) listener(event);
     return () => {
       const current = this.streamListeners.get(turnId);
       if (!current) return;
@@ -123,10 +125,14 @@ export class ConversationRunner {
 
   /** 推送流式事件；订阅者的异常不能影响轮次执行。 */
   private publishStream(turnId: string, event: ConversationStreamEvent): void {
-    if (event.type === "text") {
-      this.streamSnapshots.set(turnId, event);
-    } else {
+    if (event.type === "done") {
       this.streamSnapshots.delete(turnId);
+    } else {
+      const events = this.streamSnapshots.get(turnId) ?? [];
+      // 同一个 token 流里的连续文本事件只需保留最新一条，避免快照无限增长。
+      if (event.type === "text" && events.at(-1)?.type === "text") events[events.length - 1] = event;
+      else events.push(event);
+      this.streamSnapshots.set(turnId, events);
     }
     for (const listener of [...(this.streamListeners.get(turnId) ?? [])]) {
       try {
@@ -375,9 +381,12 @@ export class ConversationRunner {
               systemPrompt,
               userPrompt,
               history,
-              // 正文在落库前先按增量推送给控制台；轮次完成后由 done 事件触发刷新。
+              // 正文与思考在落库前先推送给控制台；轮次完成后由 done 事件触发刷新。
               onTextDelta: (update) =>
                 this.publishStream(turn.turnId, { type: "text", reset: update.reset, text: update.text }),
+              onThinkingDelta: (update) =>
+                this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
+              onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
             },
             workspace.path,
             signal,

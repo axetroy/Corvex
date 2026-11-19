@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { en } from "../../src/app/ui/i18n.ts";
 import { TraceField } from "../../src/app/ui/components/common.tsx";
-import { ConversationToolCalls } from "../../src/app/ui/components/ConversationToolCalls.tsx";
+import { ConversationTimeline } from "../../src/app/ui/components/ConversationTimeline.tsx";
 import {
   anchoredScrollLeft,
   buildTimelineLayout,
@@ -17,18 +17,25 @@ import {
 } from "../../src/app/ui/trace.ts";
 
 describe("operations UI trace reconstruction", () => {
-  it("renders tool calls in the chat transcript with readable descriptions", () => {
-    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, {
+  it("renders each thought and tool call separately in occurrence order", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationTimeline, {
       copy: en,
-      calls: [
-        { name: "read_file", status: "succeeded", input: JSON.stringify({ path: "src/app/ui/App.tsx" }), durationMs: 42 },
-        { name: "git_grep", status: "failed", input: JSON.stringify({ query: "createHash", path: "src" }), durationMs: 7 },
-        { name: "web_fetch", status: "running", input: null, durationMs: null },
+      active: true,
+      segments: [
+        { kind: "thinking", key: "thinking-0", text: "先看目录，再读文件。" },
+        { kind: "tool", key: "tool-1", id: "call-1", call: {
+          name: "read_file", status: "succeeded", input: JSON.stringify({ path: "src/app/ui/App.tsx" }), durationMs: 42,
+        } },
+        { kind: "tool", key: "tool-2", id: "call-2", call: {
+          name: "git_grep", status: "failed", input: JSON.stringify({ query: "createHash", path: "src" }), durationMs: 7,
+        } },
+        { kind: "tool", key: "tool-3", id: "call-3", call: {
+          name: "web_fetch", status: "running", input: null, durationMs: null,
+        } },
       ],
     }));
 
-    expect(markup).toContain("3 tool calls");
-    expect(markup).toContain("Read file src/app/ui/App.tsx (lines 1-200)");
+    expect(markup.indexOf("先看目录，再读文件。")).toBeLessThan(markup.indexOf("Read file src/app/ui/App.tsx (lines 1-200)"));
     expect(markup).toContain("Search &quot;createHash&quot; in src");
     expect(markup).toContain("Read webpage unknown path");
     expect(markup).toContain("Succeeded");
@@ -36,19 +43,32 @@ describe("operations UI trace reconstruction", () => {
     expect(markup).toContain("Running");
     expect(markup).toContain("42 ms");
     expect(markup).toContain("7 ms");
+    // 思考与工具调用属于同一个过程块：只有一个折叠容器，运行期间强制展开。
+    expect(markup.match(/<details /g)).toHaveLength(1);
+    expect(markup).toContain('class="conversation-process is-active" open=""');
+    expect(markup).toContain("4 steps");
+    expect(markup).toContain("Thinking");
   });
 
-  it("uses the singular summary for a single tool call", () => {
-    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, {
+  it("collapses the whole process when the turn has settled", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationTimeline, {
       copy: en,
-      calls: [{ name: "read_file", status: "succeeded", input: JSON.stringify({ path: "src/app/ui/App.tsx" }), durationMs: 42 }],
+      active: false,
+      segments: [
+        { kind: "thinking", key: "thinking-0", text: "先看目录。" },
+        { kind: "tool", key: "tool-1", id: "call-1", call: {
+          name: "read_dir", status: "succeeded", input: JSON.stringify({ path: "." }), durationMs: 2,
+        } },
+      ],
     }));
-    expect(markup).toContain("1 tool call<");
-    expect(markup).not.toContain("1 tool calls");
+    expect(markup).toContain('<details class="conversation-process">');
+    expect(markup).toContain('class="conversation-thinking"');
+    expect(markup).toContain('class="conversation-tool-call"');
+    expect(markup).not.toContain(" open=");
   });
 
-  it("renders nothing when a turn recorded no tool calls", () => {
-    const markup = renderToStaticMarkup(createElement(ConversationToolCalls, { copy: en, calls: [] }));
+  it("renders nothing when a turn has no thought or tool call", () => {
+    const markup = renderToStaticMarkup(createElement(ConversationTimeline, { copy: en, active: false, segments: [] }));
     expect(markup).toBe("");
   });
 
