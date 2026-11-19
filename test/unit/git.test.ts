@@ -503,6 +503,15 @@ describe("Git workflows", () => {
     await expect(lstat(advanced.path)).rejects.toMatchObject({ code: "ENOENT" });
     // 幂等：目录已不存在时再次删除不应报错。
     await manager.removeConversationWorkspace(advanced);
+
+    // 启动时清扫遗留 worktree，但保留镜像，下次提问可按需重建。
+    const recreated = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, headSha);
+    expect(await manager.removeAllConversationWorkspaces()).toMatchObject({ removed: 1 });
+    await expect(lstat(recreated.path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(mirror)).resolves.toBeDefined();
+    await expect(manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, headSha)).resolves.toMatchObject({
+      path: recreated.path,
+    });
   });
 
   it("skips protected conversation workspaces during storage cleanup", async () => {

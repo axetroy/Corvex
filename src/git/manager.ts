@@ -395,6 +395,30 @@ export class GitManager {
     });
   }
 
+  /**
+   * 启动时清理所有遗留的对话 worktree：重启后不存在运行中的对话轮次，
+   * 这些目录都可以按需重建，留着只会长期占用磁盘。镜像保留不动。
+   */
+  async removeAllConversationWorkspaces(signal?: AbortSignal): Promise<{ removed: number }> {
+    let removed = 0;
+    for (const projectName of await readdir(this.workspaceRoot)) {
+      if (!/^[1-9]\d*$/.test(projectName)) continue;
+      const projectRoot = join(this.workspaceRoot, projectName);
+      const projectInfo = await lstat(projectRoot);
+      if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) continue;
+      const mirror = join(this.mirrorRoot, `${projectName}.git`);
+      for (const name of await readdir(projectRoot)) {
+        if (!conversationWorkspacePattern.test(name)) continue;
+        const workspacePath = join(projectRoot, name);
+        const info = await lstat(workspacePath);
+        if (!info.isDirectory()) continue;
+        await this.removeWorktree(mirror, workspacePath, signal);
+        removed += 1;
+      }
+    }
+    return { removed };
+  }
+
   /** 按对话 ID 删除常驻 worktree，供会话删除接口在缓存之外也能清理目录。 */
   async removeConversationWorkspaceById(
     projectId: number,

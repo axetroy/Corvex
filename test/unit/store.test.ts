@@ -115,6 +115,8 @@ describe("EventStore", () => {
         { role: "assistant", content: "", status: "queued", turnId: result.turnId, headSha: "a".repeat(40) },
       ],
     });
+    // 会话引用的项目也算受保护项目，storage cleanup 不应删掉它的镜像。
+    expect(store.pendingProjectIds().has(7)).toBe(true);
     // 对话轮次不再进入 Worker 队列，只由 Server 内联领取。
     expect(store.claimNextWithLease(30_000)).toBeUndefined();
     expect(store.claimConversationTurn(result.turnId)).toMatchObject({

@@ -90,6 +90,15 @@ export class ConversationRunner {
     return true;
   }
 
+  /** 启动时清理上次进程遗留的对话 worktree（不触碰项目镜像）。 */
+  async cleanupStaleWorkspaces(): Promise<number> {
+    const result = await this.repo.removeAllConversationWorkspaces();
+    if (result.removed > 0) {
+      console.info("removed stale conversation workspaces", { count: result.removed });
+    }
+    return result.removed;
+  }
+
   /** 删除一个对话的常驻工作区；正在执行的对话不能删除。 */
   async removeConversationWorkspace(conversationId: string, projectId: number): Promise<boolean> {
     if (this.running.has(conversationId)) return false;

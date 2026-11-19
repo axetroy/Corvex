@@ -2143,9 +2143,12 @@ export class EventStore {
     const rows = this.db
       .prepare(
         `SELECT DISTINCT project_id FROM events
-         WHERE status NOT IN (${terminalStatuses.map(() => "?").join(",")})`,
+         WHERE status NOT IN (${terminalStatuses.map(() => "?").join(",")})
+         UNION SELECT DISTINCT project_id FROM conversations`,
       )
       .all(...terminalStatuses) as { project_id: number }[];
+    // 对话可以随后续提问重新访问任何历史仓库：这些项目的镜像不能被清理掉，
+    // 否则每次重新提问都要重新克隆整座仓库。
     return new Set(rows.map((row) => row.project_id));
   }
 

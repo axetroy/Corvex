@@ -196,6 +196,12 @@ export class CorvexServer {
     if (interruptedTurns > 0) {
       console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
     }
+    // 重启后没有在途轮次，清掉上次进程留下的对话 worktree，避免磁盘占用只增不减。
+    try {
+      await this.conversations.cleanupStaleWorkspaces();
+    } catch (error) {
+      console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
+    }
     const retention = new AbortController();
     const stopRetention = () => {
       retention.abort();
