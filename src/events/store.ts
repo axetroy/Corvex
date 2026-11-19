@@ -41,6 +41,8 @@ import {
   type EventType,
   type ConversationTurnSegment,
   type StorageCleanupRecord,
+  type ModelProfile,
+  type ModelProfileInput,
   type ConversationTurnTransition,
   type ConversationTurns,
   type ModelCallMetric,
@@ -1315,7 +1317,7 @@ export class EventStore {
     // 让对话页无需额外请求就能提示「本轮有轨迹/记录可查看」。
     const messages = this.db.prepare(
       `SELECT conversation_messages.*, conversation_turns.status AS turn_status,
-         conversation_turns.process AS turn_process,
+         conversation_turns.process AS turn_process, conversation_turns.model AS turn_model,
          (SELECT COUNT(*) FROM event_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
          (SELECT COUNT(*) FROM execution_steps WHERE turn_id=conversation_messages.turn_id) AS step_count
        FROM conversation_messages
@@ -1576,7 +1578,7 @@ export class EventStore {
   }
 
   /** 完成一轮对话：写入助手回复正文并把轮次置为完成。 */
-  finishConversationTurn(turnId: string, content: string): void {
+  finishConversationTurn(turnId: string, content: string, model = ""): void {
     const now = new Date().toISOString();
     this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM conversation_turns WHERE id=?").get(turnId) as
@@ -1585,8 +1587,8 @@ export class EventStore {
       const turn = row ? readConversationTurnRow(row) : undefined;
       if (!turn) throw new Error(`conversation turn "${turnId}" not found`);
       const result = this.db.prepare(
-        "UPDATE conversation_turns SET status='completed',last_error='',updated_at=? WHERE id=? AND status='running'",
-      ).run(now, turnId);
+        "UPDATE conversation_turns SET status='completed',last_error='',model=?,updated_at=? WHERE id=? AND status='running'",
+      ).run(model, now, turnId);
       if (result.changes !== 1) throw new Error(`conversation turn "${turnId}" is not running`);
       this.insertAudit(turn.actor_id, "conversation_turn", turnId, "running->completed", now);
       if (turn.message_id) {
@@ -1901,6 +1903,7 @@ export class EventStore {
       turnStatus: (turnStatus ?? null) as ConversationMessage["turnStatus"],
       traceCount: row.trace_count === undefined ? 0 : numberColumn(row, "trace_count"),
       stepCount: row.step_count === undefined ? 0 : numberColumn(row, "step_count"),
+      model: typeof row.turn_model === "string" ? row.turn_model : "",
       toolCalls: [],
       process: typeof row.turn_process === "string" ? readConversationProcess(row.turn_process) : [],
     };
@@ -2195,6 +2198,129 @@ export class EventStore {
     }));
   }
 
+  listModelProfiles(): ModelProfile[] {
+    const rows = this.db.prepare("SELECT * FROM model_profiles ORDER BY created_at,id").all() as Record<string, unknown>[];
+    return rows.map((row) => this.readModelProfile(row));
+  }
+
+  getActiveModelProfile(): ModelProfile | undefined {
+    const row = this.db.prepare("SELECT * FROM model_profiles WHERE active=1 LIMIT 1").get() as Record<string, unknown> | undefined;
+    return row ? this.readModelProfile(row) : undefined;
+  }
+
+  createModelProfile(input: ModelProfileInput): ModelProfile {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const first = (this.db.prepare("SELECT COUNT(*) AS count FROM model_profiles").get() as { count: number }).count === 0;
+    this.db.prepare(
+      `INSERT INTO model_profiles (id,name,base_url,api_key,context_window,max_output_tokens,active,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(id, input.name, input.baseUrl, input.apiKey, input.contextWindow, input.maxOutputTokens, first ? 1 : 0, now, now);
+    return this.getModelProfile(id)!;
+  }
+
+  getModelProfile(id: string): ModelProfile | undefined {
+    const row = this.db.prepare("SELECT * FROM model_profiles WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.readModelProfile(row) : undefined;
+  }
+
+  updateModelProfile(id: string, input: ModelProfileInput): ModelProfile | undefined {
+    const result = this.db.prepare(
+      `UPDATE model_profiles SET name=?,base_url=?,api_key=?,context_window=?,max_output_tokens=?,updated_at=? WHERE id=?`,
+    ).run(input.name, input.baseUrl, input.apiKey, input.contextWindow, input.maxOutputTokens, new Date().toISOString(), id);
+    return result.changes === 1 ? this.getModelProfile(id) : undefined;
+  }
+
+  deleteModelProfile(id: string): boolean {
+    return this.transaction(() => {
+      const removed = this.db.prepare("DELETE FROM model_profiles WHERE id=?").run(id).changes === 1;
+      // 删除当前使用的模型后提升剩余的第一个，避免列表里有模型却没有选中项。
+      const active = this.db.prepare("SELECT id FROM model_profiles WHERE active=1 LIMIT 1").get();
+      if (removed && !active) {
+        this.db.prepare(
+          "UPDATE model_profiles SET active=1,updated_at=? WHERE id=(SELECT id FROM model_profiles ORDER BY created_at,id LIMIT 1)",
+        ).run(new Date().toISOString());
+      }
+      return removed;
+    });
+  }
+
+  activateModelProfile(id: string): boolean {
+    if (!this.getModelProfile(id)) return false;
+    this.transaction(() => {
+      this.db.prepare("UPDATE model_profiles SET active=0 WHERE active=1").run();
+      this.db.prepare("UPDATE model_profiles SET active=1,updated_at=? WHERE id=?").run(new Date().toISOString(), id);
+    });
+    return true;
+  }
+
+  /**
+   * 升级兼容：把旧版写在运行时设置里的模型连接参数迁移为一条模型配置，
+   * 避免升级后已保存的 Base URL 与 API Key 失效。Server 与 Worker 启动时都会调用，
+   * 用写事务把「检查 + 插入」锁在一起，先到者生效，后者直接跳过。
+   */
+  migrateLegacyModelProfile(
+    fallback: { contextWindow: number; maxOutputTokens: number },
+    actorId: number,
+  ): ModelProfile | undefined {
+    return this.transaction(() => {
+      const existing = this.db.prepare("SELECT COUNT(*) AS count FROM model_profiles").get() as { count: number };
+      if (existing.count > 0) return undefined;
+      const rows = this.db
+        .prepare(
+          "SELECT key,value FROM runtime_settings WHERE key IN ('model','model_base_url','model_api_key','context_window','max_output_tokens')",
+        )
+        .all() as { key: string; value: string }[];
+      const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+      const name = values.model?.trim() ?? "";
+      const baseUrl = values.model_base_url?.trim() ?? "";
+      if (!name || !baseUrl) return undefined;
+      const positive = (value: string | undefined, fallbackValue: number) => {
+        const parsed = Number(value);
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallbackValue;
+      };
+      const now = new Date().toISOString();
+      const id = randomUUID();
+      this.db
+        .prepare(
+          `INSERT INTO model_profiles (id,name,base_url,api_key,context_window,max_output_tokens,active,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,1,?,?)`,
+        )
+        .run(
+          id,
+          name,
+          baseUrl,
+          values.model_api_key ?? "",
+          positive(values.context_window, fallback.contextWindow),
+          positive(values.max_output_tokens, fallback.maxOutputTokens),
+          now,
+          now,
+        );
+      // 迁移后清掉旧键：模型列表成为唯一来源，避免两处配置互相矛盾。
+      this.db
+        .prepare(
+          "DELETE FROM runtime_settings WHERE key IN ('model','model_base_url','model_api_key','context_window','max_output_tokens')",
+        )
+        .run();
+      this.insertAudit(actorId, "model_profile", id, "migrated", now);
+      return this.getModelProfile(id);
+    }, true);
+  }
+
+  private readModelProfile(row: Record<string, unknown>): ModelProfile {
+    return {
+      id: stringColumn(row, "id"),
+      name: stringColumn(row, "name"),
+      baseUrl: stringColumn(row, "base_url"),
+      apiKey: stringColumn(row, "api_key"),
+      contextWindow: numberColumn(row, "context_window"),
+      maxOutputTokens: numberColumn(row, "max_output_tokens"),
+      active: numberColumn(row, "active") === 1,
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
+  }
+
   /** 仍有排队或运行中轮次的对话 ID，用于保护其常驻工作区不被清理。 */
   activeConversationIds(): Set<string> {
     const rows = this.db
@@ -2389,8 +2515,8 @@ export class EventStore {
       .run(eventId, webhookEventId);
   }
 
-  private transaction<T>(callback: () => T): T {
-    this.db.exec("BEGIN");
+  private transaction<T>(callback: () => T, immediate = false): T {
+    this.db.exec(immediate ? "BEGIN IMMEDIATE" : "BEGIN");
     try {
       const result = callback();
       this.db.exec("COMMIT");
@@ -2437,7 +2563,7 @@ export class EventStore {
         message_id TEXT, user_message_id TEXT, role TEXT NOT NULL DEFAULT 'assistant',
         status TEXT NOT NULL, request TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '',
         actor_id INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '',
+        last_error TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_turns_order_idx ON conversation_turns(conversation_id,created_at,id);
@@ -2456,6 +2582,11 @@ export class EventStore {
         error TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS storage_cleanup_log_order_idx ON storage_cleanup_log(started_at DESC,id DESC);
+      CREATE TABLE IF NOT EXISTS model_profiles (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '',
+        context_window INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS webhook_deliveries (
         webhook_event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
         received_at TEXT NOT NULL
@@ -2584,6 +2715,8 @@ export class EventStore {
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
       archived: "INTEGER NOT NULL DEFAULT 0",
+      // 落库回复使用的模型名，供控制台在复制按钮旁展示。
+      model: "TEXT NOT NULL DEFAULT ''",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);

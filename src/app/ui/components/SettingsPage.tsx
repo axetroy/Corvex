@@ -8,6 +8,7 @@ import { settingGroups } from "../types.js";
 import type { SettingField, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
 import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
+import { ModelManager } from "./ModelManager.js";
 
 /** 设置元数据里的文案键是普通字符串，查表时收窄为 Copy 的文案键。 */
 function text(copy: Copy, key: string): string {
@@ -85,6 +86,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("basic");
+  const [settingsToken, setSettingsToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -100,7 +102,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     return () => {
       active = false;
     };
-  }, [copy, refreshToken, onUpdated]);
+  }, [copy, refreshToken, onUpdated, settingsToken]);
 
   const editable = data?.editable ?? false;
   const base = data?.base ?? null;
@@ -170,8 +172,8 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       .filter(Boolean),
   );
 
-  /** 渲染一组字段；hideReset 用于完全由 Web 管理的分组（如模型连接信息）。 */
-  const renderFields = (fields: readonly SettingField[], hideReset = false) => (
+  /** 渲染一组字段；高级分组复用同一套控件。 */
+  const renderFields = (fields: readonly SettingField[]) => (
     <div className="settings-fields">
       {fields.map((field) => {
         const value = draft[field.key];
@@ -205,17 +207,6 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                     status={invalid ? "error" : undefined}
                     onChange={(next) => setValue(field.key, next)}
                   />
-                ) : field.secret ? (
-                  <Input.Password
-                    className="settings-text"
-                    value={typeof value === "string" ? value : ""}
-                    placeholder={data.overrides[field.key] ? copy.settingsSecretConfigured : undefined}
-                    maxLength={field.maxLength}
-                    disabled={!editable}
-                    status={invalid ? "error" : undefined}
-                    autoComplete="new-password"
-                    onChange={(event) => setValue(field.key, event.target.value)}
-                  />
                 ) : (
                   <Input
                     className="settings-text"
@@ -245,7 +236,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                   {field.unit === "byte" ? copy.settingsUnitBytes : copy.settingsUnitTokens}
                 </span>
               ) : null}
-              {base && !hideReset && !field.secret ? (
+              {base ? (
                 <Button type="link" size="small" disabled={!editable} onClick={() => resetField(field)}>
                   {copy.settingsReset}
                 </Button>
@@ -274,7 +265,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   );
 
   const groupsByTitle = new Map(settingGroups.map((group) => [group.titleKey, group]));
-  const renderGroup = (titleKey: string, hideReset = false) => {
+  const renderGroup = (titleKey: string) => {
     const group = groupsByTitle.get(titleKey);
     if (!group) return null;
     return (
@@ -282,7 +273,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         <Typography.Paragraph type="secondary" className="settings-group-hint">
           {text(copy, group.hintKey)}
         </Typography.Paragraph>
-        {renderFields(group.fields, hideReset)}
+        {renderFields(group.fields)}
       </Panel>
     );
   };
@@ -341,9 +332,10 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                 <Typography.Paragraph type="secondary" className="settings-group-hint">
                   {copy.settingsModelConnectionHint}
                 </Typography.Paragraph>
+                <ModelManager copy={copy} onChanged={() => setSettingsToken((value) => value + 1)} />
                 {derivedPanel}
-                {renderGroup("settingsGroupModel", true)}
-                {renderGroup("settingsGroupQuota", true)}
+                {renderGroup("settingsGroupModel")}
+                {renderGroup("settingsGroupQuota")}
               </>
             ),
           },

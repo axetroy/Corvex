@@ -1,4 +1,5 @@
 import type { CorvexConfig } from "./config.js";
+import type { ModelProfile } from "../events/model.js";
 import { resolveMaxInputTokens } from "../agent/budget.js";
 import {
   resolveCompactionKeepRecentTokens,
@@ -34,22 +35,29 @@ export interface RuntimeSettingDefinition {
    * 依赖这些参数的组件，仅改内存配置不会生效。
    */
   workerScoped?: boolean;
+  /**
+   * 不在运维台展示的旧键。模型名、地址、密钥、上下文窗口与输出上限已由模型列表
+   * （`model_profiles`）管理，这里保留读取是为了升级后旧覆盖项仍能生效。
+   */
+  hidden?: boolean;
 }
 
 export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // 模型与输出语言：PiAgent 与工作流在每次请求/轮次读取，覆盖后立即生效。
-  { key: "model", section: "agent", field: "model", type: "string", maxLength: 200 },
-  { key: "model_base_url", section: "agent", field: "baseUrl", type: "string", maxLength: 500 },
-  { key: "model_api_key", section: "agent", field: "apiKey", type: "string", maxLength: 2_000 },
+  // 前五项是模型列表出现之前的旧键，保留只为升级兼容，控制台不再展示；
+  // 模型列表（见 applyModelProfile）选中时优先级更高。
+  { key: "model", section: "agent", field: "model", type: "string", maxLength: 200, hidden: true },
+  { key: "model_base_url", section: "agent", field: "baseUrl", type: "string", maxLength: 500, hidden: true },
+  { key: "model_api_key", section: "agent", field: "apiKey", type: "string", maxLength: 2_000, hidden: true },
   { key: "response_language", section: "agent", field: "responseLanguage", type: "string", values: ["en", "zh-CN"] },
   // 上下文预算
-  { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000 },
+  { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000, hidden: true },
   { key: "max_input_tokens", section: "agent", field: "maxInputTokens", type: "number", min: 0, max: 10_000_000 },
   { key: "history_token_budget", section: "agent", field: "historyTokenBudget", type: "number", min: 0, max: 10_000_000 },
   { key: "turn_tool_result_bytes", section: "agent", field: "turnToolResultBytes", type: "number", min: 0, max: 64 << 20 },
   { key: "compaction_reserve_tokens", section: "agent", field: "compactionReserveTokens", type: "number", min: 0, max: 10_000_000 },
   { key: "compaction_keep_recent_tokens", section: "agent", field: "compactionKeepRecentTokens", type: "number", min: 0, max: 10_000_000 },
-  { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192 },
+  { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
   // 工具开关
@@ -177,6 +185,17 @@ export function validateRuntimeSettings(overrides: Record<string, string>): stri
   }
   problems.push(...checkRelations(values));
   return problems;
+}
+
+/** 把选中的模型配置应用到运行时配置；Web 模型列表是这些字段的唯一来源。 */
+export function applyModelProfile(config: CorvexConfig, profile: ModelProfile): void {
+  config.agent.model = profile.name;
+  config.agent.baseUrl = profile.baseUrl;
+  config.agent.apiKey = profile.apiKey;
+  config.agent.contextWindow = profile.contextWindow;
+  config.agent.maxOutputTokens = profile.maxOutputTokens;
+  if (config.agent.maxInputTokens >= profile.contextWindow) config.agent.maxInputTokens = 0;
+  if (config.agent.historyTokenBudget > profile.contextWindow) config.agent.historyTokenBudget = profile.contextWindow;
 }
 
 /**

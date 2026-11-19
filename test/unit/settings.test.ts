@@ -199,7 +199,8 @@ describe("isRuntimeSettingKey", () => {
 });
 
 describe("设置页与服务端设置键的一致性", () => {
-  const serverKeys = runtimeSettingDefinitions.map((definition) => definition.key);
+  // hidden 是升级兼容的旧模型键，模型列表接管后不再展示，也不要求出现在界面上。
+  const serverKeys = runtimeSettingDefinitions.filter((definition) => !definition.hidden).map((definition) => definition.key);
   const uiFields = settingGroups.flatMap((group) => group.fields);
 
   it("设置页只暴露服务端接受的键", () => {
@@ -208,6 +209,12 @@ describe("设置页与服务端设置键的一致性", () => {
 
   it("设置页覆盖每一个可覆盖的服务端键，避免遗漏", () => {
     expect(new Set(uiFields.map((field) => field.key))).toEqual(new Set(serverKeys));
+  });
+
+  it("隐藏键不出现在设置页", () => {
+    const hidden = runtimeSettingDefinitions.filter((definition) => definition.hidden).map((definition) => definition.key);
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(uiFields.map((field) => field.key).filter((key) => hidden.includes(key))).toEqual([]);
   });
 
   it("设置页的键在界面中唯一", () => {

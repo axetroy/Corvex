@@ -18,6 +18,45 @@ describe("EventStore", () => {
     directory = "";
   });
 
+  it("管理模型配置并迁移旧的模型运行时设置", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    store = await EventStore.open(join(directory, "state.db"));
+    store.setRuntimeSetting("model", "legacy-model", "ops");
+    store.setRuntimeSetting("model_base_url", "https://legacy.example.com/v1", "ops");
+    store.setRuntimeSetting("model_api_key", "legacy-key", "ops");
+    store.setRuntimeSetting("context_window", "65536", "ops");
+
+    // 升级后第一次启动：旧覆盖项变成一条激活的模型配置，旧键被清掉。
+    const migrated = store.migrateLegacyModelProfile({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0);
+    expect(migrated).toMatchObject({
+      name: "legacy-model",
+      baseUrl: "https://legacy.example.com/v1",
+      apiKey: "legacy-key",
+      contextWindow: 65_536,
+      maxOutputTokens: 4_096,
+      active: true,
+    });
+    expect(store.migrateLegacyModelProfile({ contextWindow: 131_072, maxOutputTokens: 4_096 }, 0)).toBeUndefined();
+    expect(store.listRuntimeSettings().some((row) => row.key === "model")).toBe(false);
+
+    // 第一个新增的模型自动激活，之后可以显式切换；删除当前项会提升剩余项。
+    const second = store.createModelProfile({
+      name: "second-model",
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "",
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+    });
+    expect(second.active).toBe(false);
+    expect(store.activateModelProfile(second.id)).toBe(true);
+    expect(store.getActiveModelProfile()?.id).toBe(second.id);
+    expect(store.deleteModelProfile(second.id)).toBe(true);
+    expect(store.getActiveModelProfile()?.id).toBe((migrated as { id: string }).id);
+    expect(store.deleteModelProfile((migrated as { id: string }).id)).toBe(true);
+    expect(store.listModelProfiles()).toEqual([]);
+    expect(store.getActiveModelProfile()).toBeUndefined();
+  });
+
   it("persists idempotent events and enforces leased status transitions", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await EventStore.open(join(directory, "state.db"));
@@ -264,7 +303,9 @@ describe("EventStore", () => {
       input: { requestCharacters: 24 },
       output: { textBytes: 18 },
     });
-    store.finishConversationTurn(claimed.turnId, "Routing lives in routing.ts.");
+    store.finishConversationTurn(claimed.turnId, "Routing lives in routing.ts.", "gpt-test");
+    expect(store.getConversation(created.conversationId)?.messages.find((message) => message.role === "assistant")?.model)
+      .toBe("gpt-test");
 
     const turn = store.getConversationTurn(created.conversationId, created.turnId);
     expect(turn).toMatchObject({

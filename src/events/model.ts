@@ -194,6 +194,8 @@ export interface ConversationMessage {
   traceCount: number;
   /** 助手回复对应轮次已记录的执行步骤数。 */
   stepCount: number;
+  /** 生成这条回复时使用的模型名称。 */
+  model: string;
   /** 助手回复已记录的工具调用摘要，按调用时间排序；用户消息为空数组。 */
   toolCalls: ConversationToolCall[];
   /** 该轮落库的过程条目（思考、中间回复、工具调用），按发生顺序排列。 */
@@ -262,6 +264,28 @@ export interface ConversationTurn {
   timeline: ConversationTurnTransition[];
   trajectory: EventTraceEntry[];
   events: ExecutionStep[];
+}
+
+/** Web 端维护的一个模型配置；选中项会覆盖配置里的模型连接参数。 */
+export interface ModelProfile {
+  id: string;
+  name: string;
+  baseUrl: string;
+  /** 仅用于内部连接与保存；接口一律不回显原文。 */
+  apiKey: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelProfileInput {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  contextWindow: number;
+  maxOutputTokens: number;
 }
 
 /** 一次 Git 存储清理（CLI、Server 保留任务或启动清扫）的结果记录。 */

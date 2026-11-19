@@ -22,6 +22,7 @@ import type {
   EventTraceStatus,
   EventType,
   ModelCallMetric,
+  ModelProfile,
   OperationsOverview,
   RepositoryDetails,
   StorageCleanupRecord,
@@ -55,6 +56,7 @@ export type {
   EventTraceStatus,
   EventType,
   ModelCallMetric,
+  ModelProfile,
   RepositoryDetails,
   StorageCleanupRecord,
 };
@@ -145,8 +147,6 @@ export interface SettingField {
   maxLength?: number;
   /** 输入单位提示，例如 token。 */
   unit?: string;
-  /** 密钥类字段：用密码框、不回显原文，留空表示沿用已保存的值。 */
-  secret?: boolean;
   /** 文案键：字段标签与说明。 */
   labelKey: string;
   hintKey: string;
@@ -170,9 +170,6 @@ export const settingGroups: readonly SettingGroup[] = [
     titleKey: "settingsGroupModel",
     hintKey: "settingsGroupModelHint",
     fields: [
-      { key: "model", kind: "string", maxLength: 200, labelKey: "settingsModel", hintKey: "settingsModelHint" },
-      { key: "model_base_url", kind: "string", maxLength: 500, labelKey: "settingsModelBaseUrl", hintKey: "settingsModelBaseUrlHint" },
-      { key: "model_api_key", kind: "string", secret: true, maxLength: 2_000, labelKey: "settingsModelApiKey", hintKey: "settingsModelApiKeyHint" },
       { key: "response_language", kind: "string", values: ["en", "zh-CN"], labelKey: "settingsResponseLanguage", hintKey: "settingsResponseLanguageHint" },
     ],
   },
@@ -189,7 +186,6 @@ export const settingGroups: readonly SettingGroup[] = [
     titleKey: "settingsGroupQuota",
     hintKey: "settingsGroupQuotaHint",
     fields: [
-      { key: "max_output_tokens", kind: "number", min: 1, max: 8192, step: 256, unit: "token", labelKey: "settingsMaxOutputTokens", hintKey: "settingsMaxOutputTokensHint" },
       { key: "daily_token_budget", kind: "number", min: 0, max: 1_000_000_000, step: 100_000, unit: "token", labelKey: "settingsDailyTokenBudget", hintKey: "settingsDailyTokenBudgetHint" },
     ],
   },
@@ -237,7 +233,6 @@ export const settingGroups: readonly SettingGroup[] = [
     hintKey: "settingsGroupAdvancedHint",
     advanced: true,
     fields: [
-      { key: "context_window", kind: "number", min: 1024, max: 10_000_000, step: 1024, unit: "token", labelKey: "settingsContextWindow", hintKey: "settingsContextWindowHint" },
       { key: "max_input_tokens", kind: "number", min: 0, max: 10_000_000, step: 1024, unit: "token", labelKey: "settingsMaxInputTokens", hintKey: "settingsMaxInputTokensHint" },
       { key: "compaction_reserve_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionReserveTokens", hintKey: "settingsCompactionReserveTokensHint" },
       { key: "compaction_keep_recent_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionKeepRecentTokens", hintKey: "settingsCompactionKeepRecentTokensHint" },

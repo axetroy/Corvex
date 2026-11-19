@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
-import { applyRuntimeSettingRows, copyRuntimeSettings } from "../config/settings.js";
+import { applyModelProfile, applyRuntimeSettingRows, copyRuntimeSettings } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import { FixWorkflow } from "../fix/workflow.js";
 import { ImplementWorkflow } from "../implement/workflow.js";
@@ -159,11 +159,16 @@ export class Worker {
   private refreshRuntimeSettings(): void {
     try {
       const rows = this.store.listRuntimeSettings();
-      const signature = rows.map((row) => `${row.key}=${row.value}`).join("\n");
+      const profile = this.store.getActiveModelProfile();
+      const profileSignature = profile
+        ? `${profile.id}:${profile.name}:${profile.baseUrl}:${profile.apiKey}:${profile.contextWindow}:${profile.maxOutputTokens}`
+        : "";
+      const signature = `${rows.map((row) => `${row.key}=${row.value}`).join("\n")}\n${profileSignature}`;
       if (signature === this.runtimeSignature) return;
       // 先复位到配置文件基线，再叠加覆盖：删除的键因此立即回到文件值。
       copyRuntimeSettings(this.baseline, this.config);
       const applied = applyRuntimeSettingRows(this.config, rows);
+      if (profile) applyModelProfile(this.config, profile);
       this.runtimeSignature = signature;
       this.buildWorkflows();
       console.info("worker applied runtime settings", { keys: applied });
@@ -174,6 +179,15 @@ export class Worker {
 
   async run(signal: AbortSignal): Promise<void> {
     await this.repo.initialize();
+    try {
+      const migrated = this.store.migrateLegacyModelProfile(
+        { contextWindow: this.config.agent.contextWindow, maxOutputTokens: this.config.agent.maxOutputTokens },
+        0,
+      );
+      if (migrated) console.info("worker migrated legacy model settings", { id: migrated.id, name: migrated.name });
+    } catch (error) {
+      console.error("migrate legacy model settings failed", { error: errorMessage(error) });
+    }
     console.info("Corvex worker started", { pollIntervalMs: this.config.worker.pollInterval });
     while (!signal.aborted) {
       this.refreshRuntimeSettings();

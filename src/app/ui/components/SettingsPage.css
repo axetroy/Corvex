@@ -171,3 +171,11 @@
 .settings-tabs .ant-tabs-content-holder {
   padding-top: 4px;
 }
+
+.model-manager-table {
+  margin-top: 8px;
+}
+
+.model-manager-table .ant-table-cell {
+  font-size: 12px;
+}

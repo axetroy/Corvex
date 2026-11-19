@@ -19,8 +19,9 @@ storage:
 
 agent:
   enabled: false
-  # 模型名、Base URL、API Key、回复语言与输出上限都可以完全在运维台
-  # 「设置 > 模型」中配置（存 SQLite，无需重启），下面这几行都可以从 YAML 删除。
+  # 模型列表在运维台「设置 > 模型」中维护（名称、Base URL、API Key、
+  # 上下文窗口、最大输出），存 SQLite 且无需重启；下面 base_url / model /
+  # max_output_tokens / context_window 只是列表为空时的回退值。
   # API Key 不会在接口中回显；数据库文件及备份需妥善保护。
   response_language: "en" # en or zh-CN
   base_url: "https://api.openai.com/v1"
@@ -37,6 +38,7 @@ agent:
   # 上下文预算：模型窗口、提示词预算与 SDK 压缩阈值。
   # context_window 是模型的真实窗口；请求超限时先按下面的预算在本地裁剪，
   # 而不是依赖服务端报错。max_input_tokens 为 0 时由窗口减输出预留推导。
+  # 选择了模型列表中的模型时，以模型自己的窗口与输出上限为准，这里是回退值。
   # 工具结果在进入会话历史前按单次/单轮硬性截断，因此 turn_tool_result_bytes
   # 只是软检查点：达到阈值（最多四个单轮预算）时提示模型收窄读取并继续。
   # compaction_reserve_tokens 低于工具预算推导的安全下限时会被运行时上调。

@@ -487,7 +487,7 @@ export class ConversationRunner {
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
-      this.store.finishConversationTurn(turn.turnId, answer.content);
+      this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 正文已落库，立即结束流：标题与摘要生成还需额外模型调用，不应让界面继续等流。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });

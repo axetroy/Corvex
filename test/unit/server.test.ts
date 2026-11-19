@@ -807,6 +807,57 @@ describe("CorvexServer", () => {
       expect(audit.some((entry) => entry.result?.includes("context_window: 200000 -> (config)"))).toBe(true);
       expect(audit.some((entry) => entry.result?.includes("model_api_key:"))).toBe(true);
       expect(audit.every((entry) => !entry.result?.includes("super-secret-key"))).toBe(true);
+
+      // Web 模型列表：第一个模型自动激活，密钥不回显，留空更新不会清掉原密钥。
+      expect((await (await fetch(`${base}/api/ops/models`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
+      const createModel = await fetch(`${base}/api/ops/models`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "gpt-test",
+          baseUrl: "https://api.example.com/v1",
+          apiKey: "profile-secret",
+          contextWindow: 131_072,
+          maxOutputTokens: 8_192,
+        }),
+      });
+      expect(createModel.status).toBe(201);
+      const createdModel = await createModel.json() as { id: string; active: boolean; apiKey: string };
+      expect(createdModel.active).toBe(true);
+      expect(createdModel.apiKey).toBe("••••••");
+      expect(config.agent.apiKey).toBe("profile-secret");
+      const listedModels = await (await fetch(`${base}/api/ops/models`, { headers: { authorization } })).json() as { items: { apiKey: string }[] };
+      expect(listedModels.items[0]?.apiKey).toBe("••••••");
+      const editModel = await fetch(`${base}/api/ops/models/${createdModel.id}`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "gpt-test-2",
+          baseUrl: "https://api.example.com/v1",
+          apiKey: "",
+          contextWindow: 200_000,
+          maxOutputTokens: 8_192,
+        }),
+      });
+      expect(editModel.status).toBe(200);
+      expect(config.agent.apiKey).toBe("profile-secret");
+      expect(config.agent.contextWindow).toBe(200_000);
+
+      // 保存其它设置时不能把模型连接参数退回配置文件值。
+      const languageWrite = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { response_language: "en" } }),
+      });
+      expect(languageWrite.status).toBe(200);
+      expect(config.agent.model).toBe("gpt-test-2");
+      expect(config.agent.contextWindow).toBe(200_000);
+      expect(config.agent.apiKey).toBe("profile-secret");
+
+      expect((await fetch(`${base}/api/ops/models/${createdModel.id}`, {
+        method: "DELETE",
+        headers: { authorization },
+      })).status).toBe(200);
     } finally {
       controller.abort();
       await running;

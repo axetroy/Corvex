@@ -83,6 +83,9 @@ function MessageContent({
       {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
       {settled ? (
         <div className="conversation-message-actions">
+          {message.model ? (
+            <Typography.Text type="secondary" className="conversation-message-model">{message.model}</Typography.Text>
+          ) : null}
           <Actions
             variant="borderless"
             items={[

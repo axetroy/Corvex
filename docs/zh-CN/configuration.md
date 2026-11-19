@@ -56,17 +56,17 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 |---|---:|---|---|
 | `agent.enabled` | `false` | 布尔值 | 启动 Worker 时必须设为 `true`。 |
 | `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。可在控制台运行时修改。 |
-| `agent.base_url` | `https://api.openai.com/v1` | 启用时必填；有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。 |
-| `agent.model` | `your-model-name` | 启用时必填 | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖；运维台「设置 → 模型」把运行时覆盖存入 SQLite。设置环境变量后，这一行可以从 YAML 中删除。 |
+| `agent.base_url` | `https://api.openai.com/v1` | 有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
+| `agent.model` | `your-model-name` | — | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
 | `agent.request_timeout` | `120s` | 启用时必须为正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |
 | `agent.session_timeout` | `30m` | 启用时必须为正时长 | 单个 Pi Agent Session 的总运行时限。 |
-| `agent.max_output_tokens` | `4096` | 启用时为 1–8192 | 请求模型生成的最大输出 Token 数。 |
+| `agent.max_output_tokens` | `4096` | 启用时为 1–8192 | 请求模型生成的最大输出 Token 数。每条模型配置各自保存；这里是回退值。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
 | `agent.mcp_enabled` | `false` | 布尔值 | 仅为 review 任务启用 Pi MCP 扩展。MCP 服务使用 Worker 进程的操作系统权限，且不受沙箱隔离。 |
 | `agent.web_enabled` | `true` | 布尔值 | 为 review 和 explain 任务启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组 | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 | `agent.skill_paths` | `[]` | 路径数组 | 额外的可信 Pi Skill 目录；这些路径也可作为有界只读 `read_file` 工具的允许根目录。 |
-| `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。它决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。 |
+| `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。它决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。每条模型配置各自保存；这里是回退值。 |
 | `agent.max_input_tokens` | `0` | 0 ≤ 值 < `context_window` | 单次对话请求输入 Token 的硬上限。`0` 表示由 `context_window` 减去 `max_output_tokens` 与固定框架开销推导。运行时先扣除系统提示与当前请求，再用剩余额度限制历史注入量。 |
 | `agent.history_token_budget` | `24000` | 0–`context_window` | 对话请求中重新注入历史轮次的 Token 预算；超出后裁剪较早历史，`summary_enabled` 开启时改为压缩成摘要。裁剪使用保守估算（取 chars/4 与 UTF-8 字节数/3 的较大值），避免中文和压缩代码被低估。 |
 | `agent.turn_tool_result_bytes` | `262144` | 0–67,108,864 | 单轮内累计工具输出达到该值时，提示模型先记录已确认的结论并改用更聚焦的读取。它是软检查点而非硬上限，运行时还会把阈值收敛到单轮工具预算的 4 倍（128K 窗口约 256 KiB），确保提醒在压缩之前到达。`0` 表示关闭提醒；单轮工具输出仍会被截断。 |
@@ -76,7 +76,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出，若服务商仍报超窗，会再去掉历史激进重试一次。工具结果在进入会话历史前按助手轮次硬性截断（128K 窗口下单次 32 KiB、单轮 64 KiB），因为 SDK 只能估算「最后一条回复之后新增的」内容；压缩预留也由同一个上界推导。它们也可以在 Agent 控制台设置页面上运行时调整，无需修改配置文件。
 
-启用 Agent 后必须提供 `CORVEX_MODEL_API_KEY`。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
+启用 Agent 后，调用需要鉴权的服务商前必须提供 `CORVEX_MODEL_API_KEY`，也可以在控制台的模型配置里保存。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
 Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读取固定 SHA worktree 或配置的 Skill 根目录中的 UTF-8 文本文件。每次最多返回 256 KiB，单行超过 4 KiB 时会截断并标记（压缩/混淆文件常见）；更大的文件需按行范围读取，连续读取行范围时会复用 Session 内游标。`git_grep` 仅搜索固定 workspace HEAD 的已跟踪文件，单次超时 10 秒、输出上限 256 KiB、最多返回 50 条。Chat 还提供 `git_log`（最多 50 个提交）和 `git_show`（仅接受完整 SHA）；两者均为只读，只能读取固定 MR HEAD 可达的提交，并限制输出大小。Chat 也提供 `update_mr_metadata`，仅可按用户明确要求修改当前 MR 标题和/或描述。字面量搜索工具 `search_text` 跳过常见依赖/生成目录，每次最多扫描 1,000 个文件和 16 MiB，每个文件最多 256 KiB，最多返回 50 条匹配。启用后，`web_fetch` 仅对 review 和 explain 任务开放，可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址和配置的黑名单主机；拒绝 HTML/纯文本之外的响应。单页响应体上限为 1 MiB，最多返回 40,000 个文本字符和 20 个同主机链接，每个 Session 最多抓取 10 页。网页内容是不可信模型输入。启用 MCP 时，Pi 仅为 review 任务从 `storage.root` 下服务的 Agent 目录（`pi-agent/mcp.json`）加载 MCP 工具；只能使用管理员控制的配置。
 
@@ -84,11 +84,11 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 上表中的一部分设置可以在 Agent 控制台的**设置**页面修改，无需编辑配置文件或重启。Server 只把被覆盖的键写入 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`），立即作用于后续轮次，并把每次修改记入 `audit_events`（`update_settings`，操作者取控制台用户名）。Worker 在每次轮询时重新读取该表，排队中的事件会在下一次领取时生效，并重建那些在构造函数里读取审查与修复上限的组件。Server 启动时也会重新应用已存储的覆盖项，因此重启不会悄悄退回界面显示之外的值。
 
-模型相关设置集中在「设置 → 模型」页：`agent.model`、`agent.base_url`、`agent.api_key`、`agent.response_language`、`agent.max_output_tokens` 与 `agent.daily_token_budget`，全部以运行时覆盖存入 SQLite，因此 YAML 中对应行可以删除。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存的值。由于密钥保存在本地 SQLite 中，请保护数据库文件及其备份。
+「设置 → 模型」维护一份模型列表：名称、Base URL、API Key、上下文窗口与最大输出 Token。第一条模型默认激活；切换后无需重启即作用于 Server 与 Worker，每条助手回复也会记录生成它的模型。模型配置会覆盖 `agent.model`、`agent.base_url`、`agent.api_key`、`agent.context_window` 与 `agent.max_output_tokens`；列表为空时才使用这些 YAML 值或环境变量。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存的值。由于密钥保存在本地 SQLite 中，请保护数据库文件及其备份。从旧版本升级时，已保存的 `model` / `model_base_url` / `model_api_key` 运行时覆盖会自动迁移成第一条模型配置。
 
-可编辑的键：`agent.model`、`agent.response_language`、`agent.context_window`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.max_output_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。模型与回复语言在每次请求与轮次读取，修改后无需重启即可作用于下一次。
+可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。回复语言在每次请求与轮次读取，修改后无需重启即可作用于下一次。
 
-凭据、地址、令牌、`agent.enabled`、`agent.base_url`、`agent.api_key`、Skill 路径、屏蔽主机、超时、保留天数与 Worker 轮询参数只能来自配置文件或环境变量，修改后需要重启。页面会同时展示配置值与生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+凭据、地址、令牌、`agent.enabled`、Skill 路径、屏蔽主机、超时、保留天数与 Worker 轮询参数只能来自配置文件或环境变量，修改后需要重启；模型 Base URL 与密钥是例外，它们保存在模型列表里。页面会同时展示配置值与生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 

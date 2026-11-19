@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { reloadConfig, validateConfig } from "../config/config.js";
 import {
+  applyModelProfile,
   applyRuntimeSettingRows,
   applyRuntimeSettings,
   copyRuntimeSettings,
@@ -734,6 +735,77 @@ export class CorvexServer {
       }
       return;
     }
+    // Web 模型列表：接口不回显 API Key，保存后只显示占位符。
+    const modelsPath = url.pathname === "/api/ops/models";
+    const modelItemMatch = /^\/api\/ops\/models\/([^/]+)$/.exec(url.pathname);
+    const modelActionMatch = /^\/api\/ops\/models\/([^/]+)\/(activate)$/.exec(url.pathname);
+    const redactProfile = (profile: { apiKey: string }) => ({ ...profile, apiKey: profile.apiKey ? secretSettingPlaceholder : "" });
+    const parseProfileBody = (body: Record<string, unknown>) => {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+      const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+      const contextWindow = body.contextWindow;
+      const maxOutputTokens = body.maxOutputTokens;
+      if (!name || !baseUrl || name.length > 200 || baseUrl.length > 500 || apiKey.length > 2_000) return undefined;
+      if (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow < 1024 || contextWindow > 10_000_000) return undefined;
+      if (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) return undefined;
+      try {
+        const parsed = new URL(baseUrl);
+        if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
+      } catch {
+        return undefined;
+      }
+      return { name, baseUrl, apiKey, contextWindow, maxOutputTokens };
+    };
+    if (modelsPath || modelItemMatch || modelActionMatch) {
+      if (request.method === "GET" && modelsPath) {
+        respondJson(response, 200, { items: this.store.listModelProfiles().map(redactProfile) });
+        return;
+      }
+      if (request.method === "POST" && modelsPath) {
+        const body = await this.readOperationsBody(request, response);
+        if (!body) return;
+        const input = parseProfileBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model profile" }); return; }
+        const profile = this.store.createModelProfile(input);
+        if (profile.active) applyModelProfile(this.config, profile);
+        respondJson(response, 201, redactProfile(profile));
+        return;
+      }
+      const itemId = modelItemMatch ? this.decodePathSegment(modelItemMatch[1]!) : "";
+      const actionId = modelActionMatch ? this.decodePathSegment(modelActionMatch[1]!) : "";
+      if (!itemId && !actionId) { respondJson(response, 405, { error: "method not allowed" }); return; }
+      if (request.method === "PUT" && itemId) {
+        const body = await this.readOperationsBody(request, response);
+        if (!body) return;
+        const input = parseProfileBody(body);
+        if (!input) { respondJson(response, 400, { error: "invalid model profile" }); return; }
+        const existing = this.store.getModelProfile(itemId);
+        if (!existing) { respondJson(response, 404, { error: "model profile not found" }); return; }
+        // API Key 留空表示保留原值。
+        if (!input.apiKey) input.apiKey = existing.apiKey;
+        const updated = this.store.updateModelProfile(itemId, input);
+        if (updated?.active) applyModelProfile(this.config, updated);
+        respondJson(response, 200, redactProfile(updated!));
+        return;
+      }
+      if (request.method === "DELETE" && itemId) {
+        if (!this.store.deleteModelProfile(itemId)) { respondJson(response, 404, { error: "model profile not found" }); return; }
+        const active = this.store.getActiveModelProfile();
+        if (active) applyModelProfile(this.config, active);
+        respondJson(response, 200, { deleted: true });
+        return;
+      }
+      if (request.method === "POST" && actionId) {
+        const profile = this.store.activateModelProfile(actionId) ? this.store.getModelProfile(actionId) : undefined;
+        if (!profile) { respondJson(response, 404, { error: "model profile not found" }); return; }
+        applyModelProfile(this.config, profile);
+        respondJson(response, 200, redactProfile(profile));
+        return;
+      }
+      respondJson(response, 405, { error: "method not allowed" });
+      return;
+    }
     // Git 存储清理：可预览计划，也可执行；每次都落一条记录供控制台查看。
     if (request.method === "GET" && url.pathname === "/api/ops/storage/cleanups") {
       const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 10;
@@ -892,10 +964,17 @@ export class CorvexServer {
    */
   private applyStoredSettings(): void {
     try {
+      const migrated = this.store.migrateLegacyModelProfile(
+        { contextWindow: this.config.agent.contextWindow, maxOutputTokens: this.config.agent.maxOutputTokens },
+        0,
+      );
+      if (migrated) console.info("migrated legacy model settings", { id: migrated.id, name: migrated.name });
       const applied = applyRuntimeSettingRows(this.config, this.store.listRuntimeSettings());
       if (applied.length > 0) {
         console.info("applied stored runtime settings", { keys: applied });
       }
+      const activeProfile = this.store.getActiveModelProfile();
+      if (activeProfile) applyModelProfile(this.config, activeProfile);
     } catch (error) {
       console.error("apply stored runtime settings failed", { error: errorMessage(error) });
     }
@@ -1043,6 +1122,9 @@ export class CorvexServer {
     // 内存配置以「配置文件 + 覆盖项」重建：先复位可编辑字段再应用覆盖，避免残留旧值。
     copyRuntimeSettings(base, this.config);
     applyRuntimeSettings(this.config, overrides);
+    // 模型连接参数由模型列表管理，复位后必须重新应用选中项，否则保存任何设置都会退回文件值。
+    const activeProfile = this.store.getActiveModelProfile();
+    if (activeProfile) applyModelProfile(this.config, activeProfile);
     console.info("runtime settings updated", { keys: Object.keys(overrides), actor, updatedAt: now });
     respondJson(response, 200, await this.readSettings());
   }
