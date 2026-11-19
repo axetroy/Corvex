@@ -191,6 +191,17 @@ export interface Conversation extends ConversationSummary {
 }
 
 /**
+ * 对话轮次的流式事件，经 SSE 推送给 Agent 控制台。
+ *
+ * 助手正文在落库之前先按增量推送：`reset` 表示模型开始新一轮输出（工具调用之后
+ * 可能重新生成正文），界面应丢弃上一轮的临时文本；`text` 是该轮**已累计**的正文，
+ * 而不是本次新增的片段，因此客户端漏掉若干事件后仍能凭最新一条自愈。
+ */
+export type ConversationStreamEvent =
+  | { type: "text"; reset: boolean; text: string }
+  | { type: "done"; status: ConversationTurnStatus; error?: string };
+
+/**
  * 对话详情：在列表摘要与消息之外，附带该对话的系统提示词。
  *
  * 提示词由响应语言与对话模式派生，与执行器真正下发给模型的一致；服务端在详情响应中

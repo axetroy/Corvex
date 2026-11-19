@@ -225,6 +225,8 @@ describe("review task loop", () => {
       beforeResponse?: () => void;
       /** 提供后先返回一次工具调用，由模型循环执行工具再发起下一轮请求。 */
       toolCall?: { name: string; args: string };
+      /** 提供后把正文拆成多个 SSE 内容块，模拟逐字输出；省略时一次给出全文。 */
+      chunks?: string[];
     };
     const reviewContent = JSON.stringify({
       summary: "Unchecked input is used without validation.",
@@ -253,36 +255,50 @@ describe("review task loop", () => {
           action.beforeResponse?.();
           if (response.destroyed) return;
           response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-          response.write(`data: ${JSON.stringify({
-            id: "chatcmpl-review",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "test-model",
-            choices: [{
-              index: 0,
-              delta: action.toolCall
-                ? {
-                    role: "assistant",
-                    tool_calls: [{
-                      index: 0,
-                      id: "call-conversation",
-                      type: "function",
-                      function: { name: action.toolCall.name, arguments: action.toolCall.args },
-                    }],
-                  }
-                : { role: "assistant", content: action.content },
-              finish_reason: null,
-            }],
-          })}\n\n`);
-          response.write(`data: ${JSON.stringify({
-            id: "chatcmpl-review",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "test-model",
-            choices: [{ index: 0, delta: {}, finish_reason: action.toolCall ? "tool_calls" : "stop" }],
-            usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
-          })}\n\n`);
-          response.end("data: [DONE]\n\n");
+          const writeDelta = (delta: Record<string, unknown>) => {
+            if (response.destroyed) return;
+            response.write(`data: ${JSON.stringify({
+              id: "chatcmpl-review",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "test-model",
+              choices: [{ index: 0, delta, finish_reason: null }],
+            })}\n\n`);
+          };
+          const finish = () => {
+            if (response.destroyed) return;
+            response.write(`data: ${JSON.stringify({
+              id: "chatcmpl-review",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "test-model",
+              choices: [{ index: 0, delta: {}, finish_reason: action.toolCall ? "tool_calls" : "stop" }],
+              usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
+            })}\n\n`);
+            response.end("data: [DONE]\n\n");
+          };
+          if (action.toolCall) {
+            writeDelta({
+              role: "assistant",
+              tool_calls: [{
+                index: 0,
+                id: "call-conversation",
+                type: "function",
+                function: { name: action.toolCall.name, arguments: action.toolCall.args },
+              }],
+            });
+            finish();
+            return;
+          }
+          const chunks = action.chunks?.length ? action.chunks : [action.content];
+          for (const [index, content] of chunks.entries()) {
+            if (index === 0) {
+              writeDelta({ role: "assistant", content });
+            } else {
+              setTimeout(() => writeDelta({ content }), index * 40);
+            }
+          }
+          setTimeout(finish, chunks.length * 40);
         };
         const timer = action.delayMs ? setTimeout(sendResponse, action.delayMs) : undefined;
         response.once("close", () => {
@@ -537,7 +553,13 @@ describe("review task loop", () => {
 
     // 对话轮次由 Server 内联执行：不经 Worker、不进入事件队列，并逐条暴露工具调用。
     modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
-    modelActions.push({ content: "`input.ts` assigns a value without validating it." });
+    const streamedAnswer = "`input.ts` assigns a value without validating it.";
+    modelActions.push({
+      content: streamedAnswer,
+      chunks: ["`input.ts` assigns ", "a value without ", "validating it."],
+      // 稍作延迟，确保 SSE 已建连后再开始输出正文，断言才不依赖调度顺序。
+      delayMs: 100,
+    });
     // 首轮完成后触发一次标题生成调用，使用模型的独立动作。
     modelActions.push({ content: "Value assignment in input.ts" });
     const authorization = `Basic ${Buffer.from("operator:a secure password with 16 chars").toString("base64")}`;
@@ -549,6 +571,30 @@ describe("review task loop", () => {
     expect(conversationResponse.status).toBe(202);
     const createdConversation = await conversationResponse.json() as { conversationId: string; turnId: string };
     expect(serverStore.listEvents(undefined, 200).some((event) => event.type === "conversation")).toBe(false);
+    // 控制台在轮次执行期间订阅 SSE：正文应分多次到达，最后以 done 收尾。
+    const streamResponse = await fetch(
+      `http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}/stream`,
+      { headers: { authorization } },
+    );
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+    let streamBody = "";
+    const streamReader = streamResponse.body!.getReader();
+    const streamDecoder = new TextDecoder();
+    for (;;) {
+      const { value, done } = await streamReader.read();
+      if (done) break;
+      streamBody += streamDecoder.decode(value, { stream: true });
+    }
+    const streamEvents = [...streamBody.matchAll(/^data: (.+)$/gm)]
+      .map((match) => JSON.parse(match[1]!) as { type: string; text?: string; reset?: boolean; status?: string });
+    const streamedTexts = streamEvents
+      .filter((event) => event.type === "text" && event.reset === false && event.text)
+      .map((event) => event.text);
+    expect(streamedTexts.length).toBeGreaterThan(1);
+    expect(streamedTexts[0]).toBe("`input.ts` assigns ");
+    expect(streamedTexts.at(-1)).toBe(streamedAnswer);
+    expect(streamEvents.at(-1)).toMatchObject({ type: "done", status: "completed" });
     await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
     const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
     expect(conversationDetail?.mode).toBe("read_only");

@@ -103,6 +103,12 @@ export interface ModelRequest {
    * 省略时按 `defaultConversationMode`（只读）处理，保持既有只读行为。
    */
   conversationMode?: ConversationMode;
+  /**
+   * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
+   * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
+   * 其余任务省略即可。
+   */
+  onTextDelta?: (update: { reset: boolean; text: string }) => void;
 }
 
 export function getAgentToolAccess(
@@ -157,6 +163,17 @@ export interface EventTraceContext {
     repositoryUrl?: string;
     expectedTargetSha?: string;
   };
+}
+
+/**
+ * 取助手消息中已累计的正文。思考块与工具调用参数不算正文：控制台只把用户可见的
+ * 回答逐字展示，工具调用另有「调用记录」呈现。
+ */
+function assistantText(message: AssistantMessage): string {
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
 }
 
 function hasGeneratedOutput(event: AssistantMessageEvent): boolean {
@@ -549,7 +566,27 @@ export class PiAgent {
     // 最终助手消息的错误原因：`session.prompt()` 在服务端报错（如上下文超限）时仍会正常
     // 返回，若不记录就会把上一条历史回复当成本轮成功结果，超限重试也就永远不会触发。
     let lastAssistantError: string | undefined;
+    // 流式正文只做展示，不参与判定；回调异常不能影响模型执行。
+    let streamedAssistantText = "";
+    const emitAssistantText = (reset: boolean, text: string) => {
+      if (!request.onTextDelta) return;
+      try {
+        request.onTextDelta({ reset, text });
+      } catch (error) {
+        console.warn("assistant text stream callback failed", { error: errorMessage(error) });
+      }
+    };
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_start" && event.message.role === "assistant") {
+        streamedAssistantText = "";
+        emitAssistantText(true, "");
+      } else if (event.type === "message_update" && event.message.role === "assistant") {
+        const text = assistantText(event.message);
+        if (text !== streamedAssistantText) {
+          streamedAssistantText = text;
+          emitAssistantText(false, text);
+        }
+      }
       if (event.type === "message_end" && event.message.role === "assistant") {
         lastAssistantError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
           ? event.message.errorMessage ?? `model request ${event.message.stopReason}`

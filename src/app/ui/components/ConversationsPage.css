@@ -368,6 +368,32 @@
   margin-bottom: 0;
 }
 
+/* 流式回复末尾的光标：正文仍在增长时提示「还在写」，落库后随状态移除。 */
+.conversation-message-markdown.is-streaming .x-markdown > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.55;
+  animation: conversation-streaming-blink 1s steps(2, start) infinite;
+}
+
+@keyframes conversation-streaming-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-message-markdown.is-streaming .x-markdown > :last-child::after {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
 .conversation-tool-calls {
   margin-top: 10px;
   padding: 8px 10px;

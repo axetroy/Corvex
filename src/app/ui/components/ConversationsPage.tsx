@@ -5,6 +5,7 @@ import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant
 import { XMarkdown } from "@ant-design/x-markdown";
 import "./ConversationsPage.css";
 import { fetchJson } from "../api.js";
+import { streamConversationTurn } from "../stream.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
@@ -57,14 +58,14 @@ function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): s
 }
 
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
-function MessageContent({ message, copy }: { message: ConversationMessage; copy: Copy }) {
+function MessageContent({ message, copy, streaming }: { message: ConversationMessage; copy: Copy; streaming?: boolean }) {
   if (message.role === "user") {
     return <div className="conversation-message-text">{message.content}</div>;
   }
   // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
   const settled = message.status === "completed" || message.status === "failed";
   return (
-    <div className="conversation-message-markdown">
+    <div className={`conversation-message-markdown${streaming && message.content ? " is-streaming" : ""}`}>
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
       {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
       <ConversationToolCalls calls={message.toolCalls} copy={copy} />
@@ -104,6 +105,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [draftMessage, setDraftMessage] = useState("");
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const replySubmitting = useRef(false);
+  /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
+  const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
 
   useEffect(() => {
     selectedConversationIdRef.current = conversationId;
@@ -166,12 +169,64 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const currentConversation = conversation?.id === selectedConversationId && selectedConversationId === conversationId ? conversation : undefined;
   const hasActiveTurn = currentConversation?.messages.some((message) => message.role === "assistant" &&
     (message.status === "queued" || message.status === "running")) ?? false;
+  // 当前正在运行的轮次：订阅它的 SSE 正文，等它落库后由详情接管。
+  const activeTurnId = currentConversation?.messages.find((message) =>
+    message.role === "assistant" && message.status === "running" && message.turnId)?.turnId ?? undefined;
 
   useEffect(() => {
     if (!hasActiveTurn && !pendingReplyConversations.has(selectedConversationId)) return;
     const timer = window.setInterval(() => setPollToken((value) => value + 1), 2_500);
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedConversationId || !activeTurnId) {
+      setStreamedReply(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    let closed = false;
+    let latest = "";
+    let flushTimer: number | undefined;
+    const flush = () => {
+      flushTimer = undefined;
+      if (!closed) setStreamedReply({ turnId: activeTurnId, text: latest });
+    };
+    // 合并高频 token 事件：约 60ms 刷新一次，保持逐字观感的同时避免整段
+    // Markdown 被每个 token 重新解析。
+    const schedule = (text: string) => {
+      latest = text;
+      if (flushTimer === undefined) flushTimer = window.setTimeout(flush, 60);
+    };
+    setStreamedReply({ turnId: activeTurnId, text: "" });
+    void streamConversationTurn(
+      selectedConversationId,
+      activeTurnId,
+      {
+        onText: (text) => schedule(text),
+        onDone: () => {
+          if (flushTimer !== undefined) window.clearTimeout(flushTimer);
+          flushTimer = undefined;
+          flush();
+          setPollToken((value) => value + 1);
+        },
+      },
+      controller.signal,
+    ).catch((cause: unknown) => {
+      if (controller.signal.aborted) return;
+      // 流断开只影响逐字效果：轮询仍在继续，下一轮详情会把状态收敛回来。
+      console.warn("conversation stream stopped", errorMessage(cause));
+      setPollToken((value) => value + 1);
+    }).finally(() => {
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer);
+      flushTimer = undefined;
+    });
+    return () => {
+      closed = true;
+      controller.abort();
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer);
+    };
+  }, [selectedConversationId, activeTurnId]);
 
   function selectProject(value: ProjectOption | undefined) {
     setProject(value);
@@ -311,7 +366,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       </div>
     ),
   }));
-  const bubbleItems: BubbleItemType[] = (currentConversation?.messages ?? []).map((message) => ({
+  const transcriptMessages = (currentConversation?.messages ?? []).map((message) =>
+    message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId
+      ? { ...message, content: streamedReply.text }
+      : message,
+  );
+  const bubbleItems: BubbleItemType[] = transcriptMessages.map((message) => ({
     key: message.id,
     role: message.role === "user" ? "user" : "ai",
     header: (
@@ -321,7 +381,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
       </Space>
     ),
-    content: <MessageContent message={message} copy={copy} />,
+    content: (
+      <MessageContent
+        message={message}
+        copy={copy}
+        streaming={message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId}
+      />
+    ),
     // 有工具调用记录后改为展示调用列表，避免 loading 覆盖掉正在进行的读取过程。
     loading: message.role === "assistant" && !message.content && message.toolCalls.length === 0 &&
       (message.status === "queued" || message.status === "running"),

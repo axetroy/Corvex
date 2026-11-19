@@ -17,6 +17,7 @@ import {
 import { getConversationSystemPrompt } from "../agent/prompts.js";
 import { EventStore } from "../events/store.js";
 import { isEventStatus, isEventType } from "../events/model.js";
+import type { ConversationStreamEvent } from "../events/model.js";
 import { errorMessage } from "../errors.js";
 import { parseCommand, NotCorvexCommandError } from "../gitlab/command.js";
 import { GitLabApiError, GitLabClient, GitLabWriteError } from "../gitlab/client.js";
@@ -69,6 +70,11 @@ function respondJson(response: ServerResponse, status: number, value: unknown): 
   response.setHeader("referrer-policy", "no-referrer");
   response.end(JSON.stringify(value));
 }
+
+/** 对话流式响应的心跳间隔：长工具调用期间保持连接，避免反向代理提前断开。 */
+const conversationStreamHeartbeatMs = 15_000;
+/** 对话流式响应的状态巡检间隔：轮次落库结束但事件缺失时仍能收尾。 */
+const conversationStreamProbeMs = 5_000;
 
 /** 构建后的 Agent 控制台目录；开发与生产都从包根目录的 dist/app/ui 读取。 */
 const operationsUiDirectory = new URL("../../dist/app/ui/", import.meta.url);
@@ -136,6 +142,8 @@ export class CorvexServer {
   /** 对话轮次在 Server 进程内联执行，不进入 Worker 队列。 */
   private readonly conversations: ConversationRunner;
   private readonly conversationAbort = new AbortController();
+  /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `server.close()`。 */
+  private readonly conversationStreams = new Set<ServerResponse>();
 
   constructor(
     private readonly config: CorvexConfig,
@@ -192,6 +200,11 @@ export class CorvexServer {
     const stopRetention = () => {
       retention.abort();
       this.conversationAbort.abort();
+      // 先结束流连接，再等 server.close()：SSE 不会自己断开，留着会拖到超时。
+      for (const stream of this.conversationStreams) {
+        stream.end();
+      }
+      this.conversationStreams.clear();
     };
     const retentionTask = this.runRetention(retention.signal);
     signal.addEventListener("abort", stopRetention, { once: true });
@@ -430,6 +443,86 @@ export class CorvexServer {
         return;
       }
       respondJson(response, 200, turns);
+      return;
+    }
+    // 单轮对话的流式正文：SSE 推送模型已生成的累计文本，结束后立即关闭连接。
+    // 鉴权与其余 /api/ops 一致；流里只含本轮正文与终态，不含系统提示或工具输出。
+    const conversationTurnStreamMatch = /^\/api\/ops\/conversations\/([^/]+)\/turns\/([^/]+)\/stream$/.exec(url.pathname);
+    if (request.method === "GET" && conversationTurnStreamMatch) {
+      const conversationId = this.decodePathSegment(conversationTurnStreamMatch[1]!);
+      const turnId = this.decodePathSegment(conversationTurnStreamMatch[2]!);
+      if (!conversationId || !turnId) {
+        respondJson(response, 400, { error: "invalid conversation turn ID" });
+        return;
+      }
+      const turn = this.store.getConversationTurn(conversationId, turnId);
+      if (!turn) {
+        respondJson(response, 404, { error: "conversation turn not found" });
+        return;
+      }
+      response.statusCode = 200;
+      response.setHeader("content-type", "text/event-stream; charset=utf-8");
+      response.setHeader("cache-control", "no-store");
+      response.setHeader("connection", "keep-alive");
+      response.setHeader("x-accel-buffering", "no");
+      response.setHeader("x-content-type-options", "nosniff");
+      response.flushHeaders();
+      this.conversationStreams.add(response);
+      let closed = false;
+      let heartbeat: NodeJS.Timeout | undefined;
+      let probe: NodeJS.Timeout | undefined;
+      let unsubscribe: () => void = () => {};
+      const cleanup = () => {
+        this.conversationStreams.delete(response);
+        if (heartbeat) clearInterval(heartbeat);
+        if (probe) clearInterval(probe);
+        heartbeat = undefined;
+        probe = undefined;
+        unsubscribe();
+      };
+      const send = (event: ConversationStreamEvent) => {
+        if (closed) return;
+        response.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      const finish = (event: Extract<ConversationStreamEvent, { type: "done" }>) => {
+        if (closed) return;
+        send(event);
+        closed = true;
+        cleanup();
+        response.end();
+      };
+      // 先订阅再判断终态：轮次可能在请求到达前就已完成，也可能正好在订阅前后结束，
+      // 由唯一的 `closed` 标志保证 done 只发送一次。
+      unsubscribe = this.conversations.subscribeTurn(turnId, (event) => {
+        if (event.type === "done") finish(event);
+        else send(event);
+      });
+      heartbeat = setInterval(() => {
+        if (!closed) response.write(": ping\n\n");
+      }, conversationStreamHeartbeatMs);
+      heartbeat.unref();
+      probe = setInterval(() => {
+        try {
+          const current = this.store.getConversationTurn(conversationId, turnId);
+          if (current && current.status !== "queued" && current.status !== "running") {
+            finish({ type: "done", status: current.status, error: current.lastError || undefined });
+          }
+        } catch {
+          finish({ type: "done", status: "failed" });
+        }
+      }, conversationStreamProbeMs);
+      probe.unref();
+      response.on("close", () => {
+        closed = true;
+        cleanup();
+      });
+      response.on("error", () => {
+        closed = true;
+        cleanup();
+      });
+      if (turn.status !== "queued" && turn.status !== "running") {
+        finish({ type: "done", status: turn.status, error: turn.lastError || undefined });
+      }
       return;
     }
     // 单轮对话记录：把该轮的状态、生命周期、轨迹与执行步骤一并返回，

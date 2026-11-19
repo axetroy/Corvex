@@ -64,6 +64,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/conversations`、`GET /api/ops/conversations/<id>` | 列出持久对话（含轮次数与最近一轮状态）及其消息；详情响应还附带该对话派生的系统提示词。 |
 | `GET /api/ops/conversations/<id>/turns` | 读取整段对话：把各轮轨迹与执行记录合并成一条有序时间线，并给出逐轮边界。对话轮次不是事件，不会出现在事件列表中。 |
 | `GET /api/ops/conversations/<id>/turns/<turnId>` | 读取单轮对话自己的轨迹、执行记录、尝试与生命周期变化。对话轮次不是事件，不会出现在事件列表中。 |
+| `GET /api/ops/conversations/<id>/turns/<turnId>/stream` | 以 SSE 推送运行中轮次的累计助手正文与最终 `done` 状态，控制台据此在落库前逐字展示回复。 |
 | `GET /api/ops/conversations/<id>/stats` | 汇总整段对话的用量与耗时，并给出逐轮明细。 |
 | `POST /api/ops/conversations`、`POST /api/ops/conversations/<id>/messages` | 创建固定版本的只读对话或排入下一轮对话。 |
 | `GET /api/ops/settings`、`PUT /api/ops/settings` | 读取运行时设置的生效值与是否可编辑，或在运行时覆盖它们。`PUT` 把提交的覆盖项存入 SQLite（叠加在配置文件之上）并返回新的生效值；Server 启动时未提供 `--config` 会返回 `409`。 |

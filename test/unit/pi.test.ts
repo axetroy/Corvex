@@ -113,9 +113,21 @@ describe("PiAgent", () => {
               object: "chat.completion.chunk",
               created: 1,
               model: "test-model",
-              choices: [{ index: 0, delta: { role: "assistant", content: '{"summary":"ok","findings":[]}' }, finish_reason: null }],
+              choices: [{ index: 0, delta: { role: "assistant", content: '{"summary":"ok",' }, finish_reason: null }],
             })}\n\n`,
           );
+          setTimeout(() => {
+            if (response.destroyed) return;
+            response.write(
+              `data: ${JSON.stringify({
+                id: "chatcmpl-test",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test-model",
+                choices: [{ index: 0, delta: { content: '"findings":[]}' }, finish_reason: null }],
+              })}\n\n`,
+            );
+          }, 20);
           setTimeout(() => {
             if (response.destroyed) return;
             response.write(
@@ -210,14 +222,26 @@ describe("PiAgent", () => {
     expect(requestCount).toBe(requestCountBeforeOversizedPrompt);
     responseDelayMs = 1400;
     const startedAt = Date.now();
+    const streamUpdates: { reset: boolean; text: string }[] = [];
     const result = await agent.generate(
-      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." },
+      {
+        taskType: "review",
+        systemPrompt: "Return JSON.",
+        userPrompt: "Say ok.",
+        onTextDelta: (update) => streamUpdates.push(update),
+      },
       temporaryDirectory,
       undefined,
       { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
     );
     expect(Date.now() - startedAt).toBeGreaterThan(config.agent.requestTimeout);
     expect(result.content).toContain('"summary":"ok"');
+    // 工具调用轮只发 reset；正文轮按累计值推送，客户端漏事件也能自愈。
+    expect(streamUpdates[0]).toEqual({ reset: true, text: "" });
+    expect(streamUpdates.filter((update) => update.reset)).toHaveLength(2);
+    const streamedTexts = streamUpdates.filter((update) => !update.reset).map((update) => update.text);
+    expect(streamedTexts[0]).toBe('{"summary":"ok",');
+    expect(streamedTexts.at(-1)).toBe('{"summary":"ok","findings":[]}');
     expect(result.model).toContain("test-model");
     expect(requestBodies[0]).toContain('"model":"test-model"');
     expect(requestBodies[0]).toContain('"stream":true');

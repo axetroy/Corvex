@@ -1,7 +1,7 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities } from "../events/model.js";
-import type { ConversationTurnContext } from "../events/model.js";
+import type { ConversationStreamEvent, ConversationTurnContext } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
@@ -40,6 +40,10 @@ export class ConversationRunner {
   private readonly agent: PiAgent;
   private readonly running = new Map<string, RunningTurn>();
   private readonly workspaces = new Map<string, CachedConversationWorkspace>();
+  /** 每轮对话的流式订阅者；轮次结束后立即清理，避免连接与内存泄漏。 */
+  private readonly streamListeners = new Map<string, Set<(event: ConversationStreamEvent) => void>>();
+  /** 最近一条正文快照：界面晚于轮次启动才建连时先补发，避免丢掉开头内容。 */
+  private readonly streamSnapshots = new Map<string, ConversationStreamEvent>();
 
   constructor(
     private readonly config: CorvexConfig,
@@ -68,6 +72,16 @@ export class ConversationRunner {
     } finally {
       this.running.delete(turnId);
       signal.removeEventListener("abort", abort);
+      // 兜底：正常路径已在落库后推送 done；提前 return 的分支（快照过期）由这里收尾。
+      try {
+        const status = this.store.getConversationTurn(turn.conversationId, turnId)?.status;
+        if (status) this.publishStream(turnId, { type: "done", status });
+      } catch (error) {
+        console.warn("conversation stream completion could not be resolved", {
+          turnId,
+          error: errorMessage(error),
+        });
+      }
       await this.releaseIdleWorkspaces();
     }
     return true;
@@ -84,6 +98,44 @@ export class ConversationRunner {
   /** 是否正在执行该轮次，用于界面提示「执行中」。 */
   isRunning(turnId: string): boolean {
     return this.running.has(turnId);
+  }
+
+  /**
+   * 订阅一轮对话的流式输出，返回取消订阅函数。
+   *
+   * 订阅时补发最近一条正文快照：轮次通常由 POST 触发、界面随后才建立连接，
+   * 直接只转发之后的增量会丢掉开头几段。快照是累计正文而不是增量，重连后
+   * 覆盖展示即可，不需要客户端拼接。
+   */
+  subscribeTurn(turnId: string, listener: (event: ConversationStreamEvent) => void): () => void {
+    const listeners = this.streamListeners.get(turnId) ?? new Set<(event: ConversationStreamEvent) => void>();
+    listeners.add(listener);
+    this.streamListeners.set(turnId, listeners);
+    const snapshot = this.streamSnapshots.get(turnId);
+    if (snapshot) listener(snapshot);
+    return () => {
+      const current = this.streamListeners.get(turnId);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) this.streamListeners.delete(turnId);
+    };
+  }
+
+  /** 推送流式事件；订阅者的异常不能影响轮次执行。 */
+  private publishStream(turnId: string, event: ConversationStreamEvent): void {
+    if (event.type === "text") {
+      this.streamSnapshots.set(turnId, event);
+    } else {
+      this.streamSnapshots.delete(turnId);
+    }
+    for (const listener of [...(this.streamListeners.get(turnId) ?? [])]) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.warn("conversation stream listener failed", { turnId, error: errorMessage(error) });
+      }
+    }
+    if (event.type === "done") this.streamListeners.delete(turnId);
   }
 
   /**
@@ -323,6 +375,9 @@ export class ConversationRunner {
               systemPrompt,
               userPrompt,
               history,
+              // 正文在落库前先按增量推送给控制台；轮次完成后由 done 事件触发刷新。
+              onTextDelta: (update) =>
+                this.publishStream(turn.turnId, { type: "text", reset: update.reset, text: update.text }),
             },
             workspace.path,
             signal,
@@ -336,14 +391,22 @@ export class ConversationRunner {
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
       this.store.finishConversationTurn(turn.turnId, answer.content);
+      // 正文已落库，立即结束流：标题与摘要生成还需额外模型调用，不应让界面继续等流。
+      this.publishStream(turn.turnId, { type: "done", status: "completed" });
       await this.updateTitle(turn, workspace.path, signal);
       await this.updateSummary(turn, dropped, workspace.path, signal);
     } catch (error) {
       if (signal.aborted) {
         this.store.cancelConversationTurn(turn.turnId, "This turn was cancelled before it could finish.");
+        this.publishStream(turn.turnId, { type: "done", status: "cancelled" });
       } else {
         console.error("conversation turn failed", { turnId: turn.turnId, error: errorMessage(error) });
         this.store.failConversationTurn(turn.turnId, "failed", `This turn failed: ${errorMessage(error)}`);
+        this.publishStream(turn.turnId, {
+          type: "done",
+          status: "failed",
+          error: errorMessage(error),
+        });
       }
     }
   }

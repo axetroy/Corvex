@@ -304,9 +304,27 @@ describe("CorvexServer", () => {
         }),
       });
       expect(secondConversationResponse.status).toBe(202);
-      const secondConversation = await secondConversationResponse.json() as { turnId: string };
+      const secondConversation = await secondConversationResponse.json() as { conversationId: string; turnId: string };
       expect(secondConversation.turnId).toBeTruthy();
       expect(store.eventCounts().queued ?? 0).toBe(0);
+      // 流式正文端点与其它轨迹端点一样先校验轮次归属，未知轮次返回 404。
+      expect((await fetch(
+        `${base}/api/ops/conversations/${secondConversation.conversationId}/turns/missing-turn/stream`,
+        { headers: { authorization } },
+      )).status).toBe(404);
+      // 已结束的轮次不需要保持连接：端点立即以 done 收尾，界面随即刷新详情。
+      expect(store.claimConversationTurn(secondConversation.turnId)).toBeTruthy();
+      store.finishConversationTurn(secondConversation.turnId, "Streamed answer");
+      const streamResponse = await fetch(
+        `${base}/api/ops/conversations/${secondConversation.conversationId}/turns/${secondConversation.turnId}/stream`,
+        { headers: { authorization } },
+      );
+      expect(streamResponse.status).toBe(200);
+      expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+      expect(streamResponse.headers.get("cache-control")).toBe("no-store");
+      const streamBody = await streamResponse.text();
+      expect(streamBody).toContain('"type":"done"');
+      expect(streamBody).toContain('"status":"completed"');
       const queuedConversations = store.eventCounts().queued ?? 0;
       expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
