@@ -44,14 +44,6 @@ function messageStatus(message: ConversationMessage, copy: Copy): string {
   return "";
 }
 
-/** 最近一轮状态对应的徽标颜色；无轮次返回中性色。 */
-function lastTurnColor(status: ConversationSummary["lastTurnStatus"]): string {
-  if (status === "completed") return "success";
-  if (status === "failed") return "error";
-  if (status === "queued" || status === "running") return "processing";
-  return "default";
-}
-
 /** 对话模式标签文案；未知模式回退为原始值，避免界面留白。 */
 function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): string {
   return translate(copy.conversationModes, mode);
@@ -404,24 +396,27 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   ];
   const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
 
-  const conversationItems: ConversationItemType[] = conversations.map((item) => ({
-    key: item.id,
-    label: (
-      <div className="conversation-summary-label">
-        <Typography.Text strong ellipsis>{item.title || item.projectName}</Typography.Text>
-        <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
-        <div className="conversation-summary-meta">
-          <Tag className="conversation-summary-turns" color={lastTurnColor(item.lastTurnStatus)}>
-            {(item.turnCount === 1 ? copy.conversationTurnTemplate : copy.conversationTurnsTemplate).replace("{count}", String(item.turnCount))}
-          </Tag>
-          <Tag className="conversation-summary-mode">{conversationModeLabel(item.mode, copy)}</Tag>
-          <Typography.Text type="secondary" className="conversation-summary-time">
-            {formatDate(item.updatedAt, copy, locale)}
-          </Typography.Text>
+  // 列表按最近更新排序：分组按首次出现的顺序排列，因此每组及其内部都是最近优先。
+  const sortedConversations = [...conversations].sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+  );
+  const projectNames = new Map<string, string>();
+  const conversationItems: ConversationItemType[] = sortedConversations.map((item) => {
+    const group = `${item.projectId}`;
+    projectNames.set(group, item.projectName);
+    const running = item.lastTurnStatus === "queued" || item.lastTurnStatus === "running";
+    return {
+      key: item.id,
+      group,
+      label: (
+        <div className="conversation-summary-label">
+          <Typography.Text strong ellipsis>{item.title || item.projectName}</Typography.Text>
+          <Typography.Text type="secondary" ellipsis>{item.targetBranch}</Typography.Text>
+          {running ? <span className="conversation-summary-active" aria-label={copy.statuses.analyzing} /> : null}
         </div>
-      </div>
-    ),
-  }));
+      ),
+    };
+  });
   const transcriptMessages = (currentConversation?.messages ?? []).map((message) =>
     message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId
       ? { ...message, content: streamedReply.text }
@@ -508,6 +503,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 items={conversationItems}
                 activeKey={selectedConversationId || undefined}
                 onActiveChange={(key) => openConversation(key)}
+                groupable={{
+                  label: (group) => projectNames.get(String(group)) ?? String(group),
+                  collapsible: false,
+                }}
               />
             ) : <Empty>{copy.noConversations}</Empty>}
             {conversations.length < conversationTotal ? (
