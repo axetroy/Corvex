@@ -157,3 +157,17 @@
   margin-left: auto;
   color: #71808e;
 }
+
+.settings-cleanup-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.settings-tabs {
+  margin-top: 8px;
+}
+
+.settings-tabs .ant-tabs-content-holder {
+  padding-top: 4px;
+}

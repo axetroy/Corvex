@@ -2171,11 +2171,17 @@ export class EventStore {
     );
   }
 
-  /** 最近的存储清理记录，最新的在前。 */
-  listStorageCleanups(limit = 30): StorageCleanupRecord[] {
-    const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 30;
-    const rows = this.db.prepare("SELECT * FROM storage_cleanup_log ORDER BY started_at DESC,id DESC LIMIT ?")
-      .all(safeLimit) as Record<string, unknown>[];
+  /** 存储清理记录总数，供控制台分页。 */
+  countStorageCleanups(): number {
+    return numberColumn(this.db.prepare("SELECT COUNT(*) AS count FROM storage_cleanup_log").get() as Record<string, unknown>, "count");
+  }
+
+  /** 存储清理记录，最新在前；limit/offset 由调用方校验。 */
+  listStorageCleanups(limit = 10, offset = 0): StorageCleanupRecord[] {
+    const safeLimit = Number.isSafeInteger(limit) ? Math.max(1, Math.min(100, limit)) : 10;
+    const safeOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+    const rows = this.db.prepare("SELECT * FROM storage_cleanup_log ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?")
+      .all(safeLimit, safeOffset) as Record<string, unknown>[];
     return rows.map((row) => ({
       id: numberColumn(row, "id"),
       startedAt: stringColumn(row, "started_at"),

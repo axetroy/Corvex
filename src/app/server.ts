@@ -723,12 +723,16 @@ export class CorvexServer {
     }
     // Git 存储清理：可预览计划，也可执行；每次都落一条记录供控制台查看。
     if (request.method === "GET" && url.pathname === "/api/ops/storage/cleanups") {
-      const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 30;
-      if (limit === false) {
-        respondJson(response, 400, { error: "invalid limit" });
+      const limit = optionalInteger(url.searchParams.get("limit"), 1, 100) ?? 10;
+      const offset = optionalInteger(url.searchParams.get("offset"), 0, 1_000_000) ?? 0;
+      if (limit === false || offset === false) {
+        respondJson(response, 400, { error: "invalid pagination" });
         return;
       }
-      respondJson(response, 200, { items: this.store.listStorageCleanups(limit) });
+      respondJson(response, 200, {
+        items: this.store.listStorageCleanups(limit, offset),
+        total: this.store.countStorageCleanups(),
+      });
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/ops/storage/cleanup") {

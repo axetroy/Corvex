@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Collapse, Input, InputNumber, Select, Switch, Typography } from "antd";
+import { Alert, Button, Input, InputNumber, Select, Switch, Tabs, Typography } from "antd";
 import "./SettingsPage.css";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -84,6 +84,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState("basic");
 
   useEffect(() => {
     let active = true;
@@ -261,8 +262,31 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     </div>
   );
 
-  const primaryGroups = settingGroups.filter((group) => !group.advanced);
-  const advancedGroup = settingGroups.find((group) => group.advanced);
+  const groupsByTitle = new Map(settingGroups.map((group) => [group.titleKey, group]));
+  const renderGroup = (titleKey: string) => {
+    const group = groupsByTitle.get(titleKey);
+    if (!group) return null;
+    return (
+      <Panel key={titleKey} title={text(copy, group.titleKey)}>
+        <Typography.Paragraph type="secondary" className="settings-group-hint">
+          {text(copy, group.hintKey)}
+        </Typography.Paragraph>
+        {renderFields(group.fields)}
+      </Panel>
+    );
+  };
+  const derivedPanel = (
+    <Panel title={copy.settingsDerivedTitle}>
+      <ul className="settings-derived">
+        <li>{copy.settingsDerivedCompaction
+          .replace("{value}", data.derived.compactionTriggerTokens.toLocaleString("en-US"))
+          .replace("{keep}", data.derived.compactionKeepRecentTokens.toLocaleString("en-US"))}</li>
+        <li>{copy.settingsDerivedTools
+          .replace("{call}", formatBytes(data.derived.toolCallBytes))
+          .replace("{round}", formatBytes(data.derived.toolRoundBytes))}</li>
+      </ul>
+    </Panel>
+  );
 
   return (
     <>
@@ -288,49 +312,55 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       {notice ? <Alert className="settings-alert" type="success" showIcon message={notice} /> : null}
       {dirty && !notice ? <Alert className="settings-alert" type="info" showIcon message={copy.settingsDirty} /> : null}
 
-      <Panel title={copy.settingsDerivedTitle}>
-        <ul className="settings-derived">
-          <li>{copy.settingsDerivedCompaction
-            .replace("{value}", data.derived.compactionTriggerTokens.toLocaleString("en-US"))
-            .replace("{keep}", data.derived.compactionKeepRecentTokens.toLocaleString("en-US"))}</li>
-          <li>{copy.settingsDerivedTools
-            .replace("{call}", formatBytes(data.derived.toolCallBytes))
-            .replace("{round}", formatBytes(data.derived.toolRoundBytes))}</li>
-        </ul>
-      </Panel>
-
-      {primaryGroups.map((group) => (
-        <Panel key={group.titleKey} title={text(copy, group.titleKey)}>
-          <Typography.Paragraph type="secondary" className="settings-group-hint">
-            {text(copy, group.hintKey)}
-          </Typography.Paragraph>
-          {renderFields(group.fields)}
-        </Panel>
-      ))}
-
-      <StorageCleanupPanel
-        copy={copy}
-        locale={locale}
-        retentionDays={Number(data.effective.storage_retention_days ?? 30)}
-      />
-
-      {advancedGroup ? (
-        <Collapse
-          className="settings-advanced"
-          items={[{
-            key: advancedGroup.titleKey,
-            label: text(copy, advancedGroup.titleKey),
+      <Tabs
+        className="settings-tabs"
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: "basic",
+            label: copy.settingsTabBasic,
             children: (
               <>
-                <Typography.Paragraph type="secondary" className="settings-group-hint">
-                  {text(copy, advancedGroup.hintKey)}
-                </Typography.Paragraph>
-                {renderFields(advancedGroup.fields)}
+                {derivedPanel}
+                {renderGroup("settingsGroupModel")}
+                {renderGroup("settingsGroupBudget")}
+                {renderGroup("settingsGroupQuota")}
               </>
             ),
-          }]}
-        />
-      ) : null}
+          },
+          {
+            key: "workflow",
+            label: copy.settingsTabWorkflow,
+            children: (
+              <>
+                {renderGroup("settingsGroupTools")}
+                {renderGroup("settingsGroupReview")}
+                {renderGroup("settingsGroupWorkflow")}
+              </>
+            ),
+          },
+          {
+            key: "storage",
+            label: copy.settingsTabStorage,
+            children: (
+              <>
+                {renderGroup("settingsGroupStorage")}
+                <StorageCleanupPanel
+                  copy={copy}
+                  locale={locale}
+                  retentionDays={Number(data.effective.storage_retention_days ?? 30)}
+                />
+              </>
+            ),
+          },
+          {
+            key: "advanced",
+            label: copy.settingsTabAdvanced,
+            children: renderGroup("settingsGroupAdvanced"),
+          },
+        ]}
+      />
     </>
   );
 }
