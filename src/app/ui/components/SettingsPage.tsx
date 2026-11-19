@@ -320,11 +320,18 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
           {
             key: "basic",
             label: copy.settingsTabBasic,
+            children: renderGroup("settingsGroupBudget"),
+          },
+          {
+            key: "model",
+            label: copy.settingsTabModel,
             children: (
               <>
+                <Typography.Paragraph type="secondary" className="settings-group-hint">
+                  {copy.settingsModelConnectionHint}
+                </Typography.Paragraph>
                 {derivedPanel}
                 {renderGroup("settingsGroupModel")}
-                {renderGroup("settingsGroupBudget")}
                 {renderGroup("settingsGroupQuota")}
               </>
             ),
