@@ -99,7 +99,7 @@ These are deliberate constraints, not incidental behavior. Do not weaken them to
 
 ## Tests
 
-- Vitest, no custom config. Unit tests sit in `test/unit/<module>.test.ts` next to the module they cover; the ops console scripts have `test/unit/ui-*.test.js`.
+- Vitest; `vitest.config.ts` scopes the suite to `test/**` so local runtime data under `data/` (conversation workspaces can contain third-party `*.test.js`) is never scanned. Unit tests sit in `test/unit/<module>.test.ts` next to the module they cover; the ops console scripts have `test/unit/ui-*.test.js`.
 - Integration tests (`test/integration/`) spin up fake GitLab and model HTTP servers on ephemeral ports, use real Git repos in temporary directories, and drive `CorvexServer` + `Worker` against one throwaway SQLite database. Follow that pattern instead of mocking the store or the client wholesale.
 - Keep tests hermetic: no outbound network, no dependence on developer machine state, clean up temp dirs, and abort running loops in `afterEach`.
 - Add or update tests for behavior changes, including failure paths (invalid model output, expired revision, duplicate webhook, cancellation, patch scope violation).
