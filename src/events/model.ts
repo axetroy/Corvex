@@ -166,6 +166,16 @@ export interface ConversationToolCall {
   durationMs: number | null;
 }
 
+/**
+ * 落库的对话过程条目：按发生顺序记录每轮思考、模型的中间回复与工具调用。
+ * 最终回答已存于消息的 `content`，这里不再重复保存；思考只在本次会话的流里出现，
+ * 但只要产生了文本就会随轮次落库，刷新页面后仍能在过程块里看到。
+ */
+export type ConversationProcessEntry =
+  | { kind: "thinking"; text: string }
+  | { kind: "text"; text: string }
+  | { kind: "tool"; id?: string; name: string; input: string | null; status: EventTraceStatus; durationMs: number | null };
+
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -184,6 +194,8 @@ export interface ConversationMessage {
   stepCount: number;
   /** 助手回复已记录的工具调用摘要，按调用时间排序；用户消息为空数组。 */
   toolCalls: ConversationToolCall[];
+  /** 该轮落库的过程条目（思考、中间回复、工具调用），按发生顺序排列。 */
+  process: ConversationProcessEntry[];
 }
 
 export interface Conversation extends ConversationSummary {
@@ -243,6 +255,8 @@ export interface ConversationTurn {
   createdAt: string;
   updatedAt: string;
   lastError: string;
+  /** 该轮落库的过程条目，与对话详情里的过程块同源。 */
+  process: ConversationProcessEntry[];
   timeline: ConversationTurnTransition[];
   trajectory: EventTraceEntry[];
   events: ExecutionStep[];

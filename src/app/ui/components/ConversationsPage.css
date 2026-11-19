@@ -391,6 +391,15 @@
   margin-top: 8px;
 }
 
+/* 模型在调用工具之间给出的中间回复：直接按正文展示，不折叠。 */
+.conversation-process-text {
+  padding: 2px 9px;
+  color: var(--conversation-ink);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .conversation-thinking {
   padding: 7px 9px;
   border-left: 2px solid var(--conversation-brand);

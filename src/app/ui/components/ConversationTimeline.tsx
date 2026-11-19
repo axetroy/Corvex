@@ -12,6 +12,7 @@ import type { ConversationToolCall } from "../types.js";
  */
 export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
+  | { kind: "text"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
 
 /**
@@ -51,6 +52,8 @@ export const ConversationTimeline = memo(function ConversationTimeline({
             <div className="conversation-thinking-label">{copy.conversationThinking}</div>
             <div className="conversation-thinking-content">{segment.text}</div>
           </div>
+        ) : segment.kind === "text" ? (
+          <div className="conversation-process-text" key={segment.key}>{segment.text}</div>
         ) : (
           <div className="conversation-tool-call" key={segment.key}>
             <div className="conversation-tool-call-summary">

@@ -1,7 +1,7 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities } from "../events/model.js";
-import type { ConversationStreamEvent, ConversationTurnContext } from "../events/model.js";
+import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
@@ -285,6 +285,58 @@ export class ConversationRunner {
     }
   }
 
+  /**
+   * 把本轮已推送的流式事件折成最终过程条目：文本按轮累计、工具按调用 ID 合并终态，
+   * 最终回答由消息正文单独保存，不重复进入过程快照。
+   */
+  private collectProcess(turnId: string, finalAnswer?: string): ConversationProcessEntry[] {
+    const entries: ConversationProcessEntry[] = [];
+    const updateText = (kind: "thinking" | "text", text: string) => {
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        if (entry?.kind === kind) {
+          entry.text = text;
+          return;
+        }
+      }
+      entries.push({ kind, text });
+    };
+    for (const event of this.streamSnapshots.get(turnId) ?? []) {
+      if (event.type === "thinking") {
+        if (event.reset) entries.push({ kind: "thinking", text: event.text });
+        else updateText("thinking", event.text);
+      } else if (event.type === "text") {
+        if (event.reset) entries.push({ kind: "text", text: event.text });
+        else updateText("text", event.text);
+      } else if (event.type === "tool") {
+        const { tool } = event;
+        const existing = entries.find((entry) => entry.kind === "tool" && entry.id === tool.id);
+        if (existing?.kind === "tool") {
+          existing.name = tool.name;
+          existing.input = tool.input;
+          existing.status = tool.status;
+          existing.durationMs = tool.durationMs;
+        } else {
+          entries.push({
+            kind: "tool",
+            id: tool.id,
+            name: tool.name,
+            input: tool.input,
+            status: tool.status,
+            durationMs: tool.durationMs,
+          });
+        }
+      }
+    }
+    const answer = finalAnswer?.trim();
+    return entries.filter((entry) => {
+      if (entry.kind === "tool") return true;
+      if (!entry.text.trim()) return false;
+      // 最终回答在消息正文里已有，过程块不再重复；中间回复照常保留。
+      return !(answer && entry.kind === "text" && entry.text.trim() === answer);
+    });
+  }
+
   private async execute(turn: ConversationTurnContext, signal: AbortSignal): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
@@ -400,11 +452,14 @@ export class ConversationRunner {
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
       this.store.finishConversationTurn(turn.turnId, answer.content);
+      this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 正文已落库，立即结束流：标题与摘要生成还需额外模型调用，不应让界面继续等流。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });
       await this.updateTitle(turn, workspace.path, signal);
       await this.updateSummary(turn, dropped, workspace.path, signal);
     } catch (error) {
+      // 失败/取消也保留已发生的思考与工具调用，刷新后仍能看到过程停在哪一步。
+      this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId));
       if (signal.aborted) {
         this.store.cancelConversationTurn(turn.turnId, "This turn was cancelled before it could finish.");
         this.publishStream(turn.turnId, { type: "done", status: "cancelled" });

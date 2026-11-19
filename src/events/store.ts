@@ -12,6 +12,7 @@ import {
   type Conversation,
   type ConversationMessage,
   type ConversationPage,
+  type ConversationProcessEntry,
   type ConversationSummary,
   type ConversationToolCall,
   type ConversationTurn,
@@ -64,6 +65,13 @@ const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|c
 const maxConversationToolCalls = 50;
 /** 对话列表工具调用参数展示的最大字节数，避免把整段轨迹负载塞进列表接口。 */
 const maxConversationToolInputBytes = 2048;
+/** 单轮对话过程落库的最大条目数；超出时只保留最近的过程，避免长任务撑大数据库。 */
+const maxConversationProcessEntries = 400;
+/** 单轮对话过程落库的最大字节数；超限时从最早条目开始丢弃。 */
+const maxConversationProcessBytes = 256 << 10;
+/** 过程条目里单段文本/工具参数的字符上限，按与轨迹相同的规则脱敏后截断。 */
+const maxConversationProcessTextChars = 20_000;
+const maxConversationProcessInputChars = 8_000;
 /** 单次对话轮次注入模型上下文的历史消息条数上限，按最近优先截断。 */
 /** 滚动摘要的最大字符数，避免摘要本身撑大提示词。 */
 const maxConversationSummaryCharacters = 4_000;
@@ -81,6 +89,7 @@ interface ConversationTurnRow {
   actor_id: number;
   attempt_count: number;
   last_error: string;
+  process: string;
   created_at: string;
   updated_at: string;
 }
@@ -192,6 +201,62 @@ function serializeTraceValue(value: unknown): string | null {
   return truncated;
 }
 
+/**
+ * 净化并限长对话过程条目：与轨迹共用同一套凭证脱敏规则，
+ * 工具参数再按字段过滤，避免把密钥或整段文件读进过程快照。
+ */
+function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[]): ConversationProcessEntry[] {
+  const clean = entries.slice(-maxConversationProcessEntries).map((entry): ConversationProcessEntry => {
+    if (entry.kind === "tool") {
+      return {
+        ...entry,
+        name: redactTraceText(entry.name).slice(0, 512),
+        input: entry.input ? redactTraceText(entry.input).slice(0, maxConversationProcessInputChars) : null,
+      };
+    }
+    return { ...entry, text: redactTraceText(entry.text).slice(0, maxConversationProcessTextChars) };
+  });
+  let serialized = JSON.stringify(clean);
+  while (Buffer.byteLength(serialized) > maxConversationProcessBytes && clean.length > 1) {
+    clean.shift();
+    serialized = JSON.stringify(clean);
+  }
+  return JSON.parse(serialized) as ConversationProcessEntry[];
+}
+
+/** 从 SQLite 文本读取过程条目；损坏或形状不认识的条目直接丢弃，不让列表接口失败。 */
+function readConversationProcess(raw: string): ConversationProcessEntry[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.flatMap((value): ConversationProcessEntry[] => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const entry = value as Record<string, unknown>;
+    if ((entry.kind === "thinking" || entry.kind === "text") && typeof entry.text === "string") {
+      return [{ kind: entry.kind, text: entry.text }];
+    }
+    if (
+      entry.kind === "tool" && typeof entry.name === "string" &&
+      (entry.status === "running" || entry.status === "succeeded" || entry.status === "failed")
+    ) {
+      return [{
+        kind: "tool",
+        ...(typeof entry.id === "string" ? { id: entry.id } : {}),
+        name: entry.name,
+        input: typeof entry.input === "string" ? entry.input : null,
+        status: entry.status,
+        durationMs: typeof entry.durationMs === "number" ? entry.durationMs : null,
+      }];
+    }
+    return [];
+  }).slice(-maxConversationProcessEntries);
+}
+
 function readEventRow(row: Record<string, unknown> | undefined): EventRow | undefined {
   if (!row) return undefined;
   const type = stringColumn(row, "type");
@@ -247,6 +312,7 @@ function readConversationTurnRow(row: Record<string, unknown> | undefined): Conv
     status,
     request: stringColumn(row, "request"),
     head_sha: stringColumn(row, "head_sha"),
+    process: stringColumn(row, "process"),
     actor_id: numberColumn(row, "actor_id"),
     attempt_count: numberColumn(row, "attempt_count"),
     last_error: stringColumn(row, "last_error"),
@@ -1248,6 +1314,7 @@ export class EventStore {
     // 让对话页无需额外请求就能提示「本轮有轨迹/记录可查看」。
     const messages = this.db.prepare(
       `SELECT conversation_messages.*, conversation_turns.status AS turn_status,
+         conversation_turns.process AS turn_process,
          (SELECT COUNT(*) FROM event_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
          (SELECT COUNT(*) FROM execution_steps WHERE turn_id=conversation_messages.turn_id) AS step_count
        FROM conversation_messages
@@ -1304,6 +1371,7 @@ export class EventStore {
       createdAt: turn.created_at,
       updatedAt: turn.updated_at,
       lastError: turn.last_error,
+      process: readConversationProcess(turn.process),
       timeline: this.readTurnTimeline(turnId),
       trajectory: this.readEventTrajectory({ kind: "conversation", turnId }),
       events: this.readExecutionSteps({ kind: "conversation", turnId }),
@@ -1651,6 +1719,12 @@ export class EventStore {
     this.insertAudit(0, "update_settings", `settings:${actor || "ops-console"}`, summary);
   }
 
+  /** 保存一轮对话的过程快照（思考、中间回复、工具调用），与落库回答分开存放。 */
+  saveConversationTurnProcess(turnId: string, entries: readonly ConversationProcessEntry[]): void {
+    const serialized = JSON.stringify(sanitizeConversationProcess(entries));
+    this.db.prepare("UPDATE conversation_turns SET process=? WHERE id=?").run(serialized, turnId);
+  }
+
   /** 标记对话轮次为取消；已结束的轮次保持原状。 */
   cancelConversationTurn(turnId: string, content: string): void {
     const now = new Date().toISOString();
@@ -1803,6 +1877,7 @@ export class EventStore {
       traceCount: row.trace_count === undefined ? 0 : numberColumn(row, "trace_count"),
       stepCount: row.step_count === undefined ? 0 : numberColumn(row, "step_count"),
       toolCalls: [],
+      process: typeof row.turn_process === "string" ? readConversationProcess(row.turn_process) : [],
     };
   }
 
@@ -2291,7 +2366,8 @@ export class EventStore {
         message_id TEXT, user_message_id TEXT, role TEXT NOT NULL DEFAULT 'assistant',
         status TEXT NOT NULL, request TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '',
         actor_id INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        last_error TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_turns_order_idx ON conversation_turns(conversation_id,created_at,id);
       CREATE INDEX IF NOT EXISTS conversation_turns_queue_idx ON conversation_turns(status,created_at,id);
@@ -2408,6 +2484,11 @@ export class EventStore {
     if (!runtimeColumns.has("updated_by")) {
       this.db.exec("ALTER TABLE runtime_settings ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''");
     }
+    // 对话轮次落库完整过程（思考、中间回复、工具调用），旧库留空由界面回退到工具摘要。
+    const turnColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_turns)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!turnColumns.has("process")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN process TEXT NOT NULL DEFAULT ''");
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));

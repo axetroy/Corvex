@@ -219,18 +219,21 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     const schedule = () => {
       if (flushTimer === undefined) flushTimer = window.setTimeout(flush, 60);
     };
+    const updateLast = (kind: "thinking" | "text", text: string) => {
+      for (let index = segments.length - 1; index >= 0; index -= 1) {
+        const segment = segments[index];
+        if (segment?.kind === kind) {
+          segment.text = text;
+          return;
+        }
+      }
+    };
     const onThinking = (text: string, reset: boolean) => {
       if (reset) {
         // 新一轮模型输出：新增一条思考；工具事件会插在它后面。
         segments.push({ kind: "thinking", key: `thinking-${segments.length}`, text });
       } else {
-        for (let index = segments.length - 1; index >= 0; index -= 1) {
-          const segment = segments[index];
-          if (segment?.kind === "thinking") {
-            segment.text = text;
-            break;
-          }
-        }
+        updateLast("thinking", text);
       }
       schedule();
     };
@@ -248,6 +251,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       {
         onText: (text, reset) => {
           latestText = reset ? "" : text;
+          // 工具调用之间的中间回复也算过程的一部分，按轮次单独成条。
+          if (reset) segments.push({ kind: "text", key: `text-${segments.length}`, text });
+          else updateLast("text", text);
           schedule();
         },
         onThinking,
@@ -425,15 +431,34 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     const streaming = message.role === "assistant" && message.status === "running" &&
       streamedReply?.turnId === message.turnId;
     const streamedSegments = message.turnId ? timelineByTurn[message.turnId] ?? [] : [];
-    // 页面刷新后思考不再可得，至少把落库的每次工具调用单独折叠呈现。
-    const persistedSegments: ConversationTimelineSegment[] = message.toolCalls.map((call, index) => ({
-      kind: "tool",
-      key: `persisted-${index}`,
-      id: `persisted-${index}`,
-      call,
-    }));
+    // 刷新后用落库的过程快照还原每次思考、中间回复与工具调用；旧数据回退到工具摘要。
+    const persistedSegments: ConversationTimelineSegment[] = message.process.length
+      ? message.process.map((entry, index) => entry.kind === "tool"
+          ? {
+              kind: "tool",
+              key: `persisted-${index}`,
+              id: entry.id ?? `persisted-${index}`,
+              call: {
+                name: entry.name,
+                input: entry.input,
+                status: entry.status,
+                durationMs: entry.durationMs,
+              },
+            }
+          : { kind: entry.kind, key: `persisted-${index}`, text: entry.text })
+      : message.toolCalls.map((call, index) => ({
+          kind: "tool",
+          key: `legacy-${index}`,
+          id: `legacy-${index}`,
+          call,
+        }));
     const timeline = (streamedSegments.length ? streamedSegments : persistedSegments)
-      .filter((segment) => segment.kind !== "thinking" || segment.text.trim().length > 0);
+      .filter((segment) => {
+        if (segment.kind === "tool") return true;
+        if (!segment.text.trim()) return false;
+        // 最终回答已在助手气泡里展示，过程块里不再重复；中间回复照常保留。
+        return !(streaming && segment.kind === "text" && streamedReply?.text.trim() === segment.text.trim());
+      });
     return {
       key: message.id,
       role: message.role === "user" ? "user" : "ai",

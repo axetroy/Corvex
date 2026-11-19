@@ -635,6 +635,13 @@ describe("review task loop", () => {
       toolCalls: [{ name: "read_file", status: "succeeded" }],
     });
     const conversationTurn = serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId);
+    // 思考与工具调用落库后仍可从对话详情读取：刷新页面也能还原过程块。
+    const process = conversationTurn?.process ?? [];
+    expect(process.map((entry) => entry.kind)).toEqual(["tool", "thinking"]);
+    expect(process[0]).toMatchObject({ kind: "tool", name: "read_file", status: "succeeded" });
+    expect(process[1]).toMatchObject({ kind: "thinking", text: streamedThinking });
+    expect(process.some((entry) => entry.kind === "text" && entry.text === streamedAnswer)).toBe(false);
+    expect(conversationDetail?.messages[1]?.process).toEqual(process);
     expect(conversationTurn?.trajectory.some((entry) => entry.kind === "tool" && entry.name === "read_file")).toBe(true);
     expect(conversationTurn?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
       "workflow.read_only_conversation",
