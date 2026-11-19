@@ -40,7 +40,7 @@ function parseArgs(args: string[]): CliOptions {
     positional.length > 1 ||
     (positional[0] && !["server", "worker", "check-config"].includes(positional[0]))
   ) {
-    throw new Error("usage: corvex [--config path] [--for server|worker] [server|worker|check-config]");
+    throw new Error("usage: corvex [--env path] [--config path] [--for server|worker] [server|worker|check-config]");
   }
   const mode = (positional[0] as CliOptions["mode"] | undefined) ?? "server";
   if (mode !== "check-config" && configRole && configRole !== mode) {
@@ -51,6 +51,25 @@ function parseArgs(args: string[]): CliOptions {
     mode,
     configRole: mode === "worker" ? "worker" : configRole ?? "server",
   };
+}
+
+function loadEnvironmentFile(args: string[]): string[] {
+  let envPath: string | undefined;
+  const remaining: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--env") {
+      if (envPath !== undefined) throw new Error("--env may only be specified once");
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--env requires a path");
+      envPath = value;
+      index++;
+    } else {
+      remaining.push(arg);
+    }
+  }
+  if (envPath !== undefined) process.loadEnvFile(envPath);
+  return remaining;
 }
 
 function parseInitArgs(args: string[]): string {
@@ -184,7 +203,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  const args = process.argv.slice(2);
+  const args = loadEnvironmentFile(process.argv.slice(2));
   if (args[0] === "init") {
     const configPath = parseInitArgs(args.slice(1));
     await initializeConfig(configPath);
@@ -201,7 +220,7 @@ async function run(): Promise<void> {
   }
   if (args[0] === "storage") {
     if (args[1] !== "cleanup") {
-      throw new Error("usage: corvex storage cleanup [--config path] [--older-than-days days] [--apply]");
+      throw new Error("usage: corvex storage cleanup [--env path] [--config path] [--older-than-days days] [--apply]");
     }
     await runStorageCleanup(args.slice(2));
     return;

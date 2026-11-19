@@ -2,6 +2,8 @@
 
 Corvex reads YAML from `configs/config.yaml` by default. Override the path with `--config`. Start with [`configs/config.example.yaml`](https://github.com/axetroy/Corvex/blob/main/configs/config.example.yaml). Secrets are read from environment variables, not YAML. Environment overrides listed below take precedence over YAML.
 
+Load environment variables from a dotenv-style file with `--env <path>`, for example `pnpm start -- --env .env --config configs/config.yaml worker`. Relative paths are resolved from the current working directory. Variables already set in the process environment take precedence over values in the file.
+
 In the tables, sample URLs and paths come from the example YAML; they are not all runtime defaults. Runtime defaults are called out explicitly. In particular, `gitlab.base_url`, `storage.root`, and `storage.database` must be configured.
 
 Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `h`, such as `5s`, `30s`, or `2m`. Paths are resolved relative to the process working directory when relative.

@@ -2,6 +2,8 @@
 
 Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路径。请以[`configs/config.example.yaml`](https://github.com/axetroy/Corvex/blob/main/configs/config.example.yaml)为模板。密钥从环境变量读取，不放入 YAML。下方列出的环境变量优先于 YAML 配置。
 
+可通过 `--env <路径>` 从 dotenv 格式文件加载环境变量，例如：`pnpm start -- --env .env --config configs/config.yaml worker`。相对路径以当前工作目录为基准。进程中已设置的环境变量优先于文件中的值。
+
 表格中的示例 URL 和路径来自示例 YAML，并非都属于程序运行时默认值；运行时默认值会明确标注。特别是 `gitlab.base_url`、`storage.root` 和 `storage.database` 必须配置。
 
 时长格式为数字加 `ns`、`us`、`µs`、`ms`、`s`、`m` 或 `h`，例如 `5s`、`30s` 或 `2m`。相对路径以进程的当前工作目录为基准。
