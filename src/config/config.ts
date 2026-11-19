@@ -433,12 +433,10 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     problems.push("agent.enabled must be true for worker mode");
   }
   if (config.agent.enabled && role !== "server" && role !== "storage") {
-    if (!validHttpUrl(config.agent.baseUrl)) {
+    // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），
+    // 因此配置文件不再强制要求它们；但一旦配置就必须合法。
+    if (config.agent.baseUrl && !validHttpUrl(config.agent.baseUrl)) {
       problems.push("agent.base_url must be a valid HTTP(S) URL without credentials");
-    }
-    if (!config.agent.model.trim()) problems.push("agent.model is required when the agent is enabled");
-    if (!config.agent.apiKey.trim()) {
-      problems.push("CORVEX_MODEL_API_KEY is required when the agent is enabled");
     }
     if (config.agent.requestTimeout <= 0) problems.push("agent.request_timeout must be positive");
     if (config.agent.sessionTimeout <= 0) problems.push("agent.session_timeout must be positive");

@@ -145,6 +145,8 @@ export interface SettingField {
   maxLength?: number;
   /** 输入单位提示，例如 token。 */
   unit?: string;
+  /** 密钥类字段：用密码框、不回显原文，留空表示沿用已保存的值。 */
+  secret?: boolean;
   /** 文案键：字段标签与说明。 */
   labelKey: string;
   hintKey: string;
@@ -169,6 +171,8 @@ export const settingGroups: readonly SettingGroup[] = [
     hintKey: "settingsGroupModelHint",
     fields: [
       { key: "model", kind: "string", maxLength: 200, labelKey: "settingsModel", hintKey: "settingsModelHint" },
+      { key: "model_base_url", kind: "string", maxLength: 500, labelKey: "settingsModelBaseUrl", hintKey: "settingsModelBaseUrlHint" },
+      { key: "model_api_key", kind: "string", secret: true, maxLength: 2_000, labelKey: "settingsModelApiKey", hintKey: "settingsModelApiKeyHint" },
       { key: "response_language", kind: "string", values: ["en", "zh-CN"], labelKey: "settingsResponseLanguage", hintKey: "settingsResponseLanguageHint" },
     ],
   },

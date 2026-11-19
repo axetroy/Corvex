@@ -39,6 +39,8 @@ export interface RuntimeSettingDefinition {
 export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // 模型与输出语言：PiAgent 与工作流在每次请求/轮次读取，覆盖后立即生效。
   { key: "model", section: "agent", field: "model", type: "string", maxLength: 200 },
+  { key: "model_base_url", section: "agent", field: "baseUrl", type: "string", maxLength: 500 },
+  { key: "model_api_key", section: "agent", field: "apiKey", type: "string", maxLength: 2_000 },
   { key: "response_language", section: "agent", field: "responseLanguage", type: "string", values: ["en", "zh-CN"] },
   // 上下文预算
   { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000 },
@@ -72,6 +74,9 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
 ];
 
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));
+
+/** 写入 SQLite 但绝不回显或写入审计日志的设置键。 */
+export const secretRuntimeSettingKeys = new Set(["model_api_key"]);
 
 export interface RuntimeSettingValues {
   [key: string]: number | boolean | string;
@@ -135,6 +140,20 @@ function checkRelations(values: RuntimeSettingValues): string[] {
     }
     if (typeof keepRecent === "number" && keepRecent > contextWindow) {
       problems.push("compaction_keep_recent_tokens must not exceed context_window");
+    }
+  }
+  const modelBaseUrl = values.model_base_url;
+  if (typeof modelBaseUrl === "string") {
+    try {
+      const url = new URL(modelBaseUrl);
+      if (
+        (url.protocol !== "http:" && url.protocol !== "https:") ||
+        url.username || url.password || url.search || url.hash
+      ) {
+        problems.push("model_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
+      }
+    } catch {
+      problems.push("model_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
     }
   }
   return problems;

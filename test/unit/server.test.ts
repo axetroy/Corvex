@@ -741,6 +741,30 @@ describe("CorvexServer", () => {
       expect(config.agent.model).toBe("gpt-4o");
       expect(config.agent.responseLanguage).toBe("zh-CN");
 
+      // 模型地址和密钥可在 Web 配置；密钥不回显、不进审计，留空表示沿用。
+      const secretWrite = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          settings: { model_base_url: "https://api.example.com/v1", model_api_key: "super-secret-key" },
+        }),
+      });
+      expect(secretWrite.status).toBe(200);
+      const secretBody = await secretWrite.json() as typeof initialBody;
+      expect(secretBody.settings.model_api_key).toBe("");
+      expect(secretBody.effective.model_api_key).toBe("");
+      expect(secretBody.base?.model_api_key).toBe("");
+      expect(secretBody.overrides.model_api_key).toBe("••••••");
+      expect(config.agent.apiKey).toBe("super-secret-key");
+
+      const keepSecret = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { context_window: 200_000 } }),
+      });
+      expect(keepSecret.status).toBe(200);
+      expect(config.agent.apiKey).toBe("super-secret-key");
+
       // 覆盖项是整份替换：未提交的键回退到配置文件值。
       const reset = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
@@ -749,7 +773,9 @@ describe("CorvexServer", () => {
       });
       expect(reset.status).toBe(200);
       const resetBody = await reset.json() as typeof initialBody;
-      expect(resetBody.overrides).toEqual({});
+      // 密钥没有“恢复配置文件值”：留空始终沿用已保存值，其它覆盖项被清空。
+      expect(resetBody.overrides).toMatchObject({ model_api_key: "••••••" });
+      expect(Object.keys(resetBody.overrides).filter((key) => key !== "model_api_key")).toEqual([]);
       expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
       expect(config.agent.contextWindow).toBe(131_072);
 
@@ -775,10 +801,12 @@ describe("CorvexServer", () => {
 
       // 每次写入都留下审计：操作者来自控制台凭据，结果记录旧值->新值。
       const audit = store.listAuditEvents().filter((entry) => entry.action === "update_settings");
-      expect(audit).toHaveLength(2);
-      expect(audit[1]).toMatchObject({ actorId: 0, resource: "settings:operator" });
-      expect(audit[1]?.result).toContain("context_window: (config) -> 200000");
-      expect(audit[0]?.result).toContain("context_window: 200000 -> (config)");
+      expect(audit.length).toBeGreaterThanOrEqual(3);
+      expect(audit[0]).toMatchObject({ actorId: 0, resource: "settings:operator" });
+      expect(audit.some((entry) => entry.result?.includes("context_window: (config) -> 200000"))).toBe(true);
+      expect(audit.some((entry) => entry.result?.includes("context_window: 200000 -> (config)"))).toBe(true);
+      expect(audit.some((entry) => entry.result?.includes("model_api_key:"))).toBe(true);
+      expect(audit.every((entry) => !entry.result?.includes("super-secret-key"))).toBe(true);
     } finally {
       controller.abort();
       await running;

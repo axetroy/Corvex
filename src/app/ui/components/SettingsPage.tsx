@@ -170,8 +170,8 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
       .filter(Boolean),
   );
 
-  /** 渲染一组字段；高级分组复用同一套控件。 */
-  const renderFields = (fields: readonly SettingField[]) => (
+  /** 渲染一组字段；hideReset 用于完全由 Web 管理的分组（如模型连接信息）。 */
+  const renderFields = (fields: readonly SettingField[], hideReset = false) => (
     <div className="settings-fields">
       {fields.map((field) => {
         const value = draft[field.key];
@@ -205,6 +205,17 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                     status={invalid ? "error" : undefined}
                     onChange={(next) => setValue(field.key, next)}
                   />
+                ) : field.secret ? (
+                  <Input.Password
+                    className="settings-text"
+                    value={typeof value === "string" ? value : ""}
+                    placeholder={data.overrides[field.key] ? copy.settingsSecretConfigured : undefined}
+                    maxLength={field.maxLength}
+                    disabled={!editable}
+                    status={invalid ? "error" : undefined}
+                    autoComplete="new-password"
+                    onChange={(event) => setValue(field.key, event.target.value)}
+                  />
                 ) : (
                   <Input
                     className="settings-text"
@@ -234,7 +245,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                   {field.unit === "byte" ? copy.settingsUnitBytes : copy.settingsUnitTokens}
                 </span>
               ) : null}
-              {base ? (
+              {base && !hideReset && !field.secret ? (
                 <Button type="link" size="small" disabled={!editable} onClick={() => resetField(field)}>
                   {copy.settingsReset}
                 </Button>
@@ -263,7 +274,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
   );
 
   const groupsByTitle = new Map(settingGroups.map((group) => [group.titleKey, group]));
-  const renderGroup = (titleKey: string) => {
+  const renderGroup = (titleKey: string, hideReset = false) => {
     const group = groupsByTitle.get(titleKey);
     if (!group) return null;
     return (
@@ -271,7 +282,7 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         <Typography.Paragraph type="secondary" className="settings-group-hint">
           {text(copy, group.hintKey)}
         </Typography.Paragraph>
-        {renderFields(group.fields)}
+        {renderFields(group.fields, hideReset)}
       </Panel>
     );
   };
@@ -331,8 +342,8 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                   {copy.settingsModelConnectionHint}
                 </Typography.Paragraph>
                 {derivedPanel}
-                {renderGroup("settingsGroupModel")}
-                {renderGroup("settingsGroupQuota")}
+                {renderGroup("settingsGroupModel", true)}
+                {renderGroup("settingsGroupQuota", true)}
               </>
             ),
           },

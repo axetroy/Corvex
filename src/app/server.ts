@@ -11,6 +11,7 @@ import {
   isRuntimeSettingKey,
   runtimeSettingsEffective,
   runtimeSettingsView,
+  secretRuntimeSettingKeys,
   validateRuntimeSettings,
   type DerivedContextMetrics,
 } from "../config/settings.js";
@@ -27,6 +28,18 @@ import { ConversationRunner } from "./conversation-runner.js";
 
 const maxReviewRequestCharacters = 2000;
 const webhookDeliveryLeaseMs = 60_000;
+const secretSettingPlaceholder = "••••••";
+
+/** 设置接口不回显密钥原文；有值时只给占位符，UI 据此显示「已配置」。 */
+function redactSettingValues(values: Record<string, number | boolean | string>): Record<string, number | boolean | string> {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [
+      key,
+      // 值字段始终为空，避免前端把它当成真实密钥提交回去。
+      secretRuntimeSettingKeys.has(key) ? "" : value,
+    ]),
+  );
+}
 
 function requestBody(request: IncomingMessage, maxBytes = MAX_WEBHOOK_BODY_BYTES): Promise<Buffer> {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -919,13 +932,19 @@ export class CorvexServer {
       }
     }
     const view = runtimeSettingsEffective(this.config);
+    const redactedOverrides = Object.fromEntries(
+      Object.entries(overrides).map(([key, value]) => [
+        key,
+        secretRuntimeSettingKeys.has(key) ? secretSettingPlaceholder : value,
+      ]),
+    );
     return {
-      settings: runtimeSettingsView(this.config),
-      effective: view.effective,
+      settings: redactSettingValues(runtimeSettingsView(this.config)),
+      effective: redactSettingValues(view.effective),
       adjusted: view.adjusted,
       derived: view.derived,
-      base,
-      overrides,
+      base: base ? redactSettingValues(base) : null,
+      overrides: redactedOverrides,
       overrideMeta,
       editable: Boolean(this.configPath),
       configPath: this.configPath ?? null,
@@ -957,6 +976,12 @@ export class CorvexServer {
         respondJson(response, 400, { error: `setting "${key}" must be a number, boolean or string` });
         return;
       }
+    }
+    // 密钥字段单独处理：留空表示沿用已保存的值，只有明确提交新值才覆盖。
+    // 这样界面上不回显原文也不会误清除它。
+    if (!("model_api_key" in overrides)) {
+      const stored = this.store.listRuntimeSettings().find((row) => row.key === "model_api_key");
+      if (stored) overrides.model_api_key = stored.value;
     }
     const problems = validateRuntimeSettings(overrides);
     if (problems.length > 0) {
@@ -992,7 +1017,11 @@ export class CorvexServer {
       const before = previous.get(key);
       const after = overrides[key];
       if (before === after) continue;
-      changes[key] = `${before ?? "(config)"} -> ${after ?? "(config)"}`;
+      const secret = secretRuntimeSettingKeys.has(key);
+      const describe = (value: string | undefined) => secret
+        ? (value ? "[REDACTED]" : "(config)")
+        : value ?? "(config)";
+      changes[key] = `${describe(before)} -> ${describe(after)}`;
     }
     try {
       for (const key of previous.keys()) {

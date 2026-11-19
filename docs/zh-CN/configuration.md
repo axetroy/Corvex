@@ -84,7 +84,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 上表中的一部分设置可以在 Agent 控制台的**设置**页面修改，无需编辑配置文件或重启。Server 只把被覆盖的键写入 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`），立即作用于后续轮次，并把每次修改记入 `audit_events`（`update_settings`，操作者取控制台用户名）。Worker 在每次轮询时重新读取该表，排队中的事件会在下一次领取时生效，并重建那些在构造函数里读取审查与修复上限的组件。Server 启动时也会重新应用已存储的覆盖项，因此重启不会悄悄退回界面显示之外的值。
 
-模型相关设置集中在「设置 → 模型」页：`agent.model`、`agent.response_language`、`agent.max_output_tokens` 与 `agent.daily_token_budget`。服务商 Base URL 与 API Key 刻意不写入 SQLite、也不通过接口返回；请在环境中设置 `CORVEX_MODEL_BASE_URL` / `CORVEX_MODEL_API_KEY`，这样 YAML 中对应行也可以省略。
+模型相关设置集中在「设置 → 模型」页：`agent.model`、`agent.base_url`、`agent.api_key`、`agent.response_language`、`agent.max_output_tokens` 与 `agent.daily_token_budget`，全部以运行时覆盖存入 SQLite，因此 YAML 中对应行可以删除。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存的值。由于密钥保存在本地 SQLite 中，请保护数据库文件及其备份。
 
 可编辑的键：`agent.model`、`agent.response_language`、`agent.context_window`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.max_output_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。模型与回复语言在每次请求与轮次读取，修改后无需重启即可作用于下一次。
 

@@ -19,9 +19,9 @@ storage:
 
 agent:
   enabled: false
-  # 模型名、回复语言、输出上限可在运维台「设置 > 模型」中修改（存 SQLite，无需重启）。
-  # Base URL 与 API Key 只从环境变量读取；设置后下面几行都可以从配置文件删除：
-  #   CORVEX_MODEL_BASE_URL / CORVEX_MODEL_API_KEY
+  # 模型名、Base URL、API Key、回复语言与输出上限都可以完全在运维台
+  # 「设置 > 模型」中配置（存 SQLite，无需重启），下面这几行都可以从 YAML 删除。
+  # API Key 不会在接口中回显；数据库文件及备份需妥善保护。
   response_language: "en" # en or zh-CN
   base_url: "https://api.openai.com/v1"
   model: "your-model-name"
