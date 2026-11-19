@@ -2699,12 +2699,16 @@ export class EventStore {
       (this.db.prepare("PRAGMA table_info(conversation_turns)").all() as { name: string }[]).map((column) => column.name),
     );
     if (!turnColumns.has("process")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN process TEXT NOT NULL DEFAULT ''");
+    // 落库回复使用的模型名，供控制台在复制按钮旁展示；旧库补齐这一列。
+    if (!turnColumns.has("model")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN model TEXT NOT NULL DEFAULT ''");
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));
     for (const name of ["target_type", "target_iid", "target_title"]) {
       if (legacyConversationColumns.has(name)) this.db.exec(`ALTER TABLE conversations DROP COLUMN ${name}`);
     }
+    // 旧版本误把 model 列加到了 conversations；模型名记录在 conversation_turns 上。
+    if (legacyConversationColumns.has("model")) this.db.exec("ALTER TABLE conversations DROP COLUMN model");
     // 跨轮滚动摘要：记录被裁剪历史压缩出的摘要，以及摘要覆盖到的消息边界。
     for (const [name, definition] of Object.entries({
       summary: "TEXT NOT NULL DEFAULT ''",
@@ -2715,8 +2719,6 @@ export class EventStore {
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
       archived: "INTEGER NOT NULL DEFAULT 0",
-      // 落库回复使用的模型名，供控制台在复制按钮旁展示。
-      model: "TEXT NOT NULL DEFAULT ''",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);

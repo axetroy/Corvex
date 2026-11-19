@@ -18,6 +18,29 @@ describe("EventStore", () => {
     directory = "";
   });
 
+  it("为旧库的 conversation_turns 补齐 model 列", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    const databasePath = join(directory, "state.db");
+    const first = await EventStore.open(databasePath);
+    first.close();
+    // 模拟旧库：conversation_turns 已存在但没有 model 列。
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("ALTER TABLE conversation_turns DROP COLUMN model");
+    raw.exec("ALTER TABLE conversations ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+    raw.close();
+
+    store = await EventStore.open(databasePath);
+    expect(store.listConversations(10, 0).items).toEqual([]);
+    const inspector = new DatabaseSync(databasePath);
+    const turnColumns = (inspector.prepare("PRAGMA table_info(conversation_turns)").all() as { name: string }[])
+      .map((column) => column.name);
+    const conversationColumns = (inspector.prepare("PRAGMA table_info(conversations)").all() as { name: string }[])
+      .map((column) => column.name);
+    inspector.close();
+    expect(turnColumns).toContain("model");
+    expect(conversationColumns).not.toContain("model");
+  });
+
   it("管理模型配置并迁移旧的模型运行时设置", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await EventStore.open(join(directory, "state.db"));
