@@ -192,12 +192,57 @@
   overflow: hidden;
 }
 
+.conversation-workspace-repo {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation-workspace-repo:hover .conversation-workspace-project,
+.conversation-workspace-repo:focus-visible .conversation-workspace-project {
+  color: var(--conversation-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .conversation-workspace-project.ant-typography {
   flex: 0 1 auto;
   max-width: 240px;
   min-width: 0;
   margin: 0;
   color: var(--conversation-ink);
+}
+
+.repository-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 0 24px;
+}
+
+.repository-info-row dt {
+  margin-bottom: 4px;
+  color: var(--conversation-muted);
+  font-size: 12px;
+}
+
+.repository-info-row dd {
+  margin: 0;
+  color: var(--conversation-ink);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.repository-info-row dd > * + * {
+  margin-left: 8px;
+}
+
+.repository-info-row code {
+  font-size: 12px;
 }
 
 .conversation-branch-tag.ant-tag {

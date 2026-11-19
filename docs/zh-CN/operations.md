@@ -60,6 +60,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/events` | 筛选/分页事件列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
 | `GET /api/ops/events/<id>` | 事件详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出记录。 |
 | `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
+| `GET /api/ops/projects/<id>` | 读取点击对话上方仓库名时展示的仓库元数据。 |
 | `GET /api/ops/projects/<id>/branches` | 搜索项目的分支。 |
 | `GET /api/ops/conversations`、`GET /api/ops/conversations/<id>` | 列出持久对话（含轮次数与最近一轮状态）及其消息；详情响应还附带该对话派生的系统提示词。 |
 | `GET /api/ops/conversations/<id>/turns` | 读取整段对话：把各轮轨迹与执行记录合并成一条有序时间线，并给出逐轮边界。对话轮次不是事件，不会出现在事件列表中。 |

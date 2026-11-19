@@ -23,6 +23,7 @@ import type {
   EventType,
   ModelCallMetric,
   OperationsOverview,
+  RepositoryDetails,
 } from "../../events/model.js";
 
 /**
@@ -53,6 +54,7 @@ export type {
   EventTraceStatus,
   EventType,
   ModelCallMetric,
+  RepositoryDetails,
 };
 
 /** `GET /api/ops/overview` 的响应体。 */

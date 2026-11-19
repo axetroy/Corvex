@@ -46,6 +46,8 @@ describe("CorvexServer", () => {
             id: 2,
             name: "Project",
             path_with_namespace: "group/project",
+            description: "Test project",
+            web_url: "https://gitlab.example.com/group/project",
             http_url_to_repo: "https://gitlab.example.com/group/project.git",
             default_branch: "main",
           },
@@ -197,6 +199,16 @@ describe("CorvexServer", () => {
       const projectsResponse = await fetch(`${base}/api/ops/projects?search=project`, { headers: { authorization } });
       expect(projectsResponse.status).toBe(200);
       expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);
+      const projectResponse = await fetch(`${base}/api/ops/projects/2`, { headers: { authorization } });
+      expect(projectResponse.status).toBe(200);
+      expect(await projectResponse.json()).toMatchObject({
+        id: 2,
+        path_with_namespace: "group/project",
+        description: "Test project",
+        web_url: "https://gitlab.example.com/group/project",
+        default_branch: "main",
+      });
+      expect((await fetch(`${base}/api/ops/projects/0`, { headers: { authorization } })).status).toBe(400);
       const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
       expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
       const createdConversationResponse = await fetch(`${base}/api/ops/conversations`, {

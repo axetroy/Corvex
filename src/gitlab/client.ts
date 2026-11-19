@@ -23,6 +23,8 @@ export interface Project {
   /** 项目描述；GitLab 允许为空字符串。Agent 控制台用它作为选择器的第二行。 */
   description?: string;
   http_url_to_repo: string;
+  /** GitLab 生成的仓库页面地址，供控制台跳转；旧实例可能仍指向内网地址。 */
+  web_url?: string;
   default_branch?: string;
 }
 

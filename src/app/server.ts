@@ -350,6 +350,30 @@ export class CorvexServer {
       }
       return;
     }
+    // 仓库详情：控制台点击右上角的仓库名时读取，只暴露展示所需的字段。
+    const projectDetailMatch = /^\/api\/ops\/projects\/([0-9]+)$/.exec(url.pathname);
+    if (request.method === "GET" && projectDetailMatch) {
+      const projectId = Number(projectDetailMatch[1]);
+      if (!Number.isSafeInteger(projectId) || projectId < 1) {
+        respondJson(response, 400, { error: "invalid project ID" });
+        return;
+      }
+      try {
+        const project = await this.gitlab.getProject(projectId);
+        respondJson(response, 200, {
+          id: project.id,
+          name: project.name ?? null,
+          path_with_namespace: project.path_with_namespace ?? null,
+          description: project.description ?? null,
+          default_branch: project.default_branch ?? null,
+          web_url: project.web_url ?? null,
+          http_url_to_repo: project.http_url_to_repo,
+        });
+      } catch (error) {
+        this.respondGitLabReadError(response, error);
+      }
+      return;
+    }
     const branchSearchMatch = /^\/api\/ops\/projects\/([0-9]+)\/branches$/.exec(url.pathname);
     if (request.method === "GET" && branchSearchMatch) {
       const projectId = Number(branchSearchMatch[1]);

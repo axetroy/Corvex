@@ -17,6 +17,7 @@ import { ConversationTimeline, type ConversationTimelineSegment } from "./Conver
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
+import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -115,6 +116,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [selectedBranch, setSelectedBranch] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
+  const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -546,9 +548,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     <Typography.Text strong className="conversation-workspace-project">{copy.newConversation}</Typography.Text>
                   ) : currentConversation ? (
                     <>
-                      <Typography.Text strong className="conversation-workspace-project" ellipsis>
-                        {currentConversation.projectName}
-                      </Typography.Text>
+                      <button
+                        type="button"
+                        className="conversation-workspace-repo"
+                        onClick={() => setRepoInfoOpen(true)}
+                        aria-label={copy.conversationRepositoryInfo}
+                      >
+                        <Typography.Text strong className="conversation-workspace-project" ellipsis>
+                          {currentConversation.projectName}
+                        </Typography.Text>
+                      </button>
                       <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
                       <Tag className="conversation-mode-tag">{conversationModeLabel(currentConversation.mode, copy)}</Tag>
                       <Typography.Text type="secondary" className="conversation-pinned">
@@ -688,6 +697,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           />
         </section>
       </section>
+      <RepositoryInfoDrawer
+        open={repoInfoOpen}
+        onClose={() => setRepoInfoOpen(false)}
+        projectId={currentConversation?.projectId ?? 0}
+        copy={copy}
+        currentBranch={currentConversation?.targetBranch}
+        pinnedSha={currentConversation?.messages.at(-1)?.headSha}
+      />
     </>
   );
 }

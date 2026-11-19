@@ -262,6 +262,17 @@ export interface ConversationTurn {
   events: ExecutionStep[];
 }
 
+/** 控制台「仓库信息」用到的只读项目详情，字段来自 GitLab 项目接口。 */
+export interface RepositoryDetails {
+  id: number;
+  name: string | null;
+  path_with_namespace: string | null;
+  description: string | null;
+  default_branch: string | null;
+  web_url: string | null;
+  http_url_to_repo: string;
+}
+
 export interface ConversationPage {
   items: ConversationSummary[];
   total: number;

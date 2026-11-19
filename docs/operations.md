@@ -60,6 +60,7 @@ The read-only agent console is disabled unless both `CORVEX_OPS_USERNAME` and `C
 | `GET /api/ops/events` | Filtered and paginated event list (`status`, `type`, `projectId`, `mrIid`, `search`, `limit`, `offset`). |
 | `GET /api/ops/events/<id>` | Event details, persisted attempt history, lifecycle transitions, agent trajectory, and input/output records for each execution step. |
 | `GET /api/ops/projects` | Search projects visible to the configured GitLab read token. |
+| `GET /api/ops/projects/<id>` | Read repository metadata for the panel opened from the project name above the conversation. |
 | `GET /api/ops/projects/<id>/branches` | Search the branches of a project. |
 | `GET /api/ops/conversations` / `GET /api/ops/conversations/<id>` | List persistent conversations (with turn counts and the latest turn status) and their messages; the detail response also carries the conversation's derived system prompt. |
 | `GET /api/ops/conversations/<id>/turns` | Read the whole conversation: every turn's trajectory and execution records merged into one ordered timeline, plus the per-turn boundaries. Conversation turns are not events and never appear in the events list. |
