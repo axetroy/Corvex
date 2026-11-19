@@ -60,7 +60,8 @@ Before finishing a change, run `pnpm run lint`, `pnpm run typecheck` and `pnpm t
 ```text
 src/cli.ts          argument parsing and process wiring (init/backup/events/storage/server/worker)
 src/config/         YAML loading, role-based validation, defaults
-src/app/            HTTP server, inline conversation runner, worker loop, leases/retries, readiness, metrics, ops console
+src/app/            HTTP server lifecycle, inline conversation runner, worker loop, leases/retries, readiness, metrics, ops console
+src/app/http/       Fastify app wiring, auth hook, request/response helpers, webhook, system and ops routes, console assets
 src/app/ui/         React agent console, bundled by Vite into dist/app/ui and served under /ops
 src/events/         SQLite schema + migrations, event/conversation store, state machine, trace/metrics persistence
 src/gitlab/         webhook verification/parsing, command parsing, REST client
@@ -78,7 +79,7 @@ test/fixtures/      config fixtures used by CI docker smoke
 
 - ESM with `module`/`moduleResolution` `NodeNext`: relative imports carry a `.js` extension even from `.ts` files (`./model.js`). Use `import type` / `type` modifiers for type-only imports.
 - TypeScript is `strict`. Avoid `any`; validate external data (YAML, HTTP bodies, GitLab payloads, model output, SQLite rows) at the boundary and narrow with type guards.
-- Prefer Node built-ins (`node:fs/promises`, `node:crypto`, `node:sqlite`, `node:http`, `node:timers/promises`) and standard `fetch`. New runtime dependencies are an architecture decision: justify them in `design.md` and keep the dependency set minimal.
+- Prefer Node built-ins (`node:fs/promises`, `node:crypto`, `node:sqlite`, `node:timers/promises`) and standard `fetch`. The HTTP layer uses Fastify (`src/app/http`: `server.ts` lifecycle plus `auth.ts`, `routes.ts`, `respond.ts` and per-area route modules), justified in `design.md`; it keeps every request body as a raw Buffer so the webhook can verify and decode original bytes, `/api/ops` validates `content-type` and parses JSON itself, and SSE hijacks the raw response. Preserve the existing status codes, bodies, headers, auth realm and log keys when changing routes. New runtime dependencies are an architecture decision: justify them in `design.md` and keep the dependency set minimal.
 - Source comments and JSDoc are written in Chinese; keep that convention and keep them true. Identifiers and user-visible log keys are English.
 - User-visible text follows the configured `agent.response_language` (`en` or `zh-CN`). Docs are bilingual: `docs/<page>.md` plus `docs/zh-CN/<page>.md`, and `README.md` plus `README.zh_CN.md`, with navigation in `docs/.vitepress/config.mts`. Update both languages when behavior, config, or operations change.
 - No secrets in code, configs, fixtures, logs, prompts or trace payloads. Trace data is redacted and size-capped in `src/events/store.ts`; do not bypass that path.
