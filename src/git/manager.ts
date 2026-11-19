@@ -1247,7 +1247,7 @@ export class GitManager {
       repository.protocol !== this.gitlabUrl.protocol ||
       repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
     ) {
-      throw new Error("repository URL must use the configured GitLab scheme and host");
+      throw new Error("repository URL must use the configured GitLab scheme and host, expected " + this.gitlabUrl.host.toLowerCase() + ", got " + repository.host.toLowerCase());
     }
     if (
       !repository.pathname ||
