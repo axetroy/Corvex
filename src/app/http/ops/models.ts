@@ -85,7 +85,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model provider not found" });
       return;
     }
-    ctx.settings.applyActiveModelAndProbe();
+    ctx.settings.applyActiveModel();
     sendJson(reply, 200, redactProvider(updated));
   });
 
@@ -99,7 +99,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model provider not found" });
       return;
     }
-    ctx.settings.applyActiveModelAndProbe();
+    ctx.settings.applyActiveModel();
     sendJson(reply, 200, { deleted: true });
   });
 
@@ -117,7 +117,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model provider not found" });
       return;
     }
-    if (model.active) ctx.settings.applyActiveModelAndProbe();
+    if (model.active) ctx.settings.applyActiveModel();
     sendJson(reply, 201, model);
   });
 
@@ -137,7 +137,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model not found" });
       return;
     }
-    if (updated.active) ctx.settings.applyActiveModelAndProbe();
+    if (updated.active) ctx.settings.applyActiveModel();
     sendJson(reply, 200, updated);
   });
 
@@ -153,7 +153,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model not found" });
       return;
     }
-    ctx.settings.applyActiveModelAndProbe();
+    ctx.settings.applyActiveModel();
     sendJson(reply, 200, { deleted: true });
   });
 
@@ -170,7 +170,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
       sendJson(reply, 404, { error: "model not found" });
       return;
     }
-    ctx.settings.applyActiveModelAndProbe();
+    ctx.settings.applyActiveModel();
     sendJson(reply, 200, model);
   });
 
