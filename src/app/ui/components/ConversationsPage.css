@@ -417,13 +417,11 @@
   font-weight: 500;
 }
 
-/* 欢迎页的仓库/分支/模式与模型选择器同处底栏，统一小号无边框样式。 */
-.conversation-composer-footer {
+/* 欢迎页中央的仓库/分支/模式行；保持小号样式，与底栏模型选择器区分开。 */
+.conversation-welcome-setup {
   display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
+  justify-content: center;
+  margin: 0 auto 14px;
 }
 
 .conversation-composer-setup {
@@ -431,11 +429,13 @@
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 6px;
 }
 
-/* 底栏四个选择器统一成同一套小号样式。五级选择器压过 AntD 运行时样式与 remote-picker 的大号卡片样式。 */
-.conversations-layout .conversation-chat .conversation-composer .conversation-composer-footer .ant-select {
+/* 欢迎页选择器与底栏模型选择器统一成同一套小号样式。 */
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .ant-select,
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-model-select.ant-select {
   display: inline-flex;
   box-sizing: border-box;
   height: 22px;

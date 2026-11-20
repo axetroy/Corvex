@@ -775,6 +775,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             title={copy.conversationWelcomeTitle}
                             description={copy.conversationWelcomeDescription}
                           />
+                          <div className="conversation-welcome-setup">{composerSetup}</div>
                           <Prompts
                             className="conversation-prompts"
                             title={copy.conversationSuggestions}
@@ -803,12 +804,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       autoSize={{ minRows: 3, maxRows: 10 }}
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}
-                      footer={
-                        <div className="conversation-composer-footer">
-                          {composerSetup}
-                          <ComposerModelPicker copy={copy} disabled={busy} />
-                        </div>
-                      }
+                      footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (
                         <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
                       )}
