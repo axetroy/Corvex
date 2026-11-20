@@ -416,7 +416,7 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
                 ))}
               </div>
             </div>
-            {(["llm", "tool"] as const).map((kind) => (
+            {(["llm", "tool", "context"] as const).map((kind) => (
               <div className={`trace-overview-track trace-overview-track-${kind}`} key={kind}>
                 <span className="trace-overview-track-label">{copy.traceKinds[kind]}</span>
                 <div

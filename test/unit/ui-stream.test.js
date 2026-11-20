@@ -49,6 +49,15 @@ describe("operations UI conversation stream", () => {
     ]);
   });
 
+  it("parses context change notices", () => {
+    const parsed = parseSseFrames(
+      'data: {"type":"context","context":{"id":"ctx-1","text":"上下文已压缩：42000 → 12000 token"}}\n\n',
+    );
+    expect(parsed.events).toEqual([
+      { type: "context", context: { id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" } },
+    ]);
+  });
+
   it("accepts CRLF framing and keeps the done error message", () => {
     const parsed = parseSseFrames('data: {"type":"done","status":"failed","error":"boom"}\r\n\r\n');
     expect(parsed.events).toEqual([{ type: "done", status: "failed", error: "boom" }]);

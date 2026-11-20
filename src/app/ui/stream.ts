@@ -1,5 +1,5 @@
 import { isConversationTurnStatus } from "../../events/model.js";
-import type { ConversationStreamTool, ConversationTurnStatus } from "../../events/model.js";
+import type { ConversationStreamContext, ConversationStreamTool, ConversationTurnStatus } from "../../events/model.js";
 import type { ConversationStreamEvent } from "./types.js";
 
 /**
@@ -40,6 +40,11 @@ export function parseSseFrames(buffer: string): {
       typeof event.reset === "boolean"
     ) {
       events.push({ type: event.type, reset: event.reset, text: event.text });
+    } else if (event.type === "context" && event.context && typeof event.context === "object" && !Array.isArray(event.context)) {
+      const context = event.context as Record<string, unknown>;
+      if (typeof context.id === "string" && typeof context.text === "string") {
+        events.push({ type: "context", context: context as unknown as ConversationStreamContext });
+      }
     } else if (event.type === "tool" && event.tool && typeof event.tool === "object" && !Array.isArray(event.tool)) {
       const tool = event.tool as Record<string, unknown>;
       if (
@@ -76,6 +81,8 @@ export interface ConversationStreamHandlers {
   onThinking?: (text: string, reset: boolean) => void;
   /** 工具开始/结束事件，按发生顺序与思考事件交替出现。 */
   onTool?: (tool: ConversationStreamTool) => void;
+  /** 上下文压缩/裁剪通知；同一 id 的后续事件替换前面的提示。 */
+  onContext?: (context: ConversationStreamContext) => void;
   /** 轮次结束；服务端保证只发送一次。 */
   onDone: (status: ConversationTurnStatus, error?: string) => void;
 }
@@ -119,6 +126,8 @@ export async function streamConversationTurn(
           handlers.onThinking?.(event.text, event.reset);
         } else if (event.type === "tool") {
           handlers.onTool?.(event.tool);
+        } else if (event.type === "context") {
+          handlers.onContext?.(event.context);
         } else {
           handlers.onDone(event.status, event.error);
           await reader.cancel().catch(() => undefined);

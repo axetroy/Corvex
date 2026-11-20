@@ -256,6 +256,9 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
     if ((entry.kind === "thinking" || entry.kind === "text") && typeof entry.text === "string") {
       return [{ kind: entry.kind, text: entry.text }];
     }
+    if (entry.kind === "context" && typeof entry.id === "string" && typeof entry.text === "string") {
+      return [{ kind: "context", id: entry.id, text: entry.text }];
+    }
     if (
       entry.kind === "tool" && typeof entry.name === "string" &&
       (entry.status === "running" || entry.status === "succeeded" || entry.status === "failed")
@@ -356,7 +359,7 @@ function readModelCallMetric(row: Record<string, unknown>): ModelCallMetric {
 
 function readEventTrace(row: Record<string, unknown>): EventTraceEntry {
   const kind = stringColumn(row, "kind");
-  if (kind !== "tool" && kind !== "llm") throw new Error(`SQLite event trace kind "${kind}" is invalid`);
+  if (kind !== "tool" && kind !== "llm" && kind !== "context") throw new Error(`SQLite event trace kind "${kind}" is invalid`);
   const status = stringColumn(row, "status");
   if (status !== "running" && status !== "succeeded" && status !== "failed") {
     throw new Error(`SQLite event trace status "${status}" is invalid`);
@@ -661,7 +664,7 @@ export class EventStore {
     if (!Number.isSafeInteger(attempt) || attempt <= 0) {
       throw new Error("event trace requires a positive attempt number");
     }
-    if (kind !== "tool" && kind !== "llm") throw new Error(`unsupported event trace kind "${kind}"`);
+    if (kind !== "tool" && kind !== "llm" && kind !== "context") throw new Error(`unsupported event trace kind "${kind}"`);
     if (
       !name.trim() ||
       name.length > 128 ||

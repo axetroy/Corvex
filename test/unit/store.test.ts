@@ -78,6 +78,40 @@ describe("EventStore", () => {
     expect(store.listModelProviders()[0]?.models).toEqual([]);
   });
 
+  it("记录上下文变化轨迹并纳入对话过程快照", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    store = await EventStore.open(join(directory, "state.db"));
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Check context notices",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    const traceId = store.startEventTrace(
+      { kind: "conversation", turnId: claimed.turnId },
+      claimed.attempt,
+      "context",
+      "context.compact",
+      "",
+      null,
+      { input: JSON.stringify({ reason: "threshold", tokensBefore: 42_000 }) },
+    );
+    store.finishEventTrace(traceId, "succeeded", 0);
+    store.saveConversationTurnProcess(claimed.turnId, [
+      { kind: "context", id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" },
+    ]);
+    store.finishConversationTurn(claimed.turnId, "done");
+
+    expect(store.getConversationTurn(created.conversationId, claimed.turnId)?.trajectory)
+      .toEqual([expect.objectContaining({ kind: "context", name: "context.compact", status: "succeeded" })]);
+    expect(store.getConversation(created.conversationId)?.messages[1]?.process)
+      .toEqual([{ kind: "context", id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" }]);
+  });
+
   it("自动下调模型上下文窗口时只接受更小值并写审计", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await EventStore.open(join(directory, "state.db"));

@@ -10,7 +10,7 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamTool, ConversationSummary } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
 import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
@@ -264,6 +264,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       }
       schedule();
     };
+    const onContext = (notice: ConversationStreamContext) => {
+      const key = `context-${notice.id}`;
+      const existing = segments.find((segment) => segment.kind === "context" && segment.key === key);
+      if (existing?.kind === "context") existing.text = notice.text;
+      else segments.push({ kind: "context", key, text: notice.text });
+      schedule();
+    };
     const onTool = (tool: ConversationStreamTool) => {
       const call = { name: tool.name, input: tool.input, status: tool.status, durationMs: tool.durationMs };
       const existing = segments.find((segment) => segment.kind === "tool" && segment.id === tool.id);
@@ -285,6 +292,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         },
         onThinking,
         onTool,
+        onContext,
         onDone: () => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;

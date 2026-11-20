@@ -951,6 +951,10 @@ details summary {
   background-color: #fbfcfa;
 }
 
+.trace-overview-plot-context {
+  background-color: #f2f8fd;
+}
+
 .trace-time-bar {
   position: absolute;
   top: 8px;
@@ -969,6 +973,16 @@ details summary {
   top: 9px;
   height: 10px;
   background: #df8c37;
+}
+
+.trace-time-bar-context {
+  top: 9px;
+  height: 10px;
+  background: #2f7fe0;
+}
+
+.trace-time-bar-context:hover {
+  background: #1d63b0;
 }
 
 .trace-time-bar-failed {

@@ -15,6 +15,7 @@ import type { ConversationToolCall } from "../types.js";
 export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "text"; key: string; text: string }
+  | { kind: "context"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
 
 /** 工具描述很长时同时保留开头与结尾，中间用省略号；完整文本留在 title。 */
@@ -99,6 +100,11 @@ export const ConversationTimeline = memo(function ConversationTimeline({
           </div>
         ) : segment.kind === "text" ? (
           <div className="conversation-process-text" key={segment.key}>{segment.text}</div>
+        ) : segment.kind === "context" ? (
+          <div className="conversation-context-notice" key={segment.key} role="status">
+            <span className="conversation-context-notice-icon" aria-hidden="true">↻</span>
+            <span>{segment.text}</span>
+          </div>
         ) : (
           <details className="conversation-tool-call" key={segment.key}>
             <summary className="conversation-tool-call-summary">

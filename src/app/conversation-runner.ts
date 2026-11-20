@@ -344,6 +344,8 @@ export class ConversationRunner {
       } else if (event.type === "text") {
         if (event.reset) entries.push({ kind: "text", text: event.text });
         else updateText("text", event.text);
+      } else if (event.type === "context") {
+        entries.push({ kind: "context", id: event.context.id, text: event.context.text });
       } else if (event.type === "tool") {
         const { tool } = event;
         const existing = entries.find((entry) => entry.kind === "tool" && entry.id === tool.id);
@@ -475,6 +477,7 @@ export class ConversationRunner {
               onThinkingDelta: (update) =>
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
+              onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
             },
             workspace.path,
             signal,

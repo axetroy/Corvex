@@ -176,6 +176,7 @@ export interface ConversationToolCall {
 export type ConversationProcessEntry =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
+  | { kind: "context"; id: string; text: string }
   | { kind: "tool"; id?: string; name: string; input: string | null; status: EventTraceStatus; durationMs: number | null };
 
 export interface ConversationMessage {
@@ -228,10 +229,13 @@ export interface ConversationStreamTool {
   durationMs: number | null;
 }
 
+export type ConversationStreamContext = { id: string; text: string };
+
 export type ConversationStreamEvent =
   | { type: "text"; reset: boolean; text: string }
   | { type: "thinking"; reset: boolean; text: string }
   | { type: "tool"; tool: ConversationStreamTool }
+  | { type: "context"; context: ConversationStreamContext }
   | { type: "done"; status: ConversationTurnStatus; error?: string };
 
 /**
@@ -450,7 +454,7 @@ export interface StatusTransition<S extends string = EventStatus> {
 export type EventStatusTransition = StatusTransition<EventStatus>;
 export type ConversationTurnTransition = StatusTransition<ConversationTurnStatus>;
 
-export type EventTraceKind = "tool" | "llm";
+export type EventTraceKind = "tool" | "llm" | "context";
 export type EventTraceStatus = "running" | "succeeded" | "failed";
 
 export interface EventTraceEntry {

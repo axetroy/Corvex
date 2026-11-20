@@ -16,12 +16,13 @@ import type { CorvexConfig } from "../config/config.js";
 import { applyActiveModel } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
-import type { ConversationMode, ConversationStreamTool, EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
+import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, EventTraceEntry, EventTraceKind, ModelTaskType, TraceScope } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
+import { contextNoticeText } from "./context-notice.js";
 import {
   GitLabWriteError,
   type GitLabWriteReceipt,
@@ -121,6 +122,11 @@ export interface ModelRequest {
    * 参数沿用轨迹的脱敏与限长结果；与正文、思考一样只用于展示，不影响执行。
    */
   onToolDelta?: (tool: ConversationStreamTool) => void;
+  /**
+   * 上下文压缩/裁剪通知，用于对话控制台把变化以消息形式展示。
+   * 同一 id 的后续事件替换前面的提示（例如「正在压缩」→「已压缩」）。
+   */
+  onContextDelta?: (context: ConversationStreamContext) => void;
 }
 
 export function getAgentToolAccess(
@@ -281,6 +287,20 @@ export class PiAgent {
         // 自动调优：按服务端实际可用的上下文下调模型设置，再重试。只降不升，并写审计。
         const nextWindow = nextOverflowRetryContextWindow(this.config.agent.contextWindow);
         const active = this.config.agent.autoContextTune === false ? undefined : this.store?.getActiveModel();
+        try {
+          request.onContextDelta?.({ id: `context-trim-${Date.now()}`, text: contextNoticeText(this.config.agent.responseLanguage, "trim") });
+        } catch (error) {
+          console.warn("context stream callback failed", { error: errorMessage(error) });
+        }
+        if (trace) {
+          const trimTrace = this.startTrace(trace, "context", "context.trim", "", null, {
+            input: JSON.stringify({ reason: "overflow", nextWindow }),
+          });
+          if (trimTrace !== undefined) {
+            this.finishTrace(trimTrace, "succeeded", 0, undefined, undefined, undefined,
+              JSON.stringify({ nextWindow, droppedHistory: (request.history ?? []).length }));
+          }
+        }
         if (active && nextWindow < active.model.contextWindow) {
           const reduced = this.store!.reduceProviderModelContextWindow(
             active.model,
@@ -631,7 +651,64 @@ export class PiAgent {
         console.warn("tool stream callback failed", { error: errorMessage(error) });
       }
     };
+    const emitContextStream = (context: ConversationStreamContext) => {
+      if (!request.onContextDelta) return;
+      try {
+        request.onContextDelta(context);
+      } catch (error) {
+        console.warn("context stream callback failed", { error: errorMessage(error) });
+      }
+    };
+    let contextEventCount = 0;
+    let activeCompaction: { streamId: string; traceId?: number; reason: string; startedAt: number } | undefined;
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "compaction_start") {
+        const streamId = `context-${++contextEventCount}`;
+        emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
+        activeCompaction = {
+          streamId,
+          reason: event.reason,
+          startedAt: performance.now(),
+          traceId: trace
+            ? this.startTrace(trace, "context", "context.compact", "", null, {
+                input: JSON.stringify({ phase: "start", reason: event.reason, id: streamId }),
+              })
+            : undefined,
+        };
+        return;
+      }
+      if (event.type === "compaction_end") {
+        const active = activeCompaction;
+        activeCompaction = undefined;
+        const result = event.result;
+        const language = this.config.agent.responseLanguage;
+        const failed = event.aborted || !result;
+        emitContextStream({
+          id: active?.streamId ?? `context-${++contextEventCount}`,
+          text: failed
+            ? contextNoticeText(language, "failed")
+            : contextNoticeText(language, "end", result.tokensBefore, result.estimatedTokensAfter),
+        });
+        const details = JSON.stringify({
+          phase: "end",
+          reason: active?.reason ?? event.reason,
+          aborted: event.aborted,
+          willRetry: event.willRetry,
+          tokensBefore: result?.tokensBefore ?? null,
+          tokensAfter: result?.estimatedTokensAfter ?? null,
+          summaryLength: result?.summary?.length ?? 0,
+          ...(event.errorMessage ? { error: event.errorMessage } : {}),
+        });
+        const duration = active ? performance.now() - active.startedAt : 0;
+        if (active?.traceId !== undefined) {
+          this.finishTrace(active.traceId, failed ? "failed" : "succeeded", duration, undefined, undefined,
+            failed ? event.errorMessage ?? "context compaction aborted" : undefined, details);
+        } else if (trace) {
+          const traceId = this.startTrace(trace, "context", "context.compact", "", null, { input: details });
+          if (traceId !== undefined) this.finishTrace(traceId, failed ? "failed" : "succeeded", duration);
+        }
+        return;
+      }
       if (event.type === "message_start" && event.message.role === "assistant") {
         streamedAssistantText = "";
         streamedAssistantThinking = "";
@@ -886,7 +963,7 @@ export class PiAgent {
 
   private startTrace(
     trace: EventTraceContext,
-    kind: "tool" | "llm",
+    kind: EventTraceKind,
     name: string,
     model = "",
     rawContent: string | null = null,
