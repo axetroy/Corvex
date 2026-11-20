@@ -329,6 +329,8 @@ export class PiAgent {
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
+    // 内部 Provider ID 只用于注册 SDK Provider；展示给用户的名称来自控制台的供应商设置。
+    const providerLabel = this.config.agent.providerName || providerId;
     const completionsApi = openAICompletionsApi();
     const requestTimeout = this.config.agent.requestTimeout;
     let activeModelCall: {
@@ -671,7 +673,7 @@ export class PiAgent {
           trace,
           "llm",
           trace.taskType,
-          `${event.message.provider}/${event.message.responseModel ?? event.message.model}`,
+          `${providerLabel}/${event.message.responseModel ?? event.message.model}`,
           modelCallCount === 0 ? JSON.stringify(request) : null,
           {
             round,
@@ -783,7 +785,7 @@ export class PiAgent {
       const usage = session.getSessionStats().tokens;
       return {
         content,
-        model: `${model.provider}/${model.id}`,
+        model: `${providerLabel}/${model.id}`,
         usage: {
           inputTokens: usage.input,
           outputTokens: usage.output,

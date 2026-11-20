@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyActiveModel,
   applyRuntimeSettingRows,
   applyRuntimeSettings,
   copyRuntimeSettings,
@@ -165,6 +166,41 @@ describe("applyRuntimeSettings", () => {
     const before = config.agent.model;
     applyRuntimeSettings(config, { nope: "1" });
     expect(config.agent.model).toBe(before);
+  });
+});
+
+describe("applyActiveModel", () => {
+  it("把选中模型的供应商展示名与连接参数一并写入运行时配置", () => {
+    const config = { agent: agentConfig() } as CorvexConfig;
+    const now = "2026-01-01T00:00:00.000Z";
+    applyActiveModel(config, {
+      provider: {
+        id: "provider-1",
+        name: "Acme Models",
+        baseUrl: "https://acme.example/v1",
+        apiKey: "secret",
+        createdAt: now,
+        updatedAt: now,
+      },
+      model: {
+        id: "model-1",
+        providerId: "provider-1",
+        name: "gpt-4.1",
+        contextWindow: 65_536,
+        maxOutputTokens: 2_048,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    expect(config.agent).toMatchObject({
+      model: "gpt-4.1",
+      providerName: "Acme Models",
+      baseUrl: "https://acme.example/v1",
+      apiKey: "secret",
+      contextWindow: 65_536,
+      maxOutputTokens: 2_048,
+    });
   });
 });
 

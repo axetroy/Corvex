@@ -38,6 +38,8 @@ export interface CorvexConfig {
     enabled: boolean;
     baseUrl: string;
     model: string;
+    /** 当前模型的供应商展示名；来自控制台模型目录，仅用于展示，不参与连接。 */
+    providerName?: string;
     apiKey: string;
     requestTimeout: number;
     sessionTimeout: number;

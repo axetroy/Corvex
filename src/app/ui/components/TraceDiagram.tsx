@@ -2,6 +2,7 @@ import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState }
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import { translate } from "../i18n.js";
+import { displayModelName } from "../modelLabel.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import {
   anchoredScrollLeft,
@@ -83,7 +84,7 @@ function InspectorContent({
       <dl className="trace-inspector-grid">
         <DetailItem
           label={copy.traceKinds[entry.kind]}
-          value={entry.kind === "llm" ? entry.model || entry.name : entry.name}
+          value={entry.kind === "llm" ? displayModelName(entry.model) || entry.name : entry.name}
         />
         <DetailItem label={copy.traceStatus} value={translate(copy.traceStatuses, entry.status)} />
         <DetailItem label={copy.traceAttempt} value={entry.attempt} />
@@ -445,7 +446,7 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
                     return (segment?.positions ?? [])
                       .filter((position) => position.entry.kind === kind)
                       .map(({ entry, startRatio, widthRatio }) => {
-                        const title = entry.kind === "llm" ? entry.model || entry.name : entry.name;
+                        const title = entry.kind === "llm" ? displayModelName(entry.model) || entry.name : entry.name;
                         return (
                           <button
                             key={entry.id}
@@ -516,7 +517,7 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
                   >
                     <span className="trace-event-kind">{copy.traceKinds[entry.kind]}</span>
                     <strong className="trace-event-title">
-                      {entry.kind === "llm" ? entry.model || copy.traceAgent : entry.name}
+                      {entry.kind === "llm" ? displayModelName(entry.model) || copy.traceAgent : entry.name}
                     </strong>
                     <span className="trace-event-round">
                       {copy.traceAttemptRoundTemplate

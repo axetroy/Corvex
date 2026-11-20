@@ -17,6 +17,7 @@ import { ConversationTimeline, type ConversationTimelineSegment } from "./Conver
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { ComposerModelPicker } from "./ComposerModelPicker.js";
 import { BranchPicker } from "./BranchPicker.js";
+import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
 import type { ProjectOption } from "../projectPicker.js";
@@ -85,7 +86,7 @@ function MessageContent({
       {settled ? (
         <div className="conversation-message-actions">
           {message.model ? (
-            <Typography.Text type="secondary" className="conversation-message-model">{message.model}</Typography.Text>
+            <Typography.Text type="secondary" className="conversation-message-model">{displayModelName(message.model)}</Typography.Text>
           ) : null}
           <Actions
             variant="borderless"

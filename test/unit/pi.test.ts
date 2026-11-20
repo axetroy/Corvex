@@ -181,6 +181,7 @@ describe("PiAgent", () => {
         enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
+        providerName: "Acme Models",
         apiKey: "test-key",
         requestTimeout: 2000,
         sessionTimeout: 10000,
@@ -262,7 +263,7 @@ describe("PiAgent", () => {
     expect(finishedTools.map((tool) => tool.status).sort()).toEqual(["failed", "succeeded"]);
     expect(toolUpdates.some((tool) => tool.input?.includes("README.md"))).toBe(true);
     expect(finishedTools.every((tool) => typeof tool.durationMs === "number")).toBe(true);
-    expect(result.model).toContain("test-model");
+    expect(result.model).toBe("Acme Models/test-model");
     expect(requestBodies[0]).toContain('"model":"test-model"');
     expect(requestBodies[0]).toContain('"stream":true');
     expect(requestBodies[0]).toContain('"name":"read_file"');
@@ -307,7 +308,7 @@ describe("PiAgent", () => {
     expect(llmTraces?.[1]?.input).not.toContain("Say ok.");
     expect(llmTraces).toMatchObject([
       {
-        model: expect.stringContaining("test-model"),
+        model: "Acme Models/test-model",
         status: "succeeded",
         inputTokens: 8,
         outputTokens: 3,
@@ -316,7 +317,7 @@ describe("PiAgent", () => {
         rawContent: JSON.stringify({ taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
       },
       {
-        model: expect.stringContaining("test-model"),
+        model: "Acme Models/test-model",
         status: "succeeded",
         inputTokens: 14,
         outputTokens: 6,
