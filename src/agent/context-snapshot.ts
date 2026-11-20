@@ -89,9 +89,15 @@ export function buildFallbackSummary(snapshot: ContextSnapshot): string {
   ].join("\n\n");
 }
 
+export interface ContextTriggerDetail {
+  reason?: string;
+  tokens?: number;
+  reserveTokens?: number;
+}
+
 export interface ContextObserveCallbacks {
   /** 压缩刚开始（SDK 尚未开始摘要）时通知界面。 */
-  onBeforeCompact?: (snapshot: ContextSnapshot) => void;
+  onBeforeCompact?: (snapshot: ContextSnapshot, trigger: ContextTriggerDetail) => void;
   /** 摘要失败时通知界面。 */
   onFailed?: (error?: string) => void;
 }
@@ -111,7 +117,12 @@ export function createContextObserveExtension(
         event.preparation.tokensBefore,
       );
       observation.before = snapshot;
-      callbacks.onBeforeCompact?.(snapshot);
+      const settings = event.preparation.settings as { reserveTokens?: number } | undefined;
+      callbacks.onBeforeCompact?.(snapshot, {
+        reason: event.reason,
+        tokens: snapshot.tokens ?? event.preparation.tokensBefore,
+        reserveTokens: settings?.reserveTokens,
+      });
       observation.failures ??= 0;
       if (observation.failures < 1) return;
       const summary = buildFallbackSummary(snapshot);

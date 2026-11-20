@@ -56,6 +56,7 @@ describe("context observe extension", () => {
   const preparation = {
     firstKeptEntryId: "entry-1",
     tokensBefore: 99,
+    settings: { reserveTokens: 20 },
     messagesToSummarize: [message("user", "before compaction")],
   };
 
@@ -68,6 +69,10 @@ describe("context observe extension", () => {
     const result = handlers.get("session_before_compact")?.({ preparation, reason: "threshold" });
     expect(result).toBeUndefined();
     expect(onBeforeCompact).toHaveBeenCalledOnce();
+    expect(onBeforeCompact).toHaveBeenCalledWith(
+      expect.objectContaining({ tokens: 99 }),
+      { reason: "threshold", tokens: 99, reserveTokens: 20 },
+    );
     expect(observation.before).toMatchObject({ tokens: 99 });
     expect(observation.before?.messages).toEqual([{ role: "user", text: "before compaction" }]);
   });

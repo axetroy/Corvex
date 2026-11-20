@@ -17,3 +17,21 @@ describe("context change notices", () => {
     expect(contextNoticeText("en", "trim")).toBe("History was too long; retried with trimmed context.");
   });
 });
+
+describe("context trigger notices", () => {
+  const info = { reason: "threshold", tokens: 17_885, window: 32_768, threshold: 12_288 };
+
+  it("explains a threshold-triggered compaction in Chinese", () => {
+    expect(contextNoticeText("zh-CN", "start", 17_885, undefined, info))
+      .toBe("上下文已达 17885/32768 token（55%），达到压缩阈值 12288，正在压缩…");
+  });
+
+  it("explains a threshold-triggered compaction in English", () => {
+    expect(contextNoticeText("en", "start", 17_885, undefined, info))
+      .toBe("Context is at 17885/32768 tokens (55%), reached the compaction threshold 12288; compacting...");
+  });
+
+  it("uses a shorter message when the trigger details are unknown", () => {
+    expect(contextNoticeText("en", "start", 17_885)).toBe("Compacting context...");
+  });
+});

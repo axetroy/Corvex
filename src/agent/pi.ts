@@ -477,6 +477,12 @@ export class PiAgent {
     };
     let contextEventCount = 0;
     let contextEventId = "";
+    let activeCompactionTrigger: {
+      reason?: string;
+      tokens?: number;
+      window: number;
+      threshold: number;
+    } | undefined;
     const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -597,11 +603,19 @@ export class PiAgent {
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
         createContextObserveExtension(contextObservation, {
-          onBeforeCompact: () => {
+          onBeforeCompact: (_snapshot, trigger) => {
             if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
+            const window = this.config.agent.contextWindow;
+            const info = {
+              reason: trigger.reason,
+              tokens: trigger.tokens,
+              window,
+              threshold: window - compactionReserveTokens,
+            };
+            activeCompactionTrigger = info;
             emitContextStream({
               id: contextEventId,
-              text: contextNoticeText(this.config.agent.responseLanguage, "start"),
+              text: contextNoticeText(this.config.agent.responseLanguage, "start", info.tokens, undefined, info),
             });
           },
           onFailed: () => {
@@ -692,7 +706,9 @@ export class PiAgent {
       if (event.type === "compaction_start") {
         const streamId = contextEventId || `context-${++contextEventCount}`;
         contextEventId = streamId;
-        emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
+        if (!activeCompactionTrigger) {
+          emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
+        }
         activeCompaction = {
           streamId,
           reason: event.reason,
@@ -704,6 +720,7 @@ export class PiAgent {
                   phase: "start",
                   reason: event.reason,
                   id: streamId,
+                  trigger: activeCompactionTrigger ?? null,
                   before: contextObservation.before ?? null,
                 }),
               })
@@ -715,6 +732,7 @@ export class PiAgent {
         const active = activeCompaction;
         activeCompaction = undefined;
         contextEventId = "";
+        activeCompactionTrigger = undefined;
         const before = active?.before ?? contextObservation.before ?? null;
         contextObservation.before = undefined;
         const result = event.result;
@@ -731,6 +749,7 @@ export class PiAgent {
           reason: active?.reason ?? event.reason,
           aborted: event.aborted,
           willRetry: event.willRetry,
+          trigger: active?.reason ? { reason: active.reason } : null,
           before,
           after: result
             ? {
