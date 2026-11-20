@@ -5,11 +5,13 @@ import { registerSetupRoutes } from "./setup.js";
 import { registerOperationsUi } from "./operations-ui.js";
 import { registerObservabilityRoutes } from "./ops/observability.js";
 import { registerConversationRoutes } from "./ops/conversations.js";
+import { registerAdminRoutes } from "./ops/admin.js";
 import { registerModelRoutes } from "./ops/models.js";
 import { registerProjectRoutes } from "./ops/projects.js";
 import { registerSettingsRoutes } from "./ops/settings.js";
 import { registerStorageRoutes } from "./ops/storage.js";
 import { sendJson, sendText } from "./respond.js";
+import { requireAdmin } from "../auth/context.js";
 import { registerSystemRoutes } from "./system.js";
 import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
 
@@ -22,6 +24,17 @@ import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
  * `setNotFoundHandler` 统一返回文本 404。
  */
 export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
+  // 设置、模型目录与存储维护属于管理员能力；其它运维接口对所有登录用户开放。
+  app.addHook("preHandler", async (request, reply) => {
+    const path = new URL(request.raw.url ?? "/", "http://localhost").pathname;
+    if (
+      path.startsWith("/api/ops/settings") ||
+      path.startsWith("/api/ops/model-providers") ||
+      path.startsWith("/api/ops/storage/")
+    ) {
+      if (!requireAdmin(request, reply)) return reply;
+    }
+  });
   registerSystemRoutes(app, ctx.store);
   registerAuthRoutes(app, {
     oauth: ctx.oauth,
@@ -37,6 +50,7 @@ export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerModelRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
+  registerAdminRoutes(app, ctx);
   registerObservabilityRoutes(app, ctx);
 
   const otherMethods = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;

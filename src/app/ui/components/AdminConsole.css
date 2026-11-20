@@ -1,0 +1,97 @@
+.admin-console {
+  display: flex;
+  min-height: 100vh;
+  background: #f7f9fb;
+  color: #17212b;
+}
+
+.admin-console-sidebar {
+  display: flex;
+  width: 200px;
+  flex: 0 0 200px;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 14px;
+  border-right: 1px solid #e1e6eb;
+  background: #fff;
+}
+
+.admin-console-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.admin-console-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #4f7dff, #9a5cff);
+  color: #fff;
+  font-size: 12px;
+}
+
+.admin-console-label {
+  color: #71808e;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-console-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-console-nav a {
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: #5b6b79;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.admin-console-nav a:hover,
+.admin-console-nav a.active {
+  background: #f0f4f8;
+  color: #1769aa;
+  font-weight: 600;
+}
+
+.admin-console-nav .admin-console-back {
+  margin-top: 12px;
+  border-top: 1px solid #e1e6eb;
+  padding-top: 12px;
+}
+
+.admin-console-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 24px max(24px, calc((100% - 1100px) / 2));
+  overflow: auto;
+}
+
+.admin-console-updated {
+  position: fixed;
+  right: 16px;
+  bottom: 12px;
+  color: #71808e;
+  font-size: 11px;
+}
+
+.admin-console-loading,
+.admin-console-denied {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  color: #5b6b79;
+}
+
+@media (max-width: 800px) {
+  .admin-console-sidebar { width: 140px; flex-basis: 140px; }
+}

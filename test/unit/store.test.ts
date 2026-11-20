@@ -179,6 +179,23 @@ describe("EventStore", () => {
     expect(store.readUserSession(session)?.userId).toBe(user.id);
     store.deleteUserSession(session);
     expect(store.readUserSession(session)).toBeUndefined();
+    expect(user.isAdmin).toBe(true);
+
+    const second = store.upsertUser({
+      gitlabUserId: 43,
+      username: "viewer",
+      name: "Viewer",
+      avatarUrl: "",
+      accessToken: "",
+      refreshToken: "",
+      expiresAt: 0,
+    }, cipher);
+    expect(second.isAdmin).toBe(false);
+    expect(store.listUsers()).toHaveLength(2);
+    expect(store.setUserAdmin(second.id, true)).toBe(true);
+    expect(store.readUser(second.id, cipher)?.isAdmin).toBe(true);
+    expect(store.setUserAdmin(user.id, false)).toBe(true);
+    expect(() => store.setUserAdmin(second.id, false)).toThrow("at least one administrator");
   });
 
   it("persists idempotent events and enforces leased status transitions", async () => {

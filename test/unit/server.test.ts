@@ -119,6 +119,18 @@ describe("CorvexServer", () => {
     const gitlabPort = await listen(fakeGitLab);
     const store = await EventStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
+    const nonAdminCipher = createTokenCipher(store.getOrCreateSessionSecret());
+    const nonAdmin = store.upsertUser({
+      gitlabUserId: 99,
+      username: "viewer",
+      name: "Viewer",
+      avatarUrl: "",
+      accessToken: "viewer-token",
+      refreshToken: "",
+      expiresAt: Date.now() + 3_600_000,
+    }, nonAdminCipher);
+    const viewerSession = store.createUserSession(nonAdmin.id, Date.now() + 3_600_000);
+    const viewerHeaders = { cookie: `corvex_session=${viewerSession}` };
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "", password: "" },
@@ -178,6 +190,9 @@ describe("CorvexServer", () => {
       const landing = await fetch(`${base}/`);
       expect(landing.status).toBe(200);
       expect(await landing.text()).toContain("Corvex");
+      expect((await fetch(`${base}/api/ops/admin/users`, { headers: viewerHeaders })).status).toBe(403);
+      expect((await fetch(`${base}/api/ops/settings`, { headers: viewerHeaders })).status).toBe(403);
+      expect((await fetch(`${base}/api/ops/admin/users`, { headers: authHeaders })).status).toBe(200);
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);

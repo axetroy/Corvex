@@ -77,6 +77,13 @@ export function eventQueueQuery(queue: EventQueue): string {
   return query ? `?${query}` : "";
 }
 
+/** 前端路由跳转：直接改 hash，由 hashchange 驱动 React 重渲染。 */
+export function navigateTo(route: string): void {
+  const target = route.startsWith("#") ? route : `#${route}`;
+  if (window.location.hash === target) return;
+  window.location.hash = target;
+}
+
 /** 事件列表的 hash，导航与筛选更新共用。 */
 export function eventsHash(queue: EventQueue): string {
   return `#events${eventQueueQuery(queue)}`;

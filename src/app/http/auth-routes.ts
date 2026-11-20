@@ -81,6 +81,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AuthRoutesContext)
       username: user.username,
       name: user.name,
       avatarUrl: user.avatarUrl,
+      isAdmin: user.isAdmin,
     });
   });
 }

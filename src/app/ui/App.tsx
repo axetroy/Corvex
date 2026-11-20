@@ -5,6 +5,7 @@ import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
 import { LandingPage } from "./components/LandingPage.js";
+import { AdminConsole } from "./components/AdminConsole.js";
 import { SetupPage } from "./components/SetupPage.js";
 import {
   ConversationsIcon,
@@ -12,7 +13,6 @@ import {
   LanguageIcon,
   LogoutIcon,
   OverviewIcon,
-  SettingsIcon,
   SidebarCollapseIcon,
   SidebarExpandIcon,
 } from "./components/icons.js";
@@ -28,7 +28,6 @@ const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((mod
 const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
 const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
-const SettingsPage = lazy(() => import("./components/SettingsPage.js").then((module) => ({ default: module.SettingsPage })));
 
 /** localStorage 中保存 Agent 控制台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -100,6 +99,23 @@ export function App() {
   const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
   const route = useHashRoute();
   // 页面与筛选条件都来自 hash，刷新或分享链接后视图保持不变。
+  // 首次安装时把控制台重定向到 #/setup；服务端只让 API 返回 setupRequired。
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/ops")) return;
+    let active = true;
+    fetch("/api/setup/status")
+      .then((response) => response.json() as Promise<{ configured: boolean }>)
+      .then((status) => {
+        if (active && !status.configured && window.location.hash !== "#/setup") {
+          window.location.hash = "#/setup";
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const { page, params } = useMemo(() => parseHash(route), [route]);
   const queue = useMemo(
     () => eventQueueFromParams(page.kind === "events" || page.kind === "event" ? params : emptyParams),
@@ -107,12 +123,12 @@ export function App() {
   );
   const [updated, setUpdated] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [account, setAccount] = useState<{ username: string; name: string; avatarUrl: string }>();
+  const [account, setAccount] = useState<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>();
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let active = true;
-    fetchJson<{ username: string; name: string; avatarUrl: string }>("/api/auth/me", copy)
+    fetchJson<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>("/api/auth/me", copy)
       .then((user) => active && setAccount(user))
       .catch(() => active && setAccount(undefined));
     return () => {
@@ -132,7 +148,7 @@ export function App() {
 
   // 未知路由与非法事件 ID 统一回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "unknown") window.location.hash = "conversations";
+    if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") window.location.hash = "conversations";
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
@@ -178,7 +194,7 @@ export function App() {
     components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
   };
 
-  // 公开首页：与控制台共用 React bundle，但不需要登录。
+  // 公开首页是唯一的 pathname 路由；其余界面都在 /ops 下用 hash 路由。
   if (window.location.pathname === "/") {
     return (
       <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
@@ -187,8 +203,16 @@ export function App() {
     );
   }
 
-  // 首次安装：把 OAuth 配置写进本地数据库，不需要任何环境变量。
-  if (window.location.pathname === "/setup") {
+  // 管理页与安装向导都是 hash 路由，切换时不刷新页面。
+  if (route.startsWith("admin")) {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <AdminConsole copy={copy} locale={locale} route={route} />
+      </ConfigProvider>
+    );
+  }
+
+  if (route === "setup") {
     return (
       <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
         <SetupPage copy={copy} />
@@ -249,7 +273,7 @@ export function App() {
             className="sidebar-nav"
             mode="inline"
             inlineCollapsed={navigationCollapsed}
-            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : page.kind === "settings" ? "settings" : "conversations"]}
+            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
               window.location.hash = key === "events"
                 ? eventsHash(queue)
@@ -261,7 +285,6 @@ export function App() {
               { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
               { key: "events", icon: <EventsIcon />, label: copy.navEvents },
               { key: "overview", icon: <OverviewIcon />, label: copy.navOverview },
-              { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
           {account ? (
@@ -277,6 +300,11 @@ export function App() {
                 <span className="sidebar-account-name">{account.name || account.username}</span>
                 <span className="sidebar-account-username">@{account.username}</span>
               </span>
+              {account.isAdmin ? (
+                <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
+                  [admin]
+                </a>
+              ) : null}
               <button
                 type="button"
                 className="sidebar-logout"
@@ -333,14 +361,6 @@ export function App() {
                 onUpdated={handleUpdated}
                 onRefresh={refresh}
                 onConversationChange={updateConversationRoute}
-              />
-            ) : null}
-            {page.kind === "settings" ? (
-              <SettingsPage
-                copy={copy}
-                locale={locale}
-                onUpdated={handleUpdated}
-                onRefresh={refresh}
               />
             ) : null}
             </Suspense>

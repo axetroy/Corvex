@@ -103,7 +103,7 @@ export function registerOperationsUi(app: FastifyInstance): void {
 
   app.get("/ops", serveIndex);
   app.head("/ops", serveIndex);
-  // 公开首页复用同一份 React 构建产物。
+  // 公开首页复用同一份 React 构建产物；管理页走 /ops 的 hash 路由。
   app.get("/", serveIndex);
   app.head("/", serveIndex);
   app.get("/ops/", serveIndex);
@@ -111,6 +111,4 @@ export function registerOperationsUi(app: FastifyInstance): void {
   app.get("/ops/*", servePath);
   app.head("/ops/*", servePath);
   // 安装向导复用同一份控制台构建产物，由前端按 pathname 渲染。
-  app.get("/setup", serveIndex);
-  app.head("/setup", serveIndex);
 }

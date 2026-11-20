@@ -63,8 +63,8 @@ export function attachOperationsAuth(app: FastifyInstance, ctx: OperationsAuthCo
         sendJson(reply, 401, { error: "setup required", setupRequired: true });
         return reply;
       }
-      reply.code(302).header("location", "/setup").send();
-      return reply;
+      // 页面交给前端：控制台会按 hash 路由跳到 #/setup。
+      return;
     }
     if (user) return;
     if (pathname.startsWith("/api/ops/")) {

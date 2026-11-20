@@ -5,7 +5,7 @@ import {
   backup as sqliteBackup,
   DatabaseSync,
 } from "node:sqlite";
-import type { AuthUser, GitLabIdentity } from "../app/auth/model.js";
+import type { AuthUser, GitLabIdentity, ManagedUser } from "../app/auth/model.js";
 import type { TokenCipher } from "../tokens.js";
 import {
   defaultConversationMode,
@@ -1758,10 +1758,11 @@ export class EventStore {
           `UPDATE users SET username=?,name=?,avatar_url=?,access_token=?,refresh_token=?,token_expires_at=?,updated_at=? WHERE id=?`,
         ).run(identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, now, userId);
       } else {
+        const firstUser = (this.db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count === 0;
         this.db.prepare(
-          `INSERT INTO users(id,gitlab_user_id,username,name,avatar_url,access_token,refresh_token,token_expires_at,created_at,updated_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?)`,
-        ).run(userId, identity.gitlabUserId, identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, now, now);
+          `INSERT INTO users(id,gitlab_user_id,username,name,avatar_url,access_token,refresh_token,token_expires_at,is_admin,created_at,updated_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        ).run(userId, identity.gitlabUserId, identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, firstUser ? 1 : 0, now, now);
       }
       const saved = this.readUser(userId, cipher);
       if (!saved) throw new Error(`user "${userId}" disappeared after upsert`);
@@ -1782,7 +1783,36 @@ export class EventStore {
       accessToken: cipher.decrypt(String(row.access_token ?? "")),
       refreshToken: cipher.decrypt(String(row.refresh_token ?? "")),
       tokenExpiresAt: Number(row.token_expires_at ?? 0),
+      isAdmin: row.is_admin === 1 || row.is_admin === true,
     };
+  }
+
+  /** 列出全部登录用户，供管理员管理。 */
+  listUsers(): ManagedUser[] {
+    return (this.db.prepare("SELECT * FROM users ORDER BY created_at,id").all() as Record<string, unknown>[])
+      .map((row) => ({
+        id: String(row.id),
+        gitlabUserId: Number(row.gitlab_user_id),
+        username: String(row.username),
+        name: String(row.name ?? ""),
+        avatarUrl: String(row.avatar_url ?? ""),
+        isAdmin: row.is_admin === 1 || row.is_admin === true,
+      }));
+  }
+
+  /** 设置或取消管理员；不允许取消最后一个管理员，返回是否命中用户。 */
+  setUserAdmin(userId: string, admin: boolean): boolean {
+    const existing = this.db.prepare("SELECT is_admin FROM users WHERE id=?").get(userId) as
+      | { is_admin: number }
+      | undefined;
+    if (!existing) return false;
+    if (!admin && existing.is_admin === 1) {
+      const count = (this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE is_admin=1").get() as { count: number }).count;
+      if (count <= 1) throw new Error("at least one administrator is required");
+    }
+    this.db.prepare("UPDATE users SET is_admin=?,updated_at=? WHERE id=?")
+      .run(admin ? 1 : 0, new Date().toISOString(), userId);
+    return true;
   }
 
   /** 更新令牌（刷新后调用）；令牌字段存密文。 */
@@ -2856,7 +2886,7 @@ export class EventStore {
         id TEXT PRIMARY KEY, gitlab_user_id INTEGER NOT NULL UNIQUE,
         username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
         access_token TEXT NOT NULL DEFAULT '', refresh_token TEXT NOT NULL DEFAULT '',
-        token_expires_at INTEGER NOT NULL DEFAULT 0,
+        token_expires_at INTEGER NOT NULL DEFAULT 0, is_admin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS user_sessions (
@@ -3016,6 +3046,15 @@ export class EventStore {
     );
     if (!runtimeColumns.has("updated_by")) {
       this.db.exec("ALTER TABLE runtime_settings ADD COLUMN updated_by TEXT NOT NULL DEFAULT ''");
+    }
+    const userColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!userColumns.has("is_admin")) this.db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+    const adminCount = (this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE is_admin=1").get() as { count: number }).count;
+    if (adminCount === 0) {
+      const firstUser = this.db.prepare("SELECT id FROM users ORDER BY created_at,id LIMIT 1").get() as { id: string } | undefined;
+      if (firstUser) this.db.prepare("UPDATE users SET is_admin=1 WHERE id=?").run(firstUser.id);
     }
     // 对话轮次落库完整过程（思考、中间回复、工具调用），旧库留空由界面回退到工具摘要。
     const turnColumns = new Set(

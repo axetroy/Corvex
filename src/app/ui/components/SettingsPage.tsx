@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, InputNumber, Select, Switch, Tabs, Typography } from "antd";
+import { Alert, Button, Input, InputNumber, Select, Switch, Typography } from "antd";
 import "./SettingsPage.css";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -31,9 +31,12 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
   return value.toLocaleString("en-US");
 }
 
+export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "advanced";
+
 interface Props {
   copy: Copy;
   locale: Locale;
+  section?: SettingsSection;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
 }
@@ -89,13 +92,12 @@ function fieldError(field: SettingField, value: SettingValue | undefined, copy: 
 }
 
 /** 设置页：调整上下文预算、工具开关、审查上限与修复权限。 */
-export function SettingsPage({ copy, locale, onUpdated, onRefresh }: Props) {
+export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRefresh }: Props) {
   const [data, setData] = useState<SettingsResponse>();
   const [draft, setDraft] = useState<Draft>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState("basic");
   const [settingsToken, setSettingsToken] = useState(0);
 
   useEffect(() => {
@@ -326,73 +328,42 @@ export function SettingsPage({ copy, locale, onUpdated, onRefresh }: Props) {
       {notice ? <Alert className="settings-alert" type="success" showIcon message={notice} /> : null}
       {dirty && !notice ? <Alert className="settings-alert" type="info" showIcon message={copy.settingsDirty} /> : null}
 
-      <Tabs
-        className="settings-tabs"
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          {
-            key: "basic",
-            label: copy.settingsTabBasic,
-            children: renderGroup("settingsGroupBudget"),
-          },
-          {
-            key: "model",
-            label: copy.settingsTabModel,
-            children: (
-              <>
-                <Typography.Paragraph type="secondary" className="settings-group-hint">
-                  {copy.settingsModelConnectionHint}
-                </Typography.Paragraph>
-                <ModelManager copy={copy} onChanged={() => setSettingsToken((value) => value + 1)} />
-                {derivedPanel}
-                {renderGroup("settingsGroupModel")}
-                {renderGroup("settingsGroupQuota")}
-              </>
-            ),
-          },
-          {
-            key: "gitlab",
-            label: copy.settingsTabGitLab,
-            children: renderGroup("settingsGroupGitLab"),
-          },
-          {
-            key: "workflow",
-            label: copy.settingsTabWorkflow,
-            children: (
-              <>
-                {renderGroup("settingsGroupTools")}
-                {renderGroup("settingsGroupReview")}
-                {renderGroup("settingsGroupWorkflow")}
-              </>
-            ),
-          },
-          {
-            key: "storage",
-            label: copy.settingsTabStorage,
-            children: (
-              <>
-                {renderGroup("settingsGroupStorage")}
-                <StorageCleanupPanel
-                  copy={copy}
-                  locale={locale}
-                  retentionDays={Number(data.effective.storage_retention_days ?? 30)}
-                />
-              </>
-            ),
-          },
-          {
-            key: "advanced",
-            label: copy.settingsTabAdvanced,
-            children: (
-              <>
-                {renderGroup("settingsGroupRuntime")}
-                {renderGroup("settingsGroupAdvanced")}
-              </>
-            ),
-          },
-        ]}
-      />
+      {section === "basic" ? renderGroup("settingsGroupBudget") : null}
+      {section === "model" ? (
+        <>
+          <Typography.Paragraph type="secondary" className="settings-group-hint">
+            {copy.settingsModelConnectionHint}
+          </Typography.Paragraph>
+          <ModelManager copy={copy} onChanged={() => setSettingsToken((value) => value + 1)} />
+          {derivedPanel}
+          {renderGroup("settingsGroupModel")}
+          {renderGroup("settingsGroupQuota")}
+        </>
+      ) : null}
+      {section === "gitlab" ? renderGroup("settingsGroupGitLab") : null}
+      {section === "workflow" ? (
+        <>
+          {renderGroup("settingsGroupTools")}
+          {renderGroup("settingsGroupReview")}
+          {renderGroup("settingsGroupWorkflow")}
+        </>
+      ) : null}
+      {section === "storage" ? (
+        <>
+          {renderGroup("settingsGroupStorage")}
+          <StorageCleanupPanel
+            copy={copy}
+            locale={locale}
+            retentionDays={Number(data.effective.storage_retention_days ?? 30)}
+          />
+        </>
+      ) : null}
+      {section === "advanced" ? (
+        <>
+          {renderGroup("settingsGroupRuntime")}
+          {renderGroup("settingsGroupAdvanced")}
+        </>
+      ) : null}
     </>
   );
 }

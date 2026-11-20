@@ -22,3 +22,14 @@ export function requireUser(request: FastifyRequest, reply: FastifyReply): AuthU
   }
   return user;
 }
+
+/** 需要管理员的运维接口统一入口；非管理员返回 403。 */
+export function requireAdmin(request: FastifyRequest, reply: FastifyReply): AuthUser | undefined {
+  const user = requireUser(request, reply);
+  if (!user) return undefined;
+  if (!user.isAdmin) {
+    sendJson(reply, 403, { error: "administrator access required" });
+    return undefined;
+  }
+  return user;
+}
