@@ -40,6 +40,8 @@ export interface CorvexConfig {
     model: string;
     /** 当前模型的供应商展示名；来自控制台模型目录，仅用于展示，不参与连接。 */
     providerName?: string;
+    /** 探测或超窗后自动下调模型上下文窗口；关闭后只按人工设置运行。 */
+    autoContextTune?: boolean;
     apiKey: string;
     requestTimeout: number;
     sessionTimeout: number;
@@ -110,6 +112,7 @@ const defaults: CorvexConfig = {
     enabled: false,
     baseUrl: "https://api.openai.com/v1",
     model: "",
+    autoContextTune: true,
     apiKey: "",
     requestTimeout: 120_000,
     sessionTimeout: 30 * 60_000,
@@ -261,6 +264,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       baseUrl:
         process.env.CORVEX_MODEL_BASE_URL ?? string(agent.base_url, defaults.agent.baseUrl),
       model: process.env.CORVEX_MODEL_NAME ?? string(agent.model, defaults.agent.model),
+      autoContextTune: boolean(agent.auto_context_tune, defaults.agent.autoContextTune ?? true),
       apiKey: process.env.CORVEX_MODEL_API_KEY ?? "",
       requestTimeout: duration(
         agent.request_timeout,

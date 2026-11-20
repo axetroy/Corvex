@@ -254,6 +254,7 @@ export const settingGroups: readonly SettingGroup[] = [
     advanced: true,
     fields: [
       { key: "max_input_tokens", kind: "number", min: 0, max: 10_000_000, step: 1024, unit: "token", labelKey: "settingsMaxInputTokens", hintKey: "settingsMaxInputTokensHint" },
+      { key: "auto_context_tune", kind: "boolean", labelKey: "settingsAutoContextTune", hintKey: "settingsAutoContextTuneHint" },
       { key: "compaction_reserve_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionReserveTokens", hintKey: "settingsCompactionReserveTokensHint" },
       { key: "compaction_keep_recent_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionKeepRecentTokens", hintKey: "settingsCompactionKeepRecentTokensHint" },
     ],

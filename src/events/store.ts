@@ -2298,6 +2298,28 @@ export class EventStore {
     return result.changes === 1 ? this.getProviderModel(providerId, id) : undefined;
   }
 
+  /**
+   * 自动下调模型上下文窗口：只接受更小的值，并记录审计，便于操作台追溯自动改动。
+   * 探测结果或超窗重试调用它，避免把服务端的临时错误当成永久扩大窗口的依据。
+   */
+  reduceProviderModelContextWindow(model: ProviderModel, contextWindow: number, reason: string): ProviderModel | undefined {
+    if (
+      !Number.isSafeInteger(contextWindow) || contextWindow < 1_024 ||
+      contextWindow >= model.contextWindow || !reason.trim()
+    ) {
+      return undefined;
+    }
+    return this.transaction(() => {
+      const now = new Date().toISOString();
+      const result = this.db.prepare(
+        "UPDATE provider_models SET context_window=?,updated_at=? WHERE provider_id=? AND id=?",
+      ).run(contextWindow, now, model.providerId, model.id);
+      if (result.changes !== 1) return undefined;
+      this.insertAudit(0, "auto_context_tune", model.id, `${model.contextWindow}->${contextWindow}:${reason}`, now);
+      return this.getProviderModel(model.providerId, model.id);
+    });
+  }
+
   deleteProviderModel(providerId: string, id: string): boolean {
     return this.transaction(() => {
       const removed = this.db

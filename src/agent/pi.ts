@@ -13,6 +13,7 @@ import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
+import { applyActiveModel } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
 import type { ConversationMode, ConversationStreamTool, EventTraceEntry, ModelTaskType, TraceScope } from "../events/model.js";
@@ -20,7 +21,7 @@ import type { EventStore } from "../events/store.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
-import { isContextOverflowError } from "./budget.js";
+import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import {
   GitLabWriteError,
   type GitLabWriteReceipt,
@@ -277,6 +278,24 @@ export class PiAgent {
         // 本地预算估算总有误差（不同分词器差异很大）。服务端仍报超限时收缩一次
         // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
         if (signal?.aborted || !isContextOverflowError(errorMessage(error))) throw error;
+        // 自动调优：按服务端实际可用的上下文下调模型设置，再重试。只降不升，并写审计。
+        const nextWindow = nextOverflowRetryContextWindow(this.config.agent.contextWindow);
+        const active = this.config.agent.autoContextTune === false ? undefined : this.store?.getActiveModel();
+        if (active && nextWindow < active.model.contextWindow) {
+          const reduced = this.store!.reduceProviderModelContextWindow(
+            active.model,
+            nextWindow,
+            "context overflow retry",
+          );
+          if (reduced) {
+            applyActiveModel(this.config, { provider: active.provider, model: reduced });
+            console.warn("model context window reduced after overflow", {
+              model: reduced.name,
+              from: active.model.contextWindow,
+              to: reduced.contextWindow,
+            });
+          }
+        }
         const retry: ModelRequest = request.history?.length
           ? { ...request, history: [] }
           : request;

@@ -13,6 +13,7 @@ import {
   type RuntimeSettingValue,
 } from "../config/settings.js";
 import type { EventStore } from "../events/store.js";
+import { probeLlamaContext } from "../agent/context-probe.js";
 import { errorMessage } from "../errors.js";
 import { redactSettingValues, secretSettingPlaceholder } from "./http/respond.js";
 
@@ -45,6 +46,7 @@ export class SettingsService {
     private readonly baseline: CorvexConfig,
     private readonly configPath?: string,
   ) {}
+  private probing = false;
 
   /**
    * 启动时应用数据库中的设置。界面回显的是当前值与生效值，
@@ -69,7 +71,7 @@ export class SettingsService {
       if (applied.length > 0) {
         console.info("applied stored runtime settings", { keys: applied });
       }
-      this.applyActiveModel();
+      this.applyActiveModelAndProbe();
     } catch (error) {
       console.error("apply stored runtime settings failed", { error: errorMessage(error) });
     }
@@ -79,6 +81,41 @@ export class SettingsService {
   applyActiveModel(): void {
     const active = this.store.getActiveModel();
     if (active) applyActiveModel(this.config, active);
+  }
+
+  /** 应用选中模型，并在模型变更时 best-effort 探测服务端的单请求上下文上限。 */
+  applyActiveModelAndProbe(): void {
+    this.applyActiveModel();
+    void this.probeActiveContext();
+  }
+
+  /** 探测 llama.cpp 等多 slot 服务，把偏大的模型上下文窗口下调到单 slot 可用值。 */
+  private async probeActiveContext(): Promise<void> {
+    if (this.config.agent.autoContextTune === false || this.probing) return;
+    const active = this.store.getActiveModel();
+    if (!active) return;
+    this.probing = true;
+    try {
+      const probe = await probeLlamaContext(active.provider.baseUrl);
+      if (!probe || probe.contextWindow >= active.model.contextWindow) return;
+      const updated = this.store.reduceProviderModelContextWindow(
+        active.model,
+        probe.contextWindow,
+        `llama.cpp ${probe.slots} slots`,
+      );
+      if (!updated) return;
+      this.applyActiveModel();
+      console.info("auto-tuned model context window", {
+        model: updated.name,
+        from: active.model.contextWindow,
+        to: updated.contextWindow,
+        slots: probe.slots,
+      });
+    } catch (error) {
+      console.warn("model context probe failed", { error: errorMessage(error) });
+    } finally {
+      this.probing = false;
+    }
   }
 
   /**

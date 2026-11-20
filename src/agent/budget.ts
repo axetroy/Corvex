@@ -40,6 +40,13 @@ export function resolveMaxInputTokens(
   return Math.max(1_024, derived);
 }
 
+/** 超窗后下一次尝试使用的上下文窗口：多 slot 服务按四分之一收敛，其余减半，最低 4096。 */
+export function nextOverflowRetryContextWindow(contextWindow: number): number {
+  const current = Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 131_072;
+  const factor = current > 32_768 ? 4 : 2;
+  return Math.max(4_096, Math.floor(current / factor));
+}
+
 /**
  * 判定错误文本是否为上下文超限。模式直接复用 Pi SDK 的规范列表
  * （`getOverflowPatterns`），再补充 SDK 未覆盖的服务端措辞，避免与上游漂移。

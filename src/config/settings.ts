@@ -60,6 +60,7 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "response_language", section: "agent", field: "responseLanguage", type: "string", values: ["en", "zh-CN"] },
   // 上下文预算
   { key: "context_window", section: "agent", field: "contextWindow", type: "number", min: 1_024, max: 10_000_000, hidden: true },
+  { key: "auto_context_tune", section: "agent", field: "autoContextTune", type: "boolean" },
   { key: "max_input_tokens", section: "agent", field: "maxInputTokens", type: "number", min: 0, max: 10_000_000 },
   { key: "history_token_budget", section: "agent", field: "historyTokenBudget", type: "number", min: 0, max: 10_000_000 },
   { key: "turn_tool_result_bytes", section: "agent", field: "turnToolResultBytes", type: "number", min: 0, max: 64 << 20 },

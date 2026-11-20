@@ -5,6 +5,7 @@ import {
   estimateConservativeTokens,
   estimateTokens,
   isContextOverflowError,
+  nextOverflowRetryContextWindow,
   resolveHistoryBudgetTokens,
   resolveMaxInputTokens,
   trimHistory,
@@ -99,6 +100,17 @@ describe("chunkForSummary", () => {
 
   it("空历史返回空数组", () => {
     expect(chunkForSummary("summary", [], 1_000)).toEqual([]);
+  });
+});
+
+describe("nextOverflowRetryContextWindow", () => {
+  it("多 slot 服务的偏大窗口按四分之一收敛", () => {
+    expect(nextOverflowRetryContextWindow(131_072)).toBe(32_768);
+  });
+
+  it("小窗口减半且不低于下限", () => {
+    expect(nextOverflowRetryContextWindow(32_768)).toBe(16_384);
+    expect(nextOverflowRetryContextWindow(4_096)).toBe(4_096);
   });
 });
 
