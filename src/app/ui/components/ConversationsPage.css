@@ -533,15 +533,37 @@
   margin-top: 5px;
 }
 
+/* 组内问题项：淡色背景 + 左侧色条，按分类使用不同强调色，避免一片白。 */
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item {
-  padding: 4px 7px;
+  padding: 4px 7px 4px 9px;
   border: 0;
-  border-radius: 5px;
-  background: #fff;
+  border-left: 2px solid var(--conversation-brand);
+  border-radius: 4px;
+  background: var(--conversation-brand-soft);
   color: var(--conversation-ink);
   font-size: 11px;
   line-height: 16px;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(1) .ant-prompts-nested .ant-prompts-item {
+  border-left-color: #2f7fe0;
+  background: #eff6fd;
+}
+
+.conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(2) .ant-prompts-nested .ant-prompts-item {
+  border-left-color: #2f9e73;
+  background: #eef8f3;
+}
+
+.conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(3) .ant-prompts-nested .ant-prompts-item {
+  border-left-color: #d98a2b;
+  background: #fdf5e9;
+}
+
+.conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(4) .ant-prompts-nested .ant-prompts-item {
+  border-left-color: #8b6bb1;
+  background: #f5f0fa;
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item .ant-prompts-label {
@@ -550,7 +572,7 @@
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item:hover {
-  background: var(--conversation-brand-soft);
+  background: #e3eefb;
   color: var(--conversation-brand);
 }
 
