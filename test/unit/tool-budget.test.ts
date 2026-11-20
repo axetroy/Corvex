@@ -44,9 +44,12 @@ describe("resolveToolCallBytes", () => {
 });
 
 describe("resolveCompactionReserveTokens", () => {
-  it("为单轮工具增量和输出预留足够空间", () => {
-    // 64 KiB 工具输出按最坏 2 字节/token 估 32768，加 8192 输出与 4 KiB 余量。
-    expect(resolveCompactionReserveTokens(131_072, 8_192, 0)).toBe(32_768 + 8_192 + 4_096);
+  it("为半轮工具增量和输出预留空间，避免在发送前过度压缩", () => {
+    // 64 KiB 工具输出按最坏 2 字节/token 估 32768；发送前会复查，所以只预留半轮，
+    // 再加 8192 输出与 4 KiB 余量。
+    expect(resolveCompactionReserveTokens(131_072, 8_192, 0)).toBe(16_384 + 8_192 + 4_096);
+    // 32k 窗口 + 4096 输出：16 KiB 半轮 = 4096 token，阈值升到 20480（约 62.5%）。
+    expect(resolveCompactionReserveTokens(32_768, 4_096, 0)).toBe(12_288);
   });
 
   it("用户配置更大时保留用户值", () => {

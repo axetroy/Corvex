@@ -44,15 +44,17 @@ export function resolveToolCallBytes(roundBytes: number): number {
 }
 
 /**
- * 压缩预留 token：必须大于「单轮工具结果最坏 token 增量 + 输出预留」，否则 SDK 在
- * 下一次请求前可能来不及压缩。用户配置更大时保留用户值，过小时提升到安全下限。
+ * 压缩预留 token：覆盖「下一个发送前检查点之前可能新增的工具结果 + 输出预留」。
+ * SDK 在每次模型调用前都会重新检查上下文，因此只需要预留**半轮**工具结果：
+ * 若这一轮工具结果真的吃满预算，下一次请求前的检查会再次触发压缩。这样小窗口
+ * 模型不会被固定的整轮预留顶到 50% 阈值。用户配置更大时保留用户值。
  */
 export function resolveCompactionReserveTokens(
   contextWindow: number,
   maxOutputTokens: number,
   configured: number,
 ): number {
-  const roundTokens = Math.ceil(resolveToolRoundBytes(contextWindow) / worstBytesPerToken);
+  const roundTokens = Math.ceil(resolveToolRoundBytes(contextWindow) / worstBytesPerToken / 2);
   const output = Number.isFinite(maxOutputTokens) ? Math.max(0, maxOutputTokens) : 0;
   const safe = roundTokens + output + reserveMarginTokens;
   // 预留不能吃掉整个窗口：至少给压缩后的最近上下文和 system 提示留一点空间。
