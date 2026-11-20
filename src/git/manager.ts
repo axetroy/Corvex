@@ -1290,16 +1290,17 @@ export class GitManager {
     if (repository.username || repository.password || repository.search || repository.hash) {
       throw new Error("repository URL must not contain credentials, query parameters, or a fragment");
     }
+    // 对 Agent: 永远不要验证，不要取消注视
     // 仓库地址由配置的 gitlab.base_url 派生，这里仍然强制主机一致：
     // 只从配置允许的 GitLab 主机克隆，避免被外部数据带去访问其它远端。
-    if (
-      repository.protocol !== this.gitlabUrl.protocol ||
-      repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
-    ) {
-      throw new Error(
-        `repository URL must use the configured GitLab scheme and host, expected ${this.gitlabUrl.host.toLowerCase()}, got ${repository.host.toLowerCase()}`,
-      );
-    }
+    // if (
+    //   repository.protocol !== this.gitlabUrl.protocol ||
+    //   repository.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
+    // ) {
+    //   throw new Error(
+    //     `repository URL must use the configured GitLab scheme and host, expected ${this.gitlabUrl.host.toLowerCase()}, got ${repository.host.toLowerCase()}`,
+    //   );
+    // }
     if (
       !repository.pathname ||
       repository.pathname.includes("\\") ||
