@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { describeSessionTool, formatTraceDuration } from "../format.js";
 import { isAtScrollBottom } from "../scroll.js";
+import { splitForMiddleEllipsis } from "../truncate.js";
 import { translate } from "../i18n.js";
 import type { Copy } from "../i18n.js";
 import { parseTraceValue } from "../trace.js";
@@ -15,6 +16,22 @@ export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "text"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
+
+/** 工具描述很长时同时保留开头与结尾，中间用省略号；完整文本留在 title。 */
+const ToolCallName = memo(function ToolCallName({ text }: { text: string }) {
+  const { head, tail } = splitForMiddleEllipsis(text);
+  return (
+    <span className="conversation-tool-call-name" title={text}>
+      <span className="conversation-tool-call-name-head">{head}</span>
+      {tail ? (
+        <>
+          <span className="conversation-tool-call-name-ellipsis">...</span>
+          <span className="conversation-tool-call-name-tail">{tail}</span>
+        </>
+      ) : null}
+    </span>
+  );
+});
 
 /** 思考文本在流式输出时会自动贴底；一旦用户向上翻阅就停止跟随。 */
 const ThinkingContent = memo(function ThinkingContent({ text }: { text: string }) {
@@ -85,9 +102,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
         ) : (
           <details className="conversation-tool-call" key={segment.key}>
             <summary className="conversation-tool-call-summary">
-              <span className="conversation-tool-call-name">
-                {describeSessionTool(segment.call.name, parseTraceValue(segment.call.input), null, copy)}
-              </span>
+              <ToolCallName text={describeSessionTool(segment.call.name, parseTraceValue(segment.call.input), null, copy)} />
               <span className={`conversation-tool-call-status conversation-tool-call-status-${segment.call.status}`}>
                 {translate(copy.traceStatuses, segment.call.status)}
               </span>

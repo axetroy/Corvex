@@ -669,14 +669,30 @@
 }
 
 .conversation-tool-call-name {
+  display: flex;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--conversation-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 前半段按可用宽度硬裁剪，尾部固定保留，中间的 "..." 才是唯一的省略号。 */
+.conversation-tool-call-name-head {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.conversation-tool-call-name-ellipsis {
+  flex: none;
+  margin: 0 2px;
+  color: var(--conversation-muted);
+}
+
+.conversation-tool-call-name-tail {
+  flex: none;
 }
 
 .conversation-tool-call-status,
