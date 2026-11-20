@@ -15,6 +15,7 @@ import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
+import { ComposerModelPicker } from "./ComposerModelPicker.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
@@ -735,8 +736,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       value={draftMessage}
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
                       disabled={busy || (showCreate ? !project : !canReply)}
+                      autoSize={{ minRows: 3, maxRows: 10 }}
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}
+                      footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (
                         <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
                       )}

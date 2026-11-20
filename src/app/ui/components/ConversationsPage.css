@@ -322,7 +322,7 @@
   right: 0;
   bottom: 0;
   left: 0;
-  height: 132px;
+  height: 176px;
   background: linear-gradient(to top, var(--conversation-canvas) 45%, rgb(247 249 251 / 0%));
   pointer-events: none;
 }
@@ -337,7 +337,7 @@
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 14px 20px 120px;
+  padding: 14px 20px 168px;
   overscroll-behavior: contain;
 }
 
@@ -966,6 +966,46 @@
   padding: 9px 10px 9px 14px;
 }
 
+/* 输入框底栏：模型切换器留在框内，保持低视觉权重并允许长名称省略。 */
+.conversations-layout .conversation-chat .conversation-composer.ant-sender .ant-sender-footer {
+  padding: 0 10px 9px 14px;
+}
+
+.conversation-composer-model {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversation-composer-model-label {
+  flex: none;
+  color: var(--conversation-muted);
+  font-size: 12px;
+}
+
+.conversation-composer-model-select.ant-select {
+  min-width: 0;
+  max-width: min(360px, 100%);
+  flex: 0 1 auto;
+  font-size: 12px;
+}
+
+.conversation-composer-model-value {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.conversation-composer-model-error.ant-typography {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .conversations-layout {
     grid-template-columns: 224px minmax(0, 1fr);
@@ -1023,7 +1063,7 @@
   }
 
   .conversation-transcript-pane {
-    padding: 18px 12px 24px;
+    padding: 18px 12px 156px;
   }
 
   .conversation-tabs > .ant-tabs-nav,
