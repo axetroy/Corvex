@@ -50,6 +50,24 @@ interface ResolvedAllowedPath {
   root: string;
 }
 
+/**
+ * 工具入口的仓库路径校验：worktree 内必须使用相对路径，绝对路径仅允许指向可信 Skill 根目录。
+ * 放在工具边界而不是 `resolveAllowedPath`，避免破坏内部以绝对路径递归搜索的实现。
+ */
+export async function requireRelativeRepoPath(requestedPath: string, roots: string[]): Promise<string> {
+  if (!isAbsolute(requestedPath) || roots.length === 0) return requestedPath;
+  const candidate = resolve(requestedPath);
+  const worktree = await realpath(roots[0]!);
+  const worktreeRaw = resolve(roots[0]!);
+  if (isWithin(worktree, candidate) || isWithin(worktreeRaw, candidate)) {
+    const relativePath = relative(worktree, candidate);
+    throw new Error(
+      `use a repository-relative path ("${relativePath}") instead of an absolute path for repository files`,
+    );
+  }
+  return requestedPath;
+}
+
 async function resolveAllowedPath(requestedPath: string, allowedRoots: string[]): Promise<ResolvedAllowedPath> {
   if (!requestedPath.trim() || requestedPath.includes("\0")) {
     throw new Error("file path is empty or invalid");
@@ -586,7 +604,7 @@ export function createReadOnlyFileExtension(
       name: "read_file",
       label: "Read file",
       executionMode: "parallel",
-      description: `Read a UTF-8 text file without modifying it. Relative paths resolve from ${roots[0]}. Absolute paths are allowed only within these roots: ${roots.join(", ")}. Files are limited to ${maxReadBytes} output bytes per call and each line is capped at ${maxLineBytes} bytes (longer lines are truncated with a marker, which is normal for minified bundles). For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
+      description: `Read a UTF-8 text file without modifying it. Use repository-relative paths for repository files; absolute paths are rejected for the worktree and are only accepted for trusted skill roots: ${roots.slice(1).join(", ") || "(none)"}. Files are limited to ${maxReadBytes} output bytes per call and each line is capped at ${maxLineBytes} bytes (longer lines are truncated with a marker, which is normal for minified bundles). For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
       promptSnippet: "read_file: Read a UTF-8 text file from the fixed repository worktree or trusted skill roots. Use startLine and maxLines to read large files in bounded ranges.",
       parameters: Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
@@ -594,22 +612,23 @@ export function createReadOnlyFileExtension(
         maxLines: Type.Optional(Type.Integer({ minimum: 1, maximum: maxLinesPerRead })),
       }),
       execute: async (_toolCallId, params) => {
+        const path = await requireRelativeRepoPath(params.path, roots);
         const range = {
           startLine: params.startLine,
           maxLines: params.maxLines,
         };
         const hasRange = range.startLine !== undefined || range.maxLines !== undefined;
-        const cached = hasRange ? fileCursors.get(params.path) : undefined;
-        const result = await readAllowedFileChunk(params.path, roots, maxReadBytes, range, cached);
+        const cached = hasRange ? fileCursors.get(path) : undefined;
+        const result = await readAllowedFileChunk(path, roots, maxReadBytes, range, cached);
         if (hasRange && result.hasMore) {
-          fileCursors.set(params.path, {
+          fileCursors.set(path, {
             nextLine: result.nextLine,
             nextOffset: result.nextOffset,
             size: result.size,
             modifiedAt: result.modifiedAt,
           });
         } else {
-          fileCursors.delete(params.path);
+          fileCursors.delete(path);
         }
         return {
           content: [{ type: "text", text: result.text }],
@@ -627,7 +646,7 @@ export function createReadOnlyFileExtension(
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
       execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(params.path, roots)) }],
+        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(await requireRelativeRepoPath(params.path, roots), roots)) }],
         details: {},
       }),
     });
@@ -641,7 +660,7 @@ export function createReadOnlyFileExtension(
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
       execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(params.path, roots)) }],
+        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(await requireRelativeRepoPath(params.path, roots), roots)) }],
         details: {},
       }),
     });
@@ -659,7 +678,7 @@ export function createReadOnlyFileExtension(
       execute: async (_toolCallId, params) => ({
         content: [{
           type: "text",
-          text: JSON.stringify(await searchAllowedFiles(params.query, params.path ?? ".", roots, params.caseSensitive)),
+          text: JSON.stringify(await searchAllowedFiles(params.query, await requireRelativeRepoPath(params.path ?? ".", roots), roots, params.caseSensitive)),
         }],
         details: {},
       }),

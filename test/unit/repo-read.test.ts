@@ -7,6 +7,7 @@ import {
   createReadOnlyFileExtension,
   readAllowedDirectory,
   readAllowedFile,
+  requireRelativeRepoPath,
   searchAllowedFiles,
   statAllowedPath,
 } from "../../src/agent/repo-read.js";
@@ -48,6 +49,15 @@ describe("readAllowedFile", () => {
     );
     await expect(readAllowedFile("../missing.txt", [root, skills])).rejects.toThrow(
       "use a repository-relative path without '..' segments",
+    );
+  });
+
+  it("rejects absolute paths inside the repository with a relative-path hint", async () => {
+    await expect(requireRelativeRepoPath(join(root, "README.md"), [root, skills])).rejects.toThrow(
+      "use a repository-relative path",
+    );
+    await expect(requireRelativeRepoPath(join(skills, "SKILL.md"), [root, skills])).resolves.toBe(
+      join(skills, "SKILL.md"),
     );
   });
 
