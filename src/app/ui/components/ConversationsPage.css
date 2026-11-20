@@ -44,6 +44,11 @@
   font-size: 11px;
 }
 
+.conversation-archived-toggle.ant-btn.is-active {
+  color: var(--conversation-brand);
+  font-weight: 600;
+}
+
 .conversation-new-button.ant-btn {
   display: flex;
   height: 29px;

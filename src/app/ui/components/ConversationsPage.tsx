@@ -672,15 +672,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
               {copy.newConversation}
             </Button>
             <Button
-              className="conversation-archived-toggle"
+              className={`conversation-archived-toggle${showArchived ? " is-active" : ""}`}
               type="text"
               size="small"
+              aria-pressed={showArchived}
               onClick={() => {
                 setShowArchived((value) => !value);
                 setConversationOffset(0);
               }}
             >
-              {copy.conversationShowArchived}
+              {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
             </Button>
           </div>
           <div className="conversation-sidebar-list">
@@ -688,7 +689,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
               <Conversations
                 items={conversationItems}
                 activeKey={selectedConversationId || undefined}
-                onActiveChange={(key) => openConversation(key)}
+                onActiveChange={(key) => {
+                  // Ant Design X 点击当前项会回调空值表示取消选中；会话页必须保持选中。
+                  if (key) openConversation(key);
+                }}
                 groupable={{
                   label: (group) => (
                     <span className="conversation-group-label">

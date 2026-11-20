@@ -121,7 +121,7 @@ describe("CorvexServer", () => {
       agent: {
         responseLanguage: "en",
         baseUrl: "https://api.openai.com/v1",
-        model: "",
+        model: "test-model",
         apiKey: "",
         requestTimeout: 120000,
         sessionTimeout: 30 * 60_000,
@@ -219,6 +219,18 @@ describe("CorvexServer", () => {
       expect((await fetch(`${base}/api/ops/projects/0`, { headers: { authorization } })).status).toBe(400);
       const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
       expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
+      // 未选择模型时不允许发起会话。
+      const selectedModel = config.agent.model;
+      config.agent.model = "";
+      const noModelResponse = await fetch(`${base}/api/ops/conversations`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ projectId: 2, targetBranch: "main", message: "Explain this repository" }),
+      });
+      expect(noModelResponse.status).toBe(409);
+      expect(store.listConversations(50, 0).total).toBe(0);
+      config.agent.model = selectedModel;
+
       const createdConversationResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
         headers: { authorization, "content-type": "application/json" },
@@ -984,7 +996,7 @@ describe("CorvexServer", () => {
       agent: {
         responseLanguage: "en",
         baseUrl: "https://api.openai.com/v1",
-        model: "",
+        model: "test-model",
         apiKey: "",
         requestTimeout: 120000,
         sessionTimeout: 30 * 60_000,

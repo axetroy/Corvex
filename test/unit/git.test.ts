@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DiffEngine } from "../../src/git/diff.js";
-import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
+import { GitManager, conversationWorkspaceName, gitConfigEntries } from "../../src/git/manager.js";
 import type { Workspace } from "../../src/git/types.js";
 
 const execFile = promisify(execFileCallback);
@@ -14,6 +14,19 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFile("git", args, { cwd, encoding: "utf8" });
   return result.stdout.trim();
 }
+
+describe("Git environment", () => {
+  it("enables long paths on Windows and keeps auth headers when configured", () => {
+    const withoutAuth = new Map(gitConfigEntries("", new URL("https://gitlab.example.com")));
+    expect(withoutAuth.get("core.longpaths")).toBe(process.platform === "win32" ? "true" : undefined);
+    expect(withoutAuth.has("core.hooksPath")).toBe(true);
+    expect(withoutAuth.has("credential.helper")).toBe(true);
+
+    const withAuth = new Map(gitConfigEntries("token", new URL("https://gitlab.example.com")));
+    expect(withAuth.get("http.https://gitlab.example.com/.extraHeader"))
+      .toBe(`Authorization: Basic ${Buffer.from("oauth2:token").toString("base64")}`);
+  });
+});
 
 describe("Git workflows", () => {
   let directory = "";

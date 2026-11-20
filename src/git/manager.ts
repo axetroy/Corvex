@@ -88,6 +88,26 @@ export function conversationWorkspaceName(conversationId: string): string {
   return name;
 }
 
+/**
+ * 以环境变量注入 Git 配置，避免依赖用户全局配置。Windows 上必须开启
+ * `core.longpaths`，否则带深层资源目录（如前端主题图片）的仓库在 worktree
+ * checkout 时会因 `Filename too long` 失败。
+ */
+export function gitConfigEntries(authToken: string, gitlabUrl: URL): [string, string][] {
+  const entries: [string, string][] = [
+    ["core.hooksPath", process.platform === "win32" ? "NUL" : "/dev/null"],
+    ["credential.helper", ""],
+  ];
+  if (process.platform === "win32") entries.push(["core.longpaths", "true"]);
+  if (authToken) {
+    entries.push([
+      `http.${gitlabUrl.protocol}//${gitlabUrl.host}/.extraHeader`,
+      `Authorization: Basic ${Buffer.from(`oauth2:${authToken}`).toString("base64")}`,
+    ]);
+  }
+  return entries;
+}
+
 export class GitManager {
   private readonly root: string;
   private readonly mirrorRoot: string;
@@ -259,7 +279,12 @@ export class GitManager {
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
-      await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+      try {
+        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+      } catch (error) {
+        await this.removeWorktree(mirror, workspacePath);
+        throw error;
+      }
       const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
       if (actual.toLowerCase() !== expectedSha.toLowerCase()) {
         await this.removeWorktree(mirror, workspacePath);
@@ -311,7 +336,12 @@ export class GitManager {
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
-      await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, baseSha], undefined, maxErrorOutput, signal);
+      try {
+        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, baseSha], undefined, maxErrorOutput, signal);
+      } catch (error) {
+        await this.removeWorktree(mirror, workspacePath);
+        throw error;
+      }
       try {
         await this.run(workspacePath, ["switch", "--create", sourceBranch], undefined, maxErrorOutput, signal);
         const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
@@ -395,7 +425,13 @@ export class GitManager {
       const workspacePath = join(projectRoot, eventId);
       if (!(await this.pathExists(workspacePath)) || !(await this.alignConversationWorkspace(workspacePath, expectedSha, signal))) {
         await this.removeWorktree(mirror, workspacePath);
-        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+        try {
+          await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+        } catch (error) {
+          // checkout 失败可能留下半成品目录，清掉后下次才能重新创建。
+          await this.removeWorktree(mirror, workspacePath);
+          throw error;
+        }
       }
       const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
       if (actual.toLowerCase() !== expectedSha.toLowerCase()) {
@@ -1510,15 +1546,12 @@ export class GitManager {
     env.GIT_CONFIG_NOSYSTEM = "1";
     env.GIT_CONFIG_GLOBAL = join(this.root, ".corvex-no-global-git-config");
     env.GIT_TERMINAL_PROMPT = "0";
-    env.GIT_CONFIG_COUNT = authToken ? "3" : "2";
-    env.GIT_CONFIG_KEY_0 = "core.hooksPath";
-    env.GIT_CONFIG_VALUE_0 = process.platform === "win32" ? "NUL" : "/dev/null";
-    env.GIT_CONFIG_KEY_1 = "credential.helper";
-    env.GIT_CONFIG_VALUE_1 = "";
-    if (authToken) {
-      env.GIT_CONFIG_KEY_2 = `http.${this.gitlabUrl.protocol}//${this.gitlabUrl.host}/.extraHeader`;
-      env.GIT_CONFIG_VALUE_2 = `Authorization: Basic ${Buffer.from(`oauth2:${authToken}`).toString("base64")}`;
-    }
+    const configs = gitConfigEntries(authToken, this.gitlabUrl);
+    env.GIT_CONFIG_COUNT = String(configs.length);
+    configs.forEach(([key, value], index) => {
+      env[`GIT_CONFIG_KEY_${index}`] = key;
+      env[`GIT_CONFIG_VALUE_${index}`] = value;
+    });
     return env;
   }
 

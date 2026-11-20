@@ -26,6 +26,17 @@ function invalidTurnId(reply: FastifyReply): void {
   sendJson(reply, 400, { error: "invalid conversation turn ID" });
 }
 
+/** 没有可用模型时禁止入队，否则轮次只会立刻失败且不会产生标题。 */
+function ensureModelSelected(ctx: OpsContext, reply: FastifyReply): boolean {
+  if (ctx.store.getActiveModel() || ctx.config.agent.model.trim()) return true;
+  sendJson(reply, 409, {
+    error: ctx.config.agent.responseLanguage === "zh-CN"
+      ? "尚未选择模型，请先在「设置 → 模型」中配置并激活模型。"
+      : "No model is selected. Configure and activate one in Settings > Model first.",
+  });
+  return false;
+}
+
 /** 对话工作台：列表、详情、轮次、轨迹、流式正文与统计。 */
 export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext): void {
   app.get("/api/ops/conversations", async (request, reply) => {
@@ -60,6 +71,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "invalid conversation request" });
       return;
     }
+    if (!ensureModelSelected(ctx, reply)) return;
     try {
       const project = await ctx.gitlab.getProject(projectId);
       const headSha = (await ctx.gitlab.getBranch(projectId, targetBranch)).commit.id;
@@ -308,6 +320,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "message must be between 1 and 20000 characters" });
       return;
     }
+    if (!ensureModelSelected(ctx, reply)) return;
     try {
       const headSha = (await ctx.gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;
       const queued = ctx.store.addConversationMessage(conversation.id, {

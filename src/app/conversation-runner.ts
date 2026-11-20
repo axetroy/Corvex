@@ -308,8 +308,11 @@ export class ConversationRunner {
     turn: ConversationTurnContext,
     workspacePath: string,
     signal: AbortSignal,
+    trace: EventTraceContext,
   ): Promise<void> {
-    if (turn.history.length > 0 || turn.summary) return;
+    // 以数据库里的标题为准：首轮可能因快照过期等原因失败，真正成功的那一轮
+    // 历史未必为空，不能因此跳过标题。
+    if (this.store.getConversation(turn.conversationId)?.title) return;
     try {
       const title = await this.agent.generate(
         {
@@ -319,6 +322,7 @@ export class ConversationRunner {
         },
         workspacePath,
         signal,
+        trace,
       );
       this.store.saveConversationTitle(turn.conversationId, title.content);
     } catch (error) {
@@ -503,7 +507,7 @@ export class ConversationRunner {
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 正文已落库，立即结束流：标题与摘要生成还需额外模型调用，不应让界面继续等流。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });
-      await this.updateTitle(turn, workspace.path, signal);
+      await this.updateTitle(turn, workspace.path, signal, trace);
       await this.updateSummary(turn, dropped, workspace.path, signal);
     } catch (error) {
       // 失败/取消也保留已发生的思考与工具调用，刷新后仍能看到过程停在哪一步。
