@@ -627,6 +627,34 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     pane.scrollTop = pane.scrollHeight;
   }, [showCreate, selectedConversationId, detailTab, currentConversation?.messages.length, streamedReply?.text, timelineByTurn]);
 
+  const composerSetup = showCreate ? (
+    <div className="conversation-composer-setup">
+      <ProjectPicker
+        copy={copy}
+        value={project}
+        disabled={busy}
+        onChange={selectProject}
+      />
+      <BranchPicker
+        copy={copy}
+        value={selectedBranch}
+        projectId={project?.id}
+        disabled={busy}
+        onChange={setSelectedBranch}
+      />
+      <Select<ConversationSummary["mode"]>
+        className="conversation-mode-select"
+        aria-label={copy.conversationModeLabel}
+        title={copy.conversationModeHint}
+        value={mode}
+        disabled={busy}
+        options={(Object.entries(copy.conversationModes) as [ConversationSummary["mode"], string][])
+          .map(([value, label]) => ({ value, label }))}
+        onChange={setMode}
+      />
+    </div>
+  ) : undefined;
+
   return (
     <>
       {modalContextHolder}
@@ -742,36 +770,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             title={copy.conversationWelcomeTitle}
                             description={copy.conversationWelcomeDescription}
                           />
-                          <div className="conversation-picker-row">
-                            <ProjectPicker
-                              copy={copy}
-                              value={project}
-                              disabled={busy}
-                              onChange={selectProject}
-                            />
-                            <BranchPicker
-                              copy={copy}
-                              value={selectedBranch}
-                              projectId={project?.id}
-                              disabled={busy}
-                              onChange={setSelectedBranch}
-                            />
-                          </div>
-                          <div className="conversation-mode-picker">
-                            <Typography.Text type="secondary">{copy.conversationModeLabel}</Typography.Text>
-                            <Select<ConversationSummary["mode"]>
-                              className="conversation-mode-select"
-                              aria-label={copy.conversationModeLabel}
-                              value={mode}
-                              disabled={busy}
-                              options={(Object.entries(copy.conversationModes) as [ConversationSummary["mode"], string][])
-                                .map(([value, label]) => ({ value, label }))}
-                              onChange={setMode}
-                            />
-                            <Typography.Text type="secondary" className="conversation-mode-hint">
-                              {copy.conversationModeHint}
-                            </Typography.Text>
-                          </div>
                           <Prompts
                             className="conversation-prompts"
                             title={copy.conversationSuggestions}
@@ -797,6 +795,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       value={draftMessage}
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
                       disabled={busy || (showCreate ? !project : !canReply)}
+                      header={composerSetup}
                       autoSize={{ minRows: 3, maxRows: 10 }}
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}

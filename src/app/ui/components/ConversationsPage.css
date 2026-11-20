@@ -345,6 +345,7 @@
    避免 justify-content:center 把顶部内容推到滚动区之外。 */
 .conversation-setup-pane {
   justify-content: flex-start;
+  padding-bottom: 236px;
 }
 
 .conversation-start {
@@ -403,25 +404,24 @@
   font-weight: 500;
 }
 
-.conversation-picker-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 10px;
-}
-
-.conversation-mode-picker {
+/* 欢迎页的仓库/分支/模式放进输入框头部，与输入内容同处一张卡片。 */
+.conversation-composer-setup {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--conversation-border);
 }
 
-.conversation-mode-select {
-  width: 180px;
+.conversation-composer-setup .remote-picker {
+  flex: 1 1 180px;
+  min-width: 0;
 }
 
-.conversation-mode-hint.ant-typography {
-  font-size: 11px;
+.conversation-composer-setup .conversation-mode-select {
+  flex: 0 0 132px;
+  width: 132px;
 }
 
 .conversation-prompts.ant-prompts {
