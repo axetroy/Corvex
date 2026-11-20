@@ -352,14 +352,14 @@ export function SettingsPage({ copy, locale, onUpdated, onRefresh }: Props) {
             ),
           },
           {
-            key: "connection",
-            label: copy.settingsTabConnection,
-            children: (
-              <>
-                {renderGroup("settingsGroupGitLab")}
-                {renderGroup("settingsGroupOperations")}
-              </>
-            ),
+            key: "gitlab",
+            label: copy.settingsTabGitLab,
+            children: renderGroup("settingsGroupGitLab"),
+          },
+          {
+            key: "security",
+            label: copy.settingsTabSecurity,
+            children: renderGroup("settingsGroupOperations"),
           },
           {
             key: "workflow",
