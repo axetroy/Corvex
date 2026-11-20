@@ -154,6 +154,8 @@ export interface SettingField {
   item?: "integer" | "hostname" | "path";
   /** 密钥字段用密码框展示，允许留空表示沿用已保存值。 */
   secret?: boolean;
+  /** 字符串字段允许留空（例如可选的用户名）。 */
+  allowEmpty?: boolean;
   /** 输入单位提示，例如 token。 */
   unit?: string;
   /** 文案键：字段标签与说明。 */
@@ -227,7 +229,7 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "gitlab_read_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabReadToken", hintKey: "settingsGitLabReadTokenHint" },
       { key: "gitlab_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabToken", hintKey: "settingsGitLabTokenHint" },
       { key: "gitlab_webhook_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabWebhookSecret", hintKey: "settingsGitLabWebhookSecretHint" },
-      { key: "gitlab_bot_username", kind: "string", maxLength: 200, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
+      { key: "gitlab_bot_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
       { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
     ],
   },
@@ -235,7 +237,7 @@ export const settingGroups: readonly SettingGroup[] = [
     titleKey: "settingsGroupOperations",
     hintKey: "settingsGroupOperationsHint",
     fields: [
-      { key: "operations_username", kind: "string", maxLength: 200, labelKey: "settingsOperationsUsername", hintKey: "settingsOperationsUsernameHint" },
+      { key: "operations_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsOperationsUsername", hintKey: "settingsOperationsUsernameHint" },
       { key: "operations_password", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOperationsPassword", hintKey: "settingsOperationsPasswordHint" },
     ],
   },

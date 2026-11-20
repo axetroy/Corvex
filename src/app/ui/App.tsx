@@ -277,7 +277,6 @@ export function App() {
               <SettingsPage
                 copy={copy}
                 locale={locale}
-                refreshToken={refreshToken}
                 onUpdated={handleUpdated}
                 onRefresh={refresh}
               />

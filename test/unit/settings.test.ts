@@ -316,6 +316,13 @@ describe("设置页与服务端设置键的一致性", () => {
       expect(definition?.type, field.key).toBe(field.kind);
     }
   });
+
+  it("可留空字符串字段与服务端定义一致", () => {
+    for (const field of uiFields.filter((item) => item.kind === "string" && !item.secret)) {
+      const definition = runtimeSettingDefinitions.find((item) => item.key === field.key);
+      expect(Boolean(field.allowEmpty), field.key).toBe(Boolean(definition?.allowEmpty));
+    }
+  });
 });
 
 describe("GitLab runtime settings", () => {

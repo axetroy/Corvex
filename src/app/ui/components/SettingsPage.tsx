@@ -34,7 +34,6 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
 interface Props {
   copy: Copy;
   locale: Locale;
-  refreshToken: number;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
 }
@@ -65,7 +64,7 @@ function fieldError(field: SettingField, value: SettingValue | undefined, copy: 
     return "";
   }
   if (field.kind === "string") {
-    if (typeof value !== "string" || (!field.secret && !value.trim())) return copy.settingsInvalidText;
+    if (typeof value !== "string" || (!field.secret && !field.allowEmpty && !value.trim())) return copy.settingsInvalidText;
     if (field.maxLength !== undefined && value.length > field.maxLength) {
       return copy.settingsInvalidTextMax.replace("{max}", String(field.maxLength));
     }
@@ -90,7 +89,7 @@ function fieldError(field: SettingField, value: SettingValue | undefined, copy: 
 }
 
 /** 设置页：调整上下文预算、工具开关、审查上限与修复权限。 */
-export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
+export function SettingsPage({ copy, locale, onUpdated, onRefresh }: Props) {
   const [data, setData] = useState<SettingsResponse>();
   const [draft, setDraft] = useState<Draft>({});
   const [error, setError] = useState("");
@@ -113,7 +112,9 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
     return () => {
       active = false;
     };
-  }, [copy, refreshToken, onUpdated, settingsToken]);
+    // 设置页不跟随全局的 15 秒轮询刷新：那会用服务端值覆盖用户正在填写的表单。
+    // 模型目录变更会通过 settingsToken 显式触发重新读取。
+  }, [copy, onUpdated, settingsToken]);
 
   const editable = data?.editable ?? false;
   const dirty = useMemo(
@@ -347,6 +348,16 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                 {derivedPanel}
                 {renderGroup("settingsGroupModel")}
                 {renderGroup("settingsGroupQuota")}
+              </>
+            ),
+          },
+          {
+            key: "connection",
+            label: copy.settingsTabConnection,
+            children: (
+              <>
+                {renderGroup("settingsGroupGitLab")}
+                {renderGroup("settingsGroupOperations")}
               </>
             ),
           },
