@@ -268,7 +268,6 @@ export class GitLabClient {
 
   /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
   configure(baseUrl: string, readToken: string, writeToken: string): void {
-    if (!writeToken) throw new Error("GitLab write API token is required");
     if (!baseUrl.trim()) {
       // 地址可以在运维台设置：启动时尚未配置时保留空值，调用 API 会给出明确错误。
       this.baseUrl = "";

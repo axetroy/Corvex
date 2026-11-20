@@ -269,7 +269,7 @@ function parseConfig(raw: unknown): CorvexConfig {
         process.env.CORVEX_MODEL_BASE_URL ?? string(agent.base_url, defaults.agent.baseUrl),
       model: process.env.CORVEX_MODEL_NAME ?? string(agent.model, defaults.agent.model),
       autoContextTune: boolean(agent.auto_context_tune, defaults.agent.autoContextTune ?? true),
-      apiKey: process.env.CORVEX_MODEL_API_KEY ?? "",
+      apiKey: "",
       requestTimeout: duration(
         agent.request_timeout,
         defaults.agent.requestTimeout,
@@ -378,15 +378,8 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.gitlab.baseUrl && !validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
-  // 按运行角色校验凭据：Server 既接收 Webhook，也在进程内执行事件，因此需要
-  // 读写令牌与 Webhook 密钥；存储维护命令不应依赖 GitLab API 或模型密钥。
-  if (role !== "storage") {
-    if (!config.gitlab.readToken.trim()) problems.push("CORVEX_GITLAB_READ_TOKEN is required");
-    if (!config.gitlab.writeToken.trim()) problems.push("CORVEX_GITLAB_TOKEN is required");
-  }
-  if (role !== "storage" && role !== "benchmark" && !config.gitlab.webhookSecret.trim()) {
-    problems.push("CORVEX_WEBHOOK_SECRET is required");
-  }
+  // GitLab 令牌与 Webhook 密钥都可以在运维台设置写入 SQLite，启动时不要求
+  // 环境变量或配置文件提供；未配置时 Webhook 会被拒绝，API 调用会明确报错。
   if (!config.storage.root.trim()) problems.push("storage.root is required");
   if (!config.storage.database.trim()) problems.push("storage.database is required");
   if (config.storage.retentionDays < 1 || config.storage.retentionDays > 36_500) {

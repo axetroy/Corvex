@@ -20,7 +20,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 
 ## Docker Compose
 
-1. Copy `.env.example` to `.env` and set the GitLab write token and webhook secret. The read token is required; the model API key is needed when the agent is enabled. Keep this file private and do not commit it.
+1. Copy `.env.example` to `.env` only for optional startup fallbacks (tokens, webhook secret and model API key). Prefer saving GitLab credentials in the console Settings page. Keep this file private and do not commit it.
 2. Copy `configs/config.example.yaml` to `configs/config.yaml`. Set the GitLab base URL, blocklist and bot username in the console Settings page. The agent console searches every project visible to `CORVEX_GITLAB_READ_TOKEN`.
 3. Start the Server:
 
@@ -29,7 +29,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
    docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
-4. To process model tasks, configure the model in the console Settings page and set `CORVEX_MODEL_API_KEY` in `.env` when needed, then recreate the Server container:
+4. To process model tasks, configure the model and its API key in the console Settings page, then recreate the Server container:
 
    ```sh
    docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate corvex
@@ -94,7 +94,7 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 
 | Symptom | Checks |
 |---|---|
-| Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |
+| Webhook returns `401` | Confirm the GitLab hook secret matches the Webhook Secret saved in the console (or the `CORVEX_WEBHOOK_SECRET` fallback). |
 | Webhook returns `400` | The endpoint only accepts valid merge-request or Issue Note Hook payloads. Disable unsupported event types and ensure the request is a comment on a merge request or Issue. |
 | Webhook returns `403` | Check whether the commenter is in `gitlab.blocked_user_ids`, or whether the requested capability is disabled. |
 | Tasks stay queued | Confirm the model settings in the console are valid. |

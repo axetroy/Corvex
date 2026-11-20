@@ -11,7 +11,7 @@ Corvex 是面向 GitLab 合并请求的自托管代码审查与修复代理，�
 
 - 从源码运行需要 Node.js 26.12.1 和 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
 - Server 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
-- GitLab 只读令牌用于 API 读取和仓库抓取；独立的写令牌用于发布 MR 评论和讨论。
+- GitLab 只读令牌用于 API 读取和仓库抓取，独立写令牌用于发布 MR 评论和讨论；两者都在控制台设置页保存。
 - Server 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
 - 启用 Agent 时，需要 OpenAI 兼容 Chat Completions 接口及 API 密钥；Agent Runtime 由 Pi SDK 提供。
 - SQLite 数据库和 Git 镜像目录必须位于重启后仍保留且可写的存储中。
@@ -29,14 +29,15 @@ pnpm start -- init
 复制 `configs/config.example.yaml` 为 `configs/config.yaml`。GitLab 根地址、`gitlab.blocked_user_ids` 和 `gitlab.bot_username` 都在控制台设置页维护。为 Server 设置以下变量：
 
 ```sh
-export CORVEX_GITLAB_READ_TOKEN='读取令牌'
-export CORVEX_GITLAB_TOKEN='写入令牌'
-export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
+# 可选启动兜底；控制台设置页会把这些值存入 SQLite。
+# CORVEX_GITLAB_READ_TOKEN=读取令牌
+# CORVEX_GITLAB_TOKEN=写入令牌
+# CORVEX_WEBHOOK_SECRET=足够长的随机密钥
 ```
 
-ID 使用 GitLab 数字 ID。不要把凭据写入 YAML 或提交到源代码仓库。Agent 控制台会列出 `CORVEX_GITLAB_READ_TOKEN` 可访问的项目；仅在需要接受 Corvex 指令的项目中注册 Webhook。所有配置及边界值请参阅[配置参考](./configuration)。
+ID 使用 GitLab 数字 ID。GitLab 根地址、读/写令牌和 Webhook Secret 都在控制台设置页填写；密钥留空表示保留已保存值。Agent 控制台会列出只读令牌可访问的项目；仅在需要接受 Corvex 指令的项目中注册 Webhook。所有配置及边界值请参阅[配置参考](./configuration)。
 
-Server 需要只读令牌、写令牌和 Webhook Secret；启用 Agent 时还需要 `CORVEX_MODEL_API_KEY`。请使用独立读写令牌并只授予所需权限。
+启动时不需要 GitLab 凭据或模型 API Key，两者都可在控制台保存。请使用独立读写令牌并只授予所需权限。
 
 ## 2. 启动 Server
 
@@ -55,7 +56,7 @@ pnpm start -- --config configs/config.yaml server
 https://corvex.example.com/webhooks/gitlab
 ```
 
-Webhook Secret Token 应与 `CORVEX_WEBHOOK_SECRET` 完全一致。启用 **Comments（评论/Note 事件）**；接口会处理合并请求和 Issue 评论，不处理合并请求状态事件或 Push 事件。保持 SSL 证书验证开启。
+Webhook Secret Token 应与控制台设置页保存的 Webhook Secret 完全一致。启用 **Comments（评论/Note 事件）**；接口会处理合并请求和 Issue 评论，不处理合并请求状态事件或 Push 事件。保持 SSL 证书验证开启。
 
 可使用 `scripts/register-webhook.sh` 幂等地创建或更新项目 Webhook。脚本需要 `curl`、`jq`，以及仅用于注册的 GitLab 管理员令牌：
 
@@ -103,7 +104,7 @@ Issue 中的普通提及会启动助手任务。Agent 会基于 Issue 和近期�
 
 ## 5. 启用模型任务
 
-审查、解释、修复提案和 Issue 助手需要模型配置。请在控制台设置页配置模型，并在服务商需要鉴权时提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
+审查、解释、修复提案和 Issue 助手需要模型配置。请在控制台设置页配置模型及其 API Key。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
 
 ## Issue 助手与实现
 

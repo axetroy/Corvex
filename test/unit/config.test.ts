@@ -251,12 +251,11 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config, "server")).toThrow("gitlab.base_url must be a valid HTTP(S) URL");
   });
 
-  it("requires a GitLab read token for the server role", () => {
+  it("allows GitLab credentials to be configured later in the console", () => {
     const config = validConfig();
     config.gitlab.readToken = "";
-    expect(() => validateConfig(config, "server")).toThrow("CORVEX_GITLAB_READ_TOKEN is required");
-
-    config.gitlab.readToken = "read";
+    config.gitlab.writeToken = "";
+    config.gitlab.webhookSecret = "";
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
@@ -322,14 +321,13 @@ describe("validateConfig", () => {
     }
   });
 
-  it("requires only the credentials used by the selected process role", async () => {
+  it("loads optional credential fallbacks from the environment", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-role-"));
     const configPath = join(root, "config.yaml");
     const names = [
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
       "CORVEX_WEBHOOK_SECRET",
-      "CORVEX_MODEL_API_KEY",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -347,24 +345,15 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_READ_TOKEN = "";
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "webhook";
-      process.env.CORVEX_MODEL_API_KEY = "";
-      await expect(loadConfig(configPath, "server")).rejects.toThrow(
-        "CORVEX_GITLAB_READ_TOKEN is required",
-      );
-
-      process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "read", writeToken: "write", webhookSecret: "webhook" },
+        gitlab: { readToken: "", writeToken: "write", webhookSecret: "webhook" },
       });
 
+      process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_WEBHOOK_SECRET = "";
-      await expect(loadConfig(configPath, "server")).rejects.toThrow(
-        "CORVEX_WEBHOOK_SECRET is required",
-      );
-      process.env.CORVEX_MODEL_API_KEY = "model-key";
-      await expect(loadConfig(configPath, "benchmark")).resolves.toMatchObject({
+      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
         gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
-        agent: { apiKey: "model-key", webEnabled: true, webBlockedHosts: [] },
+        agent: { webEnabled: true, webBlockedHosts: [] },
       });
 
       process.env.CORVEX_GITLAB_READ_TOKEN = "";

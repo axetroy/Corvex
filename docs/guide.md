@@ -11,7 +11,7 @@ See [Architecture and workflow](./architecture), [Configuration reference](./con
 
 - Node.js 26.12.1 and pnpm 12.4.1 to run from source. Install the locked dependencies with `pnpm install --frozen-lockfile`.
 - GitLab access from the Server, including a reachable webhook URL.
-- A GitLab read token for API reads and repository fetches; a separate write token for MR notes and discussions.
+- A GitLab read token for API reads and repository fetches and a separate write token for MR notes and discussions, both saved in the console Settings page.
 - The `git` executable on the Server host. The supplied Docker image includes it.
 - If using an agent, an OpenAI-compatible Chat Completions endpoint and an API key. Pi SDK provides the agent runtime.
 - Persistent writable storage for the SQLite database and Git mirrors. Keep it across restarts.
@@ -29,14 +29,15 @@ pnpm start -- init
 Copy `configs/config.example.yaml` to `configs/config.yaml`. The GitLab base URL, `gitlab.blocked_user_ids` and `gitlab.bot_username` are managed in the console Settings page. Set these variables for the Server:
 
 ```sh
-export CORVEX_GITLAB_READ_TOKEN='your-read-token'
-export CORVEX_GITLAB_TOKEN='your-write-token'
-export CORVEX_WEBHOOK_SECRET='a-long-random-secret'
+# Optional startup fallbacks; the console Settings page stores these in SQLite.
+# CORVEX_GITLAB_READ_TOKEN=your-read-token
+# CORVEX_GITLAB_TOKEN=your-write-token
+# CORVEX_WEBHOOK_SECRET=a-long-random-secret
 ```
 
-The IDs are numeric GitLab IDs. Keep credentials out of the YAML file and source control. The agent console lists projects visible to `CORVEX_GITLAB_READ_TOKEN`; only register webhooks on projects where Corvex should accept commands. Refer to the [configuration reference](./configuration) for every setting and its limits.
+The IDs are numeric GitLab IDs. Enter the GitLab base URL, read/write tokens and webhook secret in the console Settings page; blank secret fields keep the saved value. The agent console lists projects visible to the read token; only register webhooks on projects where Corvex should accept commands. Refer to the [configuration reference](./configuration) for every setting and its limits.
 
-The Server needs the read token, write token and webhook secret. When the agent is enabled it also needs `CORVEX_MODEL_API_KEY`. Use separate read/write tokens with only the required permissions.
+No GitLab credentials or model API key are required at startup; both can be saved in the console. Use separate read/write tokens with only the required permissions.
 
 ## 2. Start the server
 
@@ -55,7 +56,7 @@ Create a project webhook whose URL is:
 https://corvex.example.com/webhooks/gitlab
 ```
 
-Use the same value as `CORVEX_WEBHOOK_SECRET` for the webhook secret token. Enable **Comments** (Note events); the endpoint processes comments on merge requests and Issues. It does not process merge-request state events or push events. Keep SSL verification enabled.
+Use the webhook secret saved in the console Settings page for the project webhook secret token. Enable **Comments** (Note events); the endpoint processes comments on merge requests and Issues. It does not process merge-request state events or push events. Keep SSL verification enabled.
 
 The optional `scripts/register-webhook.sh` helper creates or updates the project hook idempotently. It requires `curl`, `jq`, and a GitLab administrator token used only for registration:
 
@@ -103,7 +104,7 @@ Any commenter on a project configured with the shared webhook secret can mention
 
 ## 5. Enable model tasks
 
-Reviews, explanations, fix proposals, and Issue assistance require a model configuration. Configure the model in the console Settings page and provide `CORVEX_MODEL_API_KEY` when the provider requires authentication. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
+Reviews, explanations, fix proposals, and Issue assistance require a model configuration. Configure the model and its API key in the console Settings page. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
 
 ## Issue assistance and implementation
 

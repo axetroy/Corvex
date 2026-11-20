@@ -667,7 +667,7 @@ describe("CorvexServer", () => {
   it("exposes and updates runtime context settings over the operations API", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // 凭据与令牌只从环境变量读取，测试用 stubEnv 注入并在结束时还原。
+    // 凭据与令牌可以用环境变量兜底，测试用 stubEnv 注入并在结束时还原。
     vi.stubEnv("CORVEX_OPS_USERNAME", "operator");
     vi.stubEnv("CORVEX_OPS_PASSWORD", "a secure password with 16 chars");
     vi.stubEnv("CORVEX_GITLAB_READ_TOKEN", "read");
@@ -675,8 +675,7 @@ describe("CorvexServer", () => {
     vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
     const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
     const configPath = join(root, "config.yaml");
-    // 模型密钥来自环境变量：Server 角色下合法，
-    // 保存设置时的校验必须按 Server 角色进行，否则会被误判为缺少密钥。
+    // 模型密钥在控制台保存；保存设置时按 Server 角色校验。
     await writeFile(configPath, JSON.stringify({
       server: { listen: "127.0.0.1:0" },
       gitlab: { base_url: "https://gitlab.example.com" },
@@ -768,6 +767,46 @@ describe("CorvexServer", () => {
       expect(keepSecret.status).toBe(200);
       expect(config.agent.apiKey).toBe("super-secret-key");
 
+      // GitLab 令牌与 Webhook 密钥同样只在 Web 保存；留空表示保留已保存值。
+      const credentialsWrite = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            gitlab_read_token: "read-from-console",
+            gitlab_token: "write-from-console",
+            gitlab_webhook_secret: "webhook-from-console",
+          },
+        }),
+      });
+      expect(credentialsWrite.status).toBe(200);
+      const credentialsBody = await credentialsWrite.json() as typeof initialBody;
+      expect(credentialsBody.overrides.gitlab_webhook_secret).toBe("••••••");
+      expect(config.gitlab.readToken).toBe("read-from-console");
+      expect(config.gitlab.writeToken).toBe("write-from-console");
+      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
+
+      // 显式留空的敏感字段不会覆盖已保存值。
+      const blankCredentials = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          settings: { gitlab_read_token: "", gitlab_token: "", gitlab_webhook_secret: "" },
+        }),
+      });
+      expect(blankCredentials.status).toBe(200);
+      expect(config.gitlab.readToken).toBe("read-from-console");
+      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
+
+      const keepCredentials = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { context_window: 200_000 } }),
+      });
+      expect(keepCredentials.status).toBe(200);
+      expect(config.gitlab.readToken).toBe("read-from-console");
+      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
+
       // 覆盖项是整份替换：显式提交空对象时，未提交的键回退到配置文件的初始值。
       const reset = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
@@ -778,7 +817,12 @@ describe("CorvexServer", () => {
       const resetBody = await reset.json() as typeof initialBody;
       // 密钥留空始终沿用已保存值，其它覆盖项被清空。
       expect(resetBody.overrides).toMatchObject({ model_api_key: "••••••" });
-      expect(Object.keys(resetBody.overrides).filter((key) => key !== "model_api_key")).toEqual([]);
+      expect(Object.keys(resetBody.overrides).filter((key) => ![
+        "model_api_key",
+        "gitlab_read_token",
+        "gitlab_token",
+        "gitlab_webhook_secret",
+      ].includes(key))).toEqual([]);
       expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
       expect(config.agent.contextWindow).toBe(131_072);
 

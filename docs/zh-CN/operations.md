@@ -20,7 +20,7 @@ pnpm start -- --config configs/config.yaml server
 
 ## Docker Compose
 
-1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。读取令牌始终必填；模型 API 密钥在启用 Agent 时必填。妥善保护此文件，不要提交到版本控制。
+1. `.env` 只用于可选的启动兜底（令牌、Webhook Secret 和模型 API 密钥）；建议把 GitLab 凭据保存在控制台设置页。妥善保护此文件，不要提交到版本控制。
 2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`；GitLab 根地址、用户阻止列表和机器人用户名在控制台设置页填写。Agent 控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
 3. 启动 Server：
 
@@ -29,7 +29,7 @@ pnpm start -- --config configs/config.yaml server
    docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
-4. 如需处理模型任务，在控制台配置模型，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`（如需要），然后重建 Server 容器：
+4. 如需处理模型任务，在控制台配置模型及其 API Key，然后重建 Server 容器：
 
    ```sh
    docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate corvex
@@ -92,7 +92,7 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
 
 | 现象 | 检查项 |
 |---|---|
-| Webhook 返回 `401` | 确认 GitLab Hook Secret 与 `CORVEX_WEBHOOK_SECRET` 完全相同。 |
+| Webhook 返回 `401` | 确认 GitLab Hook Secret 与控制台保存的 Webhook Secret（或 `CORVEX_WEBHOOK_SECRET` 兜底值）一致。 |
 | Webhook 返回 `400` | 接口仅接受有效的合并请求或 Issue Note Hook；关闭不支持的事件，并确认请求来自合并请求或 Issue 评论。 |
 | Webhook 返回 `403` | 检查评论者是否在 `gitlab.blocked_user_ids` 中，或请求的能力是否已启用。 |
 | 任务一直排队 | 确认控制台中的模型配置有效。 |

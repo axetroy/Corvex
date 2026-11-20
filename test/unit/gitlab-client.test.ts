@@ -17,6 +17,7 @@ describe("GitLab base URL", () => {
     const client = new GitLabClient("", "read", "write");
     await expect(client.listProjects("", 1)).rejects.toThrow("GitLab base URL is not configured");
     expect(() => client.configure("https://gitlab.example.com", "read", "write")).not.toThrow();
+    expect(() => new GitLabClient("", "", "")).not.toThrow();
   });
 });
 

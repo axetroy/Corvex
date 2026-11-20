@@ -31,13 +31,13 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `gitlab.blocked_user_ids` | `[]` | 可选 | 不允许调用指令的 GitLab 数字用户 ID。配置了 Webhook 密钥的项目中的评论者均可调用，阻止列表中的用户除外。 |
 | `gitlab.bot_username` | `corvex-bot` | 可选 | 调用指令时需要 @ 的账号名（例如 `@corvex-bot /review`）。 |
 
-以下凭据为必填环境变量：
+以下凭据是可选的启动兜底；建议在控制台设置页保存。密钥字段不会通过接口回显，留空表示保留已保存值。
 
 | 变量 | 用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Server 模式必填。用于读取 GitLab API、发现项目/目标、通过 Git 抓取仓库以及执行内联事件任务。 |
-| `CORVEX_GITLAB_TOKEN` | GitLab 写操作必填。发布评论和行级讨论；Chat 可提交/推送同项目 MR 分支；启用 Issue 实现后会推送新分支并创建 Draft MR。应使用权限最小化的独立写令牌。 |
-| `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
+| `CORVEX_GITLAB_READ_TOKEN` | 可选启动兜底。GitLab API 读取、项目/目标发现、仓库抓取和内联事件使用控制台设置页保存的值。 |
+| `CORVEX_GITLAB_TOKEN` | 可选启动兜底。用于发布评论和行级讨论，以及在控制台配置后启用同项目 MR 的 Git 写入和 Issue 实现。 |
+| `CORVEX_WEBHOOK_SECRET` | 可选启动兜底。必须与控制台保存的密钥一致；未配置密钥时 Webhook 会被拒绝。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
 | `CORVEX_OPS_PASSWORD` | 可选 Agent 控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
 
@@ -77,7 +77,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出，若服务商仍报超窗，会再去掉历史激进重试一次。工具结果在进入会话历史前按助手轮次硬性截断（128K 窗口下单次 32 KiB、单轮 64 KiB），因为 SDK 只能估算「最后一条回复之后新增的」内容；压缩预留也由同一个上界推导。它们也可以在 Agent 控制台设置页面上运行时调整，无需修改配置文件。
 
-启用 Agent 后，调用需要鉴权的服务商前必须提供 `CORVEX_MODEL_API_KEY`，也可以在控制台的模型配置里保存。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
+调用需要鉴权的服务商时，请在控制台的模型配置中保存 API Key。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算。请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
 Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file` 只读取固定 SHA worktree 或配置的 Skill 根目录中的 UTF-8 文本文件。每次最多返回 256 KiB，单行超过 4 KiB 时会截断并标记（压缩/混淆文件常见）；更大的文件需按行范围读取，连续读取行范围时会复用 Session 内游标。`git_grep` 仅搜索固定 workspace HEAD 的已跟踪文件，单次超时 10 秒、输出上限 256 KiB、最多返回 50 条。Chat 还提供 `git_log`（最多 50 个提交）和 `git_show`（仅接受完整 SHA）；两者均为只读，只能读取固定 MR HEAD 可达的提交，并限制输出大小。Chat 也提供 `update_mr_metadata`，仅可按用户明确要求修改当前 MR 标题和/或描述。字面量搜索工具 `search_text` 跳过常见依赖/生成目录，每次最多扫描 1,000 个文件和 16 MiB，每个文件最多 256 KiB，最多返回 50 条匹配。启用后，`web_fetch` 仅对 review 和 explain 任务开放，可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址和配置的黑名单主机；拒绝 HTML/纯文本之外的响应。单页响应体上限为 1 MiB，最多返回 40,000 个文本字符和 20 个同主机链接，每个 Session 最多抓取 10 页。网页内容是不可信模型输入。启用 MCP 时，Pi 仅为 review 任务从 `storage.root` 下服务的 Agent 目录（`pi-agent/mcp.json`）加载 MCP 工具；只能使用管理员控制的配置。
 
@@ -91,7 +91,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`events.poll_interval`、`events.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
 
-只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 
@@ -141,10 +141,9 @@ Issue 任务默认使用项目默认分支；只有当前请求明确命名另�
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Server 模式必填 |
-| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 模式必填 |
-| `CORVEX_WEBHOOK_SECRET` | Webhook Secret，Server 模式必填 |
-| `CORVEX_MODEL_API_KEY` | Agent API 密钥，启用 Agent 时必填 |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，可选启动兜底，通常在控制台设置页保存 |
+| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，可选启动兜底，通常在控制台设置页保存 |
+| `CORVEX_WEBHOOK_SECRET` | Webhook Secret，可选启动兜底，通常在控制台设置页保存 |
 | `CORVEX_MODEL_BASE_URL` | 覆盖 `agent.base_url` |
 | `CORVEX_MODEL_NAME` | 覆盖 `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | 覆盖 `gitlab.base_url` |

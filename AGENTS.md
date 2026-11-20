@@ -105,7 +105,7 @@ These are deliberate constraints, not incidental behavior. Do not weaken them to
 - Agent output is untrusted: findings must resolve to added diff lines; patches are limited to changed paths, size-capped, and checked with `git apply --check` and `git diff --check`. The agent never publishes directly — Corvex re-checks authorization, cancellation and revision before writing to GitLab.
 - Never execute repository code, scripts or tests. There is no shell executor by design; adding one requires a separate sandbox and authorization design.
 - Event state transitions are enforced in `EventStore` (`queued -> preparing -> analyzing -> [fixing -> verifying] -> publishing -> completed`, plus `failed`, `stale`, `cancelled`). Leases are renewed while an event runs; publishing failures are not retried automatically because the GitLab outcome may be uncertain. Conversation turns follow their own `queued -> running -> completed` lifecycle; only `gitlab` mode may publish, and only through its explicit write tools.
-- Configuration is validated per role: `server` needs GitLab read/write tokens and the webhook secret (no model key), `benchmark` needs the agent settings but no webhook secret, `storage` commands need only storage settings.
+- Configuration is validated per role: GitLab tokens and the webhook secret are optional at startup because they are stored in `runtime_settings`; `storage` commands need only storage settings.
 
 ## Tests
 
