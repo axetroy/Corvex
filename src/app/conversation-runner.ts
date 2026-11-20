@@ -54,7 +54,9 @@ export class ConversationRunner {
       config.gitlab.readToken,
       config.gitlab.writeToken,
     );
-    this.agent = new PiAgent(config, store, this.repo);
+    // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
+    // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
+    this.agent = new PiAgent(config, store, this.repo, undefined, undefined, undefined, gitlab);
   }
 
   /** 运维台修改 GitLab 连接设置后同步重建对话侧 Git 客户端。 */
