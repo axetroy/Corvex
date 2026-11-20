@@ -182,7 +182,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => {
       active = false;
     };
-  }, [copy, conversationOffset, refreshToken, onUpdated, showArchived]);
+  }, [copy, conversationOffset, refreshToken, pollToken, onUpdated, showArchived]);
 
   useEffect(() => {
     if (!selectedConversationId) {
@@ -337,7 +337,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch("/api/ops/conversations", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, mode }),
+        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, mode, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
@@ -373,7 +373,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch(`/api/ops/conversations/${encodeURIComponent(replyConversationId)}/messages`, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });

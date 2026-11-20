@@ -565,7 +565,7 @@ describe("review task loop", () => {
       // 稍作延迟，确保 SSE 已建连后再开始输出正文，断言才不依赖调度顺序。
       delayMs: 100,
     });
-    // 首轮完成后触发一次标题生成调用，使用模型的独立动作。
+    // 正文落库后、done 之前生成标题，使用模型的独立动作。
     modelActions.push({ content: "Value assignment in input.ts" });
     const cipher = createTokenCipher(serverStore.getOrCreateSessionSecret());
     const user = serverStore.upsertUser({

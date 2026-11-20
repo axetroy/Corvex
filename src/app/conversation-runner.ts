@@ -1,7 +1,7 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities } from "../events/model.js";
-import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext } from "../events/model.js";
+import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
@@ -66,7 +66,7 @@ export class ConversationRunner {
   }
 
   /** 领取并执行一轮对话；轮次已被领取或不存在时返回 false。 */
-  async runTurn(turnId: string, signal: AbortSignal, gitlab?: GitLabClient): Promise<boolean> {
+  async runTurn(turnId: string, signal: AbortSignal, gitlab?: GitLabClient, responseLanguage?: ResponseLanguage): Promise<boolean> {
     const turn = this.store.claimConversationTurn(turnId);
     if (!turn) return false;
     const controller = new AbortController();
@@ -74,7 +74,8 @@ export class ConversationRunner {
     signal.addEventListener("abort", abort, { once: true });
     this.running.set(turnId, { controller, conversationId: turn.conversationId });
     try {
-      await this.execute(turn, controller.signal, gitlab ?? this.gitlab);
+      const language = responseLanguage ?? this.config.agent.responseLanguage;
+      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language);
     } finally {
       this.running.delete(turnId);
       signal.removeEventListener("abort", abort);
@@ -264,6 +265,7 @@ export class ConversationRunner {
     dropped: { id?: string; role: "user" | "assistant"; content: string }[],
     workspacePath: string,
     signal: AbortSignal,
+    language: ResponseLanguage,
   ): Promise<void> {
     if (!this.config.agent.summaryEnabled || dropped.length === 0) return;
     if (!dropped.at(-1)?.id) return;
@@ -280,7 +282,7 @@ export class ConversationRunner {
         const summary = await this.agent.generate(
           {
             taskType: "conversation",
-            systemPrompt: getSummarySystemPrompt(this.config.agent.responseLanguage),
+            systemPrompt: getSummarySystemPrompt(language),
             userPrompt: JSON.stringify({ conversation: transcript }),
           },
           workspacePath,
@@ -309,6 +311,7 @@ export class ConversationRunner {
     workspacePath: string,
     signal: AbortSignal,
     trace: EventTraceContext,
+    language: ResponseLanguage,
   ): Promise<void> {
     // 以数据库里的标题为准：首轮可能因快照过期等原因失败，真正成功的那一轮
     // 历史未必为空，不能因此跳过标题。
@@ -317,7 +320,7 @@ export class ConversationRunner {
       const title = await this.agent.generate(
         {
           taskType: "conversation",
-          systemPrompt: getConversationTitleSystemPrompt(this.config.agent.responseLanguage),
+          systemPrompt: getConversationTitleSystemPrompt(language),
           userPrompt: turn.request,
         },
         workspacePath,
@@ -387,7 +390,7 @@ export class ConversationRunner {
     });
   }
 
-  private async execute(turn: ConversationTurnContext, signal: AbortSignal, gitlab: GitLabClient): Promise<void> {
+  private async execute(turn: ConversationTurnContext, signal: AbortSignal, gitlab: GitLabClient, language: ResponseLanguage): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
       return;
@@ -438,7 +441,7 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      const systemPrompt = getConversationSystemPrompt(this.config.agent.responseLanguage, turn.mode);
+      const systemPrompt = getConversationSystemPrompt(language, turn.mode);
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -504,12 +507,13 @@ export class ConversationRunner {
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
+      // 标题在 done 之前落库，界面收到 done 刷新列表时就能立刻看到新标题。
+      await this.updateTitle(turn, workspace.path, signal, trace, language);
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
-      // 正文已落库，立即结束流：标题与摘要生成还需额外模型调用，不应让界面继续等流。
+      // 正文与标题都已落库，再结束流，界面收到 done 后刷新即可拿到新标题。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });
-      await this.updateTitle(turn, workspace.path, signal, trace);
-      await this.updateSummary(turn, dropped, workspace.path, signal);
+      await this.updateSummary(turn, dropped, workspace.path, signal, language);
     } catch (error) {
       // 失败/取消也保留已发生的思考与工具调用，刷新后仍能看到过程停在哪一步。
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId));

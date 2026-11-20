@@ -4,6 +4,9 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import type { ResponseLanguage } from "../events/model.js";
+
+export type { ResponseLanguage };
 
 export interface CorvexConfig {
   server: {
@@ -97,8 +100,6 @@ export interface CorvexConfig {
     historyComments: number;
   };
 }
-
-export type ResponseLanguage = "en" | "zh-CN";
 
 export type ConfigRole = "server" | "storage" | "benchmark";
 

@@ -1,6 +1,7 @@
 import type { CorvexConfig } from "../../config/config.js";
 import type { EventStore } from "../../events/store.js";
 import type { TokenCipher } from "../../tokens.js";
+import { gitlabEndpoint } from "../../gitlab/client.js";
 import type { AuthUser, GitLabIdentity } from "./model.js";
 
 /** OAuth 回调上携带的授权码交换结果。 */
@@ -39,7 +40,7 @@ export class GitLabOAuthService {
   /** 生成跳转到 GitLab 的授权地址；state 由路由写入短时 Cookie 防 CSRF。 */
   authorizationUrl(state: string): string {
     if (!this.configured) throw new Error("GitLab OAuth is not configured");
-    const url = new URL("/oauth/authorize", this.config.gitlab.baseUrl);
+    const url = new URL(gitlabEndpoint(this.config.gitlab.baseUrl, "oauth/authorize"));
     url.searchParams.set("client_id", this.config.gitlab.oauthClientId);
     url.searchParams.set("redirect_uri", this.config.gitlab.oauthRedirectUri);
     url.searchParams.set("response_type", "code");
@@ -96,7 +97,7 @@ export class GitLabOAuthService {
       client_secret: this.config.gitlab.oauthClientSecret,
       ...params,
     });
-    const response = await fetch(new URL("/oauth/token", this.config.gitlab.baseUrl), {
+    const response = await fetch(gitlabEndpoint(this.config.gitlab.baseUrl, "oauth/token"), {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body,
@@ -111,7 +112,7 @@ export class GitLabOAuthService {
   }
 
   private async readIdentity(tokens: TokenResponse): Promise<GitLabIdentity> {
-    const url = new URL("/api/v4/user", this.config.gitlab.baseUrl);
+    const url = gitlabEndpoint(this.config.gitlab.baseUrl, "api/v4/user");
     const response = await fetch(url, {
       headers: {
         authorization: `Bearer ${tokens.access_token}`,

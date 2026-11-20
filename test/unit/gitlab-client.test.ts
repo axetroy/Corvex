@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { GitLabApiError, GitLabClient, GitLabWriteError, repositoryCloneUrl, repositoryWebUrl } from "../../src/gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, gitlabEndpoint, repositoryCloneUrl, repositoryWebUrl } from "../../src/gitlab/client.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -18,6 +18,15 @@ describe("GitLab base URL", () => {
     await expect(client.listProjects("", 1)).rejects.toThrow("GitLab base URL is not configured");
     expect(() => client.configure("https://gitlab.example.com", "read", "write")).not.toThrow();
     expect(() => new GitLabClient("", "", "")).not.toThrow();
+  });
+});
+
+describe("GitLab endpoint URLs", () => {
+  it("preserves the instance subpath", () => {
+    expect(gitlabEndpoint("https://gitlab.example.com/", "api/v4/projects"))
+      .toBe("https://gitlab.example.com/api/v4/projects");
+    expect(gitlabEndpoint("https://example.com/gitlab", "/oauth/token"))
+      .toBe("https://example.com/gitlab/oauth/token");
   });
 });
 

@@ -52,6 +52,11 @@ export function repositoryWebUrl(baseUrl: string, project: Pick<Project, "path_w
   return `${baseUrl.replace(/\/+$/, "")}/${projectRepositoryPath(project)}`;
 }
 
+/** 拼接 GitLab 端点时保留实例子路径，不能把 `/api/v4` 挂到域名根。 */
+export function gitlabEndpoint(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
 /** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
 export interface GitLabBranchCommit {
   id: string;

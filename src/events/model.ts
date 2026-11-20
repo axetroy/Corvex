@@ -141,6 +141,9 @@ export interface EventPage {
   total: number;
 }
 
+/** 模型生成内容的语言；控制台按界面语言传入，服务端缺省使用运行时配置。 */
+export type ResponseLanguage = "en" | "zh-CN";
+
 export interface ConversationSummary {
   id: string;
   /** 由模型生成的对话标题；尚未生成时为空字符串。 */

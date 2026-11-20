@@ -84,6 +84,9 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const targetBranch = typeof body.targetBranch === "string" ? body.targetBranch.trim() : "";
     const message = typeof body.message === "string" ? body.message : "";
     const mode = body.mode === undefined ? undefined : String(body.mode);
+    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en"
+      ? body.responseLanguage
+      : undefined;
     if (
       projectId === undefined ||
       !targetBranch || targetBranch.length > 255 ||
@@ -108,7 +111,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
         ...(mode ? { mode } : {}),
       });
-      ctx.startConversationTurn(created.turnId, gitlab);
+      ctx.startConversationTurn(created.turnId, gitlab, responseLanguage);
       sendJson(reply, 202, created);
     } catch (error) {
       sendGitLabReadError(reply, error);
@@ -339,6 +342,9 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const body = readJsonObject(request, reply);
     if (!body) return;
     const message = typeof body.message === "string" ? body.message : "";
+    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en"
+      ? body.responseLanguage
+      : undefined;
     if (!message.trim() || message.length > 20_000) {
       sendJson(reply, 400, { error: "message must be between 1 and 20000 characters" });
       return;
@@ -355,7 +361,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         actorId: 0,
         request: message,
       });
-      ctx.startConversationTurn(queued.turnId, gitlab);
+      ctx.startConversationTurn(queued.turnId, gitlab, responseLanguage);
       sendJson(reply, 202, { conversationId: conversation.id, turnId: queued.turnId });
     } catch (error) {
       if (error instanceof Error && error.message.includes("active turn")) {

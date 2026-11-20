@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { CorvexConfig } from "../config/config.js";
 import type { EventStore } from "../events/store.js";
+import type { ResponseLanguage } from "../events/model.js";
 import { errorMessage } from "../errors.js";
 import { currentUser } from "./auth/context.js";
 import { GitLabOAuthService } from "./auth/service.js";
@@ -125,8 +126,8 @@ export class CorvexServer {
         return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken, user.accessToken, 10_000, "bearer");
       },
       conversationStreams: this.conversationStreams,
-      startConversationTurn: (turnId, gitlab) => {
-        this.startConversationTurn(turnId, gitlab);
+      startConversationTurn: (turnId, gitlab, responseLanguage) => {
+        this.startConversationTurn(turnId, gitlab, responseLanguage);
       },
     };
   }
@@ -134,8 +135,8 @@ export class CorvexServer {
   /**
    * 在 Server 进程内联执行一轮对话；异常只记录日志，轮次状态由 store 落库。
    */
-  private startConversationTurn(turnId: string, gitlab: GitLabClient): void {
-    void this.conversations.runTurn(turnId, this.conversationAbort.signal, gitlab).catch((error: unknown) => {
+  private startConversationTurn(turnId: string, gitlab: GitLabClient, responseLanguage?: ResponseLanguage): void {
+    void this.conversations.runTurn(turnId, this.conversationAbort.signal, gitlab, responseLanguage).catch((error: unknown) => {
       console.error("inline conversation turn failed", { turnId, error: errorMessage(error) });
     });
   }

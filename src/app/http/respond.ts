@@ -144,6 +144,7 @@ export function idParam(value: string | undefined): string | undefined {
 /** `/api/ops` 读取 GitLab 失败时的统一响应。 */
 export function sendGitLabReadError(reply: FastifyReply, error: unknown): void {
   if (error instanceof GitLabApiError && [401, 403, 404].includes(error.status)) {
+    console.warn("operations GitLab access denied", { status: error.status, error: errorMessage(error) });
     sendJson(reply, 404, { error: "GitLab resource is not available to the configured token" });
     return;
   }
