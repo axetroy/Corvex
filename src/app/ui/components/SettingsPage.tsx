@@ -65,7 +65,7 @@ function fieldError(field: SettingField, value: SettingValue | undefined, copy: 
     return "";
   }
   if (field.kind === "string") {
-    if (typeof value !== "string" || !value.trim()) return copy.settingsInvalidText;
+    if (typeof value !== "string" || (!field.secret && !value.trim())) return copy.settingsInvalidText;
     if (field.maxLength !== undefined && value.length > field.maxLength) {
       return copy.settingsInvalidTextMax.replace("{max}", String(field.maxLength));
     }
@@ -210,6 +210,16 @@ export function SettingsPage({ copy, locale, refreshToken, onUpdated, onRefresh 
                     disabled={!editable}
                     status={invalid ? "error" : undefined}
                     onChange={(next) => setValue(field.key, next)}
+                  />
+                ) : field.secret ? (
+                  <Input.Password
+                    className="settings-text"
+                    value={typeof value === "string" ? value : ""}
+                    placeholder={copy.settingsSecretConfigured}
+                    maxLength={field.maxLength}
+                    disabled={!editable}
+                    status={invalid ? "error" : undefined}
+                    onChange={(event) => setValue(field.key, event.target.value)}
                   />
                 ) : (
                   <Input

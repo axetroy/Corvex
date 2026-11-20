@@ -152,6 +152,8 @@ export interface SettingField {
   maxLength?: number;
   /** 列表项的元素类型：用户 ID 为整数，其余按文本处理。 */
   item?: "integer" | "hostname" | "path";
+  /** 密钥字段用密码框展示，允许留空表示沿用已保存值。 */
+  secret?: boolean;
   /** 输入单位提示，例如 token。 */
   unit?: string;
   /** 文案键：字段标签与说明。 */
@@ -204,8 +206,6 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "mcp_enabled", kind: "boolean", labelKey: "settingsMcpEnabled", hintKey: "settingsMcpEnabledHint" },
       { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
-      { key: "gitlab_bot_username", kind: "string", maxLength: 200, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
-      { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
     ],
   },
   {
@@ -217,6 +217,18 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
       { key: "worker_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsWorkerPollInterval", hintKey: "settingsWorkerPollIntervalHint" },
       { key: "worker_event_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsWorkerEventTimeout", hintKey: "settingsWorkerEventTimeoutHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupGitLab",
+    hintKey: "settingsGroupGitLabHint",
+    fields: [
+      { key: "gitlab_base_url", kind: "string", maxLength: 500, labelKey: "settingsGitLabBaseUrl", hintKey: "settingsGitLabBaseUrlHint" },
+      { key: "gitlab_read_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabReadToken", hintKey: "settingsGitLabReadTokenHint" },
+      { key: "gitlab_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabToken", hintKey: "settingsGitLabTokenHint" },
+      { key: "gitlab_webhook_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabWebhookSecret", hintKey: "settingsGitLabWebhookSecretHint" },
+      { key: "gitlab_bot_username", kind: "string", maxLength: 200, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
+      { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
     ],
   },
   {

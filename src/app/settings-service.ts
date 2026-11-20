@@ -45,6 +45,8 @@ export class SettingsService {
     /** 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。 */
     private readonly baseline: CorvexConfig,
     private readonly configPath?: string,
+    /** 设置应用后的回调：重建 GitLab 客户端与 Git 管理器等持有旧连接参数的对象。 */
+    private readonly onApplied?: (config: CorvexConfig) => void,
   ) {}
   private probing = false;
 
@@ -72,6 +74,7 @@ export class SettingsService {
         console.info("applied stored runtime settings", { keys: applied });
       }
       this.applyActiveModelAndProbe();
+      this.onApplied?.(this.config);
     } catch (error) {
       console.error("apply stored runtime settings failed", { error: errorMessage(error) });
     }
@@ -176,9 +179,14 @@ export class SettingsService {
     }
     // 密钥字段单独处理：留空表示沿用已保存的值，只有明确提交新值才覆盖。
     // 这样界面上不回显原文也不会误清除它。
-    if (!("model_api_key" in overrides)) {
-      const stored = this.store.listRuntimeSettings().find((row) => row.key === "model_api_key");
-      if (stored) overrides.model_api_key = stored.value;
+    for (const key of secretRuntimeSettingKeys) {
+      const stored = this.store.listRuntimeSettings().find((row) => row.key === key);
+      const submitted = overrides[key];
+      if (submitted === "" || submitted === secretSettingPlaceholder || submitted === undefined) {
+        // 留空、占位符或未提交都沿用已保存值；没有保存值时保留配置文件/环境变量的基线值。
+        if (stored) overrides[key] = stored.value;
+        else delete overrides[key];
+      }
     }
     const problems = validateRuntimeSettings(overrides);
     if (problems.length > 0) {
@@ -232,6 +240,7 @@ export class SettingsService {
     copyRuntimeSettings(candidate, this.config);
     // 模型连接参数由模型目录管理，复位后必须重新应用选中项，否则保存任何设置都会退回文件值。
     this.applyActiveModel();
+    this.onApplied?.(this.config);
     console.info("runtime settings updated", { keys: Object.keys(overrides), actor, updatedAt: now });
     return { status: 200, body: this.read() };
   }

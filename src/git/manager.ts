@@ -92,17 +92,28 @@ export class GitManager {
   private readonly root: string;
   private readonly mirrorRoot: string;
   private readonly workspaceRoot: string;
-  private readonly gitlabUrl: URL;
+  private gitlabUrl: URL;
+  private token: string;
+  private writeToken: string;
   private readonly projectLocks = new Map<number, Promise<void>>();
   private readonly diffEngine: DiffEngine;
 
-  constructor(
-    root: string,
-    gitlabBaseUrl: string,
-    private readonly token: string,
-    private readonly writeToken = "",
-  ) {
+  constructor(root: string, gitlabBaseUrl: string, token: string, writeToken = "") {
     if (!root.trim()) throw new Error("Git storage root is required");
+    this.root = resolve(root);
+    this.mirrorRoot = join(this.root, "mirrors");
+    this.workspaceRoot = join(this.root, "workspaces");
+    this.gitlabUrl = new URL("http://localhost");
+    this.token = "";
+    this.writeToken = "";
+    this.reconfigureGitLab(gitlabBaseUrl, token, writeToken);
+    this.diffEngine = new DiffEngine((workspace, args, input, limit, signal) =>
+      this.run(workspace.path, args, input, limit, signal),
+    );
+  }
+
+  /** 运维台修改 GitLab 连接设置后更新镜像来源校验与凭据；现有镜像在下次使用时重新校验来源。 */
+  reconfigureGitLab(gitlabBaseUrl: string, token: string, writeToken: string): void {
     let url: URL;
     try {
       url = new URL(gitlabBaseUrl);
@@ -112,13 +123,9 @@ export class GitManager {
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
       throw new Error(`invalid GitLab base URL "${gitlabBaseUrl}"`);
     }
-    this.root = resolve(root);
-    this.mirrorRoot = join(this.root, "mirrors");
-    this.workspaceRoot = join(this.root, "workspaces");
     this.gitlabUrl = url;
-    this.diffEngine = new DiffEngine((workspace, args, input, limit, signal) =>
-      this.run(workspace.path, args, input, limit, signal),
-    );
+    this.token = token;
+    this.writeToken = writeToken;
   }
 
   get writeEnabled(): boolean {

@@ -8,6 +8,7 @@ import {
   runtimeSettingDefinitions,
   runtimeSettingsEffective,
   runtimeSettingsView,
+  secretRuntimeSettingKeys,
   validateRuntimeSettings,
 } from "../../src/config/settings.js";
 import { settingGroups } from "../../src/app/ui/types.js";
@@ -314,5 +315,22 @@ describe("设置页与服务端设置键的一致性", () => {
       const definition = runtimeSettingDefinitions.find((item) => item.key === field.key);
       expect(definition?.type, field.key).toBe(field.kind);
     }
+  });
+});
+
+describe("GitLab runtime settings", () => {
+  it("treats GitLab tokens and the webhook secret as redacted settings", () => {
+    expect([...secretRuntimeSettingKeys]).toEqual(expect.arrayContaining([
+      "model_api_key",
+      "gitlab_read_token",
+      "gitlab_token",
+      "gitlab_webhook_secret",
+    ]));
+  });
+
+  it("validates the GitLab base URL like the model base URL", () => {
+    expect(validateRuntimeSettings({ gitlab_base_url: "https://gitlab.example.com" })).toEqual([]);
+    expect(validateRuntimeSettings({ gitlab_base_url: "https://user:pass@gitlab.example.com" }))
+      .toContain("gitlab_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
   });
 });

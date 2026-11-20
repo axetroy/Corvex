@@ -57,6 +57,12 @@ export class ConversationRunner {
     this.agent = new PiAgent(config, store, this.repo);
   }
 
+  /** 运维台修改 GitLab 连接设置后同步重建对话侧 Git 客户端。 */
+  reconfigureGitLab(baseUrl: string, readToken: string, writeToken: string): void {
+    this.gitlab.configure(baseUrl, readToken, writeToken);
+    this.repo.reconfigureGitLab(baseUrl, readToken, writeToken);
+  }
+
   /** 领取并执行一轮对话；轮次已被领取或不存在时返回 false。 */
   async runTurn(turnId: string, signal: AbortSignal): Promise<boolean> {
     const turn = this.store.claimConversationTurn(turnId);

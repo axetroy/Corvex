@@ -81,6 +81,10 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
   // GitLab Webhook 行为：Server 每次处理 Note Hook 时读取。
+  { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500 },
+  { key: "gitlab_read_token", section: "gitlab", field: "readToken", type: "string", maxLength: 2_000, allowEmpty: true },
+  { key: "gitlab_token", section: "gitlab", field: "writeToken", type: "string", maxLength: 2_000, allowEmpty: true },
+  { key: "gitlab_webhook_secret", section: "gitlab", field: "webhookSecret", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
   { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
   // 审查与历史评论
@@ -104,7 +108,12 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));
 
 /** 写入 SQLite 但绝不回显或写入审计日志的设置键。 */
-export const secretRuntimeSettingKeys = new Set(["model_api_key"]);
+export const secretRuntimeSettingKeys = new Set([
+  "model_api_key",
+  "gitlab_read_token",
+  "gitlab_token",
+  "gitlab_webhook_secret",
+]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */
 export type RuntimeSettingValue = number | boolean | string | string[];
@@ -208,6 +217,20 @@ function checkRelations(values: RuntimeSettingValues): string[] {
     }
     if (typeof keepRecent === "number" && keepRecent > contextWindow) {
       problems.push("compaction_keep_recent_tokens must not exceed context_window");
+    }
+  }
+  const gitlabBaseUrl = values.gitlab_base_url;
+  if (typeof gitlabBaseUrl === "string") {
+    try {
+      const url = new URL(gitlabBaseUrl);
+      if (
+        (url.protocol !== "http:" && url.protocol !== "https:") ||
+        url.username || url.password || url.search || url.hash
+      ) {
+        problems.push("gitlab_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
+      }
+    } catch {
+      problems.push("gitlab_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
     }
   }
   const modelBaseUrl = values.model_base_url;

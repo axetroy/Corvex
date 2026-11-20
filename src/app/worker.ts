@@ -169,6 +169,12 @@ export class Worker {
       copyRuntimeSettings(this.baseline, this.config);
       const applied = applyRuntimeSettingRows(this.config, rows);
       if (active) applyActiveModel(this.config, active);
+      this.gitlab.configure(this.config.gitlab.baseUrl, this.config.gitlab.readToken, this.config.gitlab.writeToken);
+      this.repo.reconfigureGitLab(
+        this.config.gitlab.baseUrl,
+        this.config.gitlab.readToken,
+        this.config.gitlab.writeToken,
+      );
       this.runtimeSignature = signature;
       this.buildWorkflows();
       console.info("worker applied runtime settings", { keys: applied });

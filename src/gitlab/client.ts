@@ -221,14 +221,25 @@ function validDiscussionPath(value: string): boolean {
 }
 
 export class GitLabClient {
-  private readonly baseUrl: string;
+  private baseUrl: string;
+  private readToken: string;
+  private writeToken: string;
 
   constructor(
     baseUrl: string,
-    private readonly readToken: string,
-    private readonly writeToken: string,
+    readToken: string,
+    writeToken: string,
     private readonly requestTimeoutMs = 10_000,
   ) {
+    if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
+    this.baseUrl = "";
+    this.readToken = "";
+    this.writeToken = "";
+    this.configure(baseUrl, readToken, writeToken);
+  }
+
+  /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
+  configure(baseUrl: string, readToken: string, writeToken: string): void {
     let parsed: URL;
     try {
       parsed = new URL(baseUrl);
@@ -245,8 +256,9 @@ export class GitLabClient {
       throw new Error(`invalid GitLab base URL "${baseUrl}"`);
     }
     if (!writeToken) throw new Error("GitLab write API token is required");
-    if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.readToken = readToken;
+    this.writeToken = writeToken;
   }
 
   async getMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<MergeRequest> {

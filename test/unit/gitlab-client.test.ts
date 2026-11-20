@@ -541,3 +541,22 @@ describe("repository URLs from configured base URL", () => {
     expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "group/repo?x=1" })).toThrow();
   });
 });
+describe("GitLabClient runtime reconfiguration", () => {
+  it("uses the configured base URL and token on the next request", async () => {
+    let authorization = "";
+    const server = createServer((request, response) => {
+      authorization = String(request.headers["private-token"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("[]");
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+      client.configure(`http://127.0.0.1:${port}`, "new-read", "new-write");
+      await expect(client.listProjects("anything", 1)).resolves.toEqual([]);
+      expect(authorization).toBe("new-read");
+    } finally {
+      server.close();
+    }
+  });
+});

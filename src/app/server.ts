@@ -53,7 +53,13 @@ export class CorvexServer {
     this.address = parseListenAddress(config.server.listen);
     this.conversations = new ConversationRunner(config, store, gitlab);
     // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
-    this.settings = new SettingsService(config, store, structuredClone(config), configPath);
+    this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
+      this.conversations.reconfigureGitLab(
+        applied.gitlab.baseUrl,
+        applied.gitlab.readToken,
+        applied.gitlab.writeToken,
+      );
+    });
     this.app = Fastify({
       // 原实现对 HEAD 不额外放行，交给路由兜底；保持同样的可见行为。
       exposeHeadRoutes: false,
