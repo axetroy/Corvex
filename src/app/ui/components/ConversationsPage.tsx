@@ -629,12 +629,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   const composerSetup = showCreate ? (
     <div className="conversation-composer-setup">
+      <span className="conversation-composer-model-label">{copy.composerProject}</span>
       <ProjectPicker
         copy={copy}
         value={project}
         disabled={busy}
         onChange={selectProject}
       />
+      <span className="conversation-composer-model-label">{copy.branch}</span>
       <BranchPicker
         copy={copy}
         value={selectedBranch}
@@ -642,6 +644,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         disabled={busy}
         onChange={setSelectedBranch}
       />
+      <span className="conversation-composer-model-label">{copy.conversationModeLabel}</span>
       <Select<ConversationSummary["mode"]>
         className="conversation-mode-select"
         aria-label={copy.conversationModeLabel}
@@ -653,7 +656,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onChange={setMode}
       />
     </div>
-  ) : undefined;
+  ) : null;
 
   return (
     <>
@@ -692,7 +695,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         style={{ backgroundColor: conversationGroupColor(String(group)) }}
                         aria-hidden="true"
                       />
-                      {projectNames.get(String(group)) ?? String(group)}
+                      <span className="conversation-group-name">{projectNames.get(String(group)) ?? String(group)}</span>
                     </span>
                   ),
                   collapsible: false,
@@ -795,11 +798,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       value={draftMessage}
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
                       disabled={busy || (showCreate ? !project : !canReply)}
-                      header={composerSetup}
                       autoSize={{ minRows: 3, maxRows: 10 }}
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}
-                      footer={<ComposerModelPicker copy={copy} disabled={busy} />}
+                      footer={
+                        <div className="conversation-composer-footer">
+                          {composerSetup}
+                          <ComposerModelPicker copy={copy} disabled={busy} />
+                        </div>
+                      }
                       suffix={(_node, { components: { SendButton } }) => (
                         <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
                       )}

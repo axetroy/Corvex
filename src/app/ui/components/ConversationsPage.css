@@ -139,14 +139,22 @@
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
 }
 
 .conversation-group-label {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
+}
+
+.conversation-group-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -345,7 +353,7 @@
    避免 justify-content:center 把顶部内容推到滚动区之外。 */
 .conversation-setup-pane {
   justify-content: flex-start;
-  padding-bottom: 236px;
+  padding-bottom: 210px;
 }
 
 .conversation-start {
@@ -404,24 +412,42 @@
   font-weight: 500;
 }
 
-/* 欢迎页的仓库/分支/模式放进输入框头部，与输入内容同处一张卡片。 */
-.conversation-composer-setup {
+/* 欢迎页的仓库/分支/模式与模型选择器同处底栏，统一小号无边框样式。 */
+.conversation-composer-footer {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--conversation-border);
+  gap: 4px 10px;
 }
 
-.conversation-composer-setup .remote-picker {
-  flex: 1 1 180px;
+.conversation-composer-setup {
+  display: flex;
   min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
-.conversation-composer-setup .conversation-mode-select {
-  flex: 0 0 132px;
-  width: 132px;
+.conversation-composer-setup .remote-picker.ant-select,
+.conversation-composer-setup .conversation-mode-select.ant-select,
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-model-select.ant-select {
+  min-width: 0;
+  max-width: 180px;
+  flex: 0 1 auto;
+  font-size: 12px;
+}
+
+.conversation-composer-setup .conversation-mode-select.ant-select {
+  width: 104px;
+}
+
+/* AntD 运行时样式用三个类名，这里用五级选择器把选择器改成与模型选择器一致的无边框样式。 */
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .ant-select-selector {
+  padding: 0 4px !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .conversation-prompts.ant-prompts {
@@ -435,14 +461,18 @@
   text-transform: uppercase;
 }
 
-.conversation-prompts > .ant-prompts-list {
-  gap: 8px;
+/* 四组提示词固定两列，每行占满容器宽度；窄屏回退为单列。 */
+.conversations-layout .conversation-prompts > .ant-prompts-list {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   align-items: stretch;
 }
 
 /* 外层卡片是分类标题，本身不可点击；内层问题才是按钮。 */
 .conversation-prompts > .ant-prompts-list > .ant-prompts-item-has-nest {
-  width: min(240px, 100%);
+  width: 100%;
   min-width: 0;
   padding: 7px 9px 6px;
   border: 1px solid var(--conversation-border);
@@ -1119,7 +1149,7 @@
 
 .conversation-composer-model-select.ant-select {
   min-width: 0;
-  max-width: min(360px, 100%);
+  max-width: min(200px, 100%);
   flex: 0 1 auto;
   font-size: 12px;
 }
@@ -1137,6 +1167,12 @@
   flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .conversations-layout .conversation-prompts > .ant-prompts-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 900px) {
