@@ -1,5 +1,6 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { describeSessionTool, formatTraceDuration } from "../format.js";
+import { isAtScrollBottom } from "../scroll.js";
 import { translate } from "../i18n.js";
 import type { Copy } from "../i18n.js";
 import { parseTraceValue } from "../trace.js";
@@ -14,6 +15,32 @@ export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "text"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
+
+/** 思考文本在流式输出时会自动贴底；一旦用户向上翻阅就停止跟随。 */
+const ThinkingContent = memo(function ThinkingContent({ text }: { text: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  /** 用户是否停留在底部；初始为 true，流式开始时自然跟随最新内容。 */
+  const pinned = useRef(true);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !pinned.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [text]);
+
+  return (
+    <div
+      className="conversation-thinking-content"
+      ref={ref}
+      onScroll={(event) => {
+        const node = event.currentTarget;
+        pinned.current = isAtScrollBottom(node.scrollTop, node.clientHeight, node.scrollHeight);
+      }}
+    >
+      {text}
+    </div>
+  );
+});
 
 /**
  * 一整块「过程」：按发生顺序直接输出每次思考与工具调用，不逐条折叠。
@@ -51,7 +78,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
         {segments.map((segment) => segment.kind === "thinking" ? (
           <div className="conversation-thinking" key={segment.key}>
             <div className="conversation-thinking-label">{copy.conversationThinking}</div>
-            <div className="conversation-thinking-content">{segment.text}</div>
+            <ThinkingContent text={segment.text} />
           </div>
         ) : segment.kind === "text" ? (
           <div className="conversation-process-text" key={segment.key}>{segment.text}</div>
