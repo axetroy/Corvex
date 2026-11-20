@@ -29,6 +29,17 @@ export function RepositoryIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 /** 分支图标：git 分支图形，用于分支选择器。 */
+/** 退出图标：门与箭头，用于侧栏底部登出按钮。 */
+export function LogoutIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M9.5 2.5H4a1.5 1.5 0 0 0-1.5 1.5v8A1.5 1.5 0 0 0 4 13.5h5.5" />
+      <path d="M8 8h5.5" />
+      <path d="m11.5 5.5 3 2.5-3 2.5" />
+    </svg>
+  );
+}
+
 export function BranchIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...iconProps(props)}>

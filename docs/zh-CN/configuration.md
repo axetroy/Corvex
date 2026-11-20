@@ -16,7 +16,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `server.read_timeout` | `5s` | 正时长 | HTTP 请求头读取超时。 |
 | `server.shutdown_timeout` | `30s` | 正时长 | HTTP 优雅关闭等待时限。 |
 
-Agent 控制台始终可通过 `/ops` 访问。在控制台设置页同时保存用户名和密码后启用 HTTP Basic Auth；两者都留空时不启用认证。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
+Agent 控制台 `/ops` 使用 GitLab OAuth2 登录。每个用户用自己的 GitLab 账号登录，Corvex 使用该用户的令牌执行控制台 API 与会话。
 
 ## GitLab
 
@@ -33,6 +33,12 @@ Agent 控制台始终可通过 `/ops` 访问。在控制台设置页同时保存
 | `CORVEX_GITLAB_READ_TOKEN` | 可选启动兜底。GitLab API 读取、项目/目标发现、仓库抓取和内联事件使用控制台设置页保存的值。 |
 | `CORVEX_GITLAB_TOKEN` | 可选启动兜底。用于发布评论和行级讨论，以及在控制台配置后启用同项目 MR 的 Git 写入和 Issue 实现。 |
 | `CORVEX_WEBHOOK_SECRET` | 可选启动兜底。必须与控制台保存的密钥一致；未配置密钥时 Webhook 会被拒绝。 |
+
+## 按用户 GitLab 登录
+
+控制台通过 GitLab OAuth2 授权码流程认证每个使用者。首次访问时未登录请求会跳转到 `/setup`，在那里填写 GitLab 实例地址以及 OAuth Application 的 ID、Secret 与回调地址；这些值保存在 SQLite，之后可在「设置 → GitLab 配置」中修改，不需要任何环境变量。用户令牌的加密密钥在首次启动时生成并保存在 SQLite。
+
+每个用户的 access token 加密保存在 SQLite，仅用于该用户的控制台 API 与会话；Webhook 触发的事件仍使用站点级 GitLab 令牌。
 
 ## 存储
 

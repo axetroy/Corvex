@@ -20,6 +20,9 @@ function validConfig(): CorvexConfig {
       webhookSecret: "secret",
       blockedUserIds: [],
       botUsername: "corvex",
+      oauthClientId: "",
+      oauthClientSecret: "",
+      oauthRedirectUri: "",
     },
     storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
     agent: {
@@ -243,6 +246,16 @@ describe("validateConfig", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("requires all GitLab OAuth settings together when configured", () => {
+    const config = validConfig();
+    config.gitlab.oauthClientId = "client";
+    expect(() => validateConfig(config)).toThrow("GitLab OAuth requires client ID");
+
+    config.gitlab.oauthClientSecret = "secret";
+    config.gitlab.oauthRedirectUri = "https://corvex.example.com/auth/gitlab/callback";
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
   it("defers the GitLab base URL to the console settings", () => {

@@ -252,22 +252,26 @@ export class GitLabClient {
   private baseUrl: string;
   private readToken: string;
   private writeToken: string;
+  /** OAuth access token 必须用 Bearer；个人访问令牌沿用 PRIVATE-TOKEN。 */
+  private tokenKind: "private" | "bearer" = "private";
 
   constructor(
     baseUrl: string,
     readToken: string,
     writeToken: string,
     private readonly requestTimeoutMs = 10_000,
+    tokenKind: "private" | "bearer" = "private",
   ) {
     if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = "";
     this.readToken = "";
     this.writeToken = "";
-    this.configure(baseUrl, readToken, writeToken);
+    this.configure(baseUrl, readToken, writeToken, tokenKind);
   }
 
   /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
-  configure(baseUrl: string, readToken: string, writeToken: string): void {
+  configure(baseUrl: string, readToken: string, writeToken: string, tokenKind: "private" | "bearer" = "private"): void {
+    this.tokenKind = tokenKind;
     if (!baseUrl.trim()) {
       // 地址可以在运维台设置：启动时尚未配置时保留空值，调用 API 会给出明确错误。
       this.baseUrl = "";
@@ -869,7 +873,9 @@ export class GitLabClient {
         response = await fetch(`${baseUrl}/api/v4${path}`, {
           method,
           headers: {
-            "PRIVATE-TOKEN": token,
+            ...(this.tokenKind === "bearer"
+              ? { authorization: `Bearer ${token}` }
+              : { "PRIVATE-TOKEN": token }),
             ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
           },
           body: form,

@@ -87,9 +87,10 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "gitlab_webhook_secret", section: "gitlab", field: "webhookSecret", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
   { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
-  // 控制台凭据：两者都留空时不启用 Basic 认证。
-  { key: "operations_username", section: "operations", field: "username", type: "string", maxLength: 200, allowEmpty: true },
-  { key: "operations_password", section: "operations", field: "password", type: "string", maxLength: 2_000, allowEmpty: true },
+  // GitLab OAuth：由安装页面写入，三者必须同时配置。
+  { key: "gitlab_oauth_client_id", section: "gitlab", field: "oauthClientId", type: "string", maxLength: 500, allowEmpty: true },
+  { key: "gitlab_oauth_client_secret", section: "gitlab", field: "oauthClientSecret", type: "string", maxLength: 2_000, allowEmpty: true },
+  { key: "gitlab_oauth_redirect_uri", section: "gitlab", field: "oauthRedirectUri", type: "string", maxLength: 500, allowEmpty: true },
   // 审查与历史评论
   { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, eventRunnerScoped: true },
   { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, eventRunnerScoped: true },
@@ -116,7 +117,7 @@ export const secretRuntimeSettingKeys = new Set([
   "gitlab_read_token",
   "gitlab_token",
   "gitlab_webhook_secret",
-  "operations_password",
+  "gitlab_oauth_client_secret",
 ]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */
@@ -221,6 +222,24 @@ function checkRelations(values: RuntimeSettingValues): string[] {
     }
     if (typeof keepRecent === "number" && keepRecent > contextWindow) {
       problems.push("compaction_keep_recent_tokens must not exceed context_window");
+    }
+  }
+  const oauth = [
+    values.gitlab_oauth_client_id,
+    values.gitlab_oauth_client_secret,
+    values.gitlab_oauth_redirect_uri,
+  ];
+  if (oauth.some(Boolean) && oauth.some((value) => !value)) {
+    problems.push("GitLab OAuth requires client ID, client secret and redirect URI together");
+  }
+  if (typeof values.gitlab_oauth_redirect_uri === "string" && values.gitlab_oauth_redirect_uri) {
+    try {
+      const url = new URL(values.gitlab_oauth_redirect_uri);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+        problems.push("gitlab_oauth_redirect_uri must be a valid HTTP(S) URL");
+      }
+    } catch {
+      problems.push("gitlab_oauth_redirect_uri must be a valid HTTP(S) URL");
     }
   }
   const gitlabBaseUrl = values.gitlab_base_url;

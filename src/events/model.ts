@@ -158,6 +158,8 @@ export interface ConversationSummary {
   lastTurnStatus: ConversationTurnStatus | null;
   /** 是否已归档；归档的对话默认不出现在列表里。 */
   archived: boolean;
+  /** 拥有该会话的本地用户 ID。 */
+  ownerUserId: string;
 }
 
 /**
@@ -428,6 +430,8 @@ export interface ConversationStats {
 }
 
 export interface CreateConversationInput {
+  /** 拥有该会话的本地用户 ID；Webhook 事件不创建会话。 */
+  ownerUserId: string;
   projectId: number;
   projectName: string;
   targetBranch: string;

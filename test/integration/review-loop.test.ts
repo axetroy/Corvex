@@ -10,6 +10,7 @@ import type { CorvexConfig } from "../../src/config/config.js";
 import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
 import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
+import { createTokenCipher } from "../../src/tokens.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -566,10 +567,21 @@ describe("review task loop", () => {
     });
     // 首轮完成后触发一次标题生成调用，使用模型的独立动作。
     modelActions.push({ content: "Value assignment in input.ts" });
-    const authorization = `Basic ${Buffer.from("operator:a secure password with 16 chars").toString("base64")}`;
+    const cipher = createTokenCipher(serverStore.getOrCreateSessionSecret());
+    const user = serverStore.upsertUser({
+      gitlabUserId: 2,
+      username: "developer",
+      name: "Developer",
+      avatarUrl: "",
+      accessToken: "read-token",
+      refreshToken: "",
+      expiresAt: Date.now() + 3_600_000,
+    }, cipher);
+    const session = serverStore.createUserSession(user.id, Date.now() + 3_600_000);
+    const authHeaders = { cookie: `corvex_session=${session}` };
     const conversationResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization },
+      headers: { "content-type": "application/json", ...authHeaders },
       body: JSON.stringify({ projectId: 1, targetBranch: "main", message: "Where is the value assigned?" }),
     });
     expect(conversationResponse.status).toBe(202);
@@ -578,7 +590,7 @@ describe("review task loop", () => {
     // 控制台在轮次执行期间订阅 SSE：正文应分多次到达，最后以 done 收尾。
     const streamResponse = await fetch(
       `http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}/stream`,
-      { headers: { authorization } },
+      { headers: authHeaders },
     );
     expect(streamResponse.status).toBe(200);
     expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
@@ -656,7 +668,7 @@ describe("review task loop", () => {
     modelActions.push({ content: "The value is assigned at the top of `input.ts`." });
     const followUp = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization },
+      headers: { "content-type": "application/json", ...authHeaders },
       body: JSON.stringify({ message: "Where exactly is it assigned?" }),
     });
     expect(followUp.status).toBe(202);

@@ -13,7 +13,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): vo
       return;
     }
     try {
-      sendJson(reply, 200, await ctx.gitlab.listProjects(search, page));
+      sendJson(reply, 200, await ctx.gitlabForRequest(request).listProjects(search, page));
     } catch (error) {
       sendGitLabReadError(reply, error);
     }
@@ -33,7 +33,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): vo
       return;
     }
     try {
-      const project = await ctx.gitlab.getProject(projectId);
+      const project = await ctx.gitlabForRequest(request).getProject(projectId);
       sendJson(reply, 200, {
         id: project.id,
         name: project.name ?? null,
@@ -63,7 +63,7 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): vo
       return;
     }
     try {
-      sendJson(reply, 200, await ctx.gitlab.listBranches(projectId, search, page));
+      sendJson(reply, 200, await ctx.gitlabForRequest(request).listBranches(projectId, search, page));
     } catch (error) {
       sendGitLabReadError(reply, error);
     }

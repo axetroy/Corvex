@@ -110,6 +110,8 @@ export interface ModelRequest {
    * 省略时按 `defaultConversationMode`（只读）处理，保持既有只读行为。
    */
   conversationMode?: ConversationMode;
+  /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
+  gitlab?: GitLabClient;
   /**
    * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
    * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
@@ -457,6 +459,7 @@ export class PiAgent {
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
     const toolAccess = getAgentToolAccess(request.taskType, this.config.agent, request.conversationMode);
+    const gitlab = request.gitlab ?? this.gitlab;
     const workspace = trace?.workspace;
     const mergeRequest = trace?.mergeRequest;
     // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
@@ -610,19 +613,19 @@ export class PiAgent {
         ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
           ? [createPlanExtension()]
           : []),
-        ...(request.conversationMode === "gitlab" && this.gitlab && request.conversationProjectId
+        ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
           ? [createGitLabConversationExtension({
               projectId: request.conversationProjectId,
-              getProject: () => this.gitlab!.getProject(request.conversationProjectId!),
-              getIssue: (issueIid) => this.gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
-              getMergeRequest: (mrIid) => this.gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
-              getIssueComments: (issueIid, limit) => this.gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
-              getMergeRequestComments: (mrIid, limit) => this.gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
-              getMergeRequestCommits: (mrIid, page, perPage) => this.gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),
-              postIssueNote: (issueIid, noteBody) => this.gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
-              postMergeRequestNote: (mrIid, noteBody) => this.gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
-              updateMergeRequest: (mrIid, update) => this.gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
-              updateIssue: (issueIid, update) => this.gitlab!.updateIssue(request.conversationProjectId!, issueIid, update, signal),
+              getProject: () => gitlab!.getProject(request.conversationProjectId!),
+              getIssue: (issueIid) => gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
+              getMergeRequest: (mrIid) => gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
+              getIssueComments: (issueIid, limit) => gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
+              getMergeRequestComments: (mrIid, limit) => gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
+              getMergeRequestCommits: (mrIid, page, perPage) => gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),
+              postIssueNote: (issueIid, noteBody) => gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
+              postMergeRequestNote: (mrIid, noteBody) => gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
+              updateMergeRequest: (mrIid, update) => gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
+              updateIssue: (issueIid, update) => gitlab!.updateIssue(request.conversationProjectId!, issueIid, update, signal),
             })]
           : []),
         createContextObserveExtension(contextObservation, {

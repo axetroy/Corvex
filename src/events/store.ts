@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { backup as sqliteBackup, DatabaseSync } from "node:sqlite";
+import {
+  backup as sqliteBackup,
+  DatabaseSync,
+} from "node:sqlite";
+import type { AuthUser, GitLabIdentity } from "../app/auth/model.js";
+import type { TokenCipher } from "../tokens.js";
 import {
   defaultConversationMode,
   isConversationMode,
@@ -1297,21 +1302,21 @@ export class EventStore {
     return this.transaction(() => {
       this.db.prepare(
         `INSERT INTO conversations
-         (id,project_id,project_name,target_branch,mode,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?)`,
-      ).run(conversationId, input.projectId, input.projectName, input.targetBranch, mode, now, now);
+         (id,project_id,project_name,target_branch,mode,owner_user_id,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(conversationId, input.projectId, input.projectName, input.targetBranch, mode, input.ownerUserId ?? "", now, now);
       return this.enqueueConversationTurn(conversationId, input, now);
     });
   }
 
-  listConversations(limit = 50, offset = 0, archived = false): ConversationPage {
+  listConversations(limit = 50, offset = 0, archived = false, ownerUserId = ""): ConversationPage {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("conversation list limit must be between 1 and 100");
     }
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
       throw new Error("conversation list offset must be between 0 and 1000000");
     }
-    const count = this.db.prepare("SELECT COUNT(*) AS count FROM conversations WHERE archived=?").get(archived ? 1 : 0) as Record<string, unknown>;
+    const count = this.db.prepare("SELECT COUNT(*) AS count FROM conversations WHERE archived=? AND owner_user_id=?").get(archived ? 1 : 0, ownerUserId) as Record<string, unknown>;
     const rows = this.db.prepare(
       `SELECT conversations.*,
          (SELECT COUNT(*) FROM conversation_turns
@@ -1319,8 +1324,8 @@ export class EventStore {
          (SELECT status FROM conversation_turns
           WHERE conversation_id=conversations.id AND role='assistant'
           ORDER BY created_at DESC,rowid DESC LIMIT 1) AS last_turn_status
-       FROM conversations WHERE archived=? ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
-    ).all(archived ? 1 : 0, limit, offset);
+       FROM conversations WHERE archived=? AND owner_user_id=? ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`,
+    ).all(archived ? 1 : 0, ownerUserId, limit, offset);
     return { items: rows.map((row) => this.readConversationSummary(row as Record<string, unknown>)), total: numberColumn(count, "count") };
   }
 
@@ -1736,6 +1741,85 @@ export class EventStore {
     });
   }
 
+  /** 按 GitLab 用户 ID 创建或更新本地用户，返回带解密令牌的用户。 */
+  upsertUser(identity: GitLabIdentity, cipher: TokenCipher): AuthUser {
+    return this.transaction(() => {
+      const now = new Date().toISOString();
+      const existing = this.db
+        .prepare("SELECT id FROM users WHERE gitlab_user_id=?")
+        .get(identity.gitlabUserId) as { id: string } | undefined;
+      const userId = existing?.id ?? randomUUID();
+      const accessToken = cipher.encrypt(identity.accessToken);
+      const refreshToken = cipher.encrypt(identity.refreshToken);
+      if (existing) {
+        this.db.prepare(
+          `UPDATE users SET username=?,name=?,avatar_url=?,access_token=?,refresh_token=?,token_expires_at=?,updated_at=? WHERE id=?`,
+        ).run(identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, now, userId);
+      } else {
+        this.db.prepare(
+          `INSERT INTO users(id,gitlab_user_id,username,name,avatar_url,access_token,refresh_token,token_expires_at,created_at,updated_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?)`,
+        ).run(userId, identity.gitlabUserId, identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, now, now);
+      }
+      const saved = this.readUser(userId, cipher);
+      if (!saved) throw new Error(`user "${userId}" disappeared after upsert`);
+      return saved;
+    });
+  }
+
+  /** 读取用户并解密令牌；用户不存在时返回 undefined。 */
+  readUser(userId: string, cipher: TokenCipher): AuthUser | undefined {
+    const row = this.db.prepare("SELECT * FROM users WHERE id=?").get(userId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      gitlabUserId: Number(row.gitlab_user_id),
+      username: String(row.username),
+      name: String(row.name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
+      accessToken: cipher.decrypt(String(row.access_token ?? "")),
+      refreshToken: cipher.decrypt(String(row.refresh_token ?? "")),
+      tokenExpiresAt: Number(row.token_expires_at ?? 0),
+    };
+  }
+
+  /** 更新令牌（刷新后调用）；令牌字段存密文。 */
+  updateUserTokens(userId: string, identity: GitLabIdentity, cipher: TokenCipher): void {
+    this.db.prepare(
+      "UPDATE users SET access_token=?,refresh_token=?,token_expires_at=?,updated_at=? WHERE id=?",
+    ).run(cipher.encrypt(identity.accessToken), cipher.encrypt(identity.refreshToken), identity.expiresAt, new Date().toISOString(), userId);
+  }
+
+  createUserSession(userId: string, expiresAt: number): string {
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO user_sessions(id,user_id,created_at,expires_at) VALUES(?,?,?,?)")
+      .run(id, userId, new Date().toISOString(), expiresAt);
+    return id;
+  }
+
+  readUserSession(sessionId: string): { userId: string; expiresAt: number } | undefined {
+    const row = this.db.prepare("SELECT user_id,expires_at FROM user_sessions WHERE id=? AND expires_at>?")
+      .get(sessionId, Date.now()) as { user_id: string; expires_at: number } | undefined;
+    return row ? { userId: String(row.user_id), expiresAt: Number(row.expires_at) } : undefined;
+  }
+
+  deleteUserSession(sessionId: string): void {
+    this.db.prepare("DELETE FROM user_sessions WHERE id=?").run(sessionId);
+  }
+
+  /** 读取或生成本地加密主密钥；密钥保存在 SQLite，不依赖环境变量。 */
+  getOrCreateSessionSecret(): string {
+    const existing = this.getRuntimeSetting("system_session_secret");
+    if (existing) return existing;
+    return this.transaction(() => {
+      const fresh = `${randomUUID()}${randomUUID()}`;
+      this.db.prepare(
+        "INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)",
+      ).run("system_session_secret", fresh, new Date().toISOString(), "system");
+      return fresh;
+    });
+  }
+
   /** 读取最近的审计记录（写入顺序倒序），供运维排查与测试断言。 */
   listAuditEvents(limit = 100): {
     actorId: number;
@@ -1926,6 +2010,7 @@ export class EventStore {
       turnCount: numberColumn(row, "turn_count"),
       lastTurnStatus: (lastTurnStatus ?? null) as ConversationSummary["lastTurnStatus"],
       archived: row.archived === 1 || row.archived === true,
+      ownerUserId: stringColumn(row, "owner_user_id"),
     };
   }
 
@@ -2765,9 +2850,22 @@ export class EventStore {
         available_at INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS events_mr_created_idx ON events(project_id,mr_iid,created_at DESC);
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY, gitlab_user_id INTEGER NOT NULL UNIQUE,
+        username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
+        access_token TEXT NOT NULL DEFAULT '', refresh_token TEXT NOT NULL DEFAULT '',
+        token_expires_at INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS user_sessions_expiry_idx ON user_sessions(expires_at);
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only',
+        owner_user_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         summary TEXT NOT NULL DEFAULT '', summary_message_id TEXT NOT NULL DEFAULT '',
@@ -2942,11 +3040,27 @@ export class EventStore {
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
       archived: "INTEGER NOT NULL DEFAULT 0",
+      // 会话归属的 GitLab 用户；空值代表旧数据，迁移时会被清理。
+      owner_user_id: "TEXT NOT NULL DEFAULT ''",
     })) {
       if (!legacyConversationColumns.has(name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);
       }
     }
+    // 用户级会话是全新的数据模型：旧会话没有归属用户，按约定整体丢弃一次。
+    const ownerMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:user-owned-conversations'")
+      .get() as { value: string } | undefined;
+    if (!ownerMigration) {
+      this.db.exec("DELETE FROM conversations");
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:user-owned-conversations", now, now, "migration");
+      // 旧的控制台 Basic 凭据不再使用。
+      this.db.exec("DELETE FROM runtime_settings WHERE key IN ('operations_username','operations_password')");
+    }
+    this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
     this.backfillConversationTurns();
     this.finalizeConversationMigration();
     // turn_id 可能由上面的 ALTER 补齐，索引必须等列存在后再创建。

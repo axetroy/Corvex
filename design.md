@@ -200,10 +200,10 @@ Node.js 版本由 `engines.node` 和 CI 固定。
 
 ## 配置与运维
 
-保留 YAML 配置和现有环境变量名称，涵盖 GitLab Token、Webhook 密钥、模型密钥/基础
-URL/名称、监听地址、数据库路径和存储根目录。通过 `init` 生成配置模板，并在启动
-Server 前按运行角色校验配置。Server 需要 GitLab 读写令牌和 Webhook 密钥；模型密钥可以
-只在运维台配置。示例配置和日志中不得包含密钥。
+保留 YAML 配置和现有环境变量名称，涵盖站点级 GitLab 令牌、Webhook 密钥、模型连接、
+监听地址、数据库路径和存储根目录，首次安装的 `/setup` 页面用于填写 GitLab OAuth Application 并写入 SQLite；用户令牌加密密钥也在首次启动时生成并保存在 SQLite，不需要额外环境变量。通过 `init` 生成配置模板，并在启动 Server 前
+按运行角色校验配置。站点令牌仍供 Webhook 事件发布使用；控制台与会话使用登录用户自己的
+GitLab 令牌。示例配置和日志中不得包含密钥。
 
 必须保留以下能力：
 

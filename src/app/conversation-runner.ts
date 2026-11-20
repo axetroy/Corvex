@@ -66,7 +66,7 @@ export class ConversationRunner {
   }
 
   /** 领取并执行一轮对话；轮次已被领取或不存在时返回 false。 */
-  async runTurn(turnId: string, signal: AbortSignal): Promise<boolean> {
+  async runTurn(turnId: string, signal: AbortSignal, gitlab?: GitLabClient): Promise<boolean> {
     const turn = this.store.claimConversationTurn(turnId);
     if (!turn) return false;
     const controller = new AbortController();
@@ -74,7 +74,7 @@ export class ConversationRunner {
     signal.addEventListener("abort", abort, { once: true });
     this.running.set(turnId, { controller, conversationId: turn.conversationId });
     try {
-      await this.execute(turn, controller.signal);
+      await this.execute(turn, controller.signal, gitlab ?? this.gitlab);
     } finally {
       this.running.delete(turnId);
       signal.removeEventListener("abort", abort);
@@ -387,7 +387,7 @@ export class ConversationRunner {
     });
   }
 
-  private async execute(turn: ConversationTurnContext, signal: AbortSignal): Promise<void> {
+  private async execute(turn: ConversationTurnContext, signal: AbortSignal, gitlab: GitLabClient): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
       return;
@@ -399,7 +399,7 @@ export class ConversationRunner {
         stepContext,
         "gitlab.get_conversation_branch",
         { projectId: turn.projectId, branch: turn.targetBranch },
-        () => this.gitlab.getBranch(turn.projectId, turn.targetBranch, signal),
+        () => gitlab.getBranch(turn.projectId, turn.targetBranch, signal),
         (value) => ({ name: value.name, headSha: value.commit.id }),
       );
       if (branch.commit.id.toLowerCase() !== turn.headSha.toLowerCase()) {
@@ -415,7 +415,7 @@ export class ConversationRunner {
         stepContext,
         "gitlab.get_conversation_project",
         { projectId: turn.projectId },
-        () => this.gitlab.getProject(turn.projectId, signal),
+        () => gitlab.getProject(turn.projectId, signal),
         (value) => ({ id: value.id, repositoryUrl: repositoryCloneUrl(this.config.gitlab.baseUrl, value) }),
       );
       const workspace = await traceExecutionStep(
@@ -481,6 +481,7 @@ export class ConversationRunner {
               taskType: "conversation",
               conversationMode: turn.mode,
               conversationProjectId: turn.projectId,
+              gitlab,
               systemPrompt,
               userPrompt,
               history,

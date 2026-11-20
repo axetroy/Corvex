@@ -1,6 +1,7 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { isConversationMode } from "../../../events/model.js";
-import type { ConversationStreamEvent } from "../../../events/model.js";
+import type { Conversation, ConversationStreamEvent } from "../../../events/model.js";
+import { requireUser } from "../../auth/context.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import type { OpsContext } from "../context.js";
 import {
@@ -37,9 +38,28 @@ function ensureModelSelected(ctx: OpsContext, reply: FastifyReply): boolean {
   return false;
 }
 
+/** 校验会话归属：用户只能访问自己的会话。 */
+function ownedConversation(
+  ctx: OpsContext,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  conversationId: string,
+): Conversation | undefined {
+  const user = requireUser(request, reply);
+  if (!user) return undefined;
+  const conversation = ctx.store.getConversation(conversationId);
+  if (!conversation || conversation.ownerUserId !== user.id) {
+    sendJson(reply, 404, { error: "conversation not found" });
+    return undefined;
+  }
+  return conversation;
+}
+
 /** 对话工作台：列表、详情、轮次、轨迹、流式正文与统计。 */
 export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext): void {
   app.get("/api/ops/conversations", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
     const limit = optionalInteger(queryParam(request.query, "limit"), 1, 100) ?? 50;
     const offset = optionalInteger(queryParam(request.query, "offset"), 0, 1_000_000) ?? 0;
     const archivedParam = queryParam(request.query, "archived");
@@ -52,10 +72,12 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "invalid conversation list filter" });
       return;
     }
-    sendJson(reply, 200, ctx.store.listConversations(limit, offset, archived));
+    sendJson(reply, 200, ctx.store.listConversations(limit, offset, archived, user.id));
   });
 
   app.post("/api/ops/conversations", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
     const body = readJsonObject(request, reply);
     if (!body) return;
     const projectId = positiveInteger(body.projectId);
@@ -73,9 +95,11 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     if (!ensureModelSelected(ctx, reply)) return;
     try {
-      const project = await ctx.gitlab.getProject(projectId);
-      const headSha = (await ctx.gitlab.getBranch(projectId, targetBranch)).commit.id;
+      const gitlab = ctx.gitlabForRequest(request);
+      const project = await gitlab.getProject(projectId);
+      const headSha = (await gitlab.getBranch(projectId, targetBranch)).commit.id;
       const created = ctx.store.createConversation({
+        ownerUserId: user.id,
         projectId,
         projectName: project.path_with_namespace ?? project.name ?? String(projectId),
         targetBranch,
@@ -84,7 +108,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
         ...(mode ? { mode } : {}),
       });
-      ctx.startConversationTurn(created.turnId);
+      ctx.startConversationTurn(created.turnId, gitlab);
       sendJson(reply, 202, created);
     } catch (error) {
       sendGitLabReadError(reply, error);
@@ -98,6 +122,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidConversationId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const body = readJsonObject(request, reply);
     if (!body) return;
     if (typeof body.archived !== "boolean") {
@@ -118,11 +143,8 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidConversationId(reply);
       return;
     }
-    const conversation = ctx.store.getConversation(conversationId);
-    if (!conversation) {
-      sendJson(reply, 404, { error: "conversation not found" });
-      return;
-    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
     if (conversation.messages.some((message) => message.turnStatus === "queued" || message.turnStatus === "running")) {
       sendJson(reply, 409, { error: "a turn is still running for this conversation" });
       return;
@@ -138,11 +160,8 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidConversationId(reply);
       return;
     }
-    const conversation = ctx.store.getConversation(conversationId);
-    if (!conversation) {
-      sendJson(reply, 404, { error: "conversation not found" });
-      return;
-    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
     // 系统提示词由响应语言与对话模式派生，与执行器下发的一致；在详情里现算，
     // 使尚未执行过轮次的新对话也能在控制台查看。
     sendJson(reply, 200, {
@@ -159,6 +178,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidConversationId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const turns = ctx.store.getConversationTurns(conversationId);
     if (!turns) {
       sendJson(reply, 404, { error: "conversation not found" });
@@ -177,6 +197,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidTurnId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const turn = ctx.store.getConversationTurn(conversationId, turnId);
     if (!turn) {
       sendJson(reply, 404, { error: "conversation turn not found" });
@@ -260,6 +281,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidTurnId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const turn = ctx.store.getConversationTurn(conversationId, turnId);
     if (!turn) {
       sendJson(reply, 404, { error: "conversation turn not found" });
@@ -277,6 +299,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidTurnId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const turn = ctx.store.getConversationTurn(conversationId, turnId);
     if (!turn) {
       sendJson(reply, 404, { error: "conversation turn not found" });
@@ -296,6 +319,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       invalidConversationId(reply);
       return;
     }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
     const stats = ctx.store.getConversationStats(conversationId);
     if (!stats) {
       sendJson(reply, 404, { error: "conversation not found" });
@@ -306,31 +330,32 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
 
   app.post("/api/ops/conversations/:id/messages", async (request, reply) => {
     const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
     const body = readJsonObject(request, reply);
     if (!body) return;
     const message = typeof body.message === "string" ? body.message : "";
-    const conversation = conversationId ? ctx.store.getConversation(conversationId) : undefined;
-    if (!conversationId || !conversation) {
-      sendJson(reply, conversationId ? 404 : 400, {
-        error: conversationId ? "conversation not found" : "invalid conversation ID",
-      });
-      return;
-    }
     if (!message.trim() || message.length > 20_000) {
       sendJson(reply, 400, { error: "message must be between 1 and 20000 characters" });
       return;
     }
     if (!ensureModelSelected(ctx, reply)) return;
     try {
-      const headSha = (await ctx.gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;
+      const gitlab = ctx.gitlabForRequest(request);
+      const headSha = (await gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;
       const queued = ctx.store.addConversationMessage(conversation.id, {
+        ownerUserId: conversation.ownerUserId,
         projectId: conversation.projectId,
         targetBranch: conversation.targetBranch,
         headSha,
         actorId: 0,
         request: message,
       });
-      ctx.startConversationTurn(queued.turnId);
+      ctx.startConversationTurn(queued.turnId, gitlab);
       sendJson(reply, 202, { conversationId: conversation.id, turnId: queued.turnId });
     } catch (error) {
       if (error instanceof Error && error.message.includes("active turn")) {

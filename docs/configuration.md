@@ -16,7 +16,7 @@ Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `
 | `server.read_timeout` | `5s` | Positive duration | HTTP header-read timeout. |
 | `server.shutdown_timeout` | `30s` | Positive duration | Graceful HTTP shutdown limit. |
 
-The agent console is always reachable at `/ops`. It uses HTTP Basic Auth when both a username and password are saved in the console Settings page; when both are blank, no authentication is required. Set a strong password and access the console only over HTTPS.
+The agent console at `/ops` uses GitLab OAuth2 login. Every user signs in with their own GitLab account and Corvex uses that user's token for console API calls and conversations.
 
 ## GitLab
 
@@ -33,6 +33,12 @@ Credentials are optional startup fallbacks; the console Settings page stores the
 | `CORVEX_GITLAB_READ_TOKEN` | Optional startup fallback. GitLab API reads, project/target discovery, authenticated Git fetches and inline events use the value saved in the console Settings page. |
 | `CORVEX_GITLAB_TOKEN` | Optional startup fallback. Used for GitLab writes; posts notes and inline discussions, and enables same-project MR Git writes and Issue implementation when configured in the console. |
 | `CORVEX_WEBHOOK_SECRET` | Optional startup fallback. Must match the secret saved in the console; webhooks are rejected until a secret is configured. |
+
+## Per-user GitLab login
+
+The console authenticates each operator through GitLab OAuth2 authorization code flow. On first visit, unauthenticated requests are redirected to `/setup`, where you enter the GitLab instance URL plus the OAuth Application ID, secret and callback URL; these values are stored in SQLite and can later be edited under **Settings → GitLab configuration**. No environment variables are needed. The encryption key for stored user tokens is generated on first start and kept in SQLite.
+
+Each user's access token is encrypted in SQLite and used for that user's console API calls and conversations. Webhook-triggered events still use the site-level GitLab tokens above.
 
 ## Storage
 

@@ -9,6 +9,7 @@ import { EventRunner } from "../../src/app/event-runner.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
+import { createTokenCipher } from "../../src/tokens.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -18,6 +19,22 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("test server has no TCP address");
   return address.port;
+}
+
+/** 测试里的已登录用户：创建本地用户与会话，返回可直接用于 fetch 的 Cookie 头。 */
+function sessionHeaders(store: EventStore): Record<string, string> {
+  const cipher = createTokenCipher(store.getOrCreateSessionSecret());
+  const user = store.upsertUser({
+    gitlabUserId: 1,
+    username: "operator",
+    name: "Operator",
+    avatarUrl: "",
+    accessToken: "user-token",
+    refreshToken: "",
+    expiresAt: Date.now() + 3_600_000,
+  }, cipher);
+  const session = store.createUserSession(user.id, Date.now() + 3_600_000);
+  return { cookie: `corvex_session=${session}` };
 }
 
 describe("CorvexServer", () => {
@@ -101,6 +118,7 @@ describe("CorvexServer", () => {
     });
     const gitlabPort = await listen(fakeGitLab);
     const store = await EventStore.open(":memory:");
+    const authHeaders = sessionHeaders(store);
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "", password: "" },
@@ -157,26 +175,16 @@ describe("CorvexServer", () => {
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
-      // 未配置凭据时不认证，控制台可直接访问。
+      // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
-      expect((await fetch(`${base}/api/ops/overview`)).status).toBe(200);
-
-      config.operations.username = "operator";
-      config.operations.password = "a secure password with 16 chars";
-      const authorization = `Basic ${Buffer.from(
-        `${config.operations.username}:${config.operations.password}`,
-      ).toString("base64")}`;
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);
-      const rejected = await fetch(`${base}/api/ops/overview`, {
-        headers: { authorization: `Basic ${Buffer.from("operator:wrong").toString("base64")}` },
-      });
-      expect(rejected.status).toBe(401);
-      expect(rejected.headers.get("www-authenticate")).toContain("Basic");
-      expect((await fetch(`${base}/api/ops/overview`, { headers: { authorization } })).status).toBe(200);
+
+      expect((await fetch(`${base}/api/ops/overview`, { headers: { authorization: "Basic wrong" } })).status).toBe(401);
+      expect((await fetch(`${base}/api/ops/overview`, { headers: authHeaders })).status).toBe(200);
       expect(
-        (await fetch(`${base}/api/ops/overview`, { method: "POST", headers: { authorization } })).status,
+        (await fetch(`${base}/api/ops/overview`, { method: "POST", headers: authHeaders })).status,
       ).toBe(405);
-      const dashboard = await fetch(`${base}/ops`, { headers: { authorization } });
+      const dashboard = await fetch(`${base}/ops`, { headers: authHeaders });
       expect(dashboard.status).toBe(200);
       const markup = await dashboard.text();
       expect(markup).toContain('id="root"');
@@ -187,26 +195,26 @@ describe("CorvexServer", () => {
       expect(policy).toContain(`style-src-elem 'self' 'nonce-${nonce}'`);
       expect(policy).toContain("style-src-attr 'unsafe-inline'");
       expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
-      const refreshedDashboard = await fetch(`${base}/ops`, { headers: { authorization } });
+      const refreshedDashboard = await fetch(`${base}/ops`, { headers: authHeaders });
       const refreshedMarkup = await refreshedDashboard.text();
       expect(/property="csp-nonce" nonce="([A-Za-z0-9_-]+)"/.exec(refreshedMarkup)?.[1]).not.toBe(nonce);
       // 控制台脚本带内容哈希，测试从页面标记中取出真实地址再校验可访问性。
       const scriptPath = /src="([^"]+\.js)"/.exec(markup)?.[1];
       expect(scriptPath).toBeTruthy();
-      const script = await fetch(`${base}${scriptPath}`, { headers: { authorization } });
+      const script = await fetch(`${base}${scriptPath}`, { headers: authHeaders });
       expect(script.status).toBe(200);
       expect(script.headers.get("content-type")).toContain("javascript");
       expect(markup).toContain('name="robots"');
       expect(dashboard.headers.get("x-robots-tag")).toContain("noindex");
-      expect((await fetch(`${base}/ops`, { method: "HEAD", headers: { authorization } })).status).toBe(200);
-      expect((await fetch(`${base}/ops`, { method: "POST", headers: { authorization } })).status).toBe(405);
-      const overview = await fetch(`${base}/api/ops/overview`, { headers: { authorization } });
+      expect((await fetch(`${base}/ops`, { method: "HEAD", headers: authHeaders })).status).toBe(200);
+      expect((await fetch(`${base}/ops`, { method: "POST", headers: authHeaders })).status).toBe(405);
+      const overview = await fetch(`${base}/api/ops/overview`, { headers: authHeaders });
       expect(overview.status).toBe(200);
       expect(overview.headers.get("x-content-type-options")).toBe("nosniff");
-      const projectsResponse = await fetch(`${base}/api/ops/projects?search=project`, { headers: { authorization } });
+      const projectsResponse = await fetch(`${base}/api/ops/projects?search=project`, { headers: authHeaders });
       expect(projectsResponse.status).toBe(200);
       expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);
-      const projectResponse = await fetch(`${base}/api/ops/projects/2`, { headers: { authorization } });
+      const projectResponse = await fetch(`${base}/api/ops/projects/2`, { headers: authHeaders });
       expect(projectResponse.status).toBe(200);
       expect(await projectResponse.json()).toMatchObject({
         id: 2,
@@ -216,15 +224,15 @@ describe("CorvexServer", () => {
         http_url_to_repo: `http://127.0.0.1:${gitlabPort}/group/project.git`,
         default_branch: "main",
       });
-      expect((await fetch(`${base}/api/ops/projects/0`, { headers: { authorization } })).status).toBe(400);
-      const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: { authorization } });
+      expect((await fetch(`${base}/api/ops/projects/0`, { headers: authHeaders })).status).toBe(400);
+      const branchesResponse = await fetch(`${base}/api/ops/projects/2/branches`, { headers: authHeaders });
       expect(await branchesResponse.json()).toMatchObject([{ name: "main" }]);
       // 未选择模型时不允许发起会话。
       const selectedModel = config.agent.model;
       config.agent.model = "";
       const noModelResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ projectId: 2, targetBranch: "main", message: "Explain this repository" }),
       });
       expect(noModelResponse.status).toBe(409);
@@ -233,7 +241,7 @@ describe("CorvexServer", () => {
 
       const createdConversationResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           projectId: 2,
           targetBranch: "main",
@@ -244,7 +252,7 @@ describe("CorvexServer", () => {
       const createdConversation = await createdConversationResponse.json() as { conversationId: string; turnId: string };
       // 对话轮次不进入事件队列，只排队等待内联执行。
       expect(store.eventCounts().queued ?? 0).toBe(0);
-      const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: { authorization } });
+      const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: authHeaders });
       const conversationDetail = await conversationDetailResponse.json() as { systemPrompt: string };
       expect(conversationDetail).toMatchObject({
         id: createdConversation.conversationId,
@@ -262,7 +270,7 @@ describe("CorvexServer", () => {
       // 单轮对话记录端点返回该轮的轨迹与执行步骤，并拒绝跨对话或未知轮次。
       const conversationTurnResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       );
       expect(conversationTurnResponse.status).toBe(200);
       expect(await conversationTurnResponse.json()).toMatchObject({
@@ -276,16 +284,16 @@ describe("CorvexServer", () => {
       });
       expect((await fetch(
         `${base}/api/ops/conversations/other-conversation/turns/${createdConversation.turnId}`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       )).status).toBe(404);
       expect((await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/missing-turn`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       )).status).toBe(404);
       // 整段对话轨迹端点把全部轮次合并成一条时间线，未知对话返回 404。
       const conversationTurnsResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       );
       expect(conversationTurnsResponse.status).toBe(200);
       expect(await conversationTurnsResponse.json()).toMatchObject({
@@ -296,12 +304,12 @@ describe("CorvexServer", () => {
       });
       expect((await fetch(
         `${base}/api/ops/conversations/missing-conversation/turns`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       )).status).toBe(404);
       // 统计端点汇总整段对话的用量与逐轮明细，未知对话返回 404。
       const conversationStatsResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/stats`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       );
       expect(conversationStatsResponse.status).toBe(200);
       expect(await conversationStatsResponse.json()).toMatchObject({
@@ -318,17 +326,17 @@ describe("CorvexServer", () => {
       });
       expect((await fetch(
         `${base}/api/ops/conversations/missing-conversation/stats`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       )).status).toBe(404);
       const concurrentReplyResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ message: "A concurrent follow-up" }),
       });
       expect(concurrentReplyResponse.status).toBe(409);
       const secondConversationResponse = await fetch(`${base}/api/ops/conversations`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           projectId: 2,
           targetBranch: "main",
@@ -342,14 +350,14 @@ describe("CorvexServer", () => {
       // 流式正文端点与其它轨迹端点一样先校验轮次归属，未知轮次返回 404。
       expect((await fetch(
         `${base}/api/ops/conversations/${secondConversation.conversationId}/turns/missing-turn/stream`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       )).status).toBe(404);
       // 已结束的轮次不需要保持连接：端点立即以 done 收尾，界面随即刷新详情。
       expect(store.claimConversationTurn(secondConversation.turnId)).toBeTruthy();
       store.finishConversationTurn(secondConversation.turnId, "Streamed answer");
       const streamResponse = await fetch(
         `${base}/api/ops/conversations/${secondConversation.conversationId}/turns/${secondConversation.turnId}/stream`,
-        { headers: { authorization } },
+        { headers: authHeaders },
       );
       expect(streamResponse.status).toBe(200);
       expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
@@ -360,57 +368,57 @@ describe("CorvexServer", () => {
       // 归档：列表按归档状态过滤，详情仍可读；删除后对话详情返回 404。
       const archiveResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ archived: true }),
       });
       expect(archiveResponse.status).toBe(200);
       expect(await archiveResponse.json()).toMatchObject({ archived: true });
-      const archivedList = await fetch(`${base}/api/ops/conversations?archived=true`, { headers: { authorization } });
+      const archivedList = await fetch(`${base}/api/ops/conversations?archived=true`, { headers: authHeaders });
       expect(await archivedList.json()).toMatchObject({
         items: [{ id: secondConversation.conversationId, archived: true }],
       });
-      const activeList = await fetch(`${base}/api/ops/conversations?archived=false`, { headers: { authorization } });
+      const activeList = await fetch(`${base}/api/ops/conversations?archived=false`, { headers: authHeaders });
       expect((await activeList.json() as { items: { id: string }[] }).items.map((item) => item.id))
         .not.toContain(secondConversation.conversationId);
-      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: { authorization } })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: authHeaders })).status).toBe(200);
       expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({}),
       })).status).toBe(400);
       const archiveOffResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}/archive`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ archived: false }),
       });
       expect(archiveOffResponse.status).toBe(200);
       const deleteResponse = await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, {
         method: "DELETE",
-        headers: { authorization },
+        headers: authHeaders,
       });
       expect(deleteResponse.status).toBe(200);
-      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: { authorization } })).status).toBe(404);
+      expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: authHeaders })).status).toBe(404);
       const queuedConversations = store.eventCounts().queued ?? 0;
       // 存储清理：预览不删文件，但会留下一条可查询的记录。
       const cleanupPreview = await fetch(`${base}/api/ops/storage/cleanup`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ olderThanDays: 1, apply: false }),
       });
       expect(cleanupPreview.status).toBe(200);
       expect(await cleanupPreview.json()).toMatchObject({ applied: false, olderThanDays: 1 });
       expect((await fetch(`${base}/api/ops/storage/cleanup`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ olderThanDays: 0, apply: false }),
       })).status).toBe(400);
-      const cleanupRecords = await fetch(`${base}/api/ops/storage/cleanups`, { headers: { authorization } });
+      const cleanupRecords = await fetch(`${base}/api/ops/storage/cleanups`, { headers: authHeaders });
       expect((await cleanupRecords.json() as { items: { source: string; applied: boolean; olderThanDays: number }[] }).items)
         .toEqual(expect.arrayContaining([
           expect.objectContaining({ source: "ops-console", applied: false, olderThanDays: 1 }),
         ]));
-      expect((await fetch(`${base}/ops/app.js`, { headers: { authorization } })).status).toBe(404);
-      expect((await fetch(`${base}/ops/assets/../index.html`, { headers: { authorization } })).status).toBe(404);
+      expect((await fetch(`${base}/ops/assets/missing.js`)).status).toBe(503);
+      expect((await fetch(`${base}/ops/assets/../index.html`, { headers: authHeaders })).status).toBe(404);
       expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
 
       const payload = {
@@ -624,7 +632,7 @@ describe("CorvexServer", () => {
       expect(postedNotes).toBe(5);
 
       const eventsResponse = await fetch(`${base}/api/ops/events?status=queued&limit=1`, {
-        headers: { authorization },
+        headers: authHeaders,
       });
       expect(eventsResponse.status).toBe(200);
       const events = (await eventsResponse.json()) as { items: Array<{ id: string }>; total: number };
@@ -641,7 +649,7 @@ describe("CorvexServer", () => {
       );
       store.finishEventTrace(failedTrace, "failed", 5, undefined, undefined, "ENOENT: file not found");
       const detailResponse = await fetch(`${base}/api/ops/events/${events.items[0]!.id}`, {
-        headers: { authorization },
+        headers: authHeaders,
       });
       expect(detailResponse.status).toBe(200);
       expect(await detailResponse.json()).toMatchObject({
@@ -657,15 +665,32 @@ describe("CorvexServer", () => {
         ],
       });
       expect(
-        (await fetch(`${base}/api/ops/events?status=invalid`, { headers: { authorization } })).status,
+        (await fetch(`${base}/api/ops/events?status=invalid`, { headers: authHeaders })).status,
       ).toBe(400);
       expect(
         (
           await fetch(`${base}/api/ops/events?search=${"x".repeat(101)}`, {
-            headers: { authorization },
+            headers: authHeaders,
           })
         ).status,
       ).toBe(400);
+
+      // 首次安装通过 /api/setup/oauth 写入 OAuth 配置，不需要环境变量。
+      expect((await (await fetch(`${base}/api/setup/status`)).json()).configured).toBe(false);
+      const setup = await fetch(`${base}/api/setup/oauth`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          baseUrl: "https://gitlab.example.com",
+          clientId: "client",
+          clientSecret: "secret",
+          redirectUri: "https://corvex.example.com/auth/gitlab/callback",
+        }),
+      });
+      expect(setup.status).toBe(200);
+      expect((await (await fetch(`${base}/api/setup/status`)).json()).configured).toBe(true);
+      expect(store.getRuntimeSetting("gitlab_base_url")).toBe("https://gitlab.example.com");
+      expect(store.getRuntimeSetting("gitlab_oauth_client_id")).toBe("client");
     } finally {
       controller.abort();
       await running;
@@ -675,7 +700,7 @@ describe("CorvexServer", () => {
       );
       info.mockRestore();
     }
-  });
+  }, 20_000);
 
   it("exposes and updates runtime context settings over the operations API", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -699,6 +724,7 @@ describe("CorvexServer", () => {
     config.operations.username = "operator";
     config.operations.password = "a secure password with 16 chars";
     const store = await EventStore.open(":memory:");
+    const authHeaders = sessionHeaders(store);
     const controller = new AbortController();
     const application = new CorvexServer(
       config,
@@ -718,11 +744,8 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
-      const authorization = `Basic ${Buffer.from(
-        `${config.operations.username}:${config.operations.password}`,
-      ).toString("base64")}`;
 
-      const initial = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
+      const initial = await fetch(`${base}/api/ops/settings`, { headers: authHeaders });
       expect(initial.status).toBe(200);
       const initialBody = await initial.json() as {
         settings: Record<string, number | boolean | string | string[]>;
@@ -744,7 +767,7 @@ describe("CorvexServer", () => {
       // 控制台保存时会提交全部可编辑键；接口也接受部分键，未提交的键保持原值。
       const saved = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { context_window: 200_000, summary_enabled: false, model: "gpt-4o", response_language: "zh-CN" } }),
       });
       expect(saved.status).toBe(200);
@@ -761,7 +784,7 @@ describe("CorvexServer", () => {
       // 模型地址和密钥可在 Web 配置；密钥不回显、不进审计，留空表示沿用。
       const secretWrite = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           settings: { model_base_url: "https://api.example.com/v1", model_api_key: "super-secret-key" },
         }),
@@ -775,7 +798,7 @@ describe("CorvexServer", () => {
 
       const keepSecret = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { context_window: 200_000 } }),
       });
       expect(keepSecret.status).toBe(200);
@@ -784,7 +807,7 @@ describe("CorvexServer", () => {
       // GitLab 令牌与 Webhook 密钥同样只在 Web 保存；留空表示保留已保存值。
       const credentialsWrite = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           settings: {
             gitlab_read_token: "read-from-console",
@@ -803,7 +826,7 @@ describe("CorvexServer", () => {
       // 显式留空的敏感字段不会覆盖已保存值。
       const blankCredentials = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           settings: { gitlab_read_token: "", gitlab_token: "", gitlab_webhook_secret: "" },
         }),
@@ -814,7 +837,7 @@ describe("CorvexServer", () => {
 
       const keepCredentials = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { context_window: 200_000 } }),
       });
       expect(keepCredentials.status).toBe(200);
@@ -824,7 +847,7 @@ describe("CorvexServer", () => {
       // 覆盖项是整份替换：显式提交空对象时，未提交的键回退到配置文件的初始值。
       const reset = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: {} }),
       });
       expect(reset.status).toBe(200);
@@ -843,7 +866,7 @@ describe("CorvexServer", () => {
       // 非法取值被拒绝，且不改变当前生效值。
       const rejected = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { context_window: 10 } }),
       });
       expect(rejected.status).toBe(400);
@@ -852,44 +875,15 @@ describe("CorvexServer", () => {
 
       const unknown = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { nope: 1 } }),
       });
       expect(unknown.status).toBe(400);
 
-      expect((await fetch(`${base}/api/ops/settings`, { method: "POST", headers: { authorization } })).status).toBe(405);
+      expect((await fetch(`${base}/api/ops/settings`, { method: "POST", headers: authHeaders })).status).toBe(405);
       expect((await fetch(`${base}/api/ops/settings`)).status).toBe(401);
 
-      // 控制台凭据也在 Web 保存；留空密码保留已保存值，两者清空则不认证。
-      const consoleWrite = await fetch(`${base}/api/ops/settings`, {
-        method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({
-          settings: { operations_username: "operator", operations_password: "new-console-password" },
-        }),
-      });
-      expect(consoleWrite.status).toBe(200);
-      const updatedAuthorization = `Basic ${Buffer.from("operator:new-console-password").toString("base64")}`;
-      expect((await fetch(`${base}/api/ops/overview`, { headers: { authorization: updatedAuthorization } })).status).toBe(200);
-
-      const keepConsolePassword = await fetch(`${base}/api/ops/settings`, {
-        method: "PUT",
-        headers: { authorization: updatedAuthorization, "content-type": "application/json" },
-        body: JSON.stringify({ settings: { operations_password: "" } }),
-      });
-      expect(keepConsolePassword.status).toBe(200);
-      expect(config.operations.password).toBe("new-console-password");
-
-      const disableAuth = await fetch(`${base}/api/ops/settings`, {
-        method: "PUT",
-        headers: { authorization: updatedAuthorization, "content-type": "application/json" },
-        body: JSON.stringify({ settings: { operations_username: "", operations_password: "" } }),
-      });
-      expect(disableAuth.status).toBe(200);
-      expect(config.operations).toEqual({ username: "", password: "" });
-      expect((await fetch(`${base}/ops`)).status).toBe(200);
-
-      // 每次写入都留下审计：操作者来自控制台凭据，结果记录旧值->新值。
+      // 每次写入都留下审计：结果记录旧值->新值。
       const audit = store.listAuditEvents().filter((entry) => entry.action === "update_settings");
       expect(audit.length).toBeGreaterThanOrEqual(3);
       expect(audit[0]).toMatchObject({ actorId: 0, resource: "settings:operator" });
@@ -899,10 +893,10 @@ describe("CorvexServer", () => {
       expect(audit.every((entry) => !entry.result?.includes("super-secret-key"))).toBe(true);
 
       // 模型目录：供应商保存连接参数，其下挂模型；密钥不回显，留空更新不会清掉原密钥。
-      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
+      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: authHeaders })).json() as { items: unknown[] }).items).toEqual([]);
       const createProvider = await fetch(`${base}/api/ops/model-providers`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ name: "example", baseUrl: "https://api.example.com/v1", apiKey: "profile-secret" }),
       });
       expect(createProvider.status).toBe(201);
@@ -912,7 +906,7 @@ describe("CorvexServer", () => {
       // 第一个模型自动激活，并立即覆盖内存配置里的模型连接参数。
       const createModel = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models`, {
         method: "POST",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ name: "gpt-test", contextWindow: 131_072, maxOutputTokens: 8_192 }),
       });
       expect(createModel.status).toBe(201);
@@ -921,7 +915,7 @@ describe("CorvexServer", () => {
       expect(config.agent.model).toBe("gpt-test");
       expect(config.agent.apiKey).toBe("profile-secret");
 
-      const listedProviders = await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as {
+      const listedProviders = await (await fetch(`${base}/api/ops/model-providers`, { headers: authHeaders })).json() as {
         items: { apiKey: string; models: { name: string }[] }[];
       };
       expect(listedProviders.items[0]?.apiKey).toBe("••••••");
@@ -930,7 +924,7 @@ describe("CorvexServer", () => {
       // 编辑模型只改模型自己的窗口；密钥留在供应商上，不因留空被清掉。
       const editModel = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models/${createdModel.id}`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ name: "gpt-test-2", contextWindow: 200_000, maxOutputTokens: 8_192 }),
       });
       expect(editModel.status).toBe(200);
@@ -939,7 +933,7 @@ describe("CorvexServer", () => {
       expect(config.agent.apiKey).toBe("profile-secret");
       const editProvider = await fetch(`${base}/api/ops/model-providers/${createdProvider.id}`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ name: "example-2", baseUrl: "https://api.example.com/v1", apiKey: "" }),
       });
       expect(editProvider.status).toBe(200);
@@ -949,7 +943,7 @@ describe("CorvexServer", () => {
       // 保存其它设置时不能把模型连接参数退回配置文件值。
       const languageWrite = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({ settings: { response_language: "en" } }),
       });
       expect(languageWrite.status).toBe(200);
@@ -960,13 +954,13 @@ describe("CorvexServer", () => {
       // 删除模型后自动提升剩余模型；删掉最后一个模型后目录为空。
       expect((await fetch(`${base}/api/ops/model-providers/${createdProvider.id}/models/${createdModel.id}`, {
         method: "DELETE",
-        headers: { authorization },
+        headers: authHeaders,
       })).status).toBe(200);
       expect((await fetch(`${base}/api/ops/model-providers/${createdProvider.id}`, {
         method: "DELETE",
-        headers: { authorization },
+        headers: authHeaders,
       })).status).toBe(200);
-      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: { authorization } })).json() as { items: unknown[] }).items).toEqual([]);
+      expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: authHeaders })).json() as { items: unknown[] }).items).toEqual([]);
     } finally {
       controller.abort();
       await running;
@@ -981,6 +975,7 @@ describe("CorvexServer", () => {
   it("stores runtime settings in SQLite even when the server runs without a config file", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const store = await EventStore.open(":memory:");
+    const authHeaders = sessionHeaders(store);
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "operator", password: "a secure password with 16 chars" },
@@ -1034,16 +1029,13 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
-      const authorization = `Basic ${Buffer.from(
-        `${config.operations.username}:${config.operations.password}`,
-      ).toString("base64")}`;
-      const response = await fetch(`${base}/api/ops/settings`, { headers: { authorization } });
+      const response = await fetch(`${base}/api/ops/settings`, { headers: authHeaders });
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ editable: true, configPath: null });
       // 没有配置文件时设置仍写进 SQLite，并立即作用于内存配置。
       const write = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
-        headers: { authorization, "content-type": "application/json" },
+        headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
           settings: {
             context_window: 200_000,

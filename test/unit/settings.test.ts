@@ -332,7 +332,6 @@ describe("GitLab runtime settings", () => {
       "gitlab_read_token",
       "gitlab_token",
       "gitlab_webhook_secret",
-      "operations_password",
     ]));
   });
 

@@ -4,15 +4,18 @@ import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
+import { SetupPage } from "./components/SetupPage.js";
 import {
   ConversationsIcon,
   EventsIcon,
   LanguageIcon,
+  LogoutIcon,
   OverviewIcon,
   SettingsIcon,
   SidebarCollapseIcon,
   SidebarExpandIcon,
 } from "./components/icons.js";
+import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
@@ -103,7 +106,18 @@ export function App() {
   );
   const [updated, setUpdated] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [account, setAccount] = useState<{ username: string; name: string; avatarUrl: string }>();
   const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchJson<{ username: string; name: string; avatarUrl: string }>("/api/auth/me", copy)
+      .then((user) => active && setAccount(user))
+      .catch(() => active && setAccount(undefined));
+    return () => {
+      active = false;
+    };
+  }, [copy]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -121,6 +135,10 @@ export function App() {
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
+  const logout = useCallback(async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    window.location.href = "/ops";
+  }, []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
   const updateQueue = useCallback((next: EventQueue) => {
     const target = eventsHash(next);
@@ -154,15 +172,25 @@ export function App() {
   const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
 
   const onEvents = page.kind === "events" || page.kind === "event";
+  const theme = {
+    token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
+    components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
+  };
+
+  // 首次安装：把 OAuth 配置写进本地数据库，不需要任何环境变量。
+  if (window.location.pathname === "/setup") {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <SetupPage copy={copy} />
+      </ConfigProvider>
+    );
+  }
 
   return (
     <ConfigProvider
       locale={locale === "zh-CN" ? zhCNLocale : enUSLocale}
       csp={cspNonce ? { nonce: cspNonce } : undefined}
-      theme={{
-        token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
-        components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
-      }}
+      theme={theme}
     >
       <div className="app-shell">
         <a
@@ -226,6 +254,30 @@ export function App() {
               { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
+          {account ? (
+            <div className="sidebar-account-panel">
+              {account.avatarUrl ? (
+                <img className="sidebar-account-avatar" src={account.avatarUrl} alt="" />
+              ) : (
+                <span className="sidebar-account-avatar sidebar-account-avatar-fallback" aria-hidden="true">
+                  {[...account.username][0]?.toUpperCase() ?? "?"}
+                </span>
+              )}
+              <span className="sidebar-account-text">
+                <span className="sidebar-account-name">{account.name || account.username}</span>
+                <span className="sidebar-account-username">@{account.username}</span>
+              </span>
+              <button
+                type="button"
+                className="sidebar-logout"
+                onClick={() => void logout()}
+                aria-label={copy.logout}
+                title={copy.logout}
+              >
+                <LogoutIcon />
+              </button>
+            </div>
+          ) : null}
         </aside>
         {updatedText ? <span id="updated" className="updated">{updatedText}</span> : null}
         <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>

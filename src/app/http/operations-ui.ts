@@ -107,4 +107,7 @@ export function registerOperationsUi(app: FastifyInstance): void {
   app.head("/ops/", serveIndex);
   app.get("/ops/*", servePath);
   app.head("/ops/*", servePath);
+  // 安装向导复用同一份控制台构建产物，由前端按 pathname 渲染。
+  app.get("/setup", serveIndex);
+  app.head("/setup", serveIndex);
 }

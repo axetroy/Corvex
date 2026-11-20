@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { EventStore } from "../../src/events/store.js";
+import { createTokenCipher } from "../../src/tokens.js";
 import { traceExecutionStep } from "../../src/events/execution.js";
 
 describe("EventStore", () => {
@@ -158,6 +159,26 @@ describe("EventStore", () => {
     expect(providers).toHaveLength(1);
     expect(providers[0]?.models.map((model) => model.name)).toEqual(["model-a", "model-b"]);
     expect(store.getActiveModel()?.model.name).toBe("model-b");
+  });
+
+  it("round-trips encrypted user tokens and sessions", async () => {
+    store = await EventStore.open(":memory:");
+    const cipher = createTokenCipher("test-secret");
+    const user = store.upsertUser({
+      gitlabUserId: 42,
+      username: "developer",
+      name: "Developer",
+      avatarUrl: "https://example.com/avatar.png",
+      accessToken: "access-secret",
+      refreshToken: "refresh-secret",
+      expiresAt: 123_456,
+    }, cipher);
+    expect(user).toMatchObject({ gitlabUserId: 42, username: "developer", accessToken: "access-secret" });
+
+    const session = store.createUserSession(user.id, Date.now() + 60_000);
+    expect(store.readUserSession(session)?.userId).toBe(user.id);
+    store.deleteUserSession(session);
+    expect(store.readUserSession(session)).toBeUndefined();
   });
 
   it("persists idempotent events and enforces leased status transitions", async () => {
@@ -1343,24 +1364,9 @@ describe("EventStore", () => {
     legacy.close();
 
     store = await EventStore.open(databasePath);
-    expect(store.listConversations(10, 0)).toEqual({
-      items: [{
-        id: "legacy-session",
-        title: "",
-        projectId: 7,
-        projectName: "group/project",
-        targetBranch: "feature/session",
-        // 旧库迁移后默认只读，与旧行为一致。
-        mode: "read_only",
-        createdAt: "2025-01-01T00:00:00.000Z",
-        updatedAt: "2025-01-01T00:00:00.000Z",
-        turnCount: 0,
-        lastTurnStatus: null,
-        archived: false,
-      }],
-      total: 1,
-    });
-    expect(store.getConversation("legacy-session")?.messages[0]).toMatchObject({ id: "legacy-message", content: "Hello" });
+    // 用户级会话是新模型：旧会话没有归属用户，迁移时整体丢弃。
+    expect(store.listConversations(10, 0)).toEqual({ items: [], total: 0 });
+    expect(store.getConversation("legacy-session")).toBeUndefined();
     const inspector = new DatabaseSync(databasePath);
     const conversationColumns = inspector.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const messageColumns = inspector.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[];
@@ -1441,11 +1447,9 @@ describe("EventStore", () => {
     legacy.close();
 
     store = await EventStore.open(databasePath);
-    const conversation = store.getConversation("legacy-conversation");
-    expect(conversation?.messages[0]).toMatchObject({ id: "legacy-msg", content: "Answer", turnId: "legacy-job" });
-    expect(conversation?.messages[0]?.traceCount).toBe(1);
-    expect(conversation?.messages[0]?.stepCount).toBe(1);
-    expect(store.listConversations(10, 0).items[0]).toMatchObject({ id: "legacy-conversation", turnCount: 1 });
+    // 旧会话按约定丢弃；其它历史数据（事件、轨迹、指标）仍保留。
+    expect(store.getConversation("legacy-conversation")).toBeUndefined();
+    expect(store.listConversations(10, 0).items).toEqual([]);
     expect(store.modelCallMetrics()).toContainEqual(
       expect.objectContaining({ taskType: "conversation", calls: 3 }),
     );

@@ -476,6 +476,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   function openConversation(key: string) {
+    if (!key || key === selectedConversationIdRef.current) return;
     setSelectedConversationId(key);
     selectedConversationIdRef.current = key;
     setConversation(undefined);

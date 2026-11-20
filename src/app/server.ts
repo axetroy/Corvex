@@ -4,7 +4,11 @@ import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { CorvexConfig } from "../config/config.js";
 import type { EventStore } from "../events/store.js";
 import { errorMessage } from "../errors.js";
-import type { GitLabClient } from "../gitlab/client.js";
+import { currentUser } from "./auth/context.js";
+import { GitLabOAuthService } from "./auth/service.js";
+import type { FastifyRequest } from "fastify";
+import { createTokenCipher, type TokenCipher } from "../tokens.js";
+import { GitLabClient } from "../gitlab/client.js";
 import { MAX_WEBHOOK_BODY_BYTES } from "../gitlab/webhook.js";
 import { ConversationRunner } from "./conversation-runner.js";
 import { EventRunner } from "./event-runner.js";
@@ -42,6 +46,8 @@ export class CorvexServer {
   /** 事件（review/chat/explain/fix/implement）在 Server 进程内联执行。 */
   private readonly events: EventRunner;
   private readonly settings: SettingsService;
+  private readonly cipher: TokenCipher;
+  private readonly oauth: GitLabOAuthService;
   private readonly conversationAbort = new AbortController();
   /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `app.close()`。 */
   private readonly conversationStreams = new Set<ServerResponse>();
@@ -54,6 +60,8 @@ export class CorvexServer {
     configPath?: string,
   ) {
     this.address = parseListenAddress(config.server.listen);
+    this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
+    this.oauth = new GitLabOAuthService(config, store, this.cipher);
     this.conversations = new ConversationRunner(config, store, gitlab);
     // 内联事件执行器与 HTTP 服务共用同一个进程、同一个 SQLite 和同一份 Git 存储。
     this.events = new EventRunner(config, store, gitlab);
@@ -80,7 +88,7 @@ export class CorvexServer {
       done(null, body);
     });
     this.app.server.headersTimeout = config.server.readTimeout;
-    attachOperationsAuth(this.app, config);
+    attachOperationsAuth(this.app, { store, cipher: this.cipher, oauth: this.oauth });
     this.app.setNotFoundHandler((_request, reply) => {
       sendText(reply, 404, "not found\n");
     });
@@ -109,10 +117,16 @@ export class CorvexServer {
       gitlab: this.gitlab,
       conversations: this.conversations,
       events: this.events,
+      oauth: this.oauth,
       settings: this.settings,
+      gitlabForRequest: (request: FastifyRequest) => {
+        const user = currentUser(request);
+        if (!user) return this.gitlab;
+        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken, user.accessToken, 10_000, "bearer");
+      },
       conversationStreams: this.conversationStreams,
-      startConversationTurn: (turnId) => {
-        this.startConversationTurn(turnId);
+      startConversationTurn: (turnId, gitlab) => {
+        this.startConversationTurn(turnId, gitlab);
       },
     };
   }
@@ -120,8 +134,8 @@ export class CorvexServer {
   /**
    * 在 Server 进程内联执行一轮对话；异常只记录日志，轮次状态由 store 落库。
    */
-  private startConversationTurn(turnId: string): void {
-    void this.conversations.runTurn(turnId, this.conversationAbort.signal).catch((error: unknown) => {
+  private startConversationTurn(turnId: string, gitlab: GitLabClient): void {
+    void this.conversations.runTurn(turnId, this.conversationAbort.signal, gitlab).catch((error: unknown) => {
       console.error("inline conversation turn failed", { turnId, error: errorMessage(error) });
     });
   }

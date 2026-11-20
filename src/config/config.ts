@@ -22,7 +22,11 @@ export interface CorvexConfig {
     webhookSecret: string;
     blockedUserIds: number[];
     botUsername: string;
-  };
+    /** GitLab OAuth Application；留空时登录入口不可用，但站点仍可启动。 */
+    oauthClientId: string;
+    oauthClientSecret: string;
+    oauthRedirectUri: string;
+}
   storage: {
     root: string;
     database: string;
@@ -110,6 +114,9 @@ const defaults: CorvexConfig = {
     webhookSecret: "",
     blockedUserIds: [],
     botUsername: "",
+    oauthClientId: "",
+    oauthClientSecret: "",
+    oauthRedirectUri: "",
   },
   storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365, conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8 },
   agent: {
@@ -242,6 +249,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       webhookSecret: process.env.CORVEX_WEBHOOK_SECRET ?? "",
       blockedUserIds: numberArray(gitlab.blocked_user_ids, defaults.gitlab.blockedUserIds),
       botUsername: string(gitlab.bot_username, defaults.gitlab.botUsername),
+      oauthClientId: "",
+      oauthClientSecret: "",
+      oauthRedirectUri: "",
     },
     storage: {
       root: process.env.CORVEX_STORAGE_ROOT ?? string(storage.root, defaults.storage.root),
@@ -378,6 +388,15 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   // 一旦填写就必须合法，避免把明显错误的地址带进运行时。
   if (config.gitlab.baseUrl && !validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
+  }
+  if (config.gitlab.oauthRedirectUri && !validHttpUrl(config.gitlab.oauthRedirectUri)) {
+    problems.push("gitlab.oauth_redirect_uri must be a valid HTTP(S) URL");
+  }
+  if (
+    Boolean(config.gitlab.oauthClientId) !== Boolean(config.gitlab.oauthClientSecret) ||
+    Boolean(config.gitlab.oauthClientId) !== Boolean(config.gitlab.oauthRedirectUri)
+  ) {
+    problems.push("GitLab OAuth requires client ID, client secret and redirect URI together");
   }
   // GitLab 令牌与 Webhook 密钥都可以在运维台设置写入 SQLite，启动时不要求
   // 环境变量或配置文件提供；未配置时 Webhook 会被拒绝，API 调用会明确报错。

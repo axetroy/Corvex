@@ -231,14 +231,9 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "gitlab_webhook_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabWebhookSecret", hintKey: "settingsGitLabWebhookSecretHint" },
       { key: "gitlab_bot_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
       { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
-    ],
-  },
-  {
-    titleKey: "settingsGroupOperations",
-    hintKey: "settingsGroupOperationsHint",
-    fields: [
-      { key: "operations_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsOperationsUsername", hintKey: "settingsOperationsUsernameHint" },
-      { key: "operations_password", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOperationsPassword", hintKey: "settingsOperationsPasswordHint" },
+      { key: "gitlab_oauth_client_id", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthClientId", hintKey: "settingsOAuthClientIdHint" },
+      { key: "gitlab_oauth_client_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOAuthClientSecret", hintKey: "settingsOAuthClientSecretHint" },
+      { key: "gitlab_oauth_redirect_uri", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthRedirectUri", hintKey: "settingsOAuthRedirectUriHint" },
     ],
   },
   {

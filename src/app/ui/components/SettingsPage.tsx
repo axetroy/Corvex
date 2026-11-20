@@ -357,11 +357,6 @@ export function SettingsPage({ copy, locale, onUpdated, onRefresh }: Props) {
             children: renderGroup("settingsGroupGitLab"),
           },
           {
-            key: "security",
-            label: copy.settingsTabSecurity,
-            children: renderGroup("settingsGroupOperations"),
-          },
-          {
             key: "workflow",
             label: copy.settingsTabWorkflow,
             children: (

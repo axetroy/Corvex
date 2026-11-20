@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { OpsContext } from "./context.js";
+import { registerAuthRoutes } from "./auth-routes.js";
+import { registerSetupRoutes } from "./setup.js";
 import { registerOperationsUi } from "./operations-ui.js";
 import { registerObservabilityRoutes } from "./ops/observability.js";
 import { registerConversationRoutes } from "./ops/conversations.js";
@@ -21,6 +23,12 @@ import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
  */
 export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerSystemRoutes(app, ctx.store);
+  registerAuthRoutes(app, {
+    oauth: ctx.oauth,
+    store: ctx.store,
+    secureCookie: (ctx.config.gitlab.oauthRedirectUri ?? "").startsWith("https:"),
+  });
+  registerSetupRoutes(app, { config: ctx.config, store: ctx.store, oauth: ctx.oauth });
   registerWebhookRoute(app, new WebhookHandler(ctx.config, ctx.store, ctx.gitlab, () => ctx.events.wake()));
   registerOperationsUi(app);
 

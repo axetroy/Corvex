@@ -21,6 +21,28 @@ describe("GitLab base URL", () => {
   });
 });
 
+describe("GitLab authentication modes", () => {
+  it("sends OAuth access tokens as Bearer instead of PRIVATE-TOKEN", async () => {
+    let authorization = "";
+    let privateToken = "";
+    const server = createServer((request, response) => {
+      authorization = String(request.headers.authorization ?? "");
+      privateToken = String(request.headers["private-token"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "oauth-token", "oauth-token", 10_000, "bearer");
+      await expect(client.listProjects("", 1)).resolves.toEqual([]);
+      expect(authorization).toBe("Bearer oauth-token");
+      expect(privateToken).toBe("");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+});
+
 describe("GitLab write receipts", () => {
   it("lists accessible projects with a bounded page and optional search", async () => {
     let requestUrl = "";
