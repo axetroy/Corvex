@@ -23,6 +23,8 @@ import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
+import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
+import type { ContextSnapshot } from "./context-snapshot.js";
 import {
   GitLabWriteError,
   type GitLabWriteReceipt,
@@ -293,12 +295,13 @@ export class PiAgent {
           console.warn("context stream callback failed", { error: errorMessage(error) });
         }
         if (trace) {
+          const trimBefore = buildContextSnapshot(request.history ?? [], undefined);
           const trimTrace = this.startTrace(trace, "context", "context.trim", "", null, {
-            input: JSON.stringify({ reason: "overflow", nextWindow }),
+            input: JSON.stringify({ reason: "overflow", nextWindow, before: trimBefore }),
           });
           if (trimTrace !== undefined) {
             this.finishTrace(trimTrace, "succeeded", 0, undefined, undefined, undefined,
-              JSON.stringify({ nextWindow, droppedHistory: (request.history ?? []).length }));
+              JSON.stringify({ nextWindow, after: { tokens: null, messages: [], summary: "" } }));
           }
         }
         if (active && nextWindow < active.model.contextWindow) {
@@ -464,6 +467,7 @@ export class PiAgent {
       compactionReserveTokens,
     );
 
+    const contextObservation: { before?: ContextSnapshot } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
       agentDir,
@@ -582,6 +586,7 @@ export class PiAgent {
             })]
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
+        createContextObserveExtension(contextObservation),
       ],
       systemPrompt: request.systemPrompt,
     });
@@ -660,7 +665,13 @@ export class PiAgent {
       }
     };
     let contextEventCount = 0;
-    let activeCompaction: { streamId: string; traceId?: number; reason: string; startedAt: number } | undefined;
+    let activeCompaction: {
+      streamId: string;
+      traceId?: number;
+      reason: string;
+      startedAt: number;
+      before?: ContextSnapshot;
+    } | undefined;
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "compaction_start") {
         const streamId = `context-${++contextEventCount}`;
@@ -669,9 +680,15 @@ export class PiAgent {
           streamId,
           reason: event.reason,
           startedAt: performance.now(),
+          before: contextObservation.before,
           traceId: trace
             ? this.startTrace(trace, "context", "context.compact", "", null, {
-                input: JSON.stringify({ phase: "start", reason: event.reason, id: streamId }),
+                input: JSON.stringify({
+                  phase: "start",
+                  reason: event.reason,
+                  id: streamId,
+                  before: contextObservation.before ?? null,
+                }),
               })
             : undefined,
         };
@@ -680,6 +697,8 @@ export class PiAgent {
       if (event.type === "compaction_end") {
         const active = activeCompaction;
         activeCompaction = undefined;
+        const before = active?.before ?? contextObservation.before ?? null;
+        contextObservation.before = undefined;
         const result = event.result;
         const language = this.config.agent.responseLanguage;
         const failed = event.aborted || !result;
@@ -694,9 +713,14 @@ export class PiAgent {
           reason: active?.reason ?? event.reason,
           aborted: event.aborted,
           willRetry: event.willRetry,
-          tokensBefore: result?.tokensBefore ?? null,
-          tokensAfter: result?.estimatedTokensAfter ?? null,
-          summaryLength: result?.summary?.length ?? 0,
+          before,
+          after: result
+            ? {
+                tokens: result.estimatedTokensAfter ?? null,
+                summary: result.summary,
+                firstKeptEntryId: result.firstKeptEntryId,
+              }
+            : null,
           ...(event.errorMessage ? { error: event.errorMessage } : {}),
         });
         const duration = active ? performance.now() - active.startedAt : 0;

@@ -10,6 +10,7 @@ import {
   calculateAverageFirstTokenMs,
   calculateGenerationTokensPerSecond,
   clampZoom,
+  parseTraceValue,
   reconstructLlmInput,
   timelineTickCount,
   traceTurnId,
@@ -18,7 +19,7 @@ import {
 import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
 
-type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing";
+type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing" | "context";
 
 /** 详情面板的标签页顺序。 */
 const inspectorTabs: readonly (readonly [InspectorTab, CopyTextKey])[] = [
@@ -27,6 +28,7 @@ const inspectorTabs: readonly (readonly [InspectorTab, CopyTextKey])[] = [
   ["result", "traceTabResult"],
   ["schema", "traceTabSchema"],
   ["timing", "traceTabTiming"],
+  ["context", "traceTabContext"],
 ];
 
 /** 时间轴左侧活动名称列的宽度，与样式表保持一致。 */
@@ -109,6 +111,21 @@ function InspectorContent({
           </>
         ) : null}
       </dl>
+    );
+  }
+  if (tab === "context") {
+    if (entry.kind !== "context") return <div className="trace-inspector-empty">{copy.traceNoSelection}</div>;
+    const formatSnapshot = (value: string | null): string => {
+      const parsed = parseTraceValue(value ?? "");
+      return parsed === undefined || parsed === null
+        ? copy.traceContextEmpty
+        : JSON.stringify(parsed, null, 2);
+    };
+    return (
+      <>
+        <TraceField label={copy.traceContextBefore} value={formatSnapshot(entry.input)} emptyLabel={copy.traceContextEmpty} defaultOpen />
+        <TraceField label={copy.traceContextAfter} value={formatSnapshot(entry.output)} emptyLabel={copy.traceContextEmpty} defaultOpen />
+      </>
     );
   }
   if (tab === "parameters") {

@@ -65,7 +65,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /api/ops/conversations`、`GET /api/ops/conversations/<id>` | 列出持久对话（含轮次数与最近一轮状态）及其消息；详情响应还附带该对话派生的系统提示词。 |
 | `GET /api/ops/conversations/<id>/turns` | 读取整段对话：把各轮轨迹与执行记录合并成一条有序时间线，并给出逐轮边界。对话轮次不是事件，不会出现在事件列表中。 |
 | `GET /api/ops/conversations/<id>/turns/<turnId>` | 读取单轮对话自己的轨迹、执行记录、尝试与生命周期变化。对话轮次不是事件，不会出现在事件列表中。 |
-| `GET /api/ops/conversations/<id>/turns/<turnId>/stream` | 以 SSE 推送运行中轮次的累计助手正文（`text`）、思考过程（`thinking`）、工具执行（`tool`）、上下文压缩/裁剪通知（`context`）与最终 `done` 状态，控制台据此在落库前逐字展示回复及其交错时间线。 |
+| `GET /api/ops/conversations/<id>/turns/<turnId>/stream` | 以 SSE 推送运行中轮次的累计助手正文（`text`）、思考过程（`thinking`）、工具执行（`tool`）、上下文压缩/裁剪通知（`context`，轨迹详情里可查看有界的压缩前后上下文快照）与最终 `done` 状态，控制台据此在落库前逐字展示回复及其交错时间线。 |
 | `GET /api/ops/conversations/<id>/stats` | 汇总整段对话的用量与耗时，并给出逐轮明细。 |
 | `POST /api/ops/conversations`、`POST /api/ops/conversations/<id>/messages` | 创建固定版本的只读对话或排入下一轮对话。 |
 | `POST /api/ops/conversations/<id>/archive` | 用 `{ "archived": true|false }` 归档或取消归档；列表接口支持 `archived=true|false`。 |
