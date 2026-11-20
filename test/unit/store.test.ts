@@ -572,12 +572,16 @@ describe("EventStore", () => {
     const llmTrace = store.startEventTrace(
       { kind: "conversation", turnId: first.turnId }, first.attempt, "llm", "conversation", "test/model", "{}", { round: 1 },
     );
-    store.finishEventTrace(llmTrace, "succeeded", 120, 30, 12);
+    store.finishEventTrace(llmTrace, "succeeded", 120, 30, 12, undefined, undefined, 20, 60);
     const toolTrace = store.startEventTrace(
       { kind: "conversation", turnId: first.turnId }, first.attempt, "tool", "read_file", "test/model", "{}",
     );
     store.finishEventTrace(toolTrace, "succeeded", 40, 0, 0);
     store.finishConversationTurn(first.turnId, "First answer");
+    const firstAssistant = store.getConversation(created.conversationId)?.messages[1];
+    expect(firstAssistant?.durationMs).not.toBeNull();
+    // 输出速度只统计成功模型调用，12 tokens / 60ms = 200 tokens/s。
+    expect(firstAssistant?.tps).toBeCloseTo(200);
 
     // 未开始的轮次耗时不确定，统计里计为进行中且不计耗时。
     store.addConversationMessage(created.conversationId, {

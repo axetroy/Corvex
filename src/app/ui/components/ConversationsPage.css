@@ -730,6 +730,15 @@
   font-size: 11px;
 }
 
+.conversation-message-metric.ant-typography {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.conversation-message-metric-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .conversation-transcript .ant-bubble:hover .conversation-message-actions,
 .conversation-message-actions:focus-within {
   opacity: 1;

@@ -1331,6 +1331,11 @@ export class EventStore {
     const messages = this.db.prepare(
       `SELECT conversation_messages.*, conversation_turns.status AS turn_status,
          conversation_turns.process AS turn_process, conversation_turns.model AS turn_model,
+         conversation_turns.created_at AS turn_created_at, conversation_turns.updated_at AS turn_updated_at,
+         (SELECT COALESCE(SUM(COALESCE(output_tokens, 0)), 0) FROM event_trace
+          WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_output_tokens,
+         (SELECT COALESCE(SUM(COALESCE(generation_duration_ms, 0)), 0) FROM event_trace
+          WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_duration_ms,
          (SELECT COUNT(*) FROM event_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
          (SELECT COUNT(*) FROM execution_steps WHERE turn_id=conversation_messages.turn_id) AS step_count
        FROM conversation_messages
@@ -1904,6 +1909,17 @@ export class EventStore {
     if (turnStatus !== null && turnStatus !== undefined && (typeof turnStatus !== "string" || !isConversationTurnStatus(turnStatus))) {
       throw new Error(`SQLite conversation turn status "${String(turnStatus)}" is invalid`);
     }
+    const resolvedTurnStatus = turnStatus && isConversationTurnStatus(turnStatus) ? turnStatus : null;
+    const start = typeof row.turn_created_at === "string" ? row.turn_created_at : "";
+    const end = typeof row.turn_updated_at === "string" ? row.turn_updated_at : "";
+    const durationMs = start && end && resolvedTurnStatus && terminalConversationTurn.has(resolvedTurnStatus)
+      ? turnDurationMs(start, end, true)
+      : null;
+    const generationOutputTokens = row.generation_output_tokens === undefined ? 0 : numberColumn(row, "generation_output_tokens");
+    const generationDurationMs = row.generation_duration_ms === undefined ? 0 : numberColumn(row, "generation_duration_ms");
+    const tps = generationDurationMs > 0 && generationOutputTokens > 0
+      ? generationOutputTokens * 1000 / generationDurationMs
+      : null;
     return {
       id: stringColumn(row, "id"),
       role,
@@ -1917,6 +1933,8 @@ export class EventStore {
       traceCount: row.trace_count === undefined ? 0 : numberColumn(row, "trace_count"),
       stepCount: row.step_count === undefined ? 0 : numberColumn(row, "step_count"),
       model: typeof row.turn_model === "string" ? row.turn_model : "",
+      durationMs,
+      tps,
       toolCalls: [],
       process: typeof row.turn_process === "string" ? readConversationProcess(row.turn_process) : [],
     };

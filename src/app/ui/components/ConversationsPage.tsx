@@ -7,7 +7,7 @@ import "./ConversationsPage.css";
 import { fetchJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate } from "../format.js";
+import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamTool, ConversationSummary } from "../types.js";
@@ -85,9 +85,6 @@ function MessageContent({
       {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
       {settled ? (
         <div className="conversation-message-actions">
-          {message.model ? (
-            <Typography.Text type="secondary" className="conversation-message-model">{displayModelName(message.model)}</Typography.Text>
-          ) : null}
           <Actions
             variant="borderless"
             items={[
@@ -98,6 +95,21 @@ function MessageContent({
               },
             ]}
           />
+          {message.tps !== null ? (
+            <Typography.Text type="secondary" className="conversation-message-metric" title={copy.traceTps}>
+              <span className="conversation-message-metric-label">{copy.conversationMessageTps}</span>{" "}
+              {formatOutputTps(message.tps, copy)}
+            </Typography.Text>
+          ) : null}
+          {message.durationMs !== null ? (
+            <Typography.Text type="secondary" className="conversation-message-metric" title={copy.duration}>
+              <span className="conversation-message-metric-label">{copy.conversationMessageDuration}</span>{" "}
+              {formatTraceDuration(message.durationMs, copy)}
+            </Typography.Text>
+          ) : null}
+          {message.model ? (
+            <Typography.Text type="secondary" className="conversation-message-model">{displayModelName(message.model)}</Typography.Text>
+          ) : null}
         </div>
       ) : null}
     </div>

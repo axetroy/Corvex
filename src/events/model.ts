@@ -196,6 +196,10 @@ export interface ConversationMessage {
   stepCount: number;
   /** 生成这条回复时使用的模型名称。 */
   model: string;
+  /** 助手回复对应轮次的端到端耗时；未结束或无法计算时为空。 */
+  durationMs: number | null;
+  /** 已记录成功模型调用的输出速度（tokens/s）；无有效样本时为空。 */
+  tps: number | null;
   /** 助手回复已记录的工具调用摘要，按调用时间排序；用户消息为空数组。 */
   toolCalls: ConversationToolCall[];
   /** 该轮落库的过程条目（思考、中间回复、工具调用），按发生顺序排列。 */
