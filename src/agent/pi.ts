@@ -23,6 +23,7 @@ import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
+import { createPlanExtension } from "./plan.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import {
@@ -602,6 +603,9 @@ export class PiAgent {
             })]
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
+        ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
+          ? [createPlanExtension()]
+          : []),
         createContextObserveExtension(contextObservation, {
           onBeforeCompact: (_snapshot, trigger) => {
             if (!contextEventId) contextEventId = `context-${++contextEventCount}`;

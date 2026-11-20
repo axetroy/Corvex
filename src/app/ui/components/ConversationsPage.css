@@ -631,6 +631,26 @@
   word-break: break-word;
 }
 
+/* 步骤清单：模型通过 record_plan 记录，过程块里以编号列表展示。 */
+.conversation-plan {
+  padding: 4px 0;
+}
+
+.conversation-plan-label {
+  color: var(--conversation-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.conversation-plan-steps {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--conversation-ink);
+  line-height: 1.65;
+}
+
 /* 上下文压缩/裁剪通知：嵌在过程时间线里，与思考、工具调用共享左侧轨道。 */
 .conversation-context-notice {
   display: flex;

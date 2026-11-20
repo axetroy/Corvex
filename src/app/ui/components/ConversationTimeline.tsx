@@ -5,6 +5,7 @@ import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../truncate.js";
 import { translate } from "../i18n.js";
 import type { Copy } from "../i18n.js";
 import { parseTraceValue } from "../trace.js";
+import { parsePlanSteps } from "../planDisplay.js";
 import type { ConversationToolCall } from "../types.js";
 
 /**
@@ -123,6 +124,15 @@ export const ConversationTimeline = memo(function ConversationTimeline({
           <div className="conversation-context-notice" key={segment.key} role="status">
             <span className="conversation-context-notice-icon" aria-hidden="true">↻</span>
             <span>{segment.text}</span>
+          </div>
+        ) : segment.kind === "tool" && segment.call.name === "record_plan" ? (
+          <div className="conversation-plan" key={segment.key}>
+            <div className="conversation-plan-label">{copy.conversationPlan}</div>
+            <ol className="conversation-plan-steps">
+              {parsePlanSteps(segment.call.input).map((step, index) => (
+                <li key={`${segment.key}-${index}`}>{step}</li>
+              ))}
+            </ol>
           </div>
         ) : (
           <details className="conversation-tool-call" key={segment.key}>
