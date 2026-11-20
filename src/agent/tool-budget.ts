@@ -13,13 +13,13 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
  * 始终落在窗口内。
  */
 
-/** 单轮工具输出相对上下文窗口的字节比例；128K 窗口对应 64 KiB。 */
-const roundBytesPerContextToken = 0.5;
-const minRoundBytes = 16 << 10;
+/** 单轮工具输出相对上下文窗口的字节比例；128K 窗口对应 32 KiB。 */
+const roundBytesPerContextToken = 0.25;
+const minRoundBytes = 4 << 10;
 const maxRoundBytes = 128 << 10;
 /** 单个工具结果的字节上限占单轮预算的比例。 */
 const callShareOfRound = 0.5;
-const minCallBytes = 8 << 10;
+const minCallBytes = 4 << 10;
 /** 工具结果按最坏 2 字节/token 估算（中文、压缩代码与 JSON 转义）。 */
 const worstBytesPerToken = 2;
 /** 压缩预留的固定余量：覆盖 system 提示、转向消息与分帧开销。 */
@@ -44,17 +44,17 @@ export function resolveToolCallBytes(roundBytes: number): number {
 }
 
 /**
- * 压缩预留 token：覆盖「下一个发送前检查点之前可能新增的工具结果 + 输出预留」。
- * SDK 在每次模型调用前都会重新检查上下文，因此只需要预留**半轮**工具结果：
- * 若这一轮工具结果真的吃满预算，下一次请求前的检查会再次触发压缩。这样小窗口
- * 模型不会被固定的整轮预留顶到 50% 阈值。用户配置更大时保留用户值。
+ * 压缩预留 token：必须覆盖「完整一轮工具结果最坏增量 + 输出预留 + 固定余量」，
+ * 否则这一轮工具结果追加后，下一次请求会在压缩前就超窗。工具结果预算本身随窗口
+ * 按比例缩放（见 resolveToolRoundBytes），因此小窗口不会被固定的大预算顶到 50% 阈值。
+ * 用户配置更大时保留用户值。
  */
 export function resolveCompactionReserveTokens(
   contextWindow: number,
   maxOutputTokens: number,
   configured: number,
 ): number {
-  const roundTokens = Math.ceil(resolveToolRoundBytes(contextWindow) / worstBytesPerToken / 2);
+  const roundTokens = Math.ceil(resolveToolRoundBytes(contextWindow) / worstBytesPerToken);
   const output = Number.isFinite(maxOutputTokens) ? Math.max(0, maxOutputTokens) : 0;
   const safe = roundTokens + output + reserveMarginTokens;
   // 预留不能吃掉整个窗口：至少给压缩后的最近上下文和 system 提示留一点空间。

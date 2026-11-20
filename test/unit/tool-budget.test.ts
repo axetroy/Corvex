@@ -25,30 +25,29 @@ function handlersFor(contextWindow: number): { messageStart: Handler; toolResult
 
 describe("resolveToolRoundBytes", () => {
   it("按窗口大小分配单轮工具输出预算", () => {
-    expect(resolveToolRoundBytes(131_072)).toBe(64 << 10);
-    expect(resolveToolRoundBytes(32_768)).toBe(16 << 10);
+    expect(resolveToolRoundBytes(131_072)).toBe(32 << 10);
+    expect(resolveToolRoundBytes(32_768)).toBe(8 << 10);
   });
 
   it("过大或过小的窗口都被夹在可用区间", () => {
     expect(resolveToolRoundBytes(1_000_000)).toBe(128 << 10);
-    expect(resolveToolRoundBytes(1_024)).toBe(16 << 10);
-    expect(resolveToolRoundBytes(0)).toBe(16 << 10);
+    expect(resolveToolRoundBytes(1_024)).toBe(4 << 10);
+    expect(resolveToolRoundBytes(0)).toBe(4 << 10);
   });
 });
 
 describe("resolveToolCallBytes", () => {
   it("单个结果最多占单轮预算的一半", () => {
     expect(resolveToolCallBytes(64 << 10)).toBe(32 << 10);
-    expect(resolveToolCallBytes(8 << 10)).toBe(8 << 10);
+    expect(resolveToolCallBytes(8 << 10)).toBe(4 << 10);
   });
 });
 
 describe("resolveCompactionReserveTokens", () => {
-  it("为半轮工具增量和输出预留空间，避免在发送前过度压缩", () => {
-    // 64 KiB 工具输出按最坏 2 字节/token 估 32768；发送前会复查，所以只预留半轮，
-    // 再加 8192 输出与 4 KiB 余量。
+  it("为完整一轮工具增量和输出预留空间，随窗口缩放后不会过早压缩", () => {
+    // 128K 窗口单轮 32 KiB，按最坏 2 字节/token 估 16384，加 8192 输出与 4 KiB 余量。
     expect(resolveCompactionReserveTokens(131_072, 8_192, 0)).toBe(16_384 + 8_192 + 4_096);
-    // 32k 窗口 + 4096 输出：16 KiB 半轮 = 4096 token，阈值升到 20480（约 62.5%）。
+    // 32k 窗口单轮 8 KiB = 4096 token，加 4096 输出与 4 KiB 余量，阈值升到 20480（约 62.5%）。
     expect(resolveCompactionReserveTokens(32_768, 4_096, 0)).toBe(12_288);
   });
 
@@ -76,7 +75,7 @@ describe("resolveCompactionKeepRecentTokens", () => {
 
 describe("resolveTurnToolResultBytes", () => {
   it("把软提醒收敛到四个单轮预算", () => {
-    expect(resolveTurnToolResultBytes(131_072, 2 << 20)).toBe(256 << 10);
+    expect(resolveTurnToolResultBytes(131_072, 2 << 20)).toBe(128 << 10);
   });
 
   it("更小的配置保持原值，0 表示关闭", () => {

@@ -240,11 +240,11 @@ describe("runtimeSettingsEffective", () => {
     const config = settingsConfig();
     const view = runtimeSettingsEffective(config);
     expect(view.effective.max_input_tokens).toBe(131_072 - 4_096 - 2_000);
-    expect(view.effective.turn_tool_result_bytes).toBe(256 << 10);
+    expect(view.effective.turn_tool_result_bytes).toBe(128 << 10);
     expect(view.effective.compaction_reserve_tokens).toBe(24_576);
     expect(view.derived).toMatchObject({
-      toolRoundBytes: 64 << 10,
-      toolCallBytes: 32 << 10,
+      toolRoundBytes: 32 << 10,
+      toolCallBytes: 16 << 10,
       compactionTriggerTokens: 131_072 - 24_576,
     });
     expect(view.adjusted).toContain("compaction_reserve_tokens");
