@@ -23,17 +23,14 @@ function requestPathname(url: string | undefined): string {
 }
 
 /**
- * 安装控制台认证钩子。凭据未配置时整个控制台（含 API）按「不存在」处理，
- * 避免暴露一个未受保护的管理面。
+ * 安装控制台认证钩子。凭据保存在运维台设置中：两者都未配置时不认证，
+ * 这也是首次进入控制台设置凭据的必要前提；配置后要求 Basic 认证。
  */
 export function attachOperationsAuth(app: FastifyInstance, config: CorvexConfig): void {
   app.addHook("onRequest", async (request, reply) => {
     const pathname = requestPathname(request.raw.url);
     if (!requiresOperationsAuth(pathname)) return;
-    if (!config.operations.username || !config.operations.password) {
-      sendText(reply, 404, "not found\n");
-      return reply;
-    }
+    if (!config.operations.username || !config.operations.password) return;
     if (!basicCredentialsMatch(request.headers.authorization, config.operations.username, config.operations.password)) {
       reply.header("www-authenticate", authenticationRealm);
       sendText(reply, 401, "authentication required\n");

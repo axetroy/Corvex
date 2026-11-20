@@ -16,12 +16,7 @@ Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `
 | `server.read_timeout` | `5s` | Positive duration | HTTP header-read timeout. |
 | `server.shutdown_timeout` | `30s` | Positive duration | Graceful HTTP shutdown limit. |
 
-The optional agent console uses HTTP Basic Auth credentials supplied only through environment variables. Set both variables to enable it; leave both unset to keep the console disabled. Use a strong, unique password and access the console only over HTTPS.
-
-| Variable | Use |
-|---|---|
-| `CORVEX_OPS_USERNAME` | Optional operator username for `/ops` and `/api/ops/*`. |
-| `CORVEX_OPS_PASSWORD` | Optional operator password; set together with `CORVEX_OPS_USERNAME`. |
+The agent console is always reachable at `/ops`. It uses HTTP Basic Auth when both a username and password are saved in the console Settings page; when both are blank, no authentication is required. Set a strong password and access the console only over HTTPS.
 
 ## GitLab
 
@@ -87,7 +82,7 @@ Tunable agent settings are edited in the console **Settings** page and stored in
 
 Editable keys: `agent.response_language`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `agent.web_blocked_hosts`, `agent.skill_paths`, `agent.request_timeout`, `agent.session_timeout`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, `issue.implement_enabled`, `events.poll_interval`, `events.event_timeout`, `gitlab.bot_username`, `gitlab.blocked_user_ids`, `storage.retention_days`, `storage.audit_retention_days`, `storage.conversation_workspace_ttl_minutes` and `storage.conversation_workspace_max`. Time values are entered in seconds and stored in milliseconds. The response language and model are read on every request and turn, so a change takes effect on the next one without a restart.
 
-Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, `storage.root`, `storage.database` and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
+Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, `storage.root`, `storage.database` and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
 ## Chat context
 
@@ -140,8 +135,6 @@ Issue tasks use the project default branch unless the current request explicitly
 | `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; optional startup fallback, normally saved in console Settings |
 | `CORVEX_GITLAB_TOKEN` | GitLab write token; optional startup fallback, normally saved in console Settings |
 | `CORVEX_WEBHOOK_SECRET` | Webhook secret; optional startup fallback, normally saved in console Settings |
-| `CORVEX_OPS_USERNAME` | Optional operator username; set together with `CORVEX_OPS_PASSWORD` |
-| `CORVEX_OPS_PASSWORD` | Optional agent console password; set together with `CORVEX_OPS_USERNAME` |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | Overrides `gitlab.base_url` |

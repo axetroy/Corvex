@@ -144,9 +144,17 @@ export class SettingsService {
         };
       }
     }
+    const clearOperationsCredentials =
+      overrides.operations_username === "" &&
+      (overrides.operations_password === "" ||
+        overrides.operations_password === secretSettingPlaceholder ||
+        overrides.operations_password === undefined);
+    if (clearOperationsCredentials) overrides.operations_password = "";
     // 密钥字段单独处理：留空表示沿用已保存的值，只有明确提交新值才覆盖。
     // 这样界面上不回显原文也不会误清除它。
     for (const key of secretRuntimeSettingKeys) {
+      // 控制台凭据成对清空是显式关闭认证，不适用「留空保留」。
+      if (clearOperationsCredentials && key === "operations_password") continue;
       const stored = this.store.listRuntimeSettings().find((row) => row.key === key);
       const submitted = overrides[key];
       if (submitted === "" || submitted === secretSettingPlaceholder || submitted === undefined) {
@@ -162,6 +170,11 @@ export class SettingsService {
     // 以启动快照为基准叠加本次覆盖项；未提交的键回到配置文件的初始值。
     const candidate = structuredClone(this.baseline);
     applyRuntimeSettings(candidate, overrides);
+    // 凭据只接受成对配置；任一端为空即视为关闭认证，避免留下半套凭据。
+    if (!candidate.operations.username || !candidate.operations.password) {
+      candidate.operations.username = "";
+      candidate.operations.password = "";
+    }
     try {
       // 按 Server 角色校验：Server 不调用模型，模型密钥与地址来自供应商目录，
       // 用全量校验会把合法配置误判为缺少密钥，导致任何保存都被拒绝。

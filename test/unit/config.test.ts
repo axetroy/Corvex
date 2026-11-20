@@ -212,13 +212,16 @@ describe("validateConfig", () => {
     }
   });
 
-  it("requires complete operations dashboard credentials and accepts passwords of any length", () => {
+  it("requires operations credentials to be set together and validates them when present", () => {
     const config = validConfig();
     config.operations.username = "operator";
-    expect(() => validateConfig(config)).toThrow("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD");
+    expect(() => validateConfig(config)).toThrow("both operations username and password must be set together");
 
     config.operations.password = "short";
     expect(() => validateConfig(config)).not.toThrow();
+
+    config.operations.username = "bad:name";
+    expect(() => validateConfig(config)).toThrow("operations console credentials contain invalid characters");
   });
 
   it("accepts all projects while permitting an empty user blocklist", () => {
@@ -288,8 +291,6 @@ describe("validateConfig", () => {
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
       "CORVEX_WEBHOOK_SECRET",
-      "CORVEX_OPS_USERNAME",
-      "CORVEX_OPS_PASSWORD",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -298,8 +299,6 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "secret";
-      process.env.CORVEX_OPS_USERNAME = "operator";
-      process.env.CORVEX_OPS_PASSWORD = "a secure password with 16 chars";
       await writeFile(
         configPath,
         JSON.stringify({
@@ -310,7 +309,7 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath);
       expect(config.server.listen).toBe("127.0.0.1:9090");
       expect(config.gitlab.baseUrl).toBe("https://gitlab.override.example");
-      expect(config.operations.username).toBe("operator");
+      expect(config.operations).toEqual({ username: "", password: "" });
     } finally {
       for (const name of names) {
         const value = original[name];

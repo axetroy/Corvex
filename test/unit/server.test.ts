@@ -103,7 +103,7 @@ describe("CorvexServer", () => {
     const store = await EventStore.open(":memory:");
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
-      operations: { username: "operator", password: "a secure password with 16 chars" },
+      operations: { username: "", password: "" },
       gitlab: {
         baseUrl: `http://127.0.0.1:${gitlabPort}`,
         readToken: "read",
@@ -156,15 +156,16 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
+      expect((await fetch(`${base}/healthz`)).status).toBe(200);
+      // 未配置凭据时不认证，控制台可直接访问。
+      expect((await fetch(`${base}/ops`)).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/overview`)).status).toBe(200);
+
+      config.operations.username = "operator";
+      config.operations.password = "a secure password with 16 chars";
       const authorization = `Basic ${Buffer.from(
         `${config.operations.username}:${config.operations.password}`,
       ).toString("base64")}`;
-      expect((await fetch(`${base}/healthz`)).status).toBe(200);
-      config.operations.username = "";
-      config.operations.password = "";
-      expect((await fetch(`${base}/ops`)).status).toBe(404);
-      config.operations.username = "operator";
-      config.operations.password = "a secure password with 16 chars";
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);
       const rejected = await fetch(`${base}/api/ops/overview`, {
         headers: { authorization: `Basic ${Buffer.from("operator:wrong").toString("base64")}` },
@@ -667,9 +668,7 @@ describe("CorvexServer", () => {
   it("exposes and updates runtime context settings over the operations API", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // 凭据与令牌可以用环境变量兜底，测试用 stubEnv 注入并在结束时还原。
-    vi.stubEnv("CORVEX_OPS_USERNAME", "operator");
-    vi.stubEnv("CORVEX_OPS_PASSWORD", "a secure password with 16 chars");
+    // 令牌可以用环境变量兜底，测试用 stubEnv 注入并在结束时还原。
     vi.stubEnv("CORVEX_GITLAB_READ_TOKEN", "read");
     vi.stubEnv("CORVEX_GITLAB_TOKEN", "write");
     vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
@@ -684,6 +683,9 @@ describe("CorvexServer", () => {
     }), "utf8");
     const { loadConfig } = await import("../../src/config/config.js");
     const config = await loadConfig(configPath, "server");
+    // 模拟运维台已保存的控制台凭据。
+    config.operations.username = "operator";
+    config.operations.password = "a secure password with 16 chars";
     const store = await EventStore.open(":memory:");
     const controller = new AbortController();
     const application = new CorvexServer(
@@ -845,6 +847,35 @@ describe("CorvexServer", () => {
 
       expect((await fetch(`${base}/api/ops/settings`, { method: "POST", headers: { authorization } })).status).toBe(405);
       expect((await fetch(`${base}/api/ops/settings`)).status).toBe(401);
+
+      // 控制台凭据也在 Web 保存；留空密码保留已保存值，两者清空则不认证。
+      const consoleWrite = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          settings: { operations_username: "operator", operations_password: "new-console-password" },
+        }),
+      });
+      expect(consoleWrite.status).toBe(200);
+      const updatedAuthorization = `Basic ${Buffer.from("operator:new-console-password").toString("base64")}`;
+      expect((await fetch(`${base}/api/ops/overview`, { headers: { authorization: updatedAuthorization } })).status).toBe(200);
+
+      const keepConsolePassword = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization: updatedAuthorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { operations_password: "" } }),
+      });
+      expect(keepConsolePassword.status).toBe(200);
+      expect(config.operations.password).toBe("new-console-password");
+
+      const disableAuth = await fetch(`${base}/api/ops/settings`, {
+        method: "PUT",
+        headers: { authorization: updatedAuthorization, "content-type": "application/json" },
+        body: JSON.stringify({ settings: { operations_username: "", operations_password: "" } }),
+      });
+      expect(disableAuth.status).toBe(200);
+      expect(config.operations).toEqual({ username: "", password: "" });
+      expect((await fetch(`${base}/ops`)).status).toBe(200);
 
       // 每次写入都留下审计：操作者来自控制台凭据，结果记录旧值->新值。
       const audit = store.listAuditEvents().filter((entry) => entry.action === "update_settings");

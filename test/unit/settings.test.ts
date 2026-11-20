@@ -42,6 +42,7 @@ function agentConfig(): CorvexConfig["agent"] {
 /** 只包含设置相关段的配置对象；其余段不参与运行时设置测试。 */
 function settingsConfig(): CorvexConfig {
   return {
+    operations: { username: "", password: "" },
     agent: agentConfig(),
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
     chat: { historyComments: 20 },
@@ -324,6 +325,7 @@ describe("GitLab runtime settings", () => {
       "gitlab_read_token",
       "gitlab_token",
       "gitlab_webhook_secret",
+      "operations_password",
     ]));
   });
 

@@ -18,7 +18,7 @@ import {
  * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌、
  * Webhook 密钥等，这些仍从配置文件或环境变量读取。
  */
-export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "events" | "gitlab";
+export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "events" | "gitlab" | "operations";
 
 export interface RuntimeSettingDefinition {
   key: string;
@@ -87,6 +87,9 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "gitlab_webhook_secret", section: "gitlab", field: "webhookSecret", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
   { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
+  // 控制台凭据：两者都留空时不启用 Basic 认证。
+  { key: "operations_username", section: "operations", field: "username", type: "string", maxLength: 200, allowEmpty: true },
+  { key: "operations_password", section: "operations", field: "password", type: "string", maxLength: 2_000, allowEmpty: true },
   // 审查与历史评论
   { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, eventRunnerScoped: true },
   { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, eventRunnerScoped: true },
@@ -113,6 +116,7 @@ export const secretRuntimeSettingKeys = new Set([
   "gitlab_read_token",
   "gitlab_token",
   "gitlab_webhook_secret",
+  "operations_password",
 ]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */

@@ -232,6 +232,14 @@ export const settingGroups: readonly SettingGroup[] = [
     ],
   },
   {
+    titleKey: "settingsGroupOperations",
+    hintKey: "settingsGroupOperationsHint",
+    fields: [
+      { key: "operations_username", kind: "string", maxLength: 200, labelKey: "settingsOperationsUsername", hintKey: "settingsOperationsUsernameHint" },
+      { key: "operations_password", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOperationsPassword", hintKey: "settingsOperationsPasswordHint" },
+    ],
+  },
+  {
     titleKey: "settingsGroupStorage",
     hintKey: "settingsGroupStorageHint",
     fields: [

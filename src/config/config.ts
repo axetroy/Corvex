@@ -232,10 +232,8 @@ function parseConfig(raw: unknown): CorvexConfig {
         "server.shutdown_timeout",
       ),
     },
-    operations: {
-      username: process.env.CORVEX_OPS_USERNAME ?? defaults.operations.username,
-      password: process.env.CORVEX_OPS_PASSWORD ?? defaults.operations.password,
-    },
+    // 控制台凭据由运维台设置写入 SQLite；启动时默认无凭据，即不启用认证。
+    operations: { username: "", password: "" },
     gitlab: {
       baseUrl:
         process.env.CORVEX_GITLAB_BASE_URL ?? string(gitlab.base_url, defaults.gitlab.baseUrl),
@@ -360,18 +358,21 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.server.readTimeout <= 0 || config.server.shutdownTimeout <= 0) {
     problems.push("server timeouts must be positive");
   }
+  // 凭据可以在运维台设置；两者必须同时设置或同时留空。
   const operationsUsername = config.operations.username.trim();
   const operationsPassword = config.operations.password;
   if (Boolean(operationsUsername) !== Boolean(operationsPassword)) {
-    problems.push("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD must be set to enable the agent console");
+    problems.push("both operations username and password must be set together");
   }
-  const operationsCredentials = operationsUsername + operationsPassword;
-  const hasControlCharacters = [...operationsCredentials].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127;
-  });
-  if (operationsUsername.includes(":") || hasControlCharacters) {
-    problems.push("agent console credentials contain invalid characters");
+  if (operationsUsername || operationsPassword) {
+    const operationsCredentials = operationsUsername + operationsPassword;
+    const hasControlCharacters = [...operationsCredentials].some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    });
+    if (operationsUsername.includes(":") || hasControlCharacters) {
+      problems.push("operations console credentials contain invalid characters");
+    }
   }
   // GitLab 地址可以通过运维台设置写入 SQLite，因此配置文件/环境变量里可以为空；
   // 一旦填写就必须合法，避免把明显错误的地址带进运行时。

@@ -16,12 +16,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `server.read_timeout` | `5s` | 正时长 | HTTP 请求头读取超时。 |
 | `server.shutdown_timeout` | `30s` | 正时长 | HTTP 优雅关闭等待时限。 |
 
-可选 Agent 控制台仅通过环境变量配置 HTTP Basic Auth。设置两个变量后启用；两个都不设置则禁用控制台。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
-
-| 变量 | 用途 |
-|---|---|
-| `CORVEX_OPS_USERNAME` | `/ops` 和 `/api/ops/*` 的可选运维用户名。 |
-| `CORVEX_OPS_PASSWORD` | 可选运维密码；须与 `CORVEX_OPS_USERNAME` 同时设置。 |
+Agent 控制台始终可通过 `/ops` 访问。在控制台设置页同时保存用户名和密码后启用 HTTP Basic Auth；两者都留空时不启用认证。请使用强且唯一的密码，并且仅通过 HTTPS 访问。
 
 ## GitLab
 
@@ -38,8 +33,6 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `CORVEX_GITLAB_READ_TOKEN` | 可选启动兜底。GitLab API 读取、项目/目标发现、仓库抓取和内联事件使用控制台设置页保存的值。 |
 | `CORVEX_GITLAB_TOKEN` | 可选启动兜底。用于发布评论和行级讨论，以及在控制台配置后启用同项目 MR 的 Git 写入和 Issue 实现。 |
 | `CORVEX_WEBHOOK_SECRET` | 可选启动兜底。必须与控制台保存的密钥一致；未配置密钥时 Webhook 会被拒绝。 |
-| `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
-| `CORVEX_OPS_PASSWORD` | 可选 Agent 控制台密码；须与 `CORVEX_OPS_USERNAME` 同时设置 |
 
 ## 存储
 
@@ -91,7 +84,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`events.poll_interval`、`events.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
 
-只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 
