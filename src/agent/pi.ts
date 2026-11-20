@@ -24,6 +24,8 @@ import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
+import { createGitLabConversationExtension } from "./gitlab-conversation.js";
+import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import {
@@ -130,6 +132,8 @@ export interface ModelRequest {
    * 同一 id 的后续事件替换前面的提示（例如「正在压缩」→「已压缩」）。
    */
   onContextDelta?: (context: ConversationStreamContext) => void;
+  /** GitLab 协作模式下当前对话绑定的项目 ID；所有 GitLab 工具都固定到该项目。 */
+  conversationProjectId?: number;
 }
 
 export function getAgentToolAccess(
@@ -244,6 +248,7 @@ export class PiAgent {
       GitManager,
       "writeEnabled" | "getWorkspaceStatus" | "applyWorkspacePatch" | "commitWorkspace" | "pushWorkspace" | "revertWorkspaceCommit"
     >,
+    private readonly gitlab?: GitLabClient,
   ) {}
 
   getTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
@@ -605,6 +610,20 @@ export class PiAgent {
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
         ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
           ? [createPlanExtension()]
+          : []),
+        ...(request.conversationMode === "gitlab" && this.gitlab && request.conversationProjectId
+          ? [createGitLabConversationExtension({
+              projectId: request.conversationProjectId,
+              getProject: () => this.gitlab!.getProject(request.conversationProjectId!),
+              getIssue: (issueIid) => this.gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
+              getMergeRequest: (mrIid) => this.gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
+              getIssueComments: (issueIid, limit) => this.gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
+              getMergeRequestComments: (mrIid, limit) => this.gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
+              postIssueNote: (issueIid, noteBody) => this.gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
+              postMergeRequestNote: (mrIid, noteBody) => this.gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
+              updateMergeRequest: (mrIid, update) => this.gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
+              updateIssue: (issueIid, update) => this.gitlab!.updateIssue(request.conversationProjectId!, issueIid, update, signal),
+            })]
           : []),
         createContextObserveExtension(contextObservation, {
           onBeforeCompact: (_snapshot, trigger) => {

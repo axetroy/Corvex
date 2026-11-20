@@ -560,3 +560,36 @@ describe("GitLabClient runtime reconfiguration", () => {
     }
   });
 });
+
+describe("GitLab issue and MR state updates", () => {
+  it("sends state_event when closing an issue or MR and only submitted issue fields", async () => {
+    const calls: { url: string; method: string; body: string }[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        calls.push({
+          url: request.url ?? "",
+          method: request.method ?? "",
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: 1 }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await client.updateMergeRequest(7, 3, { stateEvent: "close" });
+      await client.updateIssue(7, 9, { title: "New title", stateEvent: "close" });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({ method: "PUT", url: "/api/v4/projects/7/merge_requests/3" });
+      expect(calls[0].body).toContain("state_event=close");
+      expect(calls[1].url).toBe("/api/v4/projects/7/issues/9");
+      expect(calls[1].body).toContain("title=New+title");
+      expect(calls[1].body).toContain("state_event=close");
+    } finally {
+      server.close();
+    }
+  });
+});

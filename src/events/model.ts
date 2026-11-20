@@ -42,7 +42,7 @@ export function isConversationTurnStatus(value: string): value is ConversationTu
  * 新增模式必须同时在 `conversationCapabilities` 中声明能力，并在存储、执行与界面
  * 三处接线，避免把「只读」继续散落成隐式假设。
  */
-export const conversationModes = ["read_only"] as const;
+export const conversationModes = ["read_only", "gitlab"] as const;
 export type ConversationMode = (typeof conversationModes)[number];
 
 /** 新建对话默认使用的模式。 */
@@ -59,13 +59,17 @@ export interface ConversationCapabilities {
   workflowStep: string;
   /** 是否允许仓库写入类工具（打补丁、提交、推送）。 */
   repositoryWrite: boolean;
+  /** 是否允许向 GitLab 发布评论、更新 Issue/MR 与关闭它们。 */
+  gitlabWrite: boolean;
 }
 
 /** 由模式派生能力；新增模式时这里会因缺少分支而编译失败，强制补齐声明。 */
 export function conversationCapabilities(mode: ConversationMode): ConversationCapabilities {
   switch (mode) {
     case "read_only":
-      return { workflowStep: "workflow.read_only_conversation", repositoryWrite: false };
+      return { workflowStep: "workflow.read_only_conversation", repositoryWrite: false, gitlabWrite: false };
+    case "gitlab":
+      return { workflowStep: "workflow.gitlab_conversation", repositoryWrite: false, gitlabWrite: true };
     default: {
       const exhaustive: never = mode;
       throw new Error(`unhandled conversation mode: ${String(exhaustive)}`);

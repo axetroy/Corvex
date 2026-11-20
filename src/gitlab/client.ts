@@ -93,6 +93,15 @@ export type IssueComment = MergeRequestComment;
 export interface MergeRequestMetadataUpdate {
   title?: string;
   description?: string;
+  /** 关闭或重新打开合并请求。 */
+  stateEvent?: "close" | "reopen";
+}
+
+/** Issue 可更新字段；与 MR 一样只允许显式传入的字段。 */
+export interface IssueUpdate {
+  title?: string;
+  description?: string;
+  stateEvent?: "close" | "reopen";
 }
 
 export interface DiscussionPosition {
@@ -627,7 +636,7 @@ export class GitLabClient {
     if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(mrIid) || mrIid <= 0) {
       throw new Error("project ID and MR IID must be positive safe integers");
     }
-    if (update.title === undefined && update.description === undefined) {
+    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
       throw new Error("at least one merge request field must be provided");
     }
     if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
@@ -651,7 +660,34 @@ export class GitLabClient {
       form.set("title", title);
     }
     if (update.description !== undefined) form.set("description", update.description);
+    if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, form, signal, "PUT");
+  }
+
+  /** 更新 Issue 的标题、详情或状态；只提交显式传入的字段。 */
+  async updateIssue(
+    projectId: number,
+    issueIid: number,
+    update: IssueUpdate,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(issueIid) || issueIid <= 0) {
+      throw new Error("project ID and issue IID must be positive safe integers");
+    }
+    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
+      throw new Error("at least one issue field must be provided");
+    }
+    if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
+      throw new Error(`issue title must contain 1-${MAX_MR_TITLE_CHARACTERS} characters`);
+    }
+    if (update.description !== undefined && [...update.description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
+      throw new Error(`issue description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
+    }
+    const form = new URLSearchParams();
+    if (update.title !== undefined) form.set("title", update.title);
+    if (update.description !== undefined) form.set("description", update.description);
+    if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
+    return this.write(`/projects/${projectId}/issues/${issueIid}`, form, signal, "PUT");
   }
 
   async postDiscussion(

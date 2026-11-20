@@ -409,6 +409,21 @@
   gap: 10px;
 }
 
+.conversation-mode-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.conversation-mode-select {
+  width: 180px;
+}
+
+.conversation-mode-hint.ant-typography {
+  font-size: 11px;
+}
+
 .conversation-prompts.ant-prompts {
   margin-top: 10px;
 }

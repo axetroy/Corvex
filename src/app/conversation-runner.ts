@@ -474,6 +474,7 @@ export class ConversationRunner {
             {
               taskType: "conversation",
               conversationMode: turn.mode,
+              conversationProjectId: turn.projectId,
               systemPrompt,
               userPrompt,
               history,

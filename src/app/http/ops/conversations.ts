@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { isConversationMode } from "../../../events/model.js";
 import type { ConversationStreamEvent } from "../../../events/model.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import type { OpsContext } from "../context.js";
@@ -49,10 +50,12 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const projectId = positiveInteger(body.projectId);
     const targetBranch = typeof body.targetBranch === "string" ? body.targetBranch.trim() : "";
     const message = typeof body.message === "string" ? body.message : "";
+    const mode = body.mode === undefined ? undefined : String(body.mode);
     if (
       projectId === undefined ||
       !targetBranch || targetBranch.length > 255 ||
-      !message.trim() || message.length > 20_000
+      !message.trim() || message.length > 20_000 ||
+      (mode !== undefined && !isConversationMode(mode))
     ) {
       sendJson(reply, 400, { error: "invalid conversation request" });
       return;
@@ -67,6 +70,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         headSha,
         actorId: 0,
         request: message,
+        ...(mode ? { mode } : {}),
       });
       ctx.startConversationTurn(created.turnId);
       sendJson(reply, 202, created);

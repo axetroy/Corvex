@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
+import { Button, Dropdown, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -137,6 +137,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [mode, setMode] = useState<ConversationSummary["mode"]>("read_only");
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -336,7 +337,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch("/api/ops/conversations", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message }),
+        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, mode }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
@@ -470,6 +471,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setProject(undefined);
     setSelectedBranch("");
     setDraftMessage("");
+    setMode("read_only");
     setError("");
   }
 
@@ -754,6 +756,21 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               disabled={busy}
                               onChange={setSelectedBranch}
                             />
+                          </div>
+                          <div className="conversation-mode-picker">
+                            <Typography.Text type="secondary">{copy.conversationModeLabel}</Typography.Text>
+                            <Select<ConversationSummary["mode"]>
+                              className="conversation-mode-select"
+                              aria-label={copy.conversationModeLabel}
+                              value={mode}
+                              disabled={busy}
+                              options={(Object.entries(copy.conversationModes) as [ConversationSummary["mode"], string][])
+                                .map(([value, label]) => ({ value, label }))}
+                              onChange={setMode}
+                            />
+                            <Typography.Text type="secondary" className="conversation-mode-hint">
+                              {copy.conversationModeHint}
+                            </Typography.Text>
                           </div>
                           <Prompts
                             className="conversation-prompts"

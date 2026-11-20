@@ -39,6 +39,8 @@ export const en = {
   conversationsTitle: "Conversations",
   conversationsDescription: "Persistent, read-only conversations pinned to a repository branch.",
   conversationWelcomeTitle: "Chat with your repository",
+  conversationModeLabel: "Conversation mode",
+  conversationModeHint: "Read-only can inspect the repository. GitLab collaboration can also reply to issues/MRs and update them when you explicitly ask.",
   conversationWelcomeDescription: "Pick a repository and branch, then ask anything about the code. Every reply reads one pinned snapshot and never changes the repository.",
   newConversation: "New conversation",
   projectSearch: "Search accessible projects",
@@ -196,6 +198,7 @@ export const en = {
   /** 对话模式标签；当前只有只读模式，新增模式时同步补齐。 */
   conversationModes: {
     read_only: "Read-only",
+    gitlab: "GitLab collaboration",
   },
   eventsTitle: "Events",
   eventsDescription: "Filter and inspect recent work.",
@@ -516,6 +519,8 @@ export const zhCN: Copy = {
   conversationsTitle: "对话",
   conversationsDescription: "绑定仓库分支的持久只读对话。",
   conversationWelcomeTitle: "和仓库对话",
+  conversationModeLabel: "对话模式",
+  conversationModeHint: "只读模式只检查仓库；GitLab 协作模式在你明确要求时可回复 Issue/MR 并修改它们。",
   conversationWelcomeDescription: "选择仓库和分支后即可就代码自由提问。每轮回复只读取固定版本快照，不会修改仓库。",
   newConversation: "新建对话",
   projectSearch: "搜索 Token 可访问的项目",
@@ -673,6 +678,7 @@ export const zhCN: Copy = {
   /** 对话模式标签；当前只有只读模式，新增模式时同步补齐。 */
   conversationModes: {
     read_only: "只读",
+    gitlab: "GitLab 协作",
   },
   eventsTitle: "事件",
   eventsDescription: "筛选并查看近期事件。",
