@@ -130,6 +130,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
   const transcriptPaneRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
+  // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
+  const [modal, modalContextHolder] = Modal.useModal();
 
   useEffect(() => {
     selectedConversationIdRef.current = conversationId;
@@ -401,7 +403,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   function confirmDelete(item: ConversationSummary) {
-    Modal.confirm({
+    modal.confirm({
       title: copy.conversationDeleteConfirm,
       content: copy.conversationDeleteConfirmDescription,
       okType: "danger",
@@ -584,6 +586,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   return (
     <>
+      {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
       <section className="conversations-layout" aria-label={copy.conversationsDescription}>
         <aside className="conversation-sidebar" aria-label={copy.conversationList}>

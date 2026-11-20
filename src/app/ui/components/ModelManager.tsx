@@ -39,6 +39,8 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
+  const [modal, modalContextHolder] = Modal.useModal();
 
   async function refresh() {
     try {
@@ -87,7 +89,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
   }
 
   function removeProvider(provider: ModelProviderDetails) {
-    Modal.confirm({
+    modal.confirm({
       title: copy.modelManagerDeleteProviderConfirm,
       okType: "danger",
       onOk: async () => {
@@ -146,7 +148,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
   }
 
   function removeModel(provider: ModelProviderDetails, model: ProviderModel) {
-    Modal.confirm({
+    modal.confirm({
       title: copy.modelManagerDeleteModelConfirm,
       okType: "danger",
       onOk: async () => {
@@ -168,6 +170,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
 
   return (
     <Panel title={copy.modelManagerTitle}>
+      {modalContextHolder}
       {error ? <Alert className="settings-alert" type="error" showIcon message={error} /> : null}
       {notice ? <Alert className="settings-alert" type="success" showIcon message={notice} /> : null}
       <div className="model-manager-head">
