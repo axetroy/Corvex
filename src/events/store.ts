@@ -14,6 +14,7 @@ import {
   isEventStatus,
   isEventType,
   isModelTaskType,
+  normalizeConversationTitle,
   type Conversation,
   type ConversationMessage,
   type ConversationPage,
@@ -47,6 +48,7 @@ import {
   type ConversationTurnSegment,
   type StorageCleanupRecord,
   type ActiveModel,
+  type ResponseLanguage,
   type ModelProvider,
   type ModelProviderDetails,
   type ModelProviderInput,
@@ -3061,6 +3063,17 @@ export class EventStore {
       this.db.exec("DELETE FROM runtime_settings WHERE key IN ('operations_username','operations_password')");
     }
     this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
+    // 早期模型可能把整段回答当作标题；按当前规则收敛已有的长标题。
+    for (const row of this.db.prepare("SELECT id,title FROM conversations WHERE title != ''").all() as {
+      id: string;
+      title: string;
+    }[]) {
+      const language: ResponseLanguage = /[一-龥]/.test(row.title) ? "zh-CN" : "en";
+      const normalized = normalizeConversationTitle(row.title, language);
+      if (normalized !== row.title) {
+        this.db.prepare("UPDATE conversations SET title=? WHERE id=?").run(normalized, row.id);
+      }
+    }
     this.backfillConversationTurns();
     this.finalizeConversationMigration();
     // turn_id 可能由上面的 ALTER 补齐，索引必须等列存在后再创建。

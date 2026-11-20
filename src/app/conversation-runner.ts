@@ -2,6 +2,7 @@ import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { conversationCapabilities } from "../events/model.js";
 import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../events/model.js";
+import { normalizeConversationTitle } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
@@ -327,7 +328,7 @@ export class ConversationRunner {
         signal,
         trace,
       );
-      this.store.saveConversationTitle(turn.conversationId, title.content);
+      this.store.saveConversationTitle(turn.conversationId, normalizeConversationTitle(title.content, language));
     } catch (error) {
       console.warn("conversation title generation failed", {
         conversationId: turn.conversationId,

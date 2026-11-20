@@ -432,6 +432,25 @@ export interface ConversationStats {
   turns: ConversationTurnStats[];
 }
 
+/**
+ * 模型生成的标题可能是一段话；按界面语言收敛成一行短标题。
+ * 中文最多 20 个字，英文最多 8 个单词。
+ */
+export function normalizeConversationTitle(raw: string, language: ResponseLanguage): string {
+  let title = raw.trim()
+    .replace(/^[\s>*#`"'“”‘’]+/, "")
+    .split(/\r?\n/, 1)[0]!
+    .trim()
+    .split(/[。！？!?]/, 1)[0]!
+    .replace(/[*`_]/g, "")
+    .replace(/[\s`"':：；，,、.]+$/, "")
+    .trim();
+  if (language === "zh-CN") title = [...title].slice(0, 20).join("");
+  else title = title.split(/\s+/).slice(0, 8).join(" ");
+  if (!title) title = [...raw.trim()].slice(0, 20).join("");
+  return title;
+}
+
 export interface CreateConversationInput {
   /** 拥有该会话的本地用户 ID；Webhook 事件不创建会话。 */
   ownerUserId: string;
