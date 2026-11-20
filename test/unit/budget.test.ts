@@ -108,6 +108,8 @@ describe("isContextOverflowError", () => {
     expect(isContextOverflowError("exceed_context_size_error: 195482 tokens > 131072 ctx")).toBe(true);
     expect(isContextOverflowError("prompt is too long: 200000 tokens")).toBe(true);
     expect(isContextOverflowError("Please reduce the length of the messages.")).toBe(true);
+    expect(isContextOverflowError("Context size has been exceeded.")).toBe(true);
+    expect(isContextOverflowError("context window is exceeded")).toBe(true);
   });
 
   it("普通错误不误判", () => {

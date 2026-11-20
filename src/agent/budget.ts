@@ -49,7 +49,7 @@ const sdkOverflowPatterns = getOverflowPatterns();
 /** SDK 未覆盖的额外超限措辞。 */
 const extraOverflowPatterns = [
   /exceed[_ ]?context[_ ]size/i, // 阿里云百炼 / DashScope: exceed_context_size_error
-  /context (?:size|window) exceeded/i,
+  /context (?:size|window) (?:has been |is )?exceeded/i, // llama.cpp: "Context size has been exceeded."
   /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i, // Cerebras 无响应体的 400/413
 ];
 /** 明确不属于超限的错误，避免把限流、服务不可用误判为超限而触发无谓重试。 */
