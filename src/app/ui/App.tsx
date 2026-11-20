@@ -4,6 +4,7 @@ import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
+import { LandingPage } from "./components/LandingPage.js";
 import { SetupPage } from "./components/SetupPage.js";
 import {
   ConversationsIcon,
@@ -176,6 +177,15 @@ export function App() {
     token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
     components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
   };
+
+  // 公开首页：与控制台共用 React bundle，但不需要登录。
+  if (window.location.pathname === "/") {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <LandingPage copy={copy} locale={locale} onLocaleChange={changeLocale} />
+      </ConfigProvider>
+    );
+  }
 
   // 首次安装：把 OAuth 配置写进本地数据库，不需要任何环境变量。
   if (window.location.pathname === "/setup") {

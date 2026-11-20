@@ -27,7 +27,7 @@ function operationsUiAsset(relativePath: string): { file: string; contentType: s
 }
 
 /** 静态资源响应的公共安全头。 */
-export function uiHeaders(contentType: string): Record<string, string> {
+function uiHeaders(contentType: string): Record<string, string> {
   return {
     "content-type": contentType,
     "cache-control": "no-store",
@@ -103,6 +103,9 @@ export function registerOperationsUi(app: FastifyInstance): void {
 
   app.get("/ops", serveIndex);
   app.head("/ops", serveIndex);
+  // 公开首页复用同一份 React 构建产物。
+  app.get("/", serveIndex);
+  app.head("/", serveIndex);
   app.get("/ops/", serveIndex);
   app.head("/ops/", serveIndex);
   app.get("/ops/*", servePath);
