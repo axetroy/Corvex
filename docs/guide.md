@@ -26,7 +26,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-Edit `configs/config.yaml` to set the GitLab URL. Add numeric user IDs to `gitlab.blocked_user_ids` only when you want to prevent them from invoking commands. Set these variables for the Server:
+Copy `configs/config.example.yaml` to `configs/config.yaml`. The GitLab base URL, `gitlab.blocked_user_ids` and `gitlab.bot_username` are managed in the console Settings page. Set these variables for the Server:
 
 ```sh
 export CORVEX_GITLAB_READ_TOKEN='your-read-token'

@@ -4,7 +4,7 @@ Corvex reads YAML from `configs/config.yaml` by default. Override the path with 
 
 Load environment variables from a dotenv-style file with `--env <path>`, for example `pnpm start -- --env .env --config configs/config.yaml server`. Relative paths are resolved from the current working directory. Variables already set in the process environment take precedence over values in the file.
 
-In the tables, sample URLs and paths come from the example YAML; they are not all runtime defaults. Runtime defaults are called out explicitly. In particular, `gitlab.base_url`, `storage.root`, and `storage.database` must be configured.
+In the tables, sample URLs and paths come from the example YAML; they are not all runtime defaults. Runtime defaults are called out explicitly. In particular, `storage.root` and `storage.database` must be configured. `gitlab.base_url` is managed in the console Settings page.
 
 Duration values use a number followed by `ns`, `us`, `µs`, `ms`, `s`, `m`, or `h`, such as `5s`, `30s`, or `2m`. Paths are resolved relative to the process working directory when relative.
 
@@ -27,7 +27,7 @@ The optional agent console uses HTTP Basic Auth credentials supplied only throug
 
 | YAML key | Example | Required / limits | Description |
 |---|---|---|---|
-| `gitlab.base_url` | `https://gitlab.example.com` | Valid HTTP(S) URL | GitLab instance root, without credentials, query, or fragment. `CORVEX_GITLAB_BASE_URL` overrides it. |
+| `gitlab.base_url` | — | Optional bootstrap fallback | GitLab instance root, managed in the console Settings page. `CORVEX_GITLAB_BASE_URL` provides a startup fallback when the console has no saved value. |
 | `gitlab.blocked_user_ids` | `[]` | Optional | GitLab numeric user IDs that cannot invoke commands. Any commenter whose webhook has the configured secret may invoke commands unless their ID is blocked. |
 | `gitlab.bot_username` | `corvex-bot` | Optional | Username to mention when invoking commands (for example, `@corvex-bot /review`). |
 
@@ -87,7 +87,7 @@ Tunable agent settings are edited in the console **Settings** page and stored in
 
 Editable keys: `agent.response_language`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `agent.web_blocked_hosts`, `agent.skill_paths`, `agent.request_timeout`, `agent.session_timeout`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, `issue.implement_enabled`, `events.poll_interval`, `events.event_timeout`, `gitlab.bot_username`, `gitlab.blocked_user_ids`, `storage.retention_days`, `storage.audit_retention_days`, `storage.conversation_workspace_ttl_minutes` and `storage.conversation_workspace_max`. Time values are entered in seconds and stored in milliseconds. The response language and model are read on every request and turn, so a change takes effect on the next one without a restart.
 
-Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, GitLab tokens and webhook secret, `gitlab.base_url`, `storage.root`, `storage.database` and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
+Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, GitLab tokens and webhook secret, `storage.root`, `storage.database` and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
 ## Chat context
 

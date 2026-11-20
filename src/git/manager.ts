@@ -114,16 +114,21 @@ export class GitManager {
 
   /** 运维台修改 GitLab 连接设置后更新镜像来源校验与凭据；现有镜像在下次使用时重新校验来源。 */
   reconfigureGitLab(gitlabBaseUrl: string, token: string, writeToken: string): void {
-    let url: URL;
-    try {
-      url = new URL(gitlabBaseUrl);
-    } catch (error) {
-      throw new Error(`invalid GitLab base URL "${gitlabBaseUrl}"`, { cause: error });
+    // 地址可在运维台设置；尚未配置时保留占位 URL，不会用它发起网络请求。
+    if (gitlabBaseUrl.trim()) {
+      let url: URL;
+      try {
+        url = new URL(gitlabBaseUrl);
+      } catch (error) {
+        throw new Error(`invalid GitLab base URL "${gitlabBaseUrl}"`, { cause: error });
+      }
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+        throw new Error(`invalid GitLab base URL "${gitlabBaseUrl}"`);
+      }
+      this.gitlabUrl = url;
+    } else {
+      this.gitlabUrl = new URL("http://localhost");
     }
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
-      throw new Error(`invalid GitLab base URL "${gitlabBaseUrl}"`);
-    }
-    this.gitlabUrl = url;
     this.token = token;
     this.writeToken = writeToken;
   }

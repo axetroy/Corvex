@@ -21,7 +21,7 @@ pnpm start -- --config configs/config.yaml server
 ## Docker Compose
 
 1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。读取令牌始终必填；模型 API 密钥在启用 Agent 时必填。妥善保护此文件，不要提交到版本控制。
-2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml` 并填写 GitLab URL；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。Agent 控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
+2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml`；GitLab 根地址、用户阻止列表和机器人用户名在控制台设置页填写。Agent 控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
 3. 启动 Server：
 
    ```sh

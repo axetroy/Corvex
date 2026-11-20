@@ -25,7 +25,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-在生成的 YAML 中填写 GitLab URL，通过环境变量提供密钥，并为 Agent 控制台配置只读令牌以发现可访问的全部仓库。然后按[快速开始指南](https://axetroy.github.io/Corvex/zh-CN/guide)注册 Note Hook 并启动 Server。Docker Compose、备份、保留策略、TLS 和持久对话见[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
+通过环境变量提供密钥，然后在 Agent 控制台设置页填写 GitLab 根地址与只读令牌（也可用 CORVEX_GITLAB_BASE_URL）。然后按[快速开始指南](https://axetroy.github.io/Corvex/zh-CN/guide)注册 Note Hook 并启动 Server。Docker Compose、备份、保留策略、TLS 和持久对话见[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
 ## 部署
 
 Corvex 提供预构建的 `ghcr.io/axetroy/corvex` 镜像和仅包含单个 Server 服务的 Compose 部署。部署、Webhook 注册、存储和资源配置请参阅[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。

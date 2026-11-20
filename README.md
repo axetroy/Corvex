@@ -25,7 +25,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-Set the GitLab URL in the generated YAML, provide secrets through environment variables, and configure a read token for repository discovery in the agent console. Follow the [getting started guide](https://axetroy.github.io/Corvex/guide) to register the Note Hook and start the Server. For Docker Compose, backups, retention, TLS, and persistent conversations, see the [operations guide](https://axetroy.github.io/Corvex/operations).
+Provide secrets through environment variables, then set the GitLab base URL and read token in the agent console Settings page (or via CORVEX_GITLAB_BASE_URL). Follow the [getting started guide](https://axetroy.github.io/Corvex/guide) to register the Note Hook and start the Server. For Docker Compose, backups, retention, TLS, and persistent conversations, see the [operations guide](https://axetroy.github.io/Corvex/operations).
 
 ## Deployment
 

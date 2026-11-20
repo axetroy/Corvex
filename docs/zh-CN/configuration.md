@@ -4,7 +4,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 可通过 `--env <路径>` 从 dotenv 格式文件加载环境变量，例如：`pnpm start -- --env .env --config configs/config.yaml server`。相对路径以当前工作目录为基准。进程中已设置的环境变量优先于文件中的值。
 
-表格中的示例 URL 和路径来自示例 YAML，并非都属于程序运行时默认值；运行时默认值会明确标注。特别是 `gitlab.base_url`、`storage.root` 和 `storage.database` 必须配置。
+表格中的示例 URL 和路径来自示例 YAML，并非都属于程序运行时默认值；运行时默认值会明确标注。特别是 `storage.root` 和 `storage.database` 必须配置；`gitlab.base_url` 在控制台设置页维护。
 
 时长格式为数字加 `ns`、`us`、`µs`、`ms`、`s`、`m` 或 `h`，例如 `5s`、`30s` 或 `2m`。相对路径以进程的当前工作目录为基准。
 
@@ -27,7 +27,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 | YAML 键 | 示例 | 必填 / 限制 | 说明 |
 |---|---|---|---|
-| `gitlab.base_url` | `https://gitlab.example.com` | 有效 HTTP(S) URL | GitLab 实例根地址，不含凭据、查询参数或片段。`CORVEX_GITLAB_BASE_URL` 可覆盖。 |
+| `gitlab.base_url` | — | 可选启动兜底 | GitLab 实例根地址，在控制台设置页维护。控制台无保存值时可由 `CORVEX_GITLAB_BASE_URL` 提供启动兜底。 |
 | `gitlab.blocked_user_ids` | `[]` | 可选 | 不允许调用指令的 GitLab 数字用户 ID。配置了 Webhook 密钥的项目中的评论者均可调用，阻止列表中的用户除外。 |
 | `gitlab.bot_username` | `corvex-bot` | 可选 | 调用指令时需要 @ 的账号名（例如 `@corvex-bot /review`）。 |
 
@@ -91,7 +91,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`events.poll_interval`、`events.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
 
-只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`gitlab.base_url`、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 

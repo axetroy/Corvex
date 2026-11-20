@@ -26,7 +26,7 @@ pnpm run build
 pnpm start -- init
 ```
 
-编辑 `configs/config.yaml`，填写 GitLab URL。只有需要禁止某些用户调用指令时，才将其数字 ID 加入 `gitlab.blocked_user_ids`。为 Server 设置以下变量：
+复制 `configs/config.example.yaml` 为 `configs/config.yaml`。GitLab 根地址、`gitlab.blocked_user_ids` 和 `gitlab.bot_username` 都在控制台设置页维护。为 Server 设置以下变量：
 
 ```sh
 export CORVEX_GITLAB_READ_TOKEN='读取令牌'

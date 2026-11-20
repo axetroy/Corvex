@@ -268,6 +268,14 @@ export class GitLabClient {
 
   /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
   configure(baseUrl: string, readToken: string, writeToken: string): void {
+    if (!writeToken) throw new Error("GitLab write API token is required");
+    if (!baseUrl.trim()) {
+      // 地址可以在运维台设置：启动时尚未配置时保留空值，调用 API 会给出明确错误。
+      this.baseUrl = "";
+      this.readToken = readToken;
+      this.writeToken = writeToken;
+      return;
+    }
     let parsed: URL;
     try {
       parsed = new URL(baseUrl);
@@ -283,10 +291,15 @@ export class GitLabClient {
     ) {
       throw new Error(`invalid GitLab base URL "${baseUrl}"`);
     }
-    if (!writeToken) throw new Error("GitLab write API token is required");
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.readToken = readToken;
     this.writeToken = writeToken;
+  }
+
+  /** 所有 GitLab 请求都要求先配置根地址。 */
+  private requireBaseUrl(): string {
+    if (!this.baseUrl) throw new Error("GitLab base URL is not configured");
+    return this.baseUrl;
   }
 
   async getMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<MergeRequest> {
@@ -846,6 +859,7 @@ export class GitLabClient {
     form?: URLSearchParams,
   ): Promise<Response> {
     if (!token) throw new Error("GitLab API token is required for this request");
+    const baseUrl = this.requireBaseUrl();
     const maxAttempts = method === "GET" ? MAX_READ_ATTEMPTS : 1;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const requestSignal = signal
@@ -853,7 +867,7 @@ export class GitLabClient {
         : AbortSignal.timeout(this.requestTimeoutMs);
       let response: Response;
       try {
-        response = await fetch(`${this.baseUrl}/api/v4${path}`, {
+        response = await fetch(`${baseUrl}/api/v4${path}`, {
           method,
           headers: {
             "PRIVATE-TOKEN": token,

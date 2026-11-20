@@ -373,7 +373,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (operationsUsername.includes(":") || hasControlCharacters) {
     problems.push("agent console credentials contain invalid characters");
   }
-  if (!validHttpUrl(config.gitlab.baseUrl)) {
+  // GitLab 地址可以通过运维台设置写入 SQLite，因此配置文件/环境变量里可以为空；
+  // 一旦填写就必须合法，避免把明显错误的地址带进运行时。
+  if (config.gitlab.baseUrl && !validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
   // 按运行角色校验凭据：Server 既接收 Webhook，也在进程内执行事件，因此需要

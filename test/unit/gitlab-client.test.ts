@@ -12,6 +12,14 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
   return address.port;
 }
 
+describe("GitLab base URL", () => {
+  it("can be configured after startup through the console", async () => {
+    const client = new GitLabClient("", "read", "write");
+    await expect(client.listProjects("", 1)).rejects.toThrow("GitLab base URL is not configured");
+    expect(() => client.configure("https://gitlab.example.com", "read", "write")).not.toThrow();
+  });
+});
+
 describe("GitLab write receipts", () => {
   it("lists accessible projects with a bounded page and optional search", async () => {
     let requestUrl = "";

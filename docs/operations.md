@@ -21,7 +21,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 ## Docker Compose
 
 1. Copy `.env.example` to `.env` and set the GitLab write token and webhook secret. The read token is required; the model API key is needed when the agent is enabled. Keep this file private and do not commit it.
-2. Copy `configs/config.example.yaml` to `configs/config.yaml` and set the GitLab URL. Add user IDs to `gitlab.blocked_user_ids` only to deny command access. The agent console searches every project visible to `CORVEX_GITLAB_READ_TOKEN`.
+2. Copy `configs/config.example.yaml` to `configs/config.yaml`. Set the GitLab base URL, blocklist and bot username in the console Settings page. The agent console searches every project visible to `CORVEX_GITLAB_READ_TOKEN`.
 3. Start the Server:
 
    ```sh

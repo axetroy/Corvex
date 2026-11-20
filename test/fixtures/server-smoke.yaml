@@ -4,9 +4,6 @@ server:
   read_timeout: 5s
   shutdown_timeout: 30s
 
-gitlab:
-  base_url: "https://gitlab.example.com"
-
 storage:
   root: "/data/corvex"
   database: "/data/corvex/state/corvex.db"

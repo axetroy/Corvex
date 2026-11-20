@@ -93,8 +93,8 @@ describe("validateConfig", () => {
       await initializeConfig(configPath);
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).not.toContain("allowed_project_ids");
-      // 模板只保留启动必需项；可调项改由控制台写入 SQLite。
-      expect(contents).toContain("base_url");
+      // 模板只保留启动必需项；可调项（含 GitLab 地址）改由控制台写入 SQLite。
+      expect(contents).not.toContain("base_url");
       expect(contents).not.toContain("session_timeout");
       expect(contents).not.toContain("retention_days");
     } finally {
@@ -240,6 +240,15 @@ describe("validateConfig", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("defers the GitLab base URL to the console settings", () => {
+    const config = validConfig();
+    config.gitlab.baseUrl = "";
+    expect(() => validateConfig(config, "server")).not.toThrow();
+
+    config.gitlab.baseUrl = "not-a-url";
+    expect(() => validateConfig(config, "server")).toThrow("gitlab.base_url must be a valid HTTP(S) URL");
   });
 
   it("requires a GitLab read token for the server role", () => {
