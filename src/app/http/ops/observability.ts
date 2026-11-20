@@ -7,7 +7,7 @@ import { idParam, optionalInteger, queryParam, sendJson } from "../respond.js";
 function registerOverviewRoute(app: FastifyInstance, ctx: OpsContext): void {
   app.get("/api/ops/overview", async (_request, reply) => {
     const generatedAt = new Date();
-    const overview = ctx.store.operationsOverview(Math.max(ctx.config.worker.pollInterval * 3, 30_000));
+    const overview = ctx.store.operationsOverview(Math.max(ctx.config.events.pollInterval * 3, 30_000));
     const oldestQueuedAt = overview.oldestQueuedAt;
     const oldestQueueAgeSeconds = oldestQueuedAt
       ? Math.max(0, Math.floor((generatedAt.valueOf() - Date.parse(oldestQueuedAt)) / 1000))

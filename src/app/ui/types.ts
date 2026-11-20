@@ -215,8 +215,8 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
       { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
-      { key: "worker_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsWorkerPollInterval", hintKey: "settingsWorkerPollIntervalHint" },
-      { key: "worker_event_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsWorkerEventTimeout", hintKey: "settingsWorkerEventTimeoutHint" },
+      { key: "events_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsEventsPollInterval", hintKey: "settingsEventsPollIntervalHint" },
+      { key: "events_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsEventsTimeout", hintKey: "settingsEventsTimeoutHint" },
     ],
   },
   {

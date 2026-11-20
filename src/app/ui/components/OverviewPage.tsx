@@ -20,7 +20,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-/** 概览页：队列、Worker 心跳与模型调用汇总。 */
+/** 概览页：队列、内联事件执行器心跳与模型调用汇总。 */
 export function OverviewPage({ copy, locale, refreshToken, onUpdated, onRefresh }: Props) {
   const [data, setData] = useState<OverviewResponse>();
   const [error, setError] = useState<string>();
@@ -70,9 +70,9 @@ export function OverviewPage({ copy, locale, refreshToken, onUpdated, onRefresh 
         <StatCard label={copy.inProgressTitle} value={active} note={copy.activeStages} />
         <StatCard label={copy.failedTitle} value={data.counts.failed} note={copy.requiresReview} />
         <StatCard
-          label={copy.workersOnline}
-          value={data.workers.onlineCount}
-          note={copy.lastSeenTemplate.replace("{value}", formatDate(data.workers.lastSeenAt, copy, locale))}
+          label={copy.runnerStatus}
+          value={data.runner.online ? copy.runnerOnline : copy.runnerOffline}
+          note={copy.lastSeenTemplate.replace("{value}", formatDate(data.runner.lastSeenAt, copy, locale))}
         />
       </div>
       <Panel title={copy.lifecycle}>

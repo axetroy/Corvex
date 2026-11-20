@@ -2,7 +2,7 @@
 
 Corvex reads YAML from `configs/config.yaml` by default. Override the path with `--config`. Start with [`configs/config.example.yaml`](https://github.com/axetroy/Corvex/blob/main/configs/config.example.yaml). Secrets are read from environment variables, not YAML. Environment overrides listed below take precedence over YAML.
 
-Load environment variables from a dotenv-style file with `--env <path>`, for example `pnpm start -- --env .env --config configs/config.yaml worker`. Relative paths are resolved from the current working directory. Variables already set in the process environment take precedence over values in the file.
+Load environment variables from a dotenv-style file with `--env <path>`, for example `pnpm start -- --env .env --config configs/config.yaml server`. Relative paths are resolved from the current working directory. Variables already set in the process environment take precedence over values in the file.
 
 In the tables, sample URLs and paths come from the example YAML; they are not all runtime defaults. Runtime defaults are called out explicitly. In particular, `gitlab.base_url`, `storage.root`, and `storage.database` must be configured.
 
@@ -35,7 +35,7 @@ Credentials are mandatory environment variables:
 
 | Variable | Use |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Required in worker mode and when the agent console is enabled in server mode. Used for GitLab API reads, project/target discovery, and authenticated Git repository fetches. |
+| `CORVEX_GITLAB_READ_TOKEN` | Required in server mode. Used for GitLab API reads, project/target discovery, authenticated Git repository fetches and inline event execution. |
 | `CORVEX_GITLAB_TOKEN` | Required for GitLab writes. Posts notes and inline discussions; Chat may commit/push to same-project MR branches, and enabled Issue implementation pushes a new branch and creates a Draft MR. Use a separate write token with only the required permissions. |
 | `CORVEX_WEBHOOK_SECRET` | Required. Must match the project webhook's secret token. |
 
@@ -54,7 +54,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `agent.enabled` | `false` | Boolean | Must be `true` to start a worker. |
+| `agent.enabled` | `false` | Boolean | Must be `true` to execute queued events or conversation turns. |
 | `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, explanations, and Issue replies or implementation summaries. JSON keys, code, paths, and quoted evidence remain unchanged. Editable at runtime from the console. |
 | `agent.base_url` | `https://api.openai.com/v1` | HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
 | `agent.model` | `your-model-name` | — | Provider model name. `CORVEX_MODEL_NAME` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
@@ -62,7 +62,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.session_timeout` | `30m` | Positive duration when enabled | Maximum time for one complete Pi agent session. |
 | `agent.max_output_tokens` | `4096` | 1–8192 when enabled | Maximum requested model output tokens. Each model stores its own value; this is the fallback. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
-| `agent.mcp_enabled` | `false` | Boolean | Enables Pi's MCP extension for review tasks only. MCP servers use the worker process's OS permissions and are not sandboxed. |
+| `agent.mcp_enabled` | `false` | Boolean | Enables Pi's MCP extension for review tasks only. MCP servers use the Server process's OS permissions and are not sandboxed. |
 | `agent.web_enabled` | `true` | Boolean | Enables the read-only `web_fetch` tool for review and explain tasks. Set to `false` to disable. |
 | `agent.web_blocked_hosts` | `[]` | Array of DNS hostnames | Optional exact hostnames to block, including their subdomains. Private, reserved, and special-use IP ranges/hostnames are always blocked. |
 | `agent.skill_paths` | `[]` | Array of paths | Additional trusted Pi Skill directories. These paths are also permitted roots for the bounded read-only `read_file` tool. |
@@ -82,11 +82,11 @@ Pi sessions do not expose built-in shell, edit, or write tools. The custom `read
 
 ## Runtime settings
 
-Tunable agent settings are edited in the console **Settings** page and stored in the SQLite `runtime_settings` table (with `updated_at` and `updated_by`); the config file only supplies their initial values. The console submits the complete editable set on save, so the database is the source of truth afterwards and there is no "restore to config file" action. The Server applies a change to new turns immediately and records it in `audit_events` (`update_settings`, actor = console username). The Worker reloads the table on every poll, so a queued event picks up a change on its next claim, and it rebuilds the components that read review and repair limits in their constructor. The Server reapplies stored settings at startup, so a restart never silently reverts the values shown in the console.
+Tunable agent settings are edited in the console **Settings** page and stored in the SQLite `runtime_settings` table (with `updated_at` and `updated_by`); the config file only supplies their initial values. The console submits the complete editable set on save, so the database is the source of truth afterwards and there is no "restore to config file" action. The Server applies a change to new turns immediately and records it in `audit_events` (`update_settings`, actor = console username). The inline event runner is woken when a setting is saved, so a queued event picks up the change immediately, and it rebuilds the components that read review and repair limits in their constructor. The Server reapplies stored settings at startup, so a restart never silently reverts the values shown in the console.
 
-**Settings → Model** manages model providers: each provider stores a name, Base URL and API key, and lists its own models with a context window and max output tokens. Exactly one model is active globally: the first model added is activated automatically, and choosing another applies it to the Server and Worker without a restart. Every assistant reply records the model that produced it. The active model overrides `agent.model`, `agent.base_url`, `agent.api_key`, `agent.context_window` and `agent.max_output_tokens`; those YAML values and environment variables are the fallback while the catalog is empty. The API key is never returned by the API or written to audit logs; leaving its password field empty keeps the saved value. Protect the SQLite file and its backups because they contain the key. Upgrading from an older version migrates stored `model` / `model_base_url` / `model_api_key` runtime overrides into a provider automatically, and splits the previous single-table model list into providers and models.
+**Settings → Model** manages model providers: each provider stores a name, Base URL and API key, and lists its own models with a context window and max output tokens. Exactly one model is active globally: the first model added is activated automatically, and choosing another applies it to the Server and the inline event runner without a restart. Every assistant reply records the model that produced it. The active model overrides `agent.model`, `agent.base_url`, `agent.api_key`, `agent.context_window` and `agent.max_output_tokens`; those YAML values and environment variables are the fallback while the catalog is empty. The API key is never returned by the API or written to audit logs; leaving its password field empty keeps the saved value. Protect the SQLite file and its backups because they contain the key. Upgrading from an older version migrates stored `model` / `model_base_url` / `model_api_key` runtime overrides into a provider automatically, and splits the previous single-table model list into providers and models.
 
-Editable keys: `agent.response_language`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `agent.web_blocked_hosts`, `agent.skill_paths`, `agent.request_timeout`, `agent.session_timeout`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, `issue.implement_enabled`, `worker.poll_interval`, `worker.event_timeout`, `gitlab.bot_username`, `gitlab.blocked_user_ids`, `storage.retention_days`, `storage.audit_retention_days`, `storage.conversation_workspace_ttl_minutes` and `storage.conversation_workspace_max`. Time values are entered in seconds and stored in milliseconds. The response language and model are read on every request and turn, so a change takes effect on the next one without a restart.
+Editable keys: `agent.response_language`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `agent.web_blocked_hosts`, `agent.skill_paths`, `agent.request_timeout`, `agent.session_timeout`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, `issue.implement_enabled`, `events.poll_interval`, `events.event_timeout`, `gitlab.bot_username`, `gitlab.blocked_user_ids`, `storage.retention_days`, `storage.audit_retention_days`, `storage.conversation_workspace_ttl_minutes` and `storage.conversation_workspace_max`. Time values are entered in seconds and stored in milliseconds. The response language and model are read on every request and turn, so a change takes effect on the next one without a restart.
 
 Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, GitLab tokens and webhook secret, `gitlab.base_url`, `storage.root`, `storage.database`, `agent.enabled`, and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
@@ -102,19 +102,19 @@ Only bootstrap settings remain file/environment-only: `server.listen`/`read_time
 |---|---:|---:|---|
 | `review.max_files` | `100` | 1–1000 | Maximum changed files considered by one review; selected files are sent in batches of at most 10, further limited by context size. |
 | `review.max_findings` | `30` | 1–100 | Maximum unique accepted findings across all batches in one review. |
-| `review.max_context_bytes` | `2097152` (2 MiB) | 1 byte–8 MiB | Configured serialized-context ceiling. The Worker additionally caps each user prompt at 80 KiB and system-plus-user prompt at 96 KiB to fit the 128K-token model window with output and tool reserves; these byte limits are conservative bounds, not tokenizer counts. |
+| `review.max_context_bytes` | `2097152` (2 MiB) | 1 byte–8 MiB | Configured serialized-context ceiling. The event runner additionally caps each user prompt at 80 KiB and system-plus-user prompt at 96 KiB to fit the 128K-token model window with output and tool reserves; these byte limits are conservative bounds, not tokenizer counts. |
 | `review.batch_concurrency` | `2` | 1–4 | Maximum number of independent review batches processed simultaneously. |
 
 `review.max_files` is a total per-review ceiling, not the batch size. Files or findings outside configured or safety limits can be omitted or rejected; omitted files are reported as partial coverage and are not silently treated as reviewed.
 
-## Worker
+## Event execution
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `worker.poll_interval` | `2s` | Positive duration | Delay between polls when no task is available. |
-| `worker.event_timeout` | `30m` | Positive duration | Overall execution timeout for a claimed event. |
+| `events.poll_interval` | `2s` | Positive duration | Fallback delay between polls when no task is available; newly queued events are woken immediately. |
+| `events.event_timeout` | `30m` | Positive duration | Overall execution timeout for a claimed event. |
 
-The event lease is currently fixed at 30 seconds and renewed during execution; it is not a YAML option.
+The event lease is currently fixed at 30 seconds and renewed during execution; it is not a YAML option. Upgrading from an older version automatically migrates saved `worker_poll_interval` / `worker_event_timeout` overrides to `events_poll_interval` / `events_timeout`, and a YAML `worker:` section is still read as a fallback for `events:`.
 
 ## Fix proposals
 
@@ -129,7 +129,7 @@ Fix requests follow the same optional user blocklist as other commands. Register
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `issue.implement_enabled` | `false` | Boolean; requires `agent.enabled: true` | Enables code writes for Issue tasks. Ordinary `@<bot> <request>` mentions can still receive analysis/replies while this is false. When enabled, the worker may create a new `corvex/issue-*` branch and Draft MR for an implementation request. It does not execute repository code or merge automatically. |
+| `issue.implement_enabled` | `false` | Boolean; requires `agent.enabled: true` | Enables code writes for Issue tasks. Ordinary `@<bot> <request>` mentions can still receive analysis/replies while this is false. When enabled, the event runner may create a new `corvex/issue-*` branch and Draft MR for an implementation request. It does not execute repository code or merge automatically. |
 | `issue.history_comments` | `20` | 0–50 | Number of most recent non-system Issue comments included in the initial assistant context. `0` disables comment history. Pagination and aggregate byte limits cap the context. |
 
 Issue tasks use the project default branch unless the current request explicitly names another existing branch; comments do not authorize branch selection. Implementation needs `CORVEX_GITLAB_TOKEN` with permission to push branches and create merge requests. Generated patches are restricted to ordinary text-file changes and validated paths. A failed/uncertain publish is not automatically retried; inspect the Issue task events and project branches before retrying.
@@ -138,12 +138,12 @@ Issue tasks use the project default branch unless the current request explicitly
 
 | Variable | YAML setting or purpose |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in worker mode and in server mode when the agent console is enabled |
-| `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server and worker modes |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; required in server mode |
+| `CORVEX_GITLAB_TOKEN` | GitLab write token; required in server mode |
 | `CORVEX_WEBHOOK_SECRET` | Webhook secret; required in server mode |
 | `CORVEX_OPS_USERNAME` | Optional operator username; set together with `CORVEX_OPS_PASSWORD` |
 | `CORVEX_OPS_PASSWORD` | Optional agent console password; set together with `CORVEX_OPS_USERNAME` |
-| `CORVEX_MODEL_API_KEY` | Model API key; required in worker mode when the agent is enabled |
+| `CORVEX_MODEL_API_KEY` | Model API key; required when the agent is enabled |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | Overrides `gitlab.base_url` |

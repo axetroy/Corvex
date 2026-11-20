@@ -1,18 +1,18 @@
 # Getting started
 
-Corvex is a self-hosted code review and repair agent for GitLab merge requests. It has two processes:
+Corvex is a self-hosted code review and repair agent for GitLab merge requests. It runs as a single process:
 
-- **Server** receives GitLab Note Hook events, checks access, writes tasks to SQLite, and replies to the note.
-- **Worker** polls SQLite, reads the exact merge request revision, calls an OpenAI-compatible model when needed, and publishes the result.
+- **Server** receives GitLab Note Hook events, checks access, writes tasks to SQLite, replies to the note, and executes those tasks inline through the event runner.
+- **Inline event runner** reads the exact merge request revision, calls an OpenAI-compatible model when needed, and publishes the result in the same process.
 
-The server can run without a worker, but review, explain, fix, and Issue assistant tasks remain queued until a worker is running. See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
+With `agent.enabled: false`, the server still accepts events but leaves review, explain, fix, and Issue assistant tasks queued until the agent is enabled. See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
 
 ## Requirements
 
 - Node.js 26.12.1 and pnpm 12.4.1 to run from source. Install the locked dependencies with `pnpm install --frozen-lockfile`.
-- GitLab access from the server and worker, including a reachable webhook URL.
+- GitLab access from the Server, including a reachable webhook URL.
 - A GitLab read token for API reads and repository fetches; a separate write token for MR notes and discussions.
-- The `git` executable on the worker host. The supplied Docker image includes it.
+- The `git` executable on the Server host. The supplied Docker image includes it.
 - If using an agent, an OpenAI-compatible Chat Completions endpoint and an API key. Pi SDK provides the agent runtime.
 - Persistent writable storage for the SQLite database and Git mirrors. Keep it across restarts.
 
@@ -29,13 +29,14 @@ pnpm start -- init
 Edit `configs/config.yaml` to set the GitLab URL. Add numeric user IDs to `gitlab.blocked_user_ids` only when you want to prevent them from invoking commands. Set these variables for the Server:
 
 ```sh
+export CORVEX_GITLAB_READ_TOKEN='your-read-token'
 export CORVEX_GITLAB_TOKEN='your-write-token'
 export CORVEX_WEBHOOK_SECRET='a-long-random-secret'
 ```
 
 The IDs are numeric GitLab IDs. Keep credentials out of the YAML file and source control. The agent console lists projects visible to `CORVEX_GITLAB_READ_TOKEN`; only register webhooks on projects where Corvex should accept commands. Refer to the [configuration reference](./configuration) for every setting and its limits.
 
-The Server needs the write token and webhook secret. When the agent console is enabled, it also needs `CORVEX_GITLAB_READ_TOKEN` for project and target discovery. The Worker needs the read token and, when the agent is enabled, `CORVEX_MODEL_API_KEY`. Use separate read/write tokens with only the required permissions.
+The Server needs the read token, write token and webhook secret. When the agent is enabled it also needs `CORVEX_MODEL_API_KEY`. Use separate read/write tokens with only the required permissions.
 
 ## 2. Start the server
 
@@ -102,22 +103,15 @@ Any commenter on a project configured with the shared webhook secret can mention
 
 ## 5. Enable model tasks
 
-Reviews, explanations, fix proposals, and Issue assistance require a worker and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
+Reviews, explanations, fix proposals, and Issue assistance require an enabled agent and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
 
 ## Issue assistance and implementation
 
 Issue mentions require the agent to be enabled. The agent receives the Issue and the latest 20 non-system comments by default; configure `issue.history_comments` from 0 to 50. It decides whether to answer, ask a clarifying question, or propose implementation. Replies do not create or push code.
 
-Code writes are disabled by default. To allow implementation, set `issue.implement_enabled: true` and provide a GitLab write token with permission to push branches and create merge requests. The worker targets the project's default branch unless the current request explicitly names another existing branch; comments cannot select a branch. It creates a new `corvex/issue-*` branch and opens a Draft MR. It does not run repository scripts, tests, or automatically merge. Review the resulting MR before merging.
+Code writes are disabled by default. To allow implementation, set `issue.implement_enabled: true` and provide a GitLab write token with permission to push branches and create merge requests. The event runner targets the project's default branch unless the current request explicitly names another existing branch; comments cannot select a branch. It creates a new `corvex/issue-*` branch and opens a Draft MR. It does not run repository scripts, tests, or automatically merge. Review the resulting MR before merging.
 
-In another process, start:
-
-```sh
-pnpm start -- --config configs/config.yaml --for worker check-config
-pnpm start -- --config configs/config.yaml worker
-```
-
-When the agent is disabled, the server can still accept events and persist tasks, but a worker will refuse to start. For local-only server testing, use the health endpoints described in [Runtime and operations](./operations).
+The Server is already running; enabling the agent takes effect on the next event without a restart. When the agent is disabled, the Server still accepts events and persists tasks, but does not execute them. For local-only Server testing, use the health endpoints described in [Runtime and operations](./operations).
 
 ## Enable fix proposals carefully
 
@@ -127,7 +121,7 @@ Fix mode is disabled by default. To enable it, set `fix.enabled: true` and enabl
 
 Enable the Basic Auth-protected agent console and open **Conversations**. Search projects visible to the GitLab read token, then pick a repository and branch to start a general chat about the code. Corvex resolves and pins the branch head SHA on the server when a message is queued. Conversations and each turn are stored in SQLite; one turn per conversation can run at a time. The page fills the viewport: the sidebar lists conversations by their model-generated title (falling back to the project name until the first turn is titled), with their turn counts, mode tag, and latest turn status, and the workspace has a repository header plus three tabs. **Chat** shows the Markdown transcript and lets you copy a reply, and displays the conversation's system prompt as a collapsible block above the transcript; **Trace** shows a single timeline of the model and tool activity, merging every turn by default (or focusing a single turn) and showing that scope's execution steps and lifecycle transitions without leaving the conversation; **Stats** totals usage and timing and breaks it down per turn. The conversation agent's repository capability comes from the conversation's explicit mode (`read_only` today), shown as a tag in the sidebar and repository header; in `read_only` it does not edit the worktree or publish GitLab notes. If the branch moves before a queued turn starts, that turn ends as `stale`; send the message again to use the current revision.
 
-The Pi session exposes no built-in shell or arbitrary command execution. Its repository tools include bounded `read_file` and `git_grep`, plus chat-only `git_log` and `git_show` for commits reachable from the pinned MR HEAD. Chat provides `update_mr_metadata` to change only the current MR's title and/or description when requested; omitted fields stay unchanged. With a write token and a same-project MR, Chat also provides `git_status`, `git_apply_patch`, `git_commit`, `git_push`, and `git_revert`, all bound to the current isolated worktree and MR source branch. Writes require no extra confirmation after the user requested them. Patches modify existing tracked regular files only; commits accept unstaged tracked modifications only; after all requested edits and available checks, Chat creates one final commit and pushes as the last repository operation before replying. It does not push intermediate work or modify files after pushing. Pushes are ordinary fast-forward updates and force-push is never possible; rollback adds a revert commit for the latest Corvex commit. Fork MRs do not receive Git write tools. Literal `search_text` remains available for bounded searches in the worktree and trusted skill roots; it is limited to 1,000 files, 16 MiB, and 50 matches per call. `web_fetch` is available only to review and explain tasks when enabled; private/reserved addresses are always blocked, `agent.web_blocked_hosts` adds optional host blocks, and at most 10 pages can be fetched per session. Redirects are revalidated and page text is untrusted input. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP tools only for review tasks from the service's Pi agent directory. MCP server processes run with the worker's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
+The Pi session exposes no built-in shell or arbitrary command execution. Its repository tools include bounded `read_file` and `git_grep`, plus chat-only `git_log` and `git_show` for commits reachable from the pinned MR HEAD. Chat provides `update_mr_metadata` to change only the current MR's title and/or description when requested; omitted fields stay unchanged. With a write token and a same-project MR, Chat also provides `git_status`, `git_apply_patch`, `git_commit`, `git_push`, and `git_revert`, all bound to the current isolated worktree and MR source branch. Writes require no extra confirmation after the user requested them. Patches modify existing tracked regular files only; commits accept unstaged tracked modifications only; after all requested edits and available checks, Chat creates one final commit and pushes as the last repository operation before replying. It does not push intermediate work or modify files after pushing. Pushes are ordinary fast-forward updates and force-push is never possible; rollback adds a revert commit for the latest Corvex commit. Fork MRs do not receive Git write tools. Literal `search_text` remains available for bounded searches in the worktree and trusted skill roots; it is limited to 1,000 files, 16 MiB, and 50 matches per call. `web_fetch` is available only to review and explain tasks when enabled; private/reserved addresses are always blocked, `agent.web_blocked_hosts` adds optional host blocks, and at most 10 pages can be fetched per session. Redirects are revalidated and page text is untrusted input. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP tools only for review tasks from the service's Pi agent directory. MCP server processes run with the Server's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
 
 ## Next steps
 

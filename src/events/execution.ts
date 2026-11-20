@@ -3,7 +3,7 @@ import type { ExecutionStepStatus, TraceScope } from "./model.js";
 import { errorMessage } from "../errors.js";
 
 /**
- * 用于把 webhook 投递或 Worker 尝试关联到执行事件；至少提供一个关联 ID。
+ * 用于把 webhook 投递或事件执行尝试关联到执行事件；至少提供一个关联 ID。
  * webhook 可在事件创建前记录，后续通过 webhookEventId 关联到事件。
  */
 export interface ExecutionStepContext {

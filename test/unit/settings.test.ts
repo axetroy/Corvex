@@ -56,7 +56,7 @@ function settingsConfig(): CorvexConfig {
       conversationWorkspaceTtlMinutes: 60,
       conversationWorkspaceMax: 8,
     },
-    worker: { pollInterval: 2_000, eventTimeout: 30 * 60_000 },
+    events: { pollInterval: 2_000, eventTimeout: 30 * 60_000 },
     gitlab: {
       baseUrl: "https://gitlab.example.com",
       readToken: "read",
@@ -121,7 +121,7 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ agent_request_timeout: "0" })).toEqual([
       "agent_request_timeout must be at least 1",
     ]);
-    expect(validateRuntimeSettings({ worker_poll_interval: "1.5" })).toEqual([]);
+    expect(validateRuntimeSettings({ events_poll_interval: "1.5" })).toEqual([]);
   });
 
   it("校验跨字段约束", () => {
@@ -229,7 +229,7 @@ describe("runtimeSettingsView", () => {
       review_max_files: 100,
       fix_max_patch_bytes: 128 << 10,
       agent_request_timeout: 120,
-      worker_poll_interval: 2,
+      events_poll_interval: 2,
       gitlab_blocked_user_ids: ["7"],
       web_blocked_hosts: [],
     });

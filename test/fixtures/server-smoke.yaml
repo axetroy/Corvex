@@ -33,7 +33,7 @@ review:
   max_findings: 5
   max_context_bytes: 1048576
 
-worker:
+events:
   poll_interval: 1s
   event_timeout: 1m
 

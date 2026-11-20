@@ -17,8 +17,8 @@ GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`f
 
 - 使用 Pi 处理 Agent 循环、模型和会话生命周期、自定义工具、Skills，以及可选的
   MCP 集成；不重复实现这些运行时能力。
-- 将产品作为单一 Node.js 应用部署，通过 `server` 和 `worker` 两种进程模式运行，
-  并共享 SQLite 数据库和 Git 存储。
+- 将产品作为单一 Node.js 应用部署，只有一个 `server` 进程模式；Webhook 事件与
+  对话轮次都在该进程内执行，共享同一个 SQLite 数据库和 Git 存储。
 - 保留持久化任务、Webhook 幂等性、租约、取消、重试策略、审计、Token 用量统计和
   可观测性。
 - 将每项任务固定到 MR 的准确 base/head SHA，并在独立的 detached Git worktree 中
@@ -46,7 +46,7 @@ GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`f
 GitLab 评论 Webhook
        |
        v
-TypeScript 服务端
+TypeScript Server（单进程）
   - 验证 Webhook 令牌和事件
   - 过滤机器人及系统评论
   - 检查可选用户阻止列表
@@ -54,7 +54,7 @@ TypeScript 服务端
   - 提供运维 API 和持久对话工作台
        |
        v
-SQLite 任务/对话存储 <----- TypeScript Worker
+SQLite 任务/对话存储 <----- 内联事件执行器（EventRunner）
                          - 领取租约、心跳、处理取消和重试
                          - 获取当前 MR 或对话目标及固定版本
                          - 准备隔离的 detached worktree
@@ -64,16 +64,16 @@ SQLite 任务/对话存储 <----- TypeScript Worker
                          - 其他授权工作流按策略校验和发布结果
 ```
 
-服务端和 Worker 是同一个 TypeScript 入口的两种运行模式，而非两个独立服务。为加强
-隔离，可以将它们运行在不同进程或容器中，但仍须使用同一个本地 SQLite 数据库和存储
-卷。不得在网络文件系统上跨主机共享 SQLite 数据库。
+事件执行器是 Server 的一个组件，而不是独立进程或独立服务。租约仍然存在，用于表达
+事件生命周期、取消与崩溃恢复；因为是单进程部署，Server 启动时可以立即回收上次进程
+留下的在途事件，不必等待租约自然过期。不得在网络文件系统上跨主机共享 SQLite 数据库。
 
 ### 职责边界
 
 | 领域 | 负责方 |
 |---|---|
 | Webhook 验证、命令解析、用户阻止列表和能力授权 | Corvex 策略代码 |
-| 持久化任务/对话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与 Worker |
+| 持久化任务/对话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与内联事件执行器 |
 | GitLab API 访问和评论发布 | Corvex GitLab 客户端 |
 | 镜像、固定 SHA 的 worktree、受限差异和安全文件访问 | Corvex Git 引擎 |
 | Agent 循环、模型提供方、会话和上下文生命周期 | Pi SDK |
@@ -86,7 +86,7 @@ Pi 会话；持久对话的消息另存于 Corvex SQLite，不依赖 Pi 进程�
 
 ## Pi 集成与能力
 
-Worker 通过 TypeScript SDK 使用 `@earendil-works/pi-coding-agent`。每项任务单独创建
+内联事件执行器通过 TypeScript SDK 使用 `@earendil-works/pi-coding-agent`。每项任务单独创建
 会话，并显式配置工作目录、模型/运行时设置、资源加载器、工具和清理生命周期。
 
 - 使用 Pi 循环执行多步推理和工具调用。
@@ -101,7 +101,7 @@ Worker 通过 TypeScript SDK 使用 `@earendil-works/pi-coding-agent`。每项�
   前，必须校验补丁路径和内容。
 - 订阅 Pi 事件用于日志和指标，但默认不得记录源代码、提示词、凭证或完整工具负载。
 
-Pi 工具和扩展以 Worker 的操作系统权限运行。Worker 应使用专用低权限用户，仅挂载所需
+Pi 工具和扩展以 Server 进程的操作系统权限运行。Server 应使用专用低权限用户，仅挂载所需
 的 worktree 和数据，使用权限范围受限的凭证，并配置容器及网络限制。提示注入防护有
 帮助，但不能视作安全边界。
 
@@ -165,9 +165,9 @@ SHA 定向抓取。需要比较差异基准（`git.ensure_base_sha`）等额外�
 publishing -> completed`，并可进入 `failed`、`stale` 或 `cancelled` 终态。任务存储
 负责校验所有状态转换。
 
-Worker 通过可续期租约领取任务，并在任务运行期间检查调用方的取消请求。发布前中断的
+内联事件执行器通过可续期租约领取任务，并在任务运行期间检查调用方的取消请求。发布前中断的
 工作可在限定的尝试次数内重试。若租约在发布期间过期，则任务失败且不自动重试，以免
-向 GitLab 重复发布评论。Worker 必须始终释放 Pi 会话并清理 worktree；清理错误也须
+向 GitLab 重复发布评论。执行器必须始终释放 Pi 会话并清理 worktree；清理错误也须
 明确报告。
 
 ## TypeScript 项目结构
@@ -176,7 +176,7 @@ Worker 通过可续期租约领取任务，并在任务运行期间检查调用�
 src/
   cli.ts
   config/
-  app/                 # HTTP 服务端与 Worker 生命周期
+  app/                 # HTTP 服务端、内联事件执行器与对话执行器生命周期
   app/http/            # Fastify 路由、鉴权、webhook 与控制台静态资源
   jobs/                # SQLite schema、存储、状态机和指标
   gitlab/              # Webhook 解析、命令和 REST 客户端
@@ -191,7 +191,7 @@ test/
 ```
 
 HTTP 层使用 Fastify，路由按系统检查、GitLab webhook、运维 API 和控制台静态资源拆分在
-`src/app/http`；`CorvexServer` 只保留生命周期、内联对话轮次与清理任务。选择 Fastify 是因为
+`src/app/http`；`CorvexServer` 只保留生命周期、内联事件执行、内联对话轮次与清理任务。选择 Fastify 是因为
 它在不引入 ORM 或额外中间件的前提下提供成熟的路由、请求体上限和钩子机制，同时仍允许
 webhook 以原始字节读取、SSE 直接写原生响应，从而保留既有的验签、响应头、状态码与日志。
 信号、进程管理、SQLite 和文件系统操作继续使用 Node.js 内置能力。外部依赖保持精简，
@@ -202,15 +202,15 @@ Node.js 版本由 `engines.node` 和 CI 固定。
 
 保留 YAML 配置和现有环境变量名称，涵盖 GitLab Token、Webhook 密钥、模型密钥/基础
 URL/名称、监听地址、数据库路径和存储根目录。通过 `init` 生成配置模板，并在启动
-Server/Worker 前按进程角色校验配置。Server 通常不需要读取令牌或模型密钥；启用运维
-控制台时需要读取令牌用于项目和目标发现。Worker 不需要 Webhook 密钥。示例配置和日志中不得包含密钥。
+Server 前按运行角色校验配置。Server 需要 GitLab 读写令牌和 Webhook 密钥；模型密钥可以
+只在运维台配置。示例配置和日志中不得包含密钥。
 
 必须保留以下能力：
 
-- `init`、按角色校验配置、`server`、`worker`、`backup`、任务列表/安全重试和 Git
+- `init`、按角色校验配置、`server`、`backup`、任务列表/安全重试和 Git
   存储清理 CLI 能力。
 - `/healthz`、基于数据库状态的 `/readyz` 和 Prometheus `/metrics`。
-- Docker Compose 的 server/worker profiles、非 root 用户、只读容器根文件系统、移除
+- Docker Compose 的单 server 服务、非 root 用户、只读容器根文件系统、移除
   不必要的 capabilities、资源限制，以及持久化 SQLite/Git 卷。
 - 数据保留策略、SQLite 在线备份/恢复流程，以及 dry-run 优先的 Git 存储清理。
 - 通过人工标注样例和显式在线运行的评审基准评估质量；基准运行不属于常规 CI。
@@ -236,9 +236,9 @@ RPC/sidecar 桥接。
 3. **纯领域模块：** 迁移配置校验、命令解析、模型、验证和状态转换测试。
 4. **存储与集成：** 迁移 SQLite schema/存储、GitLab API/Webhook 和 Git 引擎；迁移
    测试并增加基于 fixture 的集成测试。
-5. **应用运行时：** 迁移 CLI、HTTP 服务端、后台 Worker、租约、取消、数据保留、指标
+5. **应用运行时：** 迁移 CLI、HTTP 服务端、内联事件执行器、租约、取消、数据保留、指标
    和备份。
-6. **Pi Worker：** 每项任务使用独立 Pi 会话和受控工具/资源，实现结构化输出、Token
+6. **Pi 事件执行器：** 每项任务使用独立 Pi 会话和受控工具/资源，实现结构化输出、Token
    统计，以及与既有行为一致的审查/修复流程。
 7. **打包发布：** 迁移 Docker/Compose、CI、发布流程、示例和文档。
 8. **切换完成：** 在通过行为一致性检查后，移除被替代的源码、模块文件、CI/发布步骤和
@@ -255,7 +255,7 @@ RPC/sidecar 桥接。
 - 测试覆盖既有行为及异常输入、租约过期、取消、MR 版本过期、重复事件、无效模型输出
   和补丁范围违规。
 - CI 中 `pnpm install --frozen-lockfile`、lint、typecheck、单元/集成测试和生产构建均通过；Docker server 与
-  worker 模式均可成功启动。
+  server 模式均可成功启动。
 - 部署与配置文档仅描述 TypeScript/Pi 运行时。
 - 生产构建和部署使用单一运行时，不再保留被替代的源码或发布路径。
 

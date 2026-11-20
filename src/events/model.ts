@@ -1,4 +1,4 @@
-/** 系统可入队并由 Worker 处理的事件类型集合；对话轮次不再进入该队列。 */
+/** 系统可入队并由 Server 内联执行的事件类型集合；对话轮次不进入该队列。 */
 export const eventTypes = ["review", "fix", "explain", "chat", "implement"] as const;
 export type EventType = (typeof eventTypes)[number];
 
@@ -19,7 +19,7 @@ export function isModelTaskType(value: string): value is ModelTaskType {
 export type EventTargetType = "merge_request" | "issue" | "repository";
 export type ConversationMessageStatus = "queued" | "running" | "completed" | "failed";
 
-/** 对话轮次的执行状态；由 Server 内联执行，不经过 Worker 队列。 */
+/** 对话轮次的执行状态；由 Server 内联执行，不经过事件队列。 */
 export const conversationTurnStatuses = [
   "queued",
   "running",
@@ -82,7 +82,7 @@ export type TraceScope =
   | { kind: "event"; eventId: string }
   | { kind: "conversation"; turnId: string };
 
-/** SQLite、Worker 和运维界面共同使用的事件生命周期状态集合。 */
+/** SQLite、事件执行器和运维界面共同使用的事件生命周期状态集合。 */
 export const eventStatuses = [
   "queued",
   "preparing",
@@ -489,14 +489,14 @@ export interface EventTraceEntry {
 
 /**
  * 执行步骤的持久化状态。`unknown` 表示副作用可能已生效但未收到回执；
- * `interrupted` 表示步骤因 Worker 租约过期而未能正常收尾。
+ * `interrupted` 表示步骤因事件租约过期而未能正常收尾。
  */
 export type ExecutionStepStatus = "running" | "succeeded" | "failed" | "ignored" | "unknown" | "interrupted";
 
-/** 单个 webhook 或 Worker 执行步骤的脱敏追踪记录。 */
+/** 单个 webhook 或事件执行步骤的脱敏追踪记录。 */
 export interface ExecutionStep {
   id: number;
-  /** Webhook 投递关联 ID；纯 Worker 步骤为空。 */
+  /** Webhook 投递关联 ID；纯事件执行步骤为空。 */
   deliveryId: string | null;
   /** GitLab webhook 事件 ID；尚未关联到 webhook 时为空。 */
   webhookEventId: string | null;
@@ -504,7 +504,7 @@ export interface ExecutionStep {
   eventId: string | null;
   /** 对话轨迹所属轮次 ID；事件与 webhook 步骤为空。 */
   turnId: string | null;
-  /** Worker 尝试序号；webhook 步骤为空。 */
+  /** 事件尝试序号；webhook 步骤为空。 */
   attempt: number | null;
   step: string;
   status: ExecutionStepStatus;
@@ -524,15 +524,16 @@ export interface EventDetails extends EventSummary {
   attempts: EventAttemptSummary[];
   timeline: EventStatusTransition[];
   trajectory: EventTraceEntry[];
-  /** 执行事件按开始时间倒序排列，包含已关联到此事件的 webhook 与 Worker 步骤。 */
+  /** 执行事件按开始时间倒序排列，包含已关联到此事件的 webhook 与执行步骤。 */
   events: ExecutionStep[];
 }
 
 export interface OperationsOverview {
   counts: Record<EventStatus, number>;
   oldestQueuedAt: string | null;
-  workers: {
-    onlineCount: number;
+  /** 内联事件执行器的心跳；单进程部署下最多只有一个执行器在线。 */
+  runner: {
+    online: boolean;
     lastSeenAt: string | null;
   };
 }

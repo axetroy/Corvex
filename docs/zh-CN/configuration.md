@@ -2,7 +2,7 @@
 
 Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路径。请以[`configs/config.example.yaml`](https://github.com/axetroy/Corvex/blob/main/configs/config.example.yaml)为模板。密钥从环境变量读取，不放入 YAML。下方列出的环境变量优先于 YAML 配置。
 
-可通过 `--env <路径>` 从 dotenv 格式文件加载环境变量，例如：`pnpm start -- --env .env --config configs/config.yaml worker`。相对路径以当前工作目录为基准。进程中已设置的环境变量优先于文件中的值。
+可通过 `--env <路径>` 从 dotenv 格式文件加载环境变量，例如：`pnpm start -- --env .env --config configs/config.yaml server`。相对路径以当前工作目录为基准。进程中已设置的环境变量优先于文件中的值。
 
 表格中的示例 URL 和路径来自示例 YAML，并非都属于程序运行时默认值；运行时默认值会明确标注。特别是 `gitlab.base_url`、`storage.root` 和 `storage.database` 必须配置。
 
@@ -35,7 +35,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 | 变量 | 用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | Worker 模式必填；Server 模式启用 Agent 控制台时必填。用于读取 GitLab API、发现项目/目标及通过 Git 抓取仓库。 |
+| `CORVEX_GITLAB_READ_TOKEN` | Server 模式必填。用于读取 GitLab API、发现项目/目标、通过 Git 抓取仓库以及执行内联事件任务。 |
 | `CORVEX_GITLAB_TOKEN` | GitLab 写操作必填。发布评论和行级讨论；Chat 可提交/推送同项目 MR 分支；启用 Issue 实现后会推送新分支并创建 Draft MR。应使用权限最小化的独立写令牌。 |
 | `CORVEX_WEBHOOK_SECRET` | 必填。必须与项目 Webhook 的 Secret Token 一致。 |
 | `CORVEX_OPS_USERNAME` | 可选运维用户名；须与 `CORVEX_OPS_PASSWORD` 同时设置 |
@@ -56,7 +56,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
-| `agent.enabled` | `false` | 布尔值 | 启动 Worker 时必须设为 `true`。 |
+| `agent.enabled` | `false` | 布尔值 | 设为 `true` 才会执行排队的事件与对话轮次。 |
 | `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。可在控制台运行时修改。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
 | `agent.model` | `your-model-name` | — | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
@@ -64,7 +64,7 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 | `agent.session_timeout` | `30m` | 启用时必须为正时长 | 单个 Pi Agent Session 的总运行时限。 |
 | `agent.max_output_tokens` | `4096` | 启用时为 1–8192 | 请求模型生成的最大输出 Token 数。每条模型配置各自保存；这里是回退值。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
-| `agent.mcp_enabled` | `false` | 布尔值 | 仅为 review 任务启用 Pi MCP 扩展。MCP 服务使用 Worker 进程的操作系统权限，且不受沙箱隔离。 |
+| `agent.mcp_enabled` | `false` | 布尔值 | 仅为 review 任务启用 Pi MCP 扩展。MCP 服务使用 Server 进程的操作系统权限，且不受沙箱隔离。 |
 | `agent.web_enabled` | `true` | 布尔值 | 为 review 和 explain 任务启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组 | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 | `agent.skill_paths` | `[]` | 路径数组 | 额外的可信 Pi Skill 目录；这些路径也可作为有界只读 `read_file` 工具的允许根目录。 |
@@ -84,13 +84,13 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 ## 运行时设置
 
-上表中的一部分设置可以在 Agent 控制台的**设置**页面修改，无需编辑配置文件或重启。Server 只把被覆盖的键写入 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`），立即作用于后续轮次，并把每次修改记入 `audit_events`（`update_settings`，操作者取控制台用户名）。Worker 在每次轮询时重新读取该表，排队中的事件会在下一次领取时生效，并重建那些在构造函数里读取审查与修复上限的组件。Server 启动时也会重新应用已存储的覆盖项，因此重启不会悄悄退回界面显示之外的值。
+上表中的一部分设置可以在 Agent 控制台的**设置**页面修改，无需编辑配置文件或重启。Server 只把被覆盖的键写入 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`），立即作用于后续轮次，并把每次修改记入 `audit_events`（`update_settings`，操作者取控制台用户名）。保存设置时内联事件执行器会被立即唤醒，排队中的事件随即生效，并重建那些在构造函数里读取审查与修复上限的组件。Server 启动时也会重新应用已存储的覆盖项，因此重启不会悄悄退回界面显示之外的值。
 
-可调的 Agent 设置都在运维台「设置」页维护，保存在 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`）；配置文件只提供初始值。控制台保存时会提交全部可编辑项，此后数据库就是唯一来源，也不再提供「恢复为配置文件值」。Server 立即把修改作用于后续轮次，并写入 `audit_events`（`update_settings`，操作者为控制台用户名）。Worker 每次轮询重新读取该表，排队中的事件在下一次领取时生效，并按构造期参数重建审查与修复组件。Server 启动时会重新应用已保存的设置，重启不会悄悄退回界面显示之外的值。
+可调的 Agent 设置都在运维台「设置」页维护，保存在 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`）；配置文件只提供初始值。控制台保存时会提交全部可编辑项，此后数据库就是唯一来源，也不再提供「恢复为配置文件值」。Server 立即把修改作用于后续轮次，并写入 `audit_events`（`update_settings`，操作者为控制台用户名）。内联事件执行器在设置保存时立即重新读取该表，排队中的事件随即生效，并按构造期参数重建审查与修复组件。Server 启动时会重新应用已保存的设置，重启不会悄悄退回界面显示之外的值。
 
-「设置 → 模型」管理模型供应商：每个供应商保存名称、Base URL 与 API Key，并在其下维护各自的模型（上下文窗口与最大输出 Token）。全局只有一个模型处于使用中：第一个新增的模型自动激活，切换后无需重启即作用于 Server 与 Worker，每条助手回复也会记录生成它的模型。当前模型会覆盖 `agent.model`、`agent.base_url`、`agent.api_key`、`agent.context_window` 与 `agent.max_output_tokens`；目录为空时才使用这些 YAML 值或环境变量。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存的值。由于密钥保存在本地 SQLite 中，请保护数据库文件及其备份。从旧版本升级时，已保存的 `model` / `model_base_url` / `model_api_key` 运行时覆盖会自动迁移成供应商，旧版单表模型列表也会拆分为供应商与模型。
+「设置 → 模型」管理模型供应商：每个供应商保存名称、Base URL 与 API Key，并在其下维护各自的模型（上下文窗口与最大输出 Token）。全局只有一个模型处于使用中：第一个新增的模型自动激活，切换后无需重启即作用于 Server 与内联事件执行器，每条助手回复也会记录生成它的模型。当前模型会覆盖 `agent.model`、`agent.base_url`、`agent.api_key`、`agent.context_window` 与 `agent.max_output_tokens`；目录为空时才使用这些 YAML 值或环境变量。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存的值。由于密钥保存在本地 SQLite 中，请保护数据库文件及其备份。从旧版本升级时，已保存的 `model` / `model_base_url` / `model_api_key` 运行时覆盖会自动迁移成供应商，旧版单表模型列表也会拆分为供应商与模型。
 
-可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`worker.poll_interval`、`worker.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
+可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`events.poll_interval`、`events.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
 
 只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`gitlab.base_url`、`storage.root`、`storage.database`、`agent.enabled`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
@@ -106,19 +106,19 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 |---|---:|---:|---|
 | `review.max_files` | `100` | 1–1000 | 单次审查最多考虑的变更文件数；每批最多 10 个文件，并会按上下文大小进一步缩小。 |
 | `review.max_findings` | `30` | 1–100 | 单次审查所有批次合计最多接受的唯一问题数。 |
-| `review.max_context_bytes` | `2097152`（2 MiB） | 1 字节–8 MiB | 配置的序列化上下文上限。Worker 还会将单次 user prompt 限制为 80 KiB、system 与 user prompt 合计限制为 96 KiB，为 128K token 模型窗口中的输出和工具调用预留空间；这是保守字节上限，并非 tokenizer 的精确计数。 |
+| `review.max_context_bytes` | `2097152`（2 MiB） | 1 字节–8 MiB | 配置的序列化上下文上限。事件执行器还会将单次 user prompt 限制为 80 KiB、system 与 user prompt 合计限制为 96 KiB，为 128K token 模型窗口中的输出和工具调用预留空间；这是保守字节上限，并非 tokenizer 的精确计数。 |
 | `review.batch_concurrency` | `2` | 1–4 | 同时处理的独立审查批次数上限。 |
 
 `review.max_files` 是单次审查的总文件上限，不是批次大小。超过配置或安全限制的文件和问题可能被忽略或拒绝；被省略文件会标记为部分覆盖，不能因此认为这些内容已经过审查。
 
-## Worker
+## 事件执行
 
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
-| `worker.poll_interval` | `2s` | 正时长 | 无任务时两次轮询之间的等待时间。 |
-| `worker.event_timeout` | `30m` | 正时长 | 单个已领取事件的总执行超时。 |
+| `events.poll_interval` | `2s` | 正时长 | 无任务时的兜底轮询间隔；新入队事件会立即被唤醒执行。 |
+| `events.event_timeout` | `30m` | 正时长 | 单个已领取事件的总执行超时。 |
 
-事件租约固定为 30 秒，执行期间会续租；当前不是 YAML 配置项。
+事件租约固定为 30 秒，执行期间会续租；当前不是 YAML 配置项。从旧版本升级时会自动把已保存的 `worker_poll_interval` / `worker_event_timeout` 覆盖迁移为 `events_poll_interval` / `events_timeout`；YAML 中的 `worker:` 段仍可作为 `events:` 的回退被读取。
 
 ## 修复提案
 
@@ -142,10 +142,10 @@ Issue 任务默认使用项目默认分支；只有当前请求明确命名另�
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Worker 模式及启用 Agent 控制台的 Server 模式必填 |
-| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 和 Worker 模式必填 |
+| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，Server 模式必填 |
+| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，Server 模式必填 |
 | `CORVEX_WEBHOOK_SECRET` | Webhook Secret，Server 模式必填 |
-| `CORVEX_MODEL_API_KEY` | Agent API 密钥，Worker 模式启用 Agent 时必填 |
+| `CORVEX_MODEL_API_KEY` | Agent API 密钥，启用 Agent 时必填 |
 | `CORVEX_MODEL_BASE_URL` | 覆盖 `agent.base_url` |
 | `CORVEX_MODEL_NAME` | 覆盖 `agent.model` |
 | `CORVEX_GITLAB_BASE_URL` | 覆盖 `gitlab.base_url` |

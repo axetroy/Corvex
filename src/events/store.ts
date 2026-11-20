@@ -56,7 +56,7 @@ import {
   type TraceScope,
 } from "./model.js";
 
-/** Worker 从事件开始到终止状态允许执行的最大尝试次数。 */
+/** 事件执行器从开始到终止状态允许执行的最大尝试次数。 */
 const maxAttempts = 3;
 /** 已完成、失败、过期或取消的终态事件集合。 */
 const terminal = new Set<EventStatus>(["completed", "failed", "stale", "cancelled"]);
@@ -555,10 +555,12 @@ export class EventStore {
     return Object.fromEntries(rows.map((row) => [row.status, row.count]));
   }
 
-  operationsOverview(workerTimeoutMs = 30_000): OperationsOverview {
-    if (!Number.isFinite(workerTimeoutMs) || workerTimeoutMs <= 0) {
-      throw new Error("worker heartbeat timeout must be positive");
+  /** 运维总览：队列计数与内联事件执行器心跳。 */
+  operationsOverview(heartbeatTimeoutMs = 30_000): OperationsOverview {
+    if (!Number.isFinite(heartbeatTimeoutMs) || heartbeatTimeoutMs <= 0) {
+      throw new Error("event runner heartbeat timeout must be positive");
     }
+    // ... counts / oldest ...
     const counts: Record<EventStatus, number> = {
       queued: 0,
       preparing: 0,
@@ -581,25 +583,29 @@ export class EventStore {
     const oldest = this.db
       .prepare("SELECT created_at FROM events WHERE status='queued' ORDER BY created_at ASC LIMIT 1")
       .get() as { created_at: string } | undefined;
-    const workers = this.db
-      .prepare("SELECT last_seen_at FROM worker_heartbeats WHERE last_seen_at >= ? ORDER BY last_seen_at DESC")
-      .all(new Date(Date.now() - workerTimeoutMs).toISOString()) as { last_seen_at: string }[];
-    const lastWorker = this.db
+    const heartbeat = this.db
       .prepare("SELECT last_seen_at FROM worker_heartbeats ORDER BY last_seen_at DESC LIMIT 1")
       .get() as { last_seen_at: string } | undefined;
+    const lastSeenAt = heartbeat?.last_seen_at ?? null;
     return {
       counts,
       oldestQueuedAt: oldest?.created_at ?? null,
-      workers: {
-        onlineCount: workers.length,
-        lastSeenAt: lastWorker?.last_seen_at ?? null,
+      runner: {
+        online: lastSeenAt !== null && Date.parse(lastSeenAt) >= Date.now() - heartbeatTimeoutMs,
+        lastSeenAt,
       },
     };
   }
 
-  heartbeatWorker(workerId: string): void {
-    const id = workerId.trim();
-    if (!id || id.length > 128) throw new Error("worker ID must be between 1 and 128 characters");
+  /**
+   * 记录内联事件执行器心跳。
+   *
+   * 表名沿用 `worker_heartbeats`，避免为纯改名做一次数据库迁移；
+   * 单进程部署下只有一个执行器写入，总览据此判断它是否在线。
+   */
+  heartbeatRunner(runnerId: string): void {
+    const id = runnerId.trim();
+    if (!id || id.length > 128) throw new Error("event runner ID must be between 1 and 128 characters");
     const now = new Date();
     this.db
       .prepare(
@@ -1706,6 +1712,30 @@ export class EventStore {
     }));
   }
 
+  /**
+   * 升级兼容：事件调度参数曾存放在 `worker_*` 键下，统一迁移为 `events_*`。
+   * 新旧键同时存在时以新键为准并删除旧键；返回迁移的键数量。
+   */
+  migrateLegacyEventRuntimeSettings(): number {
+    return this.transaction(() => {
+      const mappings = [
+        ["worker_poll_interval", "events_poll_interval"],
+        ["worker_event_timeout", "events_timeout"],
+      ] as const;
+      let migrated = 0;
+      for (const [legacy, current] of mappings) {
+        if (this.getRuntimeSetting(legacy) === undefined) continue;
+        if (this.getRuntimeSetting(current) === undefined) {
+          this.db.prepare("UPDATE runtime_settings SET key=? WHERE key=?").run(current, legacy);
+        } else {
+          this.db.prepare("DELETE FROM runtime_settings WHERE key=?").run(legacy);
+        }
+        migrated++;
+      }
+      return migrated;
+    });
+  }
+
   /** 读取最近的审计记录（写入顺序倒序），供运维排查与测试断言。 */
   listAuditEvents(limit = 100): {
     actorId: number;
@@ -2353,7 +2383,7 @@ export class EventStore {
 
   /**
    * 升级兼容：把旧版写在运行时设置里的模型连接参数迁移为供应商 + 模型，
-   * 避免升级后已保存的 Base URL 与 API Key 失效。Server 与 Worker 启动时都会调用，
+   * 避免升级后已保存的 Base URL 与 API Key 失效。Server 启动时调用，
    * 用写事务把「检查 + 插入」锁在一起，先到者生效，后者直接跳过。
    */
   migrateLegacyModelSettings(
@@ -2598,15 +2628,28 @@ export class EventStore {
     });
   }
 
-  private recoverExpiredLeases(): void {
+  /**
+   * 启动时回收上次进程留下的在途事件。
+   *
+   * 单进程部署下不存在其他租约持有者，因此可以立即回收，不必等待租约到期；
+   * 这对「启动补跑」是必要的，否则要空转到 `lease_until` 才会重新入队。
+   */
+  recoverInterruptedEvents(): number {
+    return this.transaction(() => this.recoverExpiredLeases(true));
+  }
+
+  private recoverExpiredLeases(recoverActiveLeases = false): number {
     const now = new Date();
+    const condition = recoverActiveLeases
+      ? "lease_token != ''"
+      : "lease_token != '' AND lease_until > 0 AND lease_until <= ?";
     const rows = this.db
       .prepare(
         `SELECT id,status,attempt_count,cancel_requested,actor_id FROM events
-         WHERE lease_token != '' AND lease_until > 0 AND lease_until <= ?
+         WHERE ${condition}
          AND status IN (${active.map(() => "?").join(",")})`,
       )
-      .all(now.valueOf(), ...active) as {
+      .all(...(recoverActiveLeases ? active : [now.valueOf(), ...active])) as {
       id: string;
       status: EventStatus;
       attempt_count: number;
@@ -2616,16 +2659,16 @@ export class EventStore {
     for (const row of rows) {
       // 发布阶段无法确认 GitLab 是否已收到评论，不能像其他阶段那样自动重试。
       let status: EventStatus = "queued";
-      let error = "Worker lease expired; task will be retried.";
+      let error = "Event lease expired; task will be retried.";
       if (row.cancel_requested) {
         status = "cancelled";
-        error = "Worker lease expired after cancellation was requested; task was cancelled.";
+        error = "Event lease expired after cancellation was requested; task was cancelled.";
       } else if (row.status === "publishing") {
         status = "failed";
-        error = "Worker lease expired during publishing; outcome is uncertain, so automatic retry was skipped to prevent duplicate GitLab comments.";
+        error = "Event lease expired during publishing; outcome is uncertain, so automatic retry was skipped to prevent duplicate GitLab comments.";
       } else if (row.attempt_count >= maxAttempts) {
         status = "failed";
-        error = "Worker lease expired and the maximum number of attempts was reached.";
+        error = "Event lease expired and the maximum number of attempts was reached.";
       }
       this.db
         .prepare(
@@ -2649,6 +2692,7 @@ export class EventStore {
       }
       this.insertAudit(row.actor_id, "event_status", row.id, `${row.status}->${status}`, now.toISOString());
     }
+    return rows.length;
   }
 
   private validTransition(from: EventStatus, to: EventStatus): boolean {

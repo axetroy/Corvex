@@ -18,7 +18,7 @@ import {
  * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌、
  * Webhook 密钥与 `agent.enabled`，这些仍从配置文件或环境变量读取。
  */
-export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "worker" | "gitlab";
+export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "events" | "gitlab";
 
 export interface RuntimeSettingDefinition {
   key: string;
@@ -38,10 +38,10 @@ export interface RuntimeSettingDefinition {
   /** 允许提交空字符串（例如 bot 用户名留空）。 */
   allowEmpty?: boolean;
   /**
-   * 该键被 Worker 在构造阶段读取（例如审查文件上限）。变更后 Worker 需要重建
+   * 该键由事件执行器在构造阶段读取（例如审查文件上限）。变更后执行器需要重建
    * 依赖这些参数的组件，仅改内存配置不会生效。
    */
-  workerScoped?: boolean;
+  eventRunnerScoped?: boolean;
   /**
    * 不在运维台展示的旧键。模型名、地址、密钥、上下文窗口与输出上限已由
    * 「模型 > 供应商与模型」管理，这里保留读取是为了升级后旧覆盖项仍能生效。
@@ -73,11 +73,11 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
   { key: "mcp_enabled", section: "agent", field: "mcpEnabled", type: "boolean" },
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },
-  // 运行时长与 Worker 轮询：秒为界面单位，配置内部仍用毫秒。
+  // 运行时长与事件调度：秒为界面单位，配置内部仍用毫秒。
   { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
   { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
-  { key: "worker_poll_interval", section: "worker", field: "pollInterval", type: "number", min: 1, max: 3_600, scale: 1_000 },
-  { key: "worker_event_timeout", section: "worker", field: "eventTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
+  { key: "events_poll_interval", section: "events", field: "pollInterval", type: "number", min: 1, max: 3_600, scale: 1_000 },
+  { key: "events_timeout", section: "events", field: "eventTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
   // GitLab Webhook 行为：Server 每次处理 Note Hook 时读取。
@@ -88,15 +88,15 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
   { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
   // 审查与历史评论
-  { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, workerScoped: true },
-  { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, workerScoped: true },
-  { key: "review_max_context_bytes", section: "review", field: "maxContextBytes", type: "number", min: 1, max: 8 << 20, workerScoped: true },
-  { key: "review_batch_concurrency", section: "review", field: "batchConcurrency", type: "number", min: 1, max: 4, workerScoped: true },
+  { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, eventRunnerScoped: true },
+  { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, eventRunnerScoped: true },
+  { key: "review_max_context_bytes", section: "review", field: "maxContextBytes", type: "number", min: 1, max: 8 << 20, eventRunnerScoped: true },
+  { key: "review_batch_concurrency", section: "review", field: "batchConcurrency", type: "number", min: 1, max: 4, eventRunnerScoped: true },
   { key: "chat_history_comments", section: "chat", field: "historyComments", type: "number", min: 0, max: 50 },
   { key: "issue_history_comments", section: "issue", field: "historyComments", type: "number", min: 0, max: 50 },
   // 修复与 Issue 实现
   { key: "fix_enabled", section: "fix", field: "enabled", type: "boolean" },
-  { key: "fix_max_patch_bytes", section: "fix", field: "maxPatchBytes", type: "number", min: 1, max: 256 << 10, workerScoped: true },
+  { key: "fix_max_patch_bytes", section: "fix", field: "maxPatchBytes", type: "number", min: 1, max: 256 << 10, eventRunnerScoped: true },
   { key: "issue_implement_enabled", section: "issue", field: "implementEnabled", type: "boolean" },
   // 存储与对话工作区：Server 每次回收工作区/执行保留任务时读取，改后无需重启。
   { key: "storage_retention_days", section: "storage", field: "retentionDays", type: "number", min: 1, max: 36_500 },
@@ -289,7 +289,7 @@ export function applyActiveModel(config: CorvexConfig, active: ActiveModel): voi
 
 /**
  * 把覆盖项应用到配置对象。就地修改对应段，让已经持有该对象引用的 Runner 与
- * PiAgent 立即看到新值；Worker 需要自行决定何时重建构造期读取参数的组件。
+ * PiAgent 立即看到新值；事件执行器需要自行决定何时重建构造期读取参数的组件。
  */
 export function applyRuntimeSettings(config: CorvexConfig, overrides: Record<string, string>): void {
   for (const [key, raw] of Object.entries(overrides)) {

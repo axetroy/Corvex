@@ -4,24 +4,23 @@
 
 - 从源码构建或运行需要 Node.js 26.12.1 及 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
 - Server 需要访问 GitLab API；GitLab 必须能访问 Server 的 Webhook 地址。
-- Worker 需要 `git` 可执行程序、GitLab API/仓库抓取的网络访问，以及（启用 Agent 时）访问模型 API 的 HTTPS 网络。项目提供的 Docker 镜像包含 Git。
+- Server 需要 `git` 可执行程序用于内联事件执行、GitLab API/仓库抓取的网络访问，以及（启用 Agent 时）访问模型 API 的 HTTPS 网络。项目提供的 Docker 镜像包含 Git。
 - SQLite 与 Git 数据必须存储在持久且可写的卷中，不能依赖容器临时文件系统。Corvex 使用 SQLite WAL 模式；应选择可靠支持 SQLite 锁定的本地文件系统/卷，不要假定任意网络文件系统都适用。
 - 保持系统时间同步。每日模型预算按 UTC 记账。
 
-SQLite 通过 Node.js 内置的 `node:sqlite` 模块运行，不需要原生扩展或额外部署 SQLite 服务。构建 TypeScript 应用后，Server 与 Worker 作为两个独立进程运行：
+SQLite 通过 Node.js 内置的 `node:sqlite` 模块运行，不需要原生扩展或额外部署 SQLite 服务。构建 TypeScript 应用后，启动单进程 Server（HTTP、内联事件与内联对话）：
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm start -- --config configs/config.yaml server
-pnpm start -- --config configs/config.yaml worker
 ```
 
-默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。`agent.enabled` 未设为 `true` 时 Worker 会拒绝启动。
+默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。未启用 `agent.enabled` 时 Server 仍接收并保存事件，但不会执行。
 
 ## Docker Compose
 
-1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。只有运行 Worker 时才需要读取令牌和模型 API 密钥。妥善保护此文件，不要提交到版本控制。
+1. 复制 `.env.example` 为 `.env`，设置 GitLab 写令牌和 Webhook Secret。读取令牌始终必填；模型 API 密钥在启用 Agent 时必填。妥善保护此文件，不要提交到版本控制。
 2. 复制 `configs/config.example.yaml` 为 `configs/config.yaml` 并填写 GitLab URL；仅在需要禁止某些用户调用指令时，才填写 `gitlab.blocked_user_ids`。Agent 控制台会搜索 `CORVEX_GITLAB_READ_TOKEN` 可访问的全部项目。
 3. 启动 Server：
 
@@ -30,19 +29,18 @@ pnpm start -- --config configs/config.yaml worker
    docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
-4. 如需处理模型任务，将 `agent.enabled` 设为 `true`，配置模型 URL/名称，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`，然后启用 Worker profile：
+4. 如需处理模型任务，将 `agent.enabled` 设为 `true`，配置模型 URL/名称，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`，然后重建 Server 容器：
 
    ```sh
-   docker compose --env-file .env -f deploy/compose.yaml --profile worker pull
-   docker compose --env-file .env -f deploy/compose.yaml --profile worker up -d
+   docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate corvex
    ```
 
-两个服务将同一命名卷 `corvex-data` 挂载到 `/data/corvex`；数据库和 Git 根目录都位于此卷中。只有 Server 映射 8080 端口。示例 Compose 使用只读容器根文件系统、临时 `/tmp`、移除 Linux capabilities 并启用 `no-new-privileges`。
+单个服务将命名卷 `corvex-data` 挂载到 `/data/corvex`；数据库和 Git 根目录都位于此卷中，并映射 8080 端口。示例 Compose 使用只读容器根文件系统、临时 `/tmp`、移除 Linux capabilities 并启用 `no-new-privileges`。
 
 Compose 默认使用 `ghcr.io/axetroy/corvex` 镜像。从本地代码构建时，可在 `docker compose up` 命令中添加 `--build`。
 GHCR 的包可见性决定是否允许匿名拉取；如部署不应要求 `docker login`，首次发布后请将镜像包设为公开。
 
-Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2 CPU/2 GiB、256 个 PID。可通过 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS`、`CORVEX_PIDS_LIMIT` 以及对应的 `CORVEX_WORKER_MEM_LIMIT`、`CORVEX_WORKER_CPUS`、`CORVEX_WORKER_PIDS_LIMIT` 覆盖。JSON 日志单个最大 10 MiB，保留 3 个文件。
+Compose 默认资源限制为 1 CPU/1 GiB、256 个 PID。可通过 `CORVEX_MEM_LIMIT`、`CORVEX_CPUS`、`CORVEX_PIDS_LIMIT` 覆盖。JSON 日志单个最大 10 MiB，保留 3 个文件。
 
 通过 HTTPS 向 GitLab 暴露 Webhook，并在网络或代理层限制 GitLab API、数据库卷和指标端点的访问。Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡器处终止 TLS。
 只读 Agent 控制台默认关闭；同时设置 `CORVEX_OPS_USERNAME` 和 `CORVEX_OPS_PASSWORD` 后，可访问 `https://<corvex-host>/ops`。相同凭据也保护其 API。请使用强且唯一的密码；不要通过普通 HTTP 或不可信网络暴露控制台。
@@ -56,7 +54,7 @@ Compose 默认资源限制：Server 为 1 CPU/1 GiB、256 个 PID；Worker 为 2
 | `GET /readyz` | SQLite 就绪检查；数据库不可用时返回 `503`。 |
 | `GET /metrics` | Prometheus 文本格式指标，包含事件状态、模型调用次数、耗时和 Token 汇总。 |
 | `GET /ops` | 可选的 Basic Auth 保护只读 Agent 控制台；未配置控制台凭据时禁用。 |
-| `GET /api/ops/overview` | Agent 控制台概览：事件状态计数、最老排队时长、Worker 心跳和模型调用指标。 |
+| `GET /api/ops/overview` | Agent 控制台概览：事件状态计数、最老排队时长、内联执行器心跳和模型调用指标。 |
 | `GET /api/ops/events` | 筛选/分页事件列表（`status`、`type`、`projectId`、`mrIid`、`search`、`limit`、`offset`）。 |
 | `GET /api/ops/events/<id>` | 事件详情、持久化尝试历史、生命周期变化、Agent 轨迹及各执行步骤的输入/输出记录。 |
 | `GET /api/ops/projects` | 搜索配置的 GitLab 只读令牌可访问的项目。 |
@@ -90,7 +88,6 @@ Corvex 将结构化 JSON 日志写到 stdout。在 Compose 中查看日志：
 
 ```sh
 docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
-docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f corvex-worker
 ```
 
 | 现象 | 检查项 |
@@ -98,14 +95,14 @@ docker compose --env-file .env -f deploy/compose.yaml --profile worker logs -f c
 | Webhook 返回 `401` | 确认 GitLab Hook Secret 与 `CORVEX_WEBHOOK_SECRET` 完全相同。 |
 | Webhook 返回 `400` | 接口仅接受有效的合并请求或 Issue Note Hook；关闭不支持的事件，并确认请求来自合并请求或 Issue 评论。 |
 | Webhook 返回 `403` | 检查评论者是否在 `gitlab.blocked_user_ids` 中，或请求的能力是否已启用。 |
-| 任务一直排队 | 确认 Worker 已启动、配置 `agent.enabled: true`、使用相同数据库卷/配置，并且模型配置有效。 |
-| Worker 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Worker 上是否安装 Git。 |
+| 任务一直排队 | 确认 Server 已配置 `agent.enabled: true`，并且模型配置有效。 |
+| Server 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Server 主机是否安装 Git。 |
 | 任务变为 stale | 命令入队后 MR 已关闭或 Diff 已改变；应针对当前版本重新提交命令。 |
 | `readyz` 返回 `503` | 检查数据库路径、持久卷挂载和文件系统权限。 |
 
 ## 事件管理
 
-使用 Server 和 Worker 共享的 SQLite 数据库列出最近任务或筛选失败任务：
+使用 Server 的 SQLite 数据库列出最近任务或筛选失败任务：
 
 ```sh
 pnpm start -- events list --database ./data/state/corvex.db --status failed
@@ -133,7 +130,7 @@ pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1
 pnpm start -- storage cleanup --config configs/config.yaml --older-than-days 1 --apply
 ```
 
-默认只做 dry-run；清理会跳过活动 worktree、仍有排队或运行中轮次的对话，以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止所有 Worker，避免与新领取的任务竞争。Compose 部署可在停止 Worker profile 后，从 Server 容器运行：
+默认只做 dry-run；清理会跳过活动 worktree、仍有排队或运行中轮次的对话，以及有排队/运行任务的项目，只处理超过设定期限的目录。执行实际清理前请停止 Server，避免与新领取的任务竞争。Compose 部署可从 Server 容器运行：
 
 ```sh
 docker compose --env-file .env -f deploy/compose.yaml exec corvex \
@@ -152,13 +149,13 @@ pnpm start -- backup \
 
 容器部署时，应在可访问挂载数据库且安装了项目依赖的环境中运行备份命令。备份应采用与生产数据库相同的加密和访问控制策略。
 
-恢复前停止 Server 和 Worker，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启两个进程。不要覆盖正在使用的数据库。
+恢复前停止 Server，先保留当前数据库用于回滚，再将已验证的备份替换到配置的数据库路径，然后重启 Server。不要覆盖正在使用的数据库。
 
 Server 启动时执行清理，之后约每 24 小时清理一次。终态事件、尝试记录、关联的执行步骤、Agent 轨迹、Webhook 投递记录及每日 Token 用量按 `storage.retention_days`（默认 90 天）清理；未关联事件的执行步骤也按相同周期清理。审计记录按 `storage.audit_retention_days`（默认 365 天）清理。排队和运行中的事件会保留。Agent 控制台中空闲超过保留期的对话连同其消息一并删除；仍有排队或运行中回复的对话会保留，避免丢弃进行中的对话。执行事件输入/输出有大小限制，并会尽力脱敏类似凭证的内容。为在 Agent 控制台完整呈现一轮对话，Agent 轨迹会保留模型提示词与上下文、工具参数与结果以及模型输出；上下文条目在各轮之间增量存储，查看单轮详情时再重建完整上下文。轨迹可能包含仓库源码、diff、网页内容、评论或秘密信息，且不受执行事件的脱敏和大小限制保护。请妥善保护数据库和备份，通过 HTTPS 访问控制台，并严格限制操作员权限。`storage.root` 中的 Git 镜像不受数据库清理管理；请监控磁盘空间并单独制定镜像维护策略。
 
 ## 升级与开发
 
-升级前先备份数据库。应用会在启动时执行 SQLite Schema 迁移；Server 和 Worker 应部署相同版本并继续使用共享数据卷。在生产环境依赖升级前，应使用备份验证升级和恢复流程。
+升级前先备份数据库。应用会在启动时执行 SQLite Schema 迁移；Server 应部署相同版本并继续使用数据卷。在生产环境依赖升级前，应使用备份验证升级和恢复流程。
 
 在源码仓库中运行常用检查：
 
@@ -170,4 +167,4 @@ pnpm test
 pnpm run build
 ```
 
-仓库 CI 使用 Node.js 26.12.1 运行这些检查。Worker 主机必须安装 Git。
+仓库 CI 使用 Node.js 26.12.1 运行这些检查。Server 主机必须安装 Git。

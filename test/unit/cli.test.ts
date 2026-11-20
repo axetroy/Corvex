@@ -14,8 +14,9 @@ describe("CLI environment file", () => {
         gitlab: { base_url: "https://gitlab.example.com" },
         storage: { root, database: join(root, "state.db") },
       }));
-      await writeFile(envPath, "CORVEX_GITLAB_TOKEN=from-file\nCORVEX_WEBHOOK_SECRET=from-file\n");
+      await writeFile(envPath, "CORVEX_GITLAB_READ_TOKEN=from-file\nCORVEX_GITLAB_TOKEN=from-file\nCORVEX_WEBHOOK_SECRET=from-file\n");
       const env = { ...process.env };
+      delete env.CORVEX_GITLAB_READ_TOKEN;
       delete env.CORVEX_GITLAB_TOKEN;
       delete env.CORVEX_WEBHOOK_SECRET;
       const output = execFileSync(
@@ -31,10 +32,26 @@ describe("CLI environment file", () => {
           envPath,
         ],
         { encoding: "utf8", env },
+        { timeout: 20_000 },
       );
       expect(output).toContain("Configuration is valid");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
+
+  it("rejects the removed worker command", () => {
+    let output = "";
+    try {
+      execFileSync(
+        process.execPath,
+        ["--import", "tsx", join(process.cwd(), "src", "cli.ts"), "worker"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } catch (error) {
+      const failure = error as Error & { stderr?: string };
+      output = `${failure.stderr ?? ""}${failure.message}`;
+    }
+    expect(output).toContain("usage: corvex");
+  }, 20_000);
 });

@@ -67,6 +67,10 @@ export class SettingsService {
           model: migrated.model.name,
         });
       }
+      const migratedEventKeys = this.store.migrateLegacyEventRuntimeSettings();
+      if (migratedEventKeys > 0) {
+        console.info("migrated legacy event runtime settings", { keys: migratedEventKeys });
+      }
       const applied = applyRuntimeSettingRows(this.config, this.store.listRuntimeSettings());
       if (applied.length > 0) {
         console.info("applied stored runtime settings", { keys: applied });

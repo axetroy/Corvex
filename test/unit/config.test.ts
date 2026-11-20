@@ -39,7 +39,7 @@ function validConfig(): CorvexConfig {
     },
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
     chat: { historyComments: 20 },
-    worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+    events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
     issue: { implementEnabled: false, historyComments: 20 },
   };
@@ -235,15 +235,28 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("requires a GitLab read token when the operations console is enabled", () => {
+  it("reads the legacy worker YAML section as event settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-events-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(configPath, JSON.stringify({
+        gitlab: { base_url: "https://gitlab.example.com", blocked_user_ids: [] },
+        storage: { root, database: join(root, "state.db") },
+        worker: { poll_interval: "3s", event_timeout: "2m" },
+      }));
+      const config = await loadConfig(configPath, "storage");
+      expect(config.events).toEqual({ pollInterval: 3_000, eventTimeout: 120_000 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a GitLab read token for the server role", () => {
     const config = validConfig();
-    config.operations.username = "operator";
-    config.operations.password = "password";
     config.gitlab.readToken = "";
     expect(() => validateConfig(config, "server")).toThrow("CORVEX_GITLAB_READ_TOKEN is required");
 
-    config.operations.username = "";
-    config.operations.password = "";
+    config.gitlab.readToken = "read";
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
@@ -336,16 +349,29 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "webhook";
       process.env.CORVEX_MODEL_API_KEY = "";
-      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "", writeToken: "write", webhookSecret: "webhook" },
-      });
+      await expect(loadConfig(configPath, "server")).rejects.toThrow(
+        "CORVEX_GITLAB_READ_TOKEN is required",
+      );
 
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
+      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
+        gitlab: { readToken: "read", writeToken: "write", webhookSecret: "webhook" },
+      });
+
       process.env.CORVEX_WEBHOOK_SECRET = "";
+      await expect(loadConfig(configPath, "server")).rejects.toThrow(
+        "CORVEX_WEBHOOK_SECRET is required",
+      );
       process.env.CORVEX_MODEL_API_KEY = "model-key";
-      await expect(loadConfig(configPath, "worker")).resolves.toMatchObject({
+      await expect(loadConfig(configPath, "benchmark")).resolves.toMatchObject({
         gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
         agent: { apiKey: "model-key", webEnabled: true, webBlockedHosts: [] },
+      });
+
+      process.env.CORVEX_GITLAB_READ_TOKEN = "";
+      process.env.CORVEX_GITLAB_TOKEN = "";
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        gitlab: { readToken: "", writeToken: "", webhookSecret: "" },
       });
     } finally {
       for (const name of names) {

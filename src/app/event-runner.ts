@@ -14,7 +14,7 @@ import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext } from "../age
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../events/execution.js";
 
-/** Worker 事件租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
+/** 事件执行器租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
 /** 自动重试时按事件尝试序号递增的基础退避时长，单位为毫秒。 */
 const automaticRetryBaseDelayMs = 2_000;
@@ -86,8 +86,15 @@ function errorDetails(error: unknown): string {
   return details.join("\nCaused by: ");
 }
 
-export class Worker {
-  private readonly workerId = randomUUID();
+/**
+ * 事件执行器：在 Server 进程内联领取并执行 review / chat / explain / fix /
+ * implement 事件。它不再是独立进程，改为由 `CorvexServer` 随 HTTP 服务一起启动。
+ *
+ * 事件仍持久化在 SQLite 队列中，因此保留租约、取消、重试与发布安全语义；
+ * Webhook 入队后会立即 `wake()`，无需等待兜底轮询。
+ */
+export class EventRunner {
+  private readonly runnerId = randomUUID();
   private readonly repo: GitManager;
   private reviewer!: ReviewWorkflow;
   private fixer!: FixWorkflow;
@@ -98,13 +105,16 @@ export class Worker {
   private readonly baseline: CorvexConfig;
   /** 上次应用的覆盖项签名；相同则跳过重建流程对象。 */
   private runtimeSignature = "";
+  /** Webhook 入队后的唤醒标记与等待者，避免固定轮询带来的延迟。 */
+  private wakePending = false;
+  private readonly wakeWaiters = new Set<() => void>();
 
   constructor(
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
   ) {
-    if (!config.agent.enabled) throw new Error("worker mode requires agent.enabled=true");
+    if (!config.agent.enabled) throw new Error("event runner requires agent.enabled=true");
     this.baseline = structuredClone(config);
     this.repo = new GitManager(
       config.storage.root,
@@ -153,10 +163,10 @@ export class Worker {
   }
 
   /**
-   * 从数据库读取运行时覆盖项并热加载。Server 写入后 Worker 在下一次轮询时生效，
+   * 从数据库读取运行时覆盖项并热加载。控制台写入后执行器在下一轮循环生效，
    * 不需要重启；签名未变化时只做一次字符串比较，避免每轮重建对象。
    */
-  private refreshRuntimeSettings(): void {
+  refreshRuntimeSettings(): void {
     try {
       const rows = this.store.listRuntimeSettings();
       const active = this.store.getActiveModel();
@@ -177,7 +187,7 @@ export class Worker {
       );
       this.runtimeSignature = signature;
       this.buildWorkflows();
-      console.info("worker applied runtime settings", { keys: applied });
+      console.info("event runner applied runtime settings", { keys: applied });
     } catch (error) {
       console.error("refresh runtime settings failed", { error: errorMessage(error) });
     }
@@ -185,36 +195,29 @@ export class Worker {
 
   async run(signal: AbortSignal): Promise<void> {
     await this.repo.initialize();
+    // 上一进程可能在任意阶段中断；单进程部署下租约没有其他持有者，立即回收补跑。
     try {
-      const migrated = this.store.migrateLegacyModelSettings(
-        { contextWindow: this.config.agent.contextWindow, maxOutputTokens: this.config.agent.maxOutputTokens },
-        0,
-      );
-      if (migrated) {
-        console.info("worker migrated legacy model settings", {
-          provider: migrated.provider.name,
-          model: migrated.model.name,
-        });
-      }
+      const recovered = this.store.recoverInterruptedEvents();
+      if (recovered > 0) console.warn("recovered interrupted events", { count: recovered });
     } catch (error) {
-      console.error("migrate legacy model settings failed", { error: errorMessage(error) });
+      console.error("recover interrupted events failed", { error: errorMessage(error) });
     }
-    console.info("Corvex worker started", { pollIntervalMs: this.config.worker.pollInterval });
+    console.info("Corvex event runner started", { pollIntervalMs: this.config.events.pollInterval });
     while (!signal.aborted) {
       this.refreshRuntimeSettings();
       try {
-        this.store.heartbeatWorker(this.workerId);
+        this.store.heartbeatRunner(this.runnerId);
       } catch (error) {
-        console.error("update worker heartbeat failed", { error: errorMessage(error) });
+        console.error("update event runner heartbeat failed", { error: errorMessage(error) });
       }
       let event: Event | undefined;
       try {
         event = this.store.claimNextWithLease(leaseMs);
       } catch (error) {
-        console.error("claim worker event failed", { error: errorMessage(error) });
+        console.error("claim event failed", { error: errorMessage(error) });
       }
       if (event) {
-        console.info("Corvex worker claimed event", {
+        console.info("Corvex event runner claimed event", {
           eventId: event.id,
           type: event.type,
           projectId: event.projectId,
@@ -227,11 +230,44 @@ export class Worker {
         continue;
       }
       try {
-        await sleep(this.config.worker.pollInterval, undefined, { signal });
+        await this.waitForWork(signal, this.config.events.pollInterval);
       } catch (error) {
         if (!signal.aborted) throw error;
       }
     }
+  }
+
+  /** Webhook 入队后唤醒执行器，让新事件无需等待下一次兜底轮询。 */
+  wake(): void {
+    this.wakePending = true;
+    for (const resolve of [...this.wakeWaiters]) resolve();
+    this.wakeWaiters.clear();
+  }
+
+  /**
+   * 等待新事件或兜底轮询超时。`wake()` 会立刻结束等待；关闭信号也会结束等待，
+   * 让 `run` 正常退出。等待期间不占用租约。
+   */
+  private waitForWork(signal: AbortSignal, timeoutMs: number): Promise<void> {
+    if (this.wakePending) {
+      this.wakePending = false;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const state: { timer?: ReturnType<typeof setTimeout> } = {};
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (state.timer !== undefined) clearTimeout(state.timer);
+        this.wakeWaiters.delete(finish);
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      state.timer = setTimeout(finish, timeoutMs);
+      this.wakeWaiters.add(finish);
+      signal.addEventListener("abort", finish, { once: true });
+    });
   }
 
   private async process(event: Event, shutdownSignal: AbortSignal): Promise<void> {
@@ -239,10 +275,10 @@ export class Worker {
     const controller = new AbortController();
     const eventSignal = AbortSignal.any([
       controller.signal,
-      AbortSignal.timeout(this.config.worker.eventTimeout),
+      AbortSignal.timeout(this.config.events.eventTimeout),
       shutdownSignal,
     ]);
-    const onShutdown = () => controller.abort(new Error("worker shutting down"));
+    const onShutdown = () => controller.abort(new Error("event runner shutting down"));
     shutdownSignal.addEventListener("abort", onShutdown, { once: true });
     const heartbeat = this.maintainLease(event, eventSignal, controller);
     let processingError: unknown;
@@ -251,7 +287,7 @@ export class Worker {
         const previous = stage;
         this.store.updateLeasedStatus(event.id, event.leaseToken, stage, next);
         stage = next;
-        console.info("Corvex worker event status changed", {
+        console.info("Corvex event status changed", {
           eventId: event.id,
           type: event.type,
           projectId: event.projectId,
@@ -270,7 +306,7 @@ export class Worker {
       await heartbeat;
     }
     if (!processingError) {
-      console.info("Corvex worker event completed", {
+      console.info("Corvex event completed", {
         eventId: event.id,
         type: event.type,
         projectId: event.projectId,
@@ -282,7 +318,7 @@ export class Worker {
     }
     // 进程关闭时保留租约，由过期租约恢复事件，避免把中断误记为事件失败。
     if (shutdownSignal.aborted) {
-      console.warn("worker stopped during event; lease will recover it", {
+      console.warn("event runner stopped during event; lease will recover it", {
         eventId: event.id,
         error: errorMessage(processingError),
       });
@@ -291,7 +327,7 @@ export class Worker {
     // 事件已到达终态（stale / cancelled / failed / completed）时，
     // 状态转换在 execute() 内已完成，无需再尝试标记失败，避免无效转换。
     if (stage === "stale" || stage === "cancelled" || stage === "failed" || stage === "completed") {
-      console.info("worker event already in terminal state after error; no further recovery needed", {
+      console.info("event already in terminal state after error; no further recovery needed", {
         eventId: event.id,
         stage,
         error: errorMessage(processingError),
@@ -331,7 +367,7 @@ export class Worker {
           availableAt,
           errorDetails(processingError),
         )) {
-          console.warn("transient worker event failure; automatic retry scheduled", {
+          console.warn("transient event failure; automatic retry scheduled", {
             eventId: event.id,
             attempt: event.attemptCount,
             retryAt: new Date(availableAt).toISOString(),
@@ -340,7 +376,7 @@ export class Worker {
           return;
         }
       } catch (retryError) {
-        console.error("could not schedule automatic worker retry", {
+        console.error("could not schedule automatic event retry", {
           eventId: event.id,
           error: errorMessage(retryError),
         });
@@ -364,7 +400,7 @@ export class Worker {
         });
       }
     }
-    console.error("process worker event failed", { eventId: event.id, error: errorMessage(processingError) });
+    console.error("process event failed", { eventId: event.id, error: errorMessage(processingError) });
   }
 
   private async maintainLease(
@@ -378,7 +414,7 @@ export class Worker {
         await sleep(1000, undefined, { signal });
       } catch {
         if (signal.aborted) return;
-        throw new Error("worker heartbeat wait failed");
+        throw new Error("event runner heartbeat wait failed");
       }
       try {
         if (this.store.cancellationRequested(event.id, event.leaseToken)) {
@@ -387,9 +423,9 @@ export class Worker {
         }
         elapsed += 1000;
         if (elapsed >= leaseMs / 3) {
-          // 提前续租，为调度延迟留出余量，避免其他 worker 抢占事件。
+          // 提前续租，为调度延迟留出余量，避免租约被误判为过期。
           this.store.renewLease(event.id, event.leaseToken, leaseMs);
-          this.store.heartbeatWorker(this.workerId);
+          this.store.heartbeatRunner(this.runnerId);
           elapsed = 0;
         }
       } catch (error) {
@@ -425,7 +461,7 @@ export class Worker {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(event.headSha)) {
       this.store.recordExecutionStep({
         ...stepContext,
-        step: "worker.validate_head_sha",
+        step: "event.validate_head_sha",
         status: "ignored",
         input: { expectedHeadSha: event.headSha, actualHeadSha: event.headSha },
         output: { accepted: false, reason: "invalid_head_sha" },
@@ -461,7 +497,7 @@ export class Worker {
     if (mergeRequest.state !== "opened") {
       this.store.recordExecutionStep({
         ...stepContext,
-        step: "worker.validate_mr_state",
+        step: "event.validate_mr_state",
         status: "ignored",
         input: { state: mergeRequest.state },
         output: { accepted: false, reason: "merge_request_not_opened" },
@@ -472,7 +508,7 @@ export class Worker {
     if (!sameSha(headSha(mergeRequest), event.headSha)) {
       this.store.recordExecutionStep({
         ...stepContext,
-        step: "worker.validate_head_sha",
+        step: "event.validate_head_sha",
         status: "ignored",
         input: { expectedHeadSha: event.headSha, actualHeadSha: headSha(mergeRequest) },
         output: { accepted: false, reason: "head_sha_changed" },
@@ -771,7 +807,7 @@ export class Worker {
     if (issue.state !== "opened") {
       this.store.recordExecutionStep({
         ...stepContext,
-        step: "worker.validate_issue_state",
+        step: "event.validate_issue_state",
         status: "ignored",
         input: { state: issue.state },
         output: { accepted: false, reason: "issue_not_opened" },
@@ -1119,7 +1155,7 @@ export class Worker {
     const current = sameSnapshot(original, latest, event.headSha);
     this.store.recordExecutionStep({
       ...stepContext,
-      step: "worker.verify_snapshot",
+      step: "event.verify_snapshot",
       status: current ? "succeeded" : "ignored",
       input: { expectedHeadSha: event.headSha, original: original.diff_refs },
       output: { current, latest: latest.diff_refs, latestState: latest.state },
@@ -1156,7 +1192,7 @@ export class Worker {
       sameSha(original.diff_refs.start_sha, latest.diff_refs.start_sha);
     this.store.recordExecutionStep({
       ...stepContext,
-      step: "worker.verify_pushed_head",
+      step: "event.verify_pushed_head",
       status: current ? "succeeded" : "ignored",
       input: { expectedHeadSha: pushedSha, original: original.diff_refs },
       output: { current, latest: latest.diff_refs, latestState: latest.state },

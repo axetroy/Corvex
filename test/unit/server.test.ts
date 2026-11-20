@@ -128,7 +128,7 @@ describe("CorvexServer", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     };
@@ -924,7 +924,7 @@ describe("CorvexServer", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     };

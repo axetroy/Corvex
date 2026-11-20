@@ -33,7 +33,7 @@ function parseArgs(args: string[]): { configPath: string; minimumF1: number } {
 
 async function run(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const config = await loadConfig(options.configPath, "worker");
+  const config = await loadConfig(options.configPath, "benchmark");
   if (!config.agent.enabled) throw new Error("review benchmark requires agent.enabled=true");
   const store = await EventStore.open(config.storage.database);
   const workspace = await mkdtemp(join(tmpdir(), "corvex-review-benchmark-"));

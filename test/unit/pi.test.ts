@@ -200,7 +200,7 @@ describe("PiAgent", () => {
         summaryEnabled: true,
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     } satisfies CorvexConfig;
@@ -285,9 +285,9 @@ describe("PiAgent", () => {
       round: 1,
       input: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
       schema: expect.stringContaining("path"),
-      output: expect.stringContaining("ENOENT"),
+      output: expect.stringContaining("repository-relative path"),
       rawContent: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
-      errorDetail: expect.stringContaining("ENOENT"),
+      errorDetail: expect.stringContaining("repository-relative path"),
     });
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
     expect(llmTraces).toHaveLength(2);
@@ -463,7 +463,7 @@ describe("PiAgent", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     }, store);
@@ -585,7 +585,7 @@ describe("PiAgent", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     }, store);
@@ -676,7 +676,7 @@ describe("PiAgent", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
       fix: { enabled: false, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     }, store);

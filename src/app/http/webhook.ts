@@ -31,6 +31,8 @@ export class WebhookHandler {
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
+    /** 事件入队后的回调：唤醒内联执行器，避免等待兜底轮询。 */
+    private readonly onEventQueued?: () => void,
   ) {}
 
   async handle(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -277,6 +279,7 @@ export class WebhookHandler {
             type: "implement",
             eventId: result.event.id,
           });
+          if (result.event.created) this.onEventQueued?.();
         }
         if (!result.delivered) {
           const delivery = await this.publishWebhookResponse(
@@ -367,6 +370,7 @@ export class WebhookHandler {
           type: command.name,
           eventId: result.event.id,
         });
+        if (result.event.created) this.onEventQueued?.();
       } else if (result.delivered) {
         console.info("GitLab webhook duplicate delivery", { ...details, command: command.name });
       } else {

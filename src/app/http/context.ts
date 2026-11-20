@@ -3,6 +3,7 @@ import type { CorvexConfig } from "../../config/config.js";
 import type { EventStore } from "../../events/store.js";
 import type { GitLabClient } from "../../gitlab/client.js";
 import type { ConversationRunner } from "../conversation-runner.js";
+import type { EventRunner } from "../event-runner.js";
 import type { SettingsService } from "../settings-service.js";
 
 /**
@@ -14,6 +15,8 @@ export interface OpsContext {
   readonly store: EventStore;
   readonly gitlab: GitLabClient;
   readonly conversations: ConversationRunner;
+  /** 内联事件执行器；`agent.enabled=false` 时为 undefined。 */
+  readonly events?: EventRunner;
   readonly settings: SettingsService;
   /** 正在推送的对话流连接；Server 关闭时统一结束，避免拖住 `close()`。 */
   readonly conversationStreams: Set<ServerResponse>;

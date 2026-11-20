@@ -1,18 +1,18 @@
 # 快速开始
 
-Corvex 是面向 GitLab 合并请求的自托管代码审查与修复代理，包含两个进程：
+Corvex 是面向 GitLab 合并请求的自托管代码审查与修复代理，作为单进程运行：
 
-- **Server** 接收 GitLab Note Hook 事件，校验访问权限，将任务写入 SQLite，并回复评论。
-- **Worker** 从 SQLite 领取任务，读取合并请求的固定版本；需要时调用 OpenAI 兼容模型，并发布结果。
+- **Server** 接收 GitLab Note Hook 事件，校验访问权限，将任务写入 SQLite，回复评论，并在进程内执行这些任务。
+- **内联事件执行器** 读取合并请求的固定版本；需要时调用 OpenAI 兼容模型，并在同一进程中发布结果。
 
-Server 可以独立运行，但没有 Worker 时，审查、解释、修复和 Issue 助手任务会一直排队。详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
+未启用 Agent 时 Server 仍可接收并保存事件，但审查、解释、修复和 Issue 助手任务会一直排队。详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
 
 ## 环境要求
 
 - 从源码运行需要 Node.js 26.12.1 和 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
-- Server 和 Worker 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
+- Server 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
 - GitLab 只读令牌用于 API 读取和仓库抓取；独立的写令牌用于发布 MR 评论和讨论。
-- Worker 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
+- Server 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
 - 启用 Agent 时，需要 OpenAI 兼容 Chat Completions 接口及 API 密钥；Agent Runtime 由 Pi SDK 提供。
 - SQLite 数据库和 Git 镜像目录必须位于重启后仍保留且可写的存储中。
 
@@ -29,13 +29,14 @@ pnpm start -- init
 编辑 `configs/config.yaml`，填写 GitLab URL。只有需要禁止某些用户调用指令时，才将其数字 ID 加入 `gitlab.blocked_user_ids`。为 Server 设置以下变量：
 
 ```sh
+export CORVEX_GITLAB_READ_TOKEN='读取令牌'
 export CORVEX_GITLAB_TOKEN='写入令牌'
 export CORVEX_WEBHOOK_SECRET='足够长的随机密钥'
 ```
 
 ID 使用 GitLab 数字 ID。不要把凭据写入 YAML 或提交到源代码仓库。Agent 控制台会列出 `CORVEX_GITLAB_READ_TOKEN` 可访问的项目；仅在需要接受 Corvex 指令的项目中注册 Webhook。所有配置及边界值请参阅[配置参考](./configuration)。
 
-Server 需要写令牌和 Webhook Secret。启用 Agent 控制台后，还需要 `CORVEX_GITLAB_READ_TOKEN` 用于发现项目和目标。Worker 需要只读令牌；启用 Agent 时还需要 `CORVEX_MODEL_API_KEY`。请使用独立读写令牌并只授予所需权限。
+Server 需要只读令牌、写令牌和 Webhook Secret；启用 Agent 时还需要 `CORVEX_MODEL_API_KEY`。请使用独立读写令牌并只授予所需权限。
 
 ## 2. 启动 Server
 
@@ -102,22 +103,15 @@ Issue 中的普通提及会启动助手任务。Agent 会基于 Issue 和近期�
 
 ## 5. 启用模型任务
 
-审查、解释、修复提案和 Issue 助手需要 Worker 及模型配置。设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
+审查、解释、修复提案和 Issue 助手需要启用 Agent 及模型配置。设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
 
 ## Issue 助手与实现
 
 Issue 提及要求启用 Agent。默认会向 Agent 提供 Issue 和最近 20 条非系统评论；可通过 `issue.history_comments` 设置为 0–50 条。Agent 会自行判断是回复、追问还是提出实现；回复不会创建或推送代码。
 
-代码写入默认关闭。若要允许实现，请设置 `issue.implement_enabled: true`，并配置有权限推送分支和创建合并请求的 GitLab 写令牌。除非当前请求明确命名另一个已存在分支，否则 Worker 使用项目默认分支；评论不能选择目标分支。Worker 创建新的 `corvex/issue-*` 分支并打开 Draft MR，不会运行仓库脚本或测试，也不会自动合并。合并前请人工审查生成的 MR。
+代码写入默认关闭。若要允许实现，请设置 `issue.implement_enabled: true`，并配置有权限推送分支和创建合并请求的 GitLab 写令牌。除非当前请求明确命名另一个已存在分支，否则事件执行器使用项目默认分支；评论不能选择目标分支。事件执行器创建新的 `corvex/issue-*` 分支并打开 Draft MR，不会运行仓库脚本或测试，也不会自动合并。合并前请人工审查生成的 MR。
 
-在另一个进程中启动：
-
-```sh
-pnpm start -- --config configs/config.yaml --for worker check-config
-pnpm start -- --config configs/config.yaml worker
-```
-
-Agent 关闭时，Server 仍可接收事件并持久化任务，但 Worker 会拒绝启动。可通过[运行环境与运维](./operations)中的健康检查接口测试本地 Server。
+Server 已在运行，启用 Agent 后下一次事件即可使用，无需重启。Agent 关闭时 Server 仍接收事件并持久化任务，但不会执行。可通过[运行环境与运维](./operations)中的健康检查接口测试本地 Server。
 
 ## 谨慎启用修复提案
 
@@ -127,7 +121,7 @@ Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent�
 
 启用受 Basic Auth 保护的 Agent 控制台并打开“对话”页。搜索只读 GitLab Token 可访问的项目，然后选择仓库和分支，即可开始围绕代码的通用聊天。Corvex 在消息入队时于服务端查询并固定分支头 SHA。对话及每轮消息都保存在 SQLite 中；同一对话一次只运行一轮。页面铺满视口：左侧按模型生成的标题列出对话（首轮完成前回退为项目名），并展示轮次数、模式标签与最近一轮状态，右侧工作区显示仓库头部与三个标签页。**对话** 呈现 Markdown 记录并可复制回复，同时在记录上方以折叠块展示该对话的系统提示词；**轨迹** 以单一时间线呈现模型与工具活动，默认把全部轮次合并（也可聚焦单轮），在不离开对话的情况下查看该范围的执行步骤与生命周期变化；**统计** 汇总用量与耗时并给出逐轮明细。对话 Agent 的仓库能力由其显式模式决定（当前为 `read_only`），并在左侧列表与仓库头部以标签展示；`read_only` 模式下不会修改 worktree 或发布 GitLab 评论。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束；重新发送消息即可使用当前版本。
 
-Pi Session 不开放内建 shell 或任意命令执行。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户要求时，Chat 可通过 `update_mr_metadata` 修改当前 MR 标题和/或描述；未传入的字段保持不变。配置写令牌且 MR 源项目与目标项目相同时，Chat 还可使用 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert`，并固定绑定到当前隔离 worktree 和 MR 源分支。用户要求修改后无需额外确认；补丁仅修改已跟踪普通文件，提交仅接受未暂存的已跟踪文件修改。所有修改和可用验证完成后，Chat 创建最终提交，并在回复前将推送作为最后一次仓库操作；不会推送中间状态，也不会在推送后继续修改文件。推送只进行普通快进更新且永远不能强制推送；回滚只为最近的 Corvex 提交新增 revert commit。Fork MR 不提供 Git 写工具。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Worker 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
+Pi Session 不开放内建 shell 或任意命令执行。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户要求时，Chat 可通过 `update_mr_metadata` 修改当前 MR 标题和/或描述；未传入的字段保持不变。配置写令牌且 MR 源项目与目标项目相同时，Chat 还可使用 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert`，并固定绑定到当前隔离 worktree 和 MR 源分支。用户要求修改后无需额外确认；补丁仅修改已跟踪普通文件，提交仅接受未暂存的已跟踪文件修改。所有修改和可用验证完成后，Chat 创建最终提交，并在回复前将推送作为最后一次仓库操作；不会推送中间状态，也不会在推送后继续修改文件。推送只进行普通快进更新且永远不能强制推送；回滚只为最近的 Corvex 提交新增 revert commit。Fork MR 不提供 Git 写工具。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Server 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
 
 ## 后续阅读
 

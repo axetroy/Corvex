@@ -259,7 +259,7 @@ describe("EventStore", () => {
     });
     // 会话引用的项目也算受保护项目，storage cleanup 不应删掉它的镜像。
     expect(store.pendingProjectIds().has(7)).toBe(true);
-    // 对话轮次不再进入 Worker 队列，只由 Server 内联领取。
+    // 对话轮次不进入事件队列，只由 Server 内联领取。
     expect(store.claimNextWithLease(30_000)).toBeUndefined();
     expect(store.claimConversationTurn(result.turnId)).toMatchObject({
       conversationId: result.conversationId,
@@ -325,7 +325,7 @@ describe("EventStore", () => {
       turnStatus: "failed",
     });
 
-    // 对话轮次已从 Worker 队列移除，重试只通过再次发送消息完成。
+    // 对话轮次不进入事件队列，重试只通过再次发送消息完成。
     expect(store.listEvents("queued", 10)).toEqual([]);
     expect(store.addConversationMessage(created.conversationId, {
       projectId: 7,
@@ -703,14 +703,14 @@ describe("EventStore", () => {
     expect(overview.oldestQueuedAt).toBe(store.listEvents("queued", 10)[0]?.createdAt);
   });
 
-  it("reports recent worker heartbeats in the operations overview", async () => {
+  it("reports the inline event runner heartbeat in the operations overview", async () => {
     store = await EventStore.open(":memory:");
-    store.heartbeatWorker("worker-1");
+    store.heartbeatRunner("runner-1");
 
     const overview = store.operationsOverview();
 
-    expect(overview.workers.onlineCount).toBe(1);
-    expect(overview.workers.lastSeenAt).toEqual(expect.any(String));
+    expect(overview.runner.online).toBe(true);
+    expect(overview.runner.lastSeenAt).toEqual(expect.any(String));
   });
 
   it("filters and paginates operations events with a matching total", async () => {
@@ -940,7 +940,7 @@ describe("EventStore", () => {
     expect(Buffer.byteLength(boundedEvent?.input ?? "")).toBeLessThanOrEqual(64 << 10);
   });
 
-  it("marks in-flight execution events interrupted when a worker lease expires", async () => {
+  it("marks in-flight execution events interrupted when an event lease expires", async () => {
     store = await EventStore.open(":memory:");
     store.createReview("event-1", "key-1", {
       projectId: 7,
@@ -964,6 +964,35 @@ describe("EventStore", () => {
     expect(store.getEventDetails(firstAttempt.id)?.events).toEqual([
       expect.objectContaining({ id: webhookEventId, status: "interrupted", errorDetail: expect.stringContaining("lease expired") }),
     ]);
+  });
+
+  it("recovers an in-flight event immediately on startup", async () => {
+    store = await EventStore.open(":memory:");
+    store.createReview("event-1", "key-1", {
+      projectId: 7,
+      mrIid: 3,
+      headSha: "a".repeat(40),
+      actorId: 11,
+    });
+    const claimed = store.claimNextWithLease(60_000);
+    if (!claimed) throw new Error("expected a queued event to be claimed");
+    expect(store.listEvents("preparing", 10)).toHaveLength(1);
+
+    expect(store.recoverInterruptedEvents()).toBe(1);
+    expect(store.listEvents("queued", 10)).toHaveLength(1);
+    expect(store.claimNextWithLease(30_000)).toMatchObject({ id: claimed.id, attemptCount: 2 });
+  });
+
+  it("migrates legacy worker runtime settings to events keys", async () => {
+    store = await EventStore.open(":memory:");
+    store.setRuntimeSetting("worker_poll_interval", "3", "legacy");
+    store.setRuntimeSetting("worker_event_timeout", "120", "legacy");
+
+    expect(store.migrateLegacyEventRuntimeSettings()).toBe(2);
+    expect(store.getRuntimeSetting("events_poll_interval")).toBe("3");
+    expect(store.getRuntimeSetting("events_timeout")).toBe("120");
+    expect(store.getRuntimeSetting("worker_poll_interval")).toBeUndefined();
+    expect(store.getRuntimeSetting("worker_event_timeout")).toBeUndefined();
   });
 
   it("records execution step outputs and failures", async () => {
@@ -1133,7 +1162,7 @@ describe("EventStore", () => {
       actorId: 0,
     };
     const idle = store.createConversation({ ...base, request: "Summarize the repository layout" });
-    const active = store.createConversation({ ...base, request: "Explain the worker loop" });
+    const active = store.createConversation({ ...base, request: "Explain the event loop" });
     const activeResponseId = store.getConversation(active.conversationId)?.messages[1]?.id;
     if (!activeResponseId) throw new Error("expected a queued conversation response");
     expect(store.claimConversationTurn(idle.turnId)).toBeTruthy();

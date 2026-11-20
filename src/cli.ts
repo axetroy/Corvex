@@ -1,7 +1,6 @@
 import { initializeConfig, loadConfig, type ConfigRole } from "./config/config.js";
 import { applyRuntimeSettingRows } from "./config/settings.js";
 import { CorvexServer } from "./app/server.js";
-import { Worker } from "./app/worker.js";
 import { EventStore } from "./events/store.js";
 import { errorMessage } from "./errors.js";
 import { isEventStatus, type EventStatus } from "./events/model.js";
@@ -10,7 +9,7 @@ import { GitManager } from "./git/manager.js";
 
 interface CliOptions {
   configPath: string;
-  mode: "server" | "worker" | "check-config";
+  mode: "server" | "check-config";
   configRole: ConfigRole;
 }
 
@@ -26,8 +25,8 @@ function parseArgs(args: string[]): CliOptions {
       configPath = value;
     } else if (arg === "--for") {
       const value = args[++index];
-      if (value !== "server" && value !== "worker") {
-        throw new Error("--for must be server or worker");
+      if (value !== "server" && value !== "storage") {
+        throw new Error("--for must be server or storage");
       }
       configRole = value;
     } else if (arg.startsWith("--")) {
@@ -38,18 +37,18 @@ function parseArgs(args: string[]): CliOptions {
   }
   if (
     positional.length > 1 ||
-    (positional[0] && !["server", "worker", "check-config"].includes(positional[0]))
+    (positional[0] && !["server", "check-config"].includes(positional[0]))
   ) {
-    throw new Error("usage: corvex [--env path] [--config path] [--for server|worker] [server|worker|check-config]");
+    throw new Error("usage: corvex [--env path] [--config path] [--for server|storage] [server|check-config]");
   }
   const mode = (positional[0] as CliOptions["mode"] | undefined) ?? "server";
-  if (mode !== "check-config" && configRole && configRole !== mode) {
+  if (mode !== "check-config" && configRole) {
     throw new Error("--for is only valid with check-config");
   }
   return {
     configPath,
     mode,
-    configRole: mode === "worker" ? "worker" : configRole ?? "server",
+    configRole: configRole ?? "server",
   };
 }
 
@@ -242,11 +241,7 @@ async function run(): Promise<void> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    if (options.mode === "server") {
-      await new CorvexServer(config, store, gitlab, options.configPath).run(controller.signal);
-    } else {
-      await new Worker(config, store, gitlab).run(controller.signal);
-    }
+    await new CorvexServer(config, store, gitlab, options.configPath).run(controller.signal);
   } finally {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);

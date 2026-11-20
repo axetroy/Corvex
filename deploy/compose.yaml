@@ -24,7 +24,9 @@ services:
       - "8080:8080"
     environment:
       CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
+      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN-}
       CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET:?set CORVEX_WEBHOOK_SECRET}
+      CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}
       CORVEX_OPS_USERNAME: ${CORVEX_OPS_USERNAME-}
       CORVEX_OPS_PASSWORD: ${CORVEX_OPS_PASSWORD-}
       CORVEX_STORAGE_ROOT: /data/corvex
@@ -37,39 +39,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  corvex-worker:
-    image: ghcr.io/axetroy/corvex:${CORVEX_IMAGE_TAG:-latest}
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    command: ["--config", "/etc/corvex/config.yaml", "worker"]
-    profiles: ["worker"]
-    restart: unless-stopped
-    mem_limit: ${CORVEX_WORKER_MEM_LIMIT:-2g}
-    cpus: ${CORVEX_WORKER_CPUS:-2.0}
-    pids_limit: ${CORVEX_WORKER_PIDS_LIMIT:-256}
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN:?set CORVEX_GITLAB_TOKEN}
-      CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN-}
-      CORVEX_STORAGE_ROOT: /data/corvex
-      CORVEX_DATABASE: /data/corvex/state/corvex.db
-      CORVEX_MODEL_API_KEY: ${CORVEX_MODEL_API_KEY-}
-    volumes:
-      - ../configs/config.yaml:/etc/corvex/config.yaml:ro
-      - corvex-data:/data/corvex
 
 volumes:
   corvex-data:

@@ -6,7 +6,6 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
-import { Worker } from "../../src/app/worker.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
 import { EventStore } from "../../src/events/store.js";
@@ -51,18 +50,15 @@ describe("review task loop", () => {
   let modelServer: Server | undefined;
   let application: CorvexServer | undefined;
   let applicationRun: Promise<void> | undefined;
-  let workerRun: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let serverStore: EventStore | undefined;
-  let workerStore: EventStore | undefined;
 
   afterEach(async () => {
     controller?.abort();
-    await Promise.allSettled([applicationRun, workerRun].filter((value): value is Promise<void> => value !== undefined));
+    await Promise.allSettled([applicationRun].filter((value): value is Promise<void> => value !== undefined));
     if (apiServer) await close(apiServer);
     if (modelServer) await close(modelServer);
     serverStore?.close();
-    workerStore?.close();
     if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -359,12 +355,11 @@ describe("review task loop", () => {
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 20, eventTimeout: 15_000 },
+      events: { pollInterval: 20, eventTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     };
     serverStore = await EventStore.open(config.storage.database);
-    workerStore = await EventStore.open(config.storage.database);
     application = new CorvexServer(config, serverStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
     controller = new AbortController();
     applicationRun = application.run(controller.signal);
@@ -402,11 +397,10 @@ describe("review task loop", () => {
     );
     const webhookResponse = await sendNote(99, 3, "@corvex-bot /review");
     expect(webhookResponse.status).toBe(202);
-    const queued = serverStore.listEvents("queued", 10)[0];
+    // 事件由 Server 内联执行，可能在响应返回前就已被领取，因此不限定 queued 状态。
+    const queued = serverStore.listEvents(undefined, 10)[0];
     if (!queued) throw new Error("webhook did not enqueue a review event");
 
-    const worker = new Worker(config, workerStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
-    workerRun = worker.run(controller.signal);
     await waitFor(() => serverStore!.listEvents("completed", 10).some((event) => event.id === queued.id));
 
     const details = serverStore.getEventDetails(queued.id);
@@ -460,7 +454,7 @@ describe("review task loop", () => {
         "git.create_diff",
         "gitlab.get_merge_request_comments",
         "workflow.chat",
-        "worker.verify_snapshot",
+        "event.verify_snapshot",
         "gitlab.post_note",
       ]),
     );
@@ -558,9 +552,9 @@ describe("review task loop", () => {
     const discussionsBeforeStale = discussionAttempts;
     await waitForStatus(staleEvent.id, "stale");
     expect(discussionAttempts).toBe(discussionsBeforeStale);
-    expect(serverStore.getEventDetails(staleEvent.id)?.events.map(({ step }) => step)).toContain("worker.verify_snapshot");
+    expect(serverStore.getEventDetails(staleEvent.id)?.events.map(({ step }) => step)).toContain("event.verify_snapshot");
 
-    // 对话轮次由 Server 内联执行：不经 Worker、不进入事件队列，并逐条暴露工具调用。
+    // 对话轮次由 Server 内联执行：不进入事件队列，并逐条暴露工具调用。
     modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
     const streamedAnswer = "`input.ts` assigns a value without validating it.";
     const streamedThinking = "先读取文件，再确认赋值附近没有校验。";

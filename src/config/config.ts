@@ -75,7 +75,13 @@ export interface CorvexConfig {
   chat: {
     historyComments: number;
   };
-  worker: {
+  /**
+   * 事件执行器（Server 内联运行）的调度参数。
+   *
+   * 事件入队后会被立即唤醒执行，`pollInterval` 只是兜底轮询间隔；`eventTimeout`
+   * 限制单个事件的总体执行时长。
+   */
+  events: {
     pollInterval: number;
     eventTimeout: number;
   };
@@ -91,7 +97,7 @@ export interface CorvexConfig {
 
 export type ResponseLanguage = "en" | "zh-CN";
 
-export type ConfigRole = "server" | "worker" | "storage";
+export type ConfigRole = "server" | "storage" | "benchmark";
 
 type JsonObject = Record<string, unknown>;
 
@@ -132,7 +138,7 @@ const defaults: CorvexConfig = {
   },
   review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
   chat: { historyComments: 20 },
-  worker: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+  events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
   fix: { enabled: false, maxPatchBytes: 128 << 10 },
   issue: { implementEnabled: false, historyComments: 20 },
 };
@@ -215,7 +221,8 @@ function parseConfig(raw: unknown): CorvexConfig {
   const storage = object(root.storage, "storage");
   const agent = object(root.agent, "agent");
   const review = object(root.review, "review");
-  const worker = object(root.worker, "worker");
+  // `worker` 是旧配置段名，保留读取以便升级后的配置文件继续可用。
+  const events = object(root.events ?? root.worker, "events");
   const fix = object(root.fix, "fix");
   return {
     server: {
@@ -299,9 +306,9 @@ function parseConfig(raw: unknown): CorvexConfig {
     chat: {
       historyComments: number(object(root.chat, "chat").history_comments, defaults.chat.historyComments),
     },
-    worker: {
-      pollInterval: duration(worker.poll_interval, defaults.worker.pollInterval, "worker.poll_interval"),
-      eventTimeout: duration(worker.event_timeout, defaults.worker.eventTimeout, "worker.event_timeout"),
+    events: {
+      pollInterval: duration(events.poll_interval, defaults.events.pollInterval, "events.poll_interval"),
+      eventTimeout: duration(events.event_timeout, defaults.events.eventTimeout, "events.event_timeout"),
     },
     fix: {
       enabled: boolean(fix.enabled, defaults.fix.enabled),
@@ -372,17 +379,13 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (!validHttpUrl(config.gitlab.baseUrl)) {
     problems.push("gitlab.base_url must be a valid HTTP(S) URL");
   }
-  // 按运行角色校验凭据，存储维护命令不应依赖 GitLab API 或模型密钥。
-  if (
-    ((role !== "server" && role !== "storage") || (role === "server" && operationsUsername && operationsPassword)) &&
-    !config.gitlab.readToken.trim()
-  ) {
-    problems.push("CORVEX_GITLAB_READ_TOKEN is required");
+  // 按运行角色校验凭据：Server 既接收 Webhook，也在进程内执行事件，因此需要
+  // 读写令牌与 Webhook 密钥；存储维护命令不应依赖 GitLab API 或模型密钥。
+  if (role !== "storage") {
+    if (!config.gitlab.readToken.trim()) problems.push("CORVEX_GITLAB_READ_TOKEN is required");
+    if (!config.gitlab.writeToken.trim()) problems.push("CORVEX_GITLAB_TOKEN is required");
   }
-  if (role !== "storage" && !config.gitlab.writeToken.trim()) {
-    problems.push("CORVEX_GITLAB_TOKEN is required");
-  }
-  if (role !== "worker" && role !== "storage" && !config.gitlab.webhookSecret.trim()) {
+  if (role !== "storage" && role !== "benchmark" && !config.gitlab.webhookSecret.trim()) {
     problems.push("CORVEX_WEBHOOK_SECRET is required");
   }
   if (!config.storage.root.trim()) problems.push("storage.root is required");
@@ -414,8 +417,8 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (!Number.isInteger(config.chat.historyComments) || config.chat.historyComments < 0 || config.chat.historyComments > 50) {
     problems.push("chat.history_comments must be between 0 and 50");
   }
-  if (config.worker.pollInterval <= 0 || config.worker.eventTimeout <= 0) {
-    problems.push("worker poll interval and event timeout must be positive");
+  if (config.events.pollInterval <= 0 || config.events.eventTimeout <= 0) {
+    problems.push("events poll interval and event timeout must be positive");
   }
   if (config.fix.enabled && !config.agent.enabled) {
     problems.push("agent.enabled must be true when fix.enabled is true");
@@ -435,10 +438,10 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.agent.webBlockedHosts.some((host) => !validBlockedWebHost(host))) {
     problems.push("agent.web_blocked_hosts must contain DNS hostnames without wildcards, ports, or paths");
   }
-  if (role === "worker" && !config.agent.enabled) {
-    problems.push("agent.enabled must be true for worker mode");
+  if (role === "benchmark" && !config.agent.enabled) {
+    problems.push("agent.enabled must be true for benchmark mode");
   }
-  if (config.agent.enabled && role !== "server" && role !== "storage") {
+  if (config.agent.enabled && role !== "storage") {
     // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），
     // 因此配置文件不再强制要求它们；但一旦配置就必须合法。
     if (config.agent.baseUrl && !validHttpUrl(config.agent.baseUrl)) {
