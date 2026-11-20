@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { CompactionResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** 压缩前上下文里保留的一条消息；只取展示所需的角色与纯文本。 */
 export interface ContextSnapshotMessage {
@@ -78,14 +78,57 @@ export function buildContextSnapshot(
   };
 }
 
-/** 观察扩展：在 SDK 压缩前抓取将被摘要的上下文，交给调用方写入轨迹。 */
-export function createContextObserveExtension(observation: { before?: ContextSnapshot }): (pi: ExtensionAPI) => void {
+/** 多次摘要失败后使用的确定性摘要：保留最近几条消息的原文，避免压缩反复失败。 */
+export function buildFallbackSummary(snapshot: ContextSnapshot): string {
+  const messages = snapshot.messages.slice(-6);
+  const lines = messages.map((item) => `${item.role}: ${item.text}`);
+  const joined = lines.join("\n\n").slice(0, 3_000);
+  return [
+    "Earlier conversation context (deterministic fallback after summarization failures):",
+    joined || "(no text available)",
+  ].join("\n\n");
+}
+
+export interface ContextObserveCallbacks {
+  /** 压缩刚开始（SDK 尚未开始摘要）时通知界面。 */
+  onBeforeCompact?: (snapshot: ContextSnapshot) => void;
+  /** 摘要失败时通知界面。 */
+  onFailed?: (error?: string) => void;
+}
+
+/**
+ * 观察扩展：在 SDK 压缩前抓取将被摘要的上下文；摘要失败一次后用确定性摘要兜底，
+ * 避免 SDK 因为上下文仍超阈值而无限重试同一种会失败的 LLM 摘要。
+ */
+export function createContextObserveExtension(
+  observation: { before?: ContextSnapshot; failures?: number },
+  callbacks: ContextObserveCallbacks = {},
+): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.on("session_before_compact", (event) => {
-      observation.before = buildContextSnapshot(
+      const snapshot = buildContextSnapshot(
         event.preparation.messagesToSummarize,
         event.preparation.tokensBefore,
       );
+      observation.before = snapshot;
+      callbacks.onBeforeCompact?.(snapshot);
+      observation.failures ??= 0;
+      if (observation.failures < 1) return;
+      const summary = buildFallbackSummary(snapshot);
+      const compaction: CompactionResult = {
+        summary,
+        firstKeptEntryId: event.preparation.firstKeptEntryId,
+        tokensBefore: event.preparation.tokensBefore,
+        estimatedTokensAfter: Math.ceil(summary.length / 4),
+      };
+      return { compaction };
+    });
+    pi.on("session_compact_failed", (event) => {
+      observation.failures = (observation.failures ?? 0) + 1;
+      callbacks.onFailed?.(event.errorMessage);
+    });
+    pi.on("session_compact", () => {
+      observation.failures = 0;
     });
   };
 }

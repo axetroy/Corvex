@@ -467,7 +467,17 @@ export class PiAgent {
       compactionReserveTokens,
     );
 
-    const contextObservation: { before?: ContextSnapshot } = {};
+    const emitContextStream = (context: ConversationStreamContext) => {
+      if (!request.onContextDelta) return;
+      try {
+        request.onContextDelta(context);
+      } catch (error) {
+        console.warn("context stream callback failed", { error: errorMessage(error) });
+      }
+    };
+    let contextEventCount = 0;
+    let contextEventId = "";
+    const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
       agentDir,
@@ -586,7 +596,22 @@ export class PiAgent {
             })]
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
-        createContextObserveExtension(contextObservation),
+        createContextObserveExtension(contextObservation, {
+          onBeforeCompact: () => {
+            if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
+            emitContextStream({
+              id: contextEventId,
+              text: contextNoticeText(this.config.agent.responseLanguage, "start"),
+            });
+          },
+          onFailed: () => {
+            if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
+            emitContextStream({
+              id: contextEventId,
+              text: contextNoticeText(this.config.agent.responseLanguage, "failed"),
+            });
+          },
+        }),
       ],
       systemPrompt: request.systemPrompt,
     });
@@ -656,15 +681,6 @@ export class PiAgent {
         console.warn("tool stream callback failed", { error: errorMessage(error) });
       }
     };
-    const emitContextStream = (context: ConversationStreamContext) => {
-      if (!request.onContextDelta) return;
-      try {
-        request.onContextDelta(context);
-      } catch (error) {
-        console.warn("context stream callback failed", { error: errorMessage(error) });
-      }
-    };
-    let contextEventCount = 0;
     let activeCompaction: {
       streamId: string;
       traceId?: number;
@@ -674,7 +690,8 @@ export class PiAgent {
     } | undefined;
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "compaction_start") {
-        const streamId = `context-${++contextEventCount}`;
+        const streamId = contextEventId || `context-${++contextEventCount}`;
+        contextEventId = streamId;
         emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
         activeCompaction = {
           streamId,
@@ -697,6 +714,7 @@ export class PiAgent {
       if (event.type === "compaction_end") {
         const active = activeCompaction;
         activeCompaction = undefined;
+        contextEventId = "";
         const before = active?.before ?? contextObservation.before ?? null;
         contextObservation.before = undefined;
         const result = event.result;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildContextSnapshot, createContextObserveExtension } from "../../src/agent/context-snapshot.ts";
 
@@ -42,21 +42,56 @@ describe("context snapshot", () => {
 });
 
 describe("context observe extension", () => {
-  it("captures messages scheduled for compaction without changing the result", () => {
-    const observation: { before?: ReturnType<typeof buildContextSnapshot> } = {};
-    let handler: ((event: unknown) => void) | undefined;
+  function fakePi() {
+    const handlers = new Map<string, (event: unknown) => unknown>();
     const pi = {
-      on: (event: string, callback: (event: unknown) => void) => {
-        if (event === "session_before_compact") handler = callback;
+      on: (event: string, callback: (event: unknown) => unknown) => {
+        handlers.set(event, callback);
         return () => undefined;
       },
     } as unknown as ExtensionAPI;
-    createContextObserveExtension(observation)(pi);
+    return { pi, handlers };
+  }
 
-    handler?.({
-      preparation: { messagesToSummarize: [message("user", "before compaction")], tokensBefore: 99 },
-    });
+  const preparation = {
+    firstKeptEntryId: "entry-1",
+    tokensBefore: 99,
+    messagesToSummarize: [message("user", "before compaction")],
+  };
+
+  it("captures messages scheduled for compaction and notifies the start", () => {
+    const observation: { before?: ReturnType<typeof buildContextSnapshot> } = {};
+    const onBeforeCompact = vi.fn();
+    const { pi, handlers } = fakePi();
+    createContextObserveExtension(observation, { onBeforeCompact })(pi);
+
+    const result = handlers.get("session_before_compact")?.({ preparation, reason: "threshold" });
+    expect(result).toBeUndefined();
+    expect(onBeforeCompact).toHaveBeenCalledOnce();
     expect(observation.before).toMatchObject({ tokens: 99 });
     expect(observation.before?.messages).toEqual([{ role: "user", text: "before compaction" }]);
+  });
+
+  it("uses a deterministic summary after a summarization failure instead of looping", () => {
+    const observation: { before?: ReturnType<typeof buildContextSnapshot>; failures?: number } = {};
+    const { pi, handlers } = fakePi();
+    createContextObserveExtension(observation)(pi);
+
+    handlers.get("session_compact_failed")?.({ errorMessage: "token cap" });
+    const result = handlers.get("session_before_compact")?.({ preparation, reason: "threshold" }) as
+      | { compaction: { summary: string; firstKeptEntryId: string; tokensBefore: number } }
+      | undefined;
+    expect(result?.compaction).toMatchObject({ firstKeptEntryId: "entry-1", tokensBefore: 99 });
+    expect(result?.compaction.summary).toContain("user: before compaction");
+  });
+
+  it("resets the failure counter after a successful compaction", () => {
+    const observation: { failures?: number } = {};
+    const { pi, handlers } = fakePi();
+    createContextObserveExtension(observation)(pi);
+    handlers.get("session_compact_failed")?.({});
+    handlers.get("session_compact")?.({});
+    const result = handlers.get("session_before_compact")?.({ preparation, reason: "threshold" });
+    expect(result).toBeUndefined();
   });
 });
