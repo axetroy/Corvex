@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { describeSessionTool, formatTraceDuration } from "../format.js";
 import { isAtScrollBottom } from "../scroll.js";
-import { splitForMiddleEllipsis } from "../truncate.js";
+import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../truncate.js";
 import { translate } from "../i18n.js";
 import type { Copy } from "../i18n.js";
 import { parseTraceValue } from "../trace.js";
@@ -18,16 +18,35 @@ export type ConversationTimelineSegment =
   | { kind: "context"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
 
-/** 工具描述很长时同时保留开头与结尾，中间用省略号；完整文本留在 title。 */
+/** 工具描述很长时按实际字宽均分开头与结尾，中间用省略号；完整文本留在 title。 */
 const ToolCallName = memo(function ToolCallName({ text }: { text: string }) {
-  const { head, tail } = splitForMiddleEllipsis(text);
+  const ref = useRef<HTMLSpanElement>(null);
+  const [parts, setParts] = useState(() => splitForMiddleEllipsis(text));
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const update = () => {
+      const context = document.createElement("canvas").getContext("2d");
+      if (!context) return;
+      context.font = getComputedStyle(node).font;
+      if (node.clientWidth <= 0) return;
+      setParts(fitMiddleEllipsis(text, (value) => context.measureText(value).width, node.clientWidth));
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [text]);
+
   return (
-    <span className="conversation-tool-call-name" title={text}>
-      <span className="conversation-tool-call-name-head">{head}</span>
-      {tail ? (
+    <span className="conversation-tool-call-name" ref={ref} title={text}>
+      <span className="conversation-tool-call-name-head">{parts.head}</span>
+      {parts.tail ? (
         <>
           <span className="conversation-tool-call-name-ellipsis">...</span>
-          <span className="conversation-tool-call-name-tail">{tail}</span>
+          <span className="conversation-tool-call-name-tail">{parts.tail}</span>
         </>
       ) : null}
     </span>

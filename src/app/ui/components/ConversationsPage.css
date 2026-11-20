@@ -665,8 +665,9 @@
 
 .conversation-tool-call-summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 8px;
   min-width: 0;
   cursor: pointer;
   list-style: none;
@@ -689,7 +690,8 @@
 
 .conversation-tool-call-name {
   display: flex;
-  flex: 1 1 auto;
+  /* 名称独占一行：状态、耗时与参数提示换到下一行，避免把名称挤成几十像素。 */
+  flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
   color: var(--conversation-ink);
@@ -698,10 +700,12 @@
   white-space: nowrap;
 }
 
-/* 前半段按可用宽度硬裁剪，尾部固定保留，中间的 "..." 才是唯一的省略号。 */
-.conversation-tool-call-name-head {
+/* 前后两段由组件按实际字宽等分，中间的 "..." 是唯一省略号。 */
+.conversation-tool-call-name-head,
+.conversation-tool-call-name-tail {
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
 }
 
 .conversation-tool-call-name-ellipsis {
@@ -710,9 +714,6 @@
   color: var(--conversation-muted);
 }
 
-.conversation-tool-call-name-tail {
-  flex: none;
-}
 
 .conversation-tool-call-status,
 .conversation-tool-call-duration {
