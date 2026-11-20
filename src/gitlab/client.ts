@@ -90,6 +90,23 @@ export interface MergeRequestComment {
 
 export type IssueComment = MergeRequestComment;
 
+/** 合并请求提交记录：只保留展示所需的小字段，避免整段 commit message 撑爆上下文。 */
+export interface MergeRequestCommit {
+  id: string;
+  title: string;
+  author: string;
+  createdAt: string;
+}
+
+/** 一页 MR 提交记录与分页游标。 */
+export interface MergeRequestCommitPage {
+  commits: MergeRequestCommit[];
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  nextPage: number | null;
+}
+
 export interface MergeRequestMetadataUpdate {
   title?: string;
   description?: string;
@@ -147,6 +164,8 @@ const MAX_COMMENT_CHARACTERS = 4_000;
 const ISSUE_COMMENT_CONTEXT_BUDGET_BYTES = 24 << 10;
 /** 历史评论最多扫描的 Notes API 页数。 */
 const MAX_COMMENT_PAGES = 10;
+const MAX_MR_COMMITS_PER_PAGE = 20;
+const MAX_MR_COMMIT_TITLE_CHARACTERS = 300;
 /** MR 标题和描述工具的输入上限。 */
 const MAX_MR_TITLE_CHARACTERS = 255;
 const MAX_MR_DESCRIPTION_CHARACTERS = 100_000;
@@ -467,6 +486,68 @@ export class GitLabClient {
       }
     }
     throw new Error("merge request comments exceed the 10-page safety limit");
+  }
+
+  /**
+   * 分页读取 MR 提交记录。调用方必须按页获取，永远不一次性拼接全部历史；
+   * 标题被截断，单页最多 20 条，避免小窗口模型被提交历史淹没。
+   */
+  async getMergeRequestCommits(
+    projectId: number,
+    mrIid: number,
+    page = 1,
+    perPage = 10,
+    signal?: AbortSignal,
+  ): Promise<MergeRequestCommitPage> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    if (!Number.isSafeInteger(page) || page < 1) throw new Error("commit page must be a positive integer");
+    if (!Number.isSafeInteger(perPage) || perPage < 1 || perPage > MAX_MR_COMMITS_PER_PAGE) {
+      throw new Error(`commit page size must be between 1 and ${MAX_MR_COMMITS_PER_PAGE}`);
+    }
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
+    const response = await this.request(
+      `/projects/${projectId}/merge_requests/${mrIid}/commits?${query}`,
+      this.readToken,
+      "GET",
+      signal,
+    );
+    const body = await this.successBody(response);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(body));
+    } catch (error) {
+      throw new Error(`decode GitLab API response: ${String(error)}`, { cause: error });
+    }
+    if (!Array.isArray(parsed)) throw new Error("GitLab merge request commits response is not an array");
+    const commits: MergeRequestCommit[] = parsed.map((entry) => {
+      if (!isRecord(entry)) throw new Error("GitLab returned an invalid merge request commit");
+      const id = typeof entry.id === "string" ? entry.id : "";
+      const title = typeof entry.title === "string" ? entry.title : "";
+      if (!id || !title) throw new Error("GitLab returned an incomplete merge request commit");
+      const author = isRecord(entry.author) && typeof entry.author.name === "string"
+        ? entry.author.name
+        : typeof entry.author_name === "string" ? entry.author_name : "";
+      const createdAt = typeof entry.created_at === "string" ? entry.created_at : "";
+      const characters = [...title];
+      return {
+        id: id.slice(0, 40),
+        title: characters.slice(0, MAX_MR_COMMIT_TITLE_CHARACTERS).join(""),
+        author: author.slice(0, 128),
+        createdAt: createdAt.slice(0, 64),
+      };
+    });
+    const nextHeader = response.headers.get("x-next-page") ?? "";
+    const next = nextHeader ? Number(nextHeader) : Number.NaN;
+    if (nextHeader && (!Number.isSafeInteger(next) || next !== page + 1)) {
+      throw new Error("GitLab returned an invalid commits pagination cursor");
+    }
+    return {
+      commits,
+      page,
+      perPage,
+      hasMore: Boolean(nextHeader),
+      nextPage: nextHeader ? next : null,
+    };
   }
 
   async getIssueComments(

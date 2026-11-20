@@ -593,3 +593,38 @@ describe("GitLab issue and MR state updates", () => {
     }
   });
 });
+
+describe("GitLab MR commit pagination", () => {
+  it("returns one bounded page with a next-page cursor", async () => {
+    let url = "";
+    const server = createServer((request, response) => {
+      url = request.url ?? "";
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "x-next-page": "2",
+      });
+      response.end(JSON.stringify([
+        { id: "a".repeat(40), title: "Fix parser", author: { name: "Dev" }, created_at: "2026-11-20T01:00:00Z" },
+        { id: "b".repeat(40), title: "x".repeat(500), author_name: "Other", created_at: "2026-11-19T01:00:00Z" },
+      ]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const page = await client.getMergeRequestCommits(7, 3, 1, 2);
+      expect(url).toContain("/api/v4/projects/7/merge_requests/3/commits");
+      expect(url).toContain("per_page=2");
+      expect(page).toMatchObject({ page: 1, perPage: 2, hasMore: true, nextPage: 2 });
+      expect(page.commits).toHaveLength(2);
+      expect(page.commits[0]).toMatchObject({ id: "a".repeat(40), title: "Fix parser", author: "Dev" });
+      expect(page.commits[1].title).toHaveLength(300);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("rejects an oversized page size before calling GitLab", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    await expect(client.getMergeRequestCommits(7, 3, 1, 21)).rejects.toThrow("page size must be between 1 and 20");
+  });
+});

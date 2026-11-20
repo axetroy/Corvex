@@ -619,6 +619,7 @@ export class PiAgent {
               getMergeRequest: (mrIid) => this.gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
               getIssueComments: (issueIid, limit) => this.gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
               getMergeRequestComments: (mrIid, limit) => this.gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
+              getMergeRequestCommits: (mrIid, page, perPage) => this.gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),
               postIssueNote: (issueIid, noteBody) => this.gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
               postMergeRequestNote: (mrIid, noteBody) => this.gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
               updateMergeRequest: (mrIid, update) => this.gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),

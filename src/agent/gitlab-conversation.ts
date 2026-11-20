@@ -1,6 +1,11 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { GitLabWriteReceipt, IssueUpdate, MergeRequestMetadataUpdate } from "../gitlab/client.js";
+import type {
+  GitLabWriteReceipt,
+  IssueUpdate,
+  MergeRequestCommitPage,
+  MergeRequestMetadataUpdate,
+} from "../gitlab/client.js";
 
 /** GitLab 协作模式下的工具依赖；全部绑定到当前对话的项目，不接受跨项目参数。 */
 export interface GitLabConversationTools {
@@ -10,6 +15,7 @@ export interface GitLabConversationTools {
   getMergeRequest(mrIid: number): Promise<unknown>;
   getIssueComments(issueIid: number, limit: number): Promise<unknown>;
   getMergeRequestComments(mrIid: number, limit: number): Promise<unknown>;
+  getMergeRequestCommits(mrIid: number, page: number, perPage: number): Promise<MergeRequestCommitPage>;
   postIssueNote(issueIid: number, body: string): Promise<GitLabWriteReceipt>;
   postMergeRequestNote(mrIid: number, body: string): Promise<GitLabWriteReceipt>;
   updateMergeRequest(mrIid: number, update: MergeRequestMetadataUpdate): Promise<GitLabWriteReceipt>;
@@ -74,6 +80,23 @@ export function createGitLabConversationExtension(tools: GitLabConversationTools
       promptSnippet: "get_merge_request_comments: Read recent comments on a merge request in the current project.",
       parameters: Type.Object({ mr_iid: iid, limit }),
       execute: async (_id, params) => text(await tools.getMergeRequestComments(params.mr_iid, params.limit ?? 20)),
+    });
+    pi.registerTool({
+      name: "get_merge_request_commits",
+      label: "Get MR commits",
+      executionMode: "parallel",
+      description: "Read one page of commits from the current merge request, newest first. Page size is limited to 20; use nextPage from the result to fetch more only when needed. Do not request many pages just to dump history into the answer.",
+      promptSnippet: "get_merge_request_commits: Read MR commits one bounded page at a time; follow nextPage only when necessary.",
+      parameters: Type.Object({
+        mr_iid: iid,
+        page: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+        per_page: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+      }),
+      execute: async (_id, params) => text(await tools.getMergeRequestCommits(
+        params.mr_iid,
+        params.page ?? 1,
+        params.per_page ?? 10,
+      )),
     });
     pi.registerTool({
       name: "post_issue_note",
