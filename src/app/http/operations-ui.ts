@@ -27,7 +27,7 @@ function operationsUiAsset(relativePath: string): { file: string; contentType: s
 }
 
 /** 静态资源响应的公共安全头。 */
-function uiHeaders(contentType: string): Record<string, string> {
+export function uiHeaders(contentType: string): Record<string, string> {
   return {
     "content-type": contentType,
     "cache-control": "no-store",

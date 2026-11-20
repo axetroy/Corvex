@@ -137,7 +137,7 @@ export function App() {
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
   const logout = useCallback(async () => {
     await fetch("/auth/logout", { method: "POST" });
-    window.location.href = "/ops";
+    window.location.href = "/";
   }, []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
   const updateQueue = useCallback((next: EventQueue) => {

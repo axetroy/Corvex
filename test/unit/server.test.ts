@@ -175,6 +175,9 @@ describe("CorvexServer", () => {
       const address = application.getListeningAddress();
       const base = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
+      const landing = await fetch(`${base}/`);
+      expect(landing.status).toBe(200);
+      expect(await landing.text()).toContain("Corvex — GitLab Code Agent");
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);

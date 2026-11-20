@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { OpsContext } from "./context.js";
 import { registerAuthRoutes } from "./auth-routes.js";
+import { registerLandingRoute } from "./landing.js";
 import { registerSetupRoutes } from "./setup.js";
 import { registerOperationsUi } from "./operations-ui.js";
 import { registerObservabilityRoutes } from "./ops/observability.js";
@@ -22,6 +23,7 @@ import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
  * `setNotFoundHandler` 统一返回文本 404。
  */
 export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
+  registerLandingRoute(app);
   registerSystemRoutes(app, ctx.store);
   registerAuthRoutes(app, {
     oauth: ctx.oauth,
