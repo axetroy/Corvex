@@ -124,6 +124,11 @@
   }
 }
 
+.ant-conversations-group-label {
+  max-width: 100%;
+  overflow: hidden;
+}
+
 /* 仓库分组标题：浅色吸顶条 + 色点 + 分隔线，跨仓库时一眼可辨。 */
 .conversations-layout .conversation-sidebar-list .ant-conversations .ant-conversations-group-title {
   position: sticky;
@@ -429,25 +434,43 @@
   gap: 6px;
 }
 
-.conversation-composer-setup .remote-picker.ant-select,
-.conversation-composer-setup .conversation-mode-select.ant-select,
-.conversations-layout .conversation-chat .conversation-composer .conversation-composer-model-select.ant-select {
+/* 底栏四个选择器统一成同一套小号样式。五级选择器压过 AntD 运行时样式与 remote-picker 的大号卡片样式。 */
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-footer .ant-select {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 22px;
   min-width: 0;
   max-width: 180px;
   flex: 0 1 auto;
+  align-items: center;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 4%);
   font-size: 12px;
 }
 
-.conversation-composer-setup .conversation-mode-select.ant-select {
-  width: 104px;
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .remote-picker.ant-select {
+  max-width: 120px;
 }
 
-/* AntD 运行时样式用三个类名，这里用五级选择器把选择器改成与模型选择器一致的无边框样式。 */
-.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .ant-select-selector {
-  padding: 0 4px !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
+.conversation-composer-setup .conversation-mode-select.ant-select {
+  width: 100px;
+}
+
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .remote-picker .ant-select-content {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .remote-picker .ant-select-selection-item,
+.conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .remote-picker .ant-select-placeholder {
+  height: auto;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .conversation-prompts.ant-prompts {

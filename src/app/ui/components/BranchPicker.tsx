@@ -119,6 +119,8 @@ export function BranchPicker({ copy, value, projectId, disabled, onChange }: Pro
   return (
     <Select<string, BranchSelectOption>
       className="remote-picker"
+      size="small"
+      variant="borderless"
       classNames={{ popup: { root: "remote-picker-popup" } }}
       prefix={<BranchIcon className="remote-picker-icon" />}
       aria-label={copy.branch}

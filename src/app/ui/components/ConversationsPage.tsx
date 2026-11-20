@@ -647,6 +647,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       <span className="conversation-composer-model-label">{copy.conversationModeLabel}</span>
       <Select<ConversationSummary["mode"]>
         className="conversation-mode-select"
+        size="small"
+        variant="borderless"
         aria-label={copy.conversationModeLabel}
         title={copy.conversationModeHint}
         value={mode}

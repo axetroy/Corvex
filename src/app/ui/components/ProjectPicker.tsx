@@ -100,6 +100,8 @@ export function ProjectPicker({ copy, value, disabled, onChange }: Props) {
   return (
     <Select<number, ProjectSelectOption>
       className="remote-picker"
+      size="small"
+      variant="borderless"
       classNames={{ popup: { root: "remote-picker-popup" } }}
       prefix={<RepositoryIcon className="remote-picker-icon" />}
       aria-label={copy.projectSearch}
