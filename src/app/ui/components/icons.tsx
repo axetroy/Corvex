@@ -116,3 +116,44 @@ export function LanguageIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+/** 理解仓库分组图标：打开的书本。 */
+export function BookIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M8 3.5C6.5 2.6 4.6 2.2 2.5 2.4v9.2c2.1-.2 4 .2 5.5 1.1" />
+      <path d="M8 3.5c1.5-.9 3.4-1.3 5.5-1.1v9.2c-2.1-.2-4 .2-5.5 1.1" />
+      <path d="M8 3.5v9.2" />
+    </svg>
+  );
+}
+
+/** 定位代码分组图标：放大镜。 */
+export function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="m10.2 10.2 3.1 3.1" />
+    </svg>
+  );
+}
+
+/** 质量改进分组图标：扳手。 */
+export function WrenchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M12.8 3.1a3.6 3.6 0 0 0-4.6 4.6L3.4 12.5a1.5 1.5 0 0 0 2.1 2.1l4.8-4.8a3.6 3.6 0 0 0 4.6-4.6l-2.2 2.2-2.1-.5-.5-2.1 2.7-1.7Z" />
+    </svg>
+  );
+}
+
+/** 快速上手分组图标：纸飞机。 */
+export function RocketIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M13.4 2.6 7.2 5.1l3.7 3.7 2.5-6.2Z" />
+      <path d="m10.9 8.8-4.4 4.4-1.7-1.7 4.4-4.4" />
+      <path d="M4.8 11.5 2.6 13.4l.4 2 2-.4 1.9-2.2" />
+    </svg>
+  );
+}

@@ -410,7 +410,7 @@
 }
 
 .conversation-prompts.ant-prompts {
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .conversation-prompts .ant-prompts-title {
@@ -420,16 +420,69 @@
   text-transform: uppercase;
 }
 
-.conversation-prompts .ant-prompts-item {
-  border: 1px solid var(--conversation-border);
-  border-radius: 10px;
-  background: #fff;
-  transition: border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+.conversation-prompts > .ant-prompts-list {
+  gap: 8px;
+  align-items: stretch;
 }
 
-.conversation-prompts .ant-prompts-item:hover {
+/* 外层卡片是分类标题，本身不可点击；内层问题才是按钮。 */
+.conversation-prompts > .ant-prompts-list > .ant-prompts-item-has-nest {
+  width: min(240px, 100%);
+  min-width: 0;
+  padding: 7px 9px 6px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--conversation-canvas);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.conversation-prompts > .ant-prompts-list > .ant-prompts-item-has-nest:hover {
   border-color: var(--conversation-brand);
   box-shadow: 0 4px 12px rgb(23 105 170 / 10%);
+}
+
+.conversation-prompt-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--conversation-ink);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item-has-nest .ant-prompts-label {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.conversation-prompt-group-label svg {
+  color: var(--conversation-brand);
+}
+
+/* Ant Design 运行时样式用三个类名选中嵌套项，这里用四级覆盖其背景与边框。 */
+.conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-list {
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item {
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--conversation-ink);
+  font-size: 11px;
+  line-height: 16px;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item .ant-prompts-label {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item:hover {
+  background: var(--conversation-brand-soft);
   color: var(--conversation-brand);
 }
 

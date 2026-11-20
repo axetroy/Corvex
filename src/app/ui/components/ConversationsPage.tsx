@@ -11,6 +11,7 @@ import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamTool, ConversationSummary } from "../types.js";
+import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
@@ -20,6 +21,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
+import { BookIcon, RocketIcon, SearchIcon, WrenchIcon } from "./icons.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -480,12 +482,28 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     else void sendReply(message);
   }
 
-  const suggestionItems: PromptsItemType[] = [
-    { key: "explain", label: copy.conversationPromptExplain },
-    { key: "locate", label: copy.conversationPromptLocate },
-    { key: "improve", label: copy.conversationPromptImprove },
-    { key: "onboard", label: copy.conversationPromptOnboard },
-  ];
+  // 快捷提示词按类型分组：外层是分类卡片，Prompts 会把 children 渲染成纵向子列表。
+  const promptGroups = welcomePromptGroups(copy);
+  const groupIcons = {
+    understand: <BookIcon />,
+    locate: <SearchIcon />,
+    improve: <WrenchIcon />,
+    onboard: <RocketIcon />,
+  };
+  const suggestionItems: PromptsItemType[] = promptGroups.map((group) => ({
+    key: group.key,
+    label: (
+      <span className="conversation-prompt-group-label">
+        {groupIcons[group.key]}
+        {group.label}
+      </span>
+    ),
+    children: group.prompts.map((prompt) => ({ key: prompt.key, label: prompt.label })),
+  }));
+  const applyPrompt = (key: string) => {
+    const text = welcomePromptText(promptGroups, key);
+    if (text) setDraftMessage(text.slice(0, 20_000));
+  };
   const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
 
   // 列表按最近更新排序：分组按首次出现的顺序排列，因此每组及其内部都是最近优先。
@@ -592,10 +610,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   // Bubble.List 关闭内置滚动后由整个对话窗格统一滚动：新消息/新 token 到达时只有
   // 用户还在底部附近才跟随，向上翻阅历史不会被强行拉回。
   useEffect(() => {
+    // 欢迎页从顶部阅读：分组提示词比旧版更高，自动滚到底会藏掉标题和仓库选择器。
+    if (showCreate) return;
     const pane = transcriptPaneRef.current;
     if (!pane || !pinnedToBottom.current) return;
     pane.scrollTop = pane.scrollHeight;
-  }, [selectedConversationId, detailTab, currentConversation?.messages.length, streamedReply?.text, timelineByTurn]);
+  }, [showCreate, selectedConversationId, detailTab, currentConversation?.messages.length, streamedReply?.text, timelineByTurn]);
 
   return (
     <>
@@ -732,7 +752,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             title={copy.conversationSuggestions}
                             items={suggestionItems}
                             wrap
-                            onItemClick={({ data }) => setDraftMessage(String(data.label ?? ""))}
+                            onItemClick={({ data }) => applyPrompt(data.key)}
                           />
                         </div>
                       ) : currentConversation && bubbleItems.length ? (
