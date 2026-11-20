@@ -1,7 +1,6 @@
-# 启动必需项：监听地址、存储路径、GitLab 地址与令牌、Webhook 密钥、控制台凭据。
-# 其余可调项（模型供应商与模型、上下文预算、工具开关、审查/修复上限、超时、
-# 保留策略、屏蔽主机与用户等）都在运维台「设置」页维护，保存在 SQLite，
-# 首次保存后即为唯一来源，不需要再写进本文件。
+# 仅填写启动必需项：监听地址、存储路径、GitLab 地址与令牌、Webhook 密钥、控制台凭据。
+# 模型供应商与模型、上下文预算、工具开关、审查/修复上限、超时、保留策略、屏蔽主机
+# 与用户等都在运维台「设置」页维护，保存在 SQLite，首次保存后即为唯一来源。
 
 server:
   listen: "0.0.0.0:8080"
@@ -14,11 +13,3 @@ gitlab:
 storage:
   root: "./data/corvex"
   database: "./data/state/corvex.db"
-
-agent:
-  enabled: false
-  # 模型供应商与模型在运维台「设置 > 模型」中维护（名称、Base URL、API Key、
-  # 上下文窗口、最大输出），存 SQLite 且无需重启；下面 base_url / model 只是
-  # 模型目录为空时的兜底值。API Key 不会在接口中回显，数据库文件及备份需妥善保护。
-  base_url: "https://api.openai.com/v1"
-  model: "your-model-name"

@@ -24,7 +24,6 @@ function validConfig(): CorvexConfig {
     storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
     agent: {
       responseLanguage: "en",
-      enabled: false,
       baseUrl: "https://api.openai.com/v1",
       model: "",
       apiKey: "",
@@ -62,15 +61,7 @@ describe("validateConfig", () => {
     }
   });
 
-  it("keeps issue implementation disabled by default and requires the Agent when enabled", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-issue-config-"));
-    const configPath = join(root, "config.yaml");
-    try {
-      await writeFile(configPath, "issue:\n  implement_enabled: true\n", "utf8");
-      await expect(loadConfig(configPath)).rejects.toThrow("agent.enabled must be true when issue.implement_enabled is true");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("keeps issue implementation disabled by default", async () => {
     expect(validConfig().issue.implementEnabled).toBe(false);
   });
 
@@ -260,9 +251,8 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
-  it("rejects credential-bearing model URLs when the agent is enabled", () => {
+  it("rejects credential-bearing model URLs", () => {
     const config = validConfig();
-    config.agent.enabled = true;
     config.agent.baseUrl = "https://user:pass@example.com/v1";
     config.agent.model = "model";
     config.agent.apiKey = "key";
@@ -342,7 +332,7 @@ describe("validateConfig", () => {
             blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
-          agent: { enabled: true, model: "test-model" },
+          agent: { model: "test-model" },
         }),
       );
       process.env.CORVEX_GITLAB_READ_TOKEN = "";

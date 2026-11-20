@@ -16,7 +16,7 @@ pnpm run build
 pnpm start -- --config configs/config.yaml server
 ```
 
-The default config path is `configs/config.yaml`; pass `--config /path/to/config.yaml` to use another file. Without `agent.enabled: true`, the Server accepts and persists events but does not execute them.
+The default config path is `configs/config.yaml`; pass `--config /path/to/config.yaml` to use another file.
 
 ## Docker Compose
 
@@ -29,7 +29,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
    docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
-4. To process model tasks, set `agent.enabled: true`, configure the model URL/name, and set `CORVEX_MODEL_API_KEY` in `.env`, then recreate the Server container:
+4. To process model tasks, configure the model in the console Settings page and set `CORVEX_MODEL_API_KEY` in `.env` when needed, then recreate the Server container:
 
    ```sh
    docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate corvex
@@ -97,7 +97,7 @@ The Server logs webhook receipt, validation/rejection, ignored comments, recogni
 | Webhook returns `401` | Confirm the GitLab hook secret exactly matches `CORVEX_WEBHOOK_SECRET`. |
 | Webhook returns `400` | The endpoint only accepts valid merge-request or Issue Note Hook payloads. Disable unsupported event types and ensure the request is a comment on a merge request or Issue. |
 | Webhook returns `403` | Check whether the commenter is in `gitlab.blocked_user_ids`, or whether the requested capability is disabled. |
-| Tasks stay queued | Confirm the Server has `agent.enabled: true` and that model settings are valid. |
+| Tasks stay queued | Confirm the model settings in the console are valid. |
 | The Server cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the Server host has Git installed. |
 | Task becomes stale | The MR was closed or its diff changed after the command was queued; submit a new command on the current revision. |
 | `readyz` returns `503` | Check the database path, persistent volume mount, and filesystem permissions. |

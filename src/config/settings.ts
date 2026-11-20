@@ -16,7 +16,7 @@ import {
  * 这些值影响模型上下文、审查流程、工具边界与发布策略，改错会直接导致请求失败或
  * 行为异常，因此每个键都带类型与范围约束；写入前逐项校验，写入后立即作用于后续请求。
  * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌、
- * Webhook 密钥与 `agent.enabled`，这些仍从配置文件或环境变量读取。
+ * Webhook 密钥等，这些仍从配置文件或环境变量读取。
  */
 export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "events" | "gitlab";
 
@@ -322,7 +322,19 @@ export function applyRuntimeSettingRows(
     const definition = definitionsByKey.get(row.key);
     if (!definition) continue;
     try {
-      sectionOf(config, definition.section)[definition.field] = parseSettingValue(definition, row.value);
+      const value = parseSettingValue(definition, row.value);
+      const target = sectionOf(config, definition.section);
+      // 与 applyRuntimeSettings 保持一致：列表项要转回原生类型，带 scale 的
+      // 秒值要换算成毫秒，否则启动/热加载后配置里会留下未换算的值。
+      if (definition.type === "list") {
+        target[definition.field] = definition.item === "integer"
+          ? (value as string[]).map(Number)
+          : value;
+      } else if (definition.scale !== undefined && typeof value === "number") {
+        target[definition.field] = value * definition.scale;
+      } else {
+        target[definition.field] = value;
+      }
       applied.push(row.key);
     } catch (error) {
       console.warn("ignored invalid runtime setting", {

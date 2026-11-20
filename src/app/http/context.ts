@@ -15,8 +15,7 @@ export interface OpsContext {
   readonly store: EventStore;
   readonly gitlab: GitLabClient;
   readonly conversations: ConversationRunner;
-  /** 内联事件执行器；`agent.enabled=false` 时为 undefined。 */
-  readonly events?: EventRunner;
+  readonly events: EventRunner;
   readonly settings: SettingsService;
   /** 正在推送的对话流连接；Server 关闭时统一结束，避免拖住 `close()`。 */
   readonly conversationStreams: Set<ServerResponse>;

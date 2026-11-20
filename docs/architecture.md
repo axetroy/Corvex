@@ -6,7 +6,7 @@ Corvex separates the request path from model and repository work:
 
 1. **Server** exposes a GitLab Note Hook and authenticated agent endpoints. It verifies webhook secrets, applies the optional user blocklist, records events in SQLite, and replies to GitLab. The agent console discovers projects and branches through the configured GitLab read token.
 2. **SQLite** is the durable queue and state store. It records events, webhook idempotency/delivery, attempts, audit events, conversations and their messages/turns, model call metrics, and optional daily token reservations.
-3. **Inline event runner** lives inside the Server process. A webhook enqueue wakes it immediately; it claims an event under a renewable lease, records a heartbeat for agent console monitoring, fetches the merge request head or Issue snapshot and repository, and runs the requested workflow. It requires `agent.enabled: true`. Conversation turns are not events and are also executed inline by the Server.
+3. **Inline event runner** lives inside the Server process. A webhook enqueue wakes it immediately; it claims an event under a renewable lease, records a heartbeat for agent console monitoring, fetches the merge request head or Issue snapshot and repository, and runs the requested workflow. Conversation turns are not events and are also executed inline by the Server.
 4. **GitLab API** provides project/MR metadata, paginated diffs, and the destination for notes and discussions.
 5. **OpenAI-compatible model API** is called by the inline event runner for review, merge-request chat, explanation, fix proposal, or Issue implementation tasks, and by the Server for inline conversation turns.
 
@@ -16,7 +16,7 @@ GitLab GET requests retry transient network failures and HTTP 408, 425, 429, 500
 
 Queued events also persist retries for transient HTTP/network failures and event timeouts before publishing. The delay starts at 2 seconds, doubles per attempt, and is capped at 30 seconds; the three-attempt event limit still applies. Authentication, validation, cancellation, stale snapshots, and publishing failures are not automatically retried.
 
-The server can run with `agent.enabled: false`: commands are accepted and persisted, but model tasks remain queued until the agent is enabled. Events and conversations share one process, one SQLite database and one Git storage root; a split deployment is no longer supported.
+Commands are accepted, persisted and executed in the same process. Events and conversations share one process, one SQLite database and one Git storage root; a split deployment is no longer supported.
 
 ## Request and queue workflow
 

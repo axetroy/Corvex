@@ -39,8 +39,8 @@ export class CorvexServer {
   private readonly address: { host: string; port: number };
   /** 对话轮次在 Server 进程内联执行，不进入事件队列。 */
   private readonly conversations: ConversationRunner;
-  /** 事件（review/chat/explain/fix/implement）同样在 Server 进程内联执行。 */
-  private readonly events?: EventRunner;
+  /** 事件（review/chat/explain/fix/implement）在 Server 进程内联执行。 */
+  private readonly events: EventRunner;
   private readonly settings: SettingsService;
   private readonly conversationAbort = new AbortController();
   /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `app.close()`。 */
@@ -56,8 +56,7 @@ export class CorvexServer {
     this.address = parseListenAddress(config.server.listen);
     this.conversations = new ConversationRunner(config, store, gitlab);
     // 内联事件执行器与 HTTP 服务共用同一个进程、同一个 SQLite 和同一份 Git 存储。
-    // 未启用 Agent 时仍接收并持久化事件，只是没有执行器领取它们。
-    this.events = config.agent.enabled ? new EventRunner(config, store, gitlab) : undefined;
+    this.events = new EventRunner(config, store, gitlab);
     // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
     this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
       this.conversations.reconfigureGitLab(
@@ -66,7 +65,7 @@ export class CorvexServer {
         applied.gitlab.writeToken,
       );
       // 事件执行器持有构造期读取的参数，设置变更后立即重建，无需等下一轮循环。
-      this.events?.refreshRuntimeSettings();
+      this.events.refreshRuntimeSettings();
     });
     this.app = Fastify({
       // 原实现对 HEAD 不额外放行，交给路由兜底；保持同样的可见行为。
@@ -120,13 +119,8 @@ export class CorvexServer {
 
   /**
    * 在 Server 进程内联执行一轮对话；异常只记录日志，轮次状态由 store 落库。
-   * 关闭 `agent.enabled` 时保留排队轮次并给出告警，避免在没有模型配置时静默丢弃提问。
    */
   private startConversationTurn(turnId: string): void {
-    if (!this.config.agent.enabled) {
-      console.warn("conversation turn queued while the agent is disabled", { turnId });
-      return;
-    }
     void this.conversations.runTurn(turnId, this.conversationAbort.signal).catch((error: unknown) => {
       console.error("inline conversation turn failed", { turnId, error: errorMessage(error) });
     });
@@ -184,18 +178,12 @@ export class CorvexServer {
     const retentionTask = this.runRetention(retention.signal);
     signal.addEventListener("abort", stopRetention, { once: true });
     // 事件在 Server 进程内联执行：Webhook 入队后立即唤醒，重启时补跑残留事件。
-    // Agent 未启用时没有执行器，事件保持排队，避免在没有模型配置时静默失败。
-    let eventRunnerTask: Promise<void> | undefined;
     const runnerAbort = new AbortController();
     const abortRunner = () => runnerAbort.abort();
     signal.addEventListener("abort", abortRunner, { once: true });
-    if (this.events) {
-      eventRunnerTask = this.events.run(runnerAbort.signal).catch((error: unknown) => {
-        console.error("event runner stopped unexpectedly", { error: errorMessage(error) });
-      });
-    } else {
-      console.warn("agent is disabled; queued events will not be executed");
-    }
+    const eventRunnerTask = this.events.run(runnerAbort.signal).catch((error: unknown) => {
+      console.error("event runner stopped unexpectedly", { error: errorMessage(error) });
+    });
     try {
       await new Promise<void>((resolvePromise, rejectPromise) => {
         const close = () => {
@@ -222,7 +210,7 @@ export class CorvexServer {
       retention.abort();
       // 先让执行器在关闭信号下收尾（在途事件保留租约，下次启动补跑），再释放资源。
       runnerAbort.abort();
-      if (eventRunnerTask) await eventRunnerTask;
+      await eventRunnerTask;
       try {
         await retentionTask;
       } catch (error) {

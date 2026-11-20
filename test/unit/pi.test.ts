@@ -178,7 +178,6 @@ describe("PiAgent", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         providerName: "Acme Models",
@@ -441,7 +440,6 @@ describe("PiAgent", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         apiKey: "test-key",
@@ -563,7 +561,6 @@ describe("PiAgent", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         apiKey: "test-key",
@@ -654,7 +651,6 @@ describe("PiAgent", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         model: "test-model",
         apiKey: "test-key",

@@ -35,7 +35,6 @@ export interface CorvexConfig {
   };
   agent: {
     responseLanguage: ResponseLanguage;
-    enabled: boolean;
     baseUrl: string;
     model: string;
     /** 当前模型的供应商展示名；来自控制台模型目录，仅用于展示，不参与连接。 */
@@ -115,7 +114,6 @@ const defaults: CorvexConfig = {
   storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365, conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8 },
   agent: {
     responseLanguage: "en",
-    enabled: false,
     baseUrl: "https://api.openai.com/v1",
     model: "",
     autoContextTune: true,
@@ -267,7 +265,6 @@ function parseConfig(raw: unknown): CorvexConfig {
     },
     agent: {
       responseLanguage: responseLanguage(agent.response_language, defaults.agent.responseLanguage),
-      enabled: boolean(agent.enabled, defaults.agent.enabled),
       baseUrl:
         process.env.CORVEX_MODEL_BASE_URL ?? string(agent.base_url, defaults.agent.baseUrl),
       model: process.env.CORVEX_MODEL_NAME ?? string(agent.model, defaults.agent.model),
@@ -420,12 +417,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.events.pollInterval <= 0 || config.events.eventTimeout <= 0) {
     problems.push("events poll interval and event timeout must be positive");
   }
-  if (config.fix.enabled && !config.agent.enabled) {
-    problems.push("agent.enabled must be true when fix.enabled is true");
-  }
-  if (config.issue.implementEnabled && !config.agent.enabled) {
-    problems.push("agent.enabled must be true when issue.implement_enabled is true");
-  }
   if (!Number.isInteger(config.issue.historyComments) || config.issue.historyComments < 0 || config.issue.historyComments > 50) {
     problems.push("issue.history_comments must be between 0 and 50");
   }
@@ -438,10 +429,7 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   if (config.agent.webBlockedHosts.some((host) => !validBlockedWebHost(host))) {
     problems.push("agent.web_blocked_hosts must contain DNS hostnames without wildcards, ports, or paths");
   }
-  if (role === "benchmark" && !config.agent.enabled) {
-    problems.push("agent.enabled must be true for benchmark mode");
-  }
-  if (config.agent.enabled && role !== "storage") {
+  if (role !== "storage") {
     // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），
     // 因此配置文件不再强制要求它们；但一旦配置就必须合法。
     if (config.agent.baseUrl && !validHttpUrl(config.agent.baseUrl)) {

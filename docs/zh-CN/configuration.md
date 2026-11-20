@@ -56,7 +56,6 @@ Corvex 默认读取 `configs/config.yaml`。可通过 `--config` 指定其他路
 
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
-| `agent.enabled` | `false` | 布尔值 | 设为 `true` 才会执行排队的事件与对话轮次。 |
 | `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成的摘要、审查发现、修复说明、文件解释以及 Issue 回复或实现摘要所用语言。JSON 键名、代码、路径和引用证据保持原样。可在控制台运行时修改。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
 | `agent.model` | `your-model-name` | — | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。通常按模型在控制台配置；这里是没有模型配置时的回退值。 |
@@ -92,7 +91,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 可编辑的键：`agent.response_language`、`agent.max_input_tokens`、`agent.history_token_budget`、`agent.turn_tool_result_bytes`、`agent.compaction_reserve_tokens`、`agent.compaction_keep_recent_tokens`、`agent.daily_token_budget`、`agent.summary_enabled`、`agent.web_enabled`、`agent.mcp_enabled`、`agent.web_blocked_hosts`、`agent.skill_paths`、`agent.request_timeout`、`agent.session_timeout`、`review.max_files`、`review.max_findings`、`review.max_context_bytes`、`review.batch_concurrency`、`chat.history_comments`、`issue.history_comments`、`fix.enabled`、`fix.max_patch_bytes`、`issue.implement_enabled`、`events.poll_interval`、`events.event_timeout`、`gitlab.bot_username`、`gitlab.blocked_user_ids`、`storage.retention_days`、`storage.audit_retention_days`、`storage.conversation_workspace_ttl_minutes` 与 `storage.conversation_workspace_max`。时间参数在界面以秒填写、以毫秒保存。回复语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。
 
-只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`gitlab.base_url`、`storage.root`、`storage.database`、`agent.enabled`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
+只有启动必需项仍只来自配置文件或环境变量：`server.listen`/`read_timeout`/`shutdown_timeout`、控制台凭据、GitLab 令牌与 Webhook 密钥、`gitlab.base_url`、`storage.root`、`storage.database`，以及模型目录为空时兜底的连接参数。运行时调整过的字段会展示实际生效值：运行时自动推导 `max_input_tokens`、把工具结果检查点收敛到四个工具输出轮次，并把压缩预留提升到安全下限，因此填写的值可能与进程实际使用的值不同。
 
 ## Chat 上下文
 
@@ -124,7 +123,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。自定义 `read_file`
 
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
-| `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务；同时要求 `agent.enabled: true`。 |
+| `fix.enabled` | `false` | 布尔值 | 启用 Fix 任务。 |
 | `fix.max_patch_bytes` | `131072`（128 KiB） | 1 字节–256 KiB | Fix 或 Issue 实现模型补丁大小上限。 |
 
 Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需要接受 Corvex 指令的项目中注册 Webhook；Agent 控制台可以发现只读令牌可访问的全部项目。
@@ -133,7 +132,7 @@ Fix 请求与其他指令采用相同的可选用户黑名单规则。仅在需�
 
 | YAML 键 | 示例/默认值 | 必填 / 限制 | 说明 |
 |---|---:|---|---|
-| `issue.implement_enabled` | `false` | 布尔值；要求 `agent.enabled: true` | 启用 Issue 任务的代码写入。关闭时，普通 `@<bot> <request>` 仍可获得分析或回复；启用后，Agent 可为实现请求创建新的 `corvex/issue-*` 分支并打开 Draft MR。不执行仓库代码，也不会自动合并。 |
+| `issue.implement_enabled` | `false` | 布尔值 | 启用 Issue 任务的代码写入。关闭时，普通 `@<bot> <request>` 仍可获得分析或回复；启用后，Agent 可为实现请求创建新的 `corvex/issue-*` 分支并打开 Draft MR。不执行仓库代码，也不会自动合并。 |
 | `issue.history_comments` | `20` | 0–50 | 初始助手上下文中包含的最近非系统 Issue 评论数。`0` 表示不包含评论历史；分页和总字节限制会进一步限制上下文大小。 |
 
 Issue 任务默认使用项目默认分支；只有当前请求明确命名另一个已存在分支时才会选择该分支，评论不能授权分支选择。实现需要 `CORVEX_GITLAB_TOKEN` 具有推送分支和创建合并请求的权限。生成的补丁仅允许普通文本文件变更，并会校验路径。发布失败或结果不确定时不会自动重试；重试前请检查 Issue 任务事件及项目分支。

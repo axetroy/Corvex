@@ -5,7 +5,7 @@ Corvex is a self-hosted code review and repair agent for GitLab merge requests. 
 - **Server** receives GitLab Note Hook events, checks access, writes tasks to SQLite, replies to the note, and executes those tasks inline through the event runner.
 - **Inline event runner** reads the exact merge request revision, calls an OpenAI-compatible model when needed, and publishes the result in the same process.
 
-With `agent.enabled: false`, the server still accepts events but leaves review, explain, fix, and Issue assistant tasks queued until the agent is enabled. See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
+See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
 
 ## Requirements
 
@@ -103,7 +103,7 @@ Any commenter on a project configured with the shared webhook secret can mention
 
 ## 5. Enable model tasks
 
-Reviews, explanations, fix proposals, and Issue assistance require an enabled agent and a model configuration. Set `agent.enabled: true`, configure `agent.base_url` and `agent.model`, and provide `CORVEX_MODEL_API_KEY`. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
+Reviews, explanations, fix proposals, and Issue assistance require a model configuration. Configure the model in the console Settings page and provide `CORVEX_MODEL_API_KEY` when the provider requires authentication. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
 
 ## Issue assistance and implementation
 
@@ -115,7 +115,7 @@ The Server is already running; enabling the agent takes effect on the next event
 
 ## Enable fix proposals carefully
 
-Fix mode is disabled by default. To enable it, set `fix.enabled: true` and enable the agent. Any non-blocked commenter on a project configured with the shared webhook secret can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
+Fix mode is disabled by default. To enable it, set `fix.enabled: true` in the console. Any non-blocked commenter on a project configured with the shared webhook secret can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
 
 ## Persistent conversations
 

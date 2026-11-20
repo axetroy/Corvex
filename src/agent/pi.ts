@@ -261,7 +261,6 @@ export class PiAgent {
     signal?: AbortSignal,
     trace?: EventTraceContext,
   ): Promise<ModelResponse> {
-    if (!this.config.agent.enabled) throw new Error("Pi agent is disabled");
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }

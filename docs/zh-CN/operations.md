@@ -16,7 +16,7 @@ pnpm run build
 pnpm start -- --config configs/config.yaml server
 ```
 
-默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。未启用 `agent.enabled` 时 Server 仍接收并保存事件，但不会执行。
+默认配置路径是 `configs/config.yaml`；可通过 `--config /path/to/config.yaml` 指定其他文件。
 
 ## Docker Compose
 
@@ -29,7 +29,7 @@ pnpm start -- --config configs/config.yaml server
    docker compose --env-file .env -f deploy/compose.yaml up -d
    ```
 
-4. 如需处理模型任务，将 `agent.enabled` 设为 `true`，配置模型 URL/名称，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`，然后重建 Server 容器：
+4. 如需处理模型任务，在控制台配置模型，并在 `.env` 中设置 `CORVEX_MODEL_API_KEY`（如需要），然后重建 Server 容器：
 
    ```sh
    docker compose --env-file .env -f deploy/compose.yaml up -d --force-recreate corvex
@@ -95,7 +95,7 @@ docker compose --env-file .env -f deploy/compose.yaml logs -f corvex
 | Webhook 返回 `401` | 确认 GitLab Hook Secret 与 `CORVEX_WEBHOOK_SECRET` 完全相同。 |
 | Webhook 返回 `400` | 接口仅接受有效的合并请求或 Issue Note Hook；关闭不支持的事件，并确认请求来自合并请求或 Issue 评论。 |
 | Webhook 返回 `403` | 检查评论者是否在 `gitlab.blocked_user_ids` 中，或请求的能力是否已启用。 |
-| 任务一直排队 | 确认 Server 已配置 `agent.enabled: true`，并且模型配置有效。 |
+| 任务一直排队 | 确认控制台中的模型配置有效。 |
 | Server 无法克隆项目 | 检查 GitLab 网络、只读令牌权限、项目可见性以及 Server 主机是否安装 Git。 |
 | 任务变为 stale | 命令入队后 MR 已关闭或 Diff 已改变；应针对当前版本重新提交命令。 |
 | `readyz` 返回 `503` | 检查数据库路径、持久卷挂载和文件系统权限。 |

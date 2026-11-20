@@ -18,7 +18,6 @@ import type { CorvexConfig } from "../../src/config/config.js";
 function agentConfig(): CorvexConfig["agent"] {
   return {
     responseLanguage: "en",
-    enabled: true,
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-test",
     apiKey: "",

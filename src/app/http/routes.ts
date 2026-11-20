@@ -21,7 +21,7 @@ import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
  */
 export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerSystemRoutes(app, ctx.store);
-  registerWebhookRoute(app, new WebhookHandler(ctx.config, ctx.store, ctx.gitlab, () => ctx.events?.wake()));
+  registerWebhookRoute(app, new WebhookHandler(ctx.config, ctx.store, ctx.gitlab, () => ctx.events.wake()));
   registerOperationsUi(app);
 
   registerProjectRoutes(app, ctx);

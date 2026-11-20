@@ -5,7 +5,7 @@ Corvex 是面向 GitLab 合并请求的自托管代码审查与修复代理，�
 - **Server** 接收 GitLab Note Hook 事件，校验访问权限，将任务写入 SQLite，回复评论，并在进程内执行这些任务。
 - **内联事件执行器** 读取合并请求的固定版本；需要时调用 OpenAI 兼容模型，并在同一进程中发布结果。
 
-未启用 Agent 时 Server 仍可接收并保存事件，但审查、解释、修复和 Issue 助手任务会一直排队。详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
+详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
 
 ## 环境要求
 
@@ -103,7 +103,7 @@ Issue 中的普通提及会启动助手任务。Agent 会基于 Issue 和近期�
 
 ## 5. 启用模型任务
 
-审查、解释、修复提案和 Issue 助手需要启用 Agent 及模型配置。设置 `agent.enabled: true`、`agent.base_url`、`agent.model`，并提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
+审查、解释、修复提案和 Issue 助手需要模型配置。请在控制台设置页配置模型，并在服务商需要鉴权时提供 `CORVEX_MODEL_API_KEY`。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
 
 ## Issue 助手与实现
 
@@ -115,7 +115,7 @@ Server 已在运行，启用 Agent 后下一次事件即可使用，无需重启
 
 ## 谨慎启用修复提案
 
-Fix 默认关闭。启用时，将 `fix.enabled` 设为 `true` 并启用 Agent。配置了共享 Webhook Secret 的项目中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
+Fix 默认关闭。启用时，在控制台将 `fix.enabled` 设为 `true`。配置了共享 Webhook Secret 的项目中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
 
 ## 持久对话
 

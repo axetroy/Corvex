@@ -2,8 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, afterEach, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
+import { ConversationRunner } from "../../src/app/conversation-runner.js";
+import { EventRunner } from "../../src/app/event-runner.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
@@ -19,7 +21,12 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 }
 
 describe("CorvexServer", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("authenticates and queues a GitLab command idempotently", async () => {
+    // 本用例只验证入队与接口行为，不让对话轮次和事件真正调用模型。
+    vi.spyOn(ConversationRunner.prototype, "runTurn").mockResolvedValue(false);
+    vi.spyOn(EventRunner.prototype, "run").mockResolvedValue();
     let postedNotes = 0;
     let pausePostNotes = false;
     let notifyPostStarted!: () => void;
@@ -113,7 +120,6 @@ describe("CorvexServer", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: false,
         baseUrl: "https://api.openai.com/v1",
         model: "",
         apiKey: "",
@@ -223,7 +229,7 @@ describe("CorvexServer", () => {
       });
       expect(createdConversationResponse.status).toBe(202);
       const createdConversation = await createdConversationResponse.json() as { conversationId: string; turnId: string };
-      // 对话轮次不再进入事件队列；agent.enabled=false 时只排队、不执行。
+      // 对话轮次不进入事件队列，只排队等待内联执行。
       expect(store.eventCounts().queued ?? 0).toBe(0);
       const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: { authorization } });
       const conversationDetail = await conversationDetailResponse.json() as { systemPrompt: string };
@@ -669,13 +675,13 @@ describe("CorvexServer", () => {
     vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
     const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
     const configPath = join(root, "config.yaml");
-    // agent.enabled=true 且模型密钥来自环境变量：Server 角色下合法，
+    // 模型密钥来自环境变量：Server 角色下合法，
     // 保存设置时的校验必须按 Server 角色进行，否则会被误判为缺少密钥。
     await writeFile(configPath, JSON.stringify({
       server: { listen: "127.0.0.1:0" },
       gitlab: { base_url: "https://gitlab.example.com" },
       storage: { root, database: join(root, "state.db") },
-      agent: { enabled: true },
+      agent: {},
     }), "utf8");
     const { loadConfig } = await import("../../src/config/config.js");
     const config = await loadConfig(configPath, "server");
@@ -902,7 +908,6 @@ describe("CorvexServer", () => {
       storage: { root: ".", database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
       agent: {
         responseLanguage: "en",
-        enabled: false,
         baseUrl: "https://api.openai.com/v1",
         model: "",
         apiKey: "",

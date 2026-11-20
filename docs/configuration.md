@@ -54,7 +54,6 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `agent.enabled` | `false` | Boolean | Must be `true` to execute queued events or conversation turns. |
 | `agent.response_language` | `en` | `en` or `zh-CN` | Language for model-generated summaries, findings, fixes, explanations, and Issue replies or implementation summaries. JSON keys, code, paths, and quoted evidence remain unchanged. Editable at runtime from the console. |
 | `agent.base_url` | `https://api.openai.com/v1` | HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
 | `agent.model` | `your-model-name` | — | Provider model name. `CORVEX_MODEL_NAME` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
@@ -88,7 +87,7 @@ Tunable agent settings are edited in the console **Settings** page and stored in
 
 Editable keys: `agent.response_language`, `agent.max_input_tokens`, `agent.history_token_budget`, `agent.turn_tool_result_bytes`, `agent.compaction_reserve_tokens`, `agent.compaction_keep_recent_tokens`, `agent.daily_token_budget`, `agent.summary_enabled`, `agent.web_enabled`, `agent.mcp_enabled`, `agent.web_blocked_hosts`, `agent.skill_paths`, `agent.request_timeout`, `agent.session_timeout`, `review.max_files`, `review.max_findings`, `review.max_context_bytes`, `review.batch_concurrency`, `chat.history_comments`, `issue.history_comments`, `fix.enabled`, `fix.max_patch_bytes`, `issue.implement_enabled`, `events.poll_interval`, `events.event_timeout`, `gitlab.bot_username`, `gitlab.blocked_user_ids`, `storage.retention_days`, `storage.audit_retention_days`, `storage.conversation_workspace_ttl_minutes` and `storage.conversation_workspace_max`. Time values are entered in seconds and stored in milliseconds. The response language and model are read on every request and turn, so a change takes effect on the next one without a restart.
 
-Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, GitLab tokens and webhook secret, `gitlab.base_url`, `storage.root`, `storage.database`, `agent.enabled`, and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
+Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, console credentials, GitLab tokens and webhook secret, `gitlab.base_url`, `storage.root`, `storage.database` and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
 ## Chat context
 
@@ -120,7 +119,7 @@ The event lease is currently fixed at 30 seconds and renewed during execution; i
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `fix.enabled` | `false` | Boolean | Enables fix task processing; requires `agent.enabled: true`. |
+| `fix.enabled` | `false` | Boolean | Enables fix task processing. |
 | `fix.max_patch_bytes` | `131072` (128 KiB) | 1 byte–256 KiB | Maximum model-proposed Fix or Issue implementation patch size. |
 
 Fix requests follow the same optional user blocklist as other commands. Register webhooks only on projects where Corvex should accept commands; the agent console can discover every project visible to its read token.
@@ -129,7 +128,7 @@ Fix requests follow the same optional user blocklist as other commands. Register
 
 | YAML key | Example/default | Required / limits | Description |
 |---|---:|---|---|
-| `issue.implement_enabled` | `false` | Boolean; requires `agent.enabled: true` | Enables code writes for Issue tasks. Ordinary `@<bot> <request>` mentions can still receive analysis/replies while this is false. When enabled, the event runner may create a new `corvex/issue-*` branch and Draft MR for an implementation request. It does not execute repository code or merge automatically. |
+| `issue.implement_enabled` | `false` | Boolean | Enables code writes for Issue tasks. Ordinary `@<bot> <request>` mentions can still receive analysis/replies while this is false. When enabled, the event runner may create a new `corvex/issue-*` branch and Draft MR for an implementation request. It does not execute repository code or merge automatically. |
 | `issue.history_comments` | `20` | 0–50 | Number of most recent non-system Issue comments included in the initial assistant context. `0` disables comment history. Pagination and aggregate byte limits cap the context. |
 
 Issue tasks use the project default branch unless the current request explicitly names another existing branch; comments do not authorize branch selection. Implementation needs `CORVEX_GITLAB_TOKEN` with permission to push branches and create merge requests. Generated patches are restricted to ordinary text-file changes and validated paths. A failed/uncertain publish is not automatically retried; inspect the Issue task events and project branches before retrying.

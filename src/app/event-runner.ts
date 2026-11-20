@@ -114,7 +114,6 @@ export class EventRunner {
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
   ) {
-    if (!config.agent.enabled) throw new Error("event runner requires agent.enabled=true");
     this.baseline = structuredClone(config);
     this.repo = new GitManager(
       config.storage.root,

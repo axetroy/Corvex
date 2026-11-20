@@ -333,7 +333,6 @@ describe("review task loop", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${modelPort}/v1`,
         model: "test-model",
         apiKey: "test-api-key",

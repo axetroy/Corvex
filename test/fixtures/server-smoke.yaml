@@ -1,3 +1,4 @@
+# Docker smoke 只验证单进程启动；可调项均走运维台设置或默认值。
 server:
   listen: "0.0.0.0:8080"
   read_timeout: 5s
@@ -5,38 +6,7 @@ server:
 
 gitlab:
   base_url: "https://gitlab.example.com"
-  blocked_user_ids: []
-  bot_username: "corvex-bot"
 
 storage:
   root: "/data/corvex"
   database: "/data/corvex/state/corvex.db"
-  retention_days: 90
-  audit_retention_days: 365
-
-agent:
-  enabled: true
-  response_language: "en"
-  base_url: "https://api.openai.com/v1"
-  model: "ci-smoke-model"
-  request_timeout: 10s
-  session_timeout: 1m
-  max_output_tokens: 1024
-  daily_token_budget: 0
-  mcp_enabled: false
-  web_enabled: false
-  web_blocked_hosts: []
-  skill_paths: []
-
-review:
-  max_files: 10
-  max_findings: 5
-  max_context_bytes: 1048576
-
-events:
-  poll_interval: 1s
-  event_timeout: 1m
-
-fix:
-  enabled: false
-  max_patch_bytes: 131072

@@ -6,7 +6,7 @@ Corvex 将请求接入与模型、仓库处理分离：
 
 1. **Server** 提供 GitLab Note Hook 和经过认证的 Agent 接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件写入 SQLite，并回复 GitLab。Agent 控制台通过配置的 GitLab 只读 Token 发现项目和分支。
 2. **SQLite** 是持久化队列和状态存储，记录事件、Webhook 幂等/投递状态、执行尝试、审计事件、对话及其消息/轮次、模型调用指标以及可选的每日 Token 预留。
-3. **内联事件执行器** 运行在 Server 进程内，Webhook 入队后立即唤醒它；它领取事件并续租，记录供 Agent 控制台监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。启动需要设置 `agent.enabled: true`。对话轮次不是事件，同样由 Server 内联执行。
+3. **内联事件执行器** 运行在 Server 进程内，Webhook 入队后立即唤醒它；它领取事件并续租，记录供 Agent 控制台监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。对话轮次不是事件，同样由 Server 内联执行。
 4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
 5. **OpenAI 兼容模型 API** 由内联事件执行器调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现，也由 Server 为内联对话轮次调用。
 
