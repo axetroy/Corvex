@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile as readFileFs, realpath, writeFile as writeFileFs } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { copyFile as copyFileFs, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
@@ -11,7 +11,7 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
-import { maxWriteBytes, replaceTextExactly } from "../agent/repo-write.js";
+import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs-write.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { parseConversationCommand } from "./conversation-command.js";
@@ -156,55 +156,52 @@ export class ConversationRunner {
     return true;
   }
 
-  /** 把模型写入限定在该会话 worktree：拒绝绝对路径、上层遍历与 .git。 */
-  private async resolveWritablePath(workspacePath: string, requested: string): Promise<{ root: string; target: string; path: string }> {
-    if (!requested || [...requested].length > 4096 || requested.includes("\0")) {
-      throw new Error("invalid file path");
-    }
-    if (isAbsolute(requested) || /^[a-zA-Z]:/.test(requested)) {
-      throw new Error("absolute paths are not allowed; use a repository-relative path");
-    }
-    const parts = requested.replace(/\\/g, "/").replace(/^\/+/, "").split("/");
-    if (parts.some((part) => !part || part === "." || part === "..")) {
-      throw new Error("invalid repository-relative path");
-    }
-    if (parts[0] === ".git") throw new Error("writing .git is not allowed");
-    const root = await realpath(workspacePath);
-    const target = resolve(root, ...parts);
-    const parent = await realpath(dirname(target)).catch(() => dirname(target));
-    const inside = relative(root, parent);
-    if (inside.startsWith("..") || isAbsolute(inside)) {
-      throw new Error("file path escapes the conversation worktree");
-    }
-    // 目标本身若为符号链接，写入会跟随到 worktree 之外；直接拒绝。
-    const existing = await lstat(target).catch(() => undefined);
-    if (existing?.isSymbolicLink()) throw new Error("cannot write through a symbolic link");
-    return { root, target, path: parts.join("/") };
-  }
-
-  private async writeWorkspaceFile(workspacePath: string, requested: string, content: string) {
-    const bytes = Buffer.byteLength(content);
-    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
-    const { target, path } = await this.resolveWritablePath(workspacePath, requested);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFileFs(target, content, "utf8");
-    return { path, bytes };
-  }
-
-  private async editWorkspaceFile(
-    workspacePath: string,
-    requested: string,
-    oldString: string,
-    newString: string,
-    replaceAll: boolean,
-  ) {
-    const { target, path } = await this.resolveWritablePath(workspacePath, requested);
-    const current = await readFileFs(target, "utf8");
-    const { updated, replaced } = replaceTextExactly(current, oldString, newString, replaceAll);
-    const bytes = Buffer.byteLength(updated);
-    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
-    await writeFileFs(target, updated, "utf8");
-    return { path, bytes, replaced };
+  /** 把文件系统能力绑定到当前会话的 worktree；所有路径都走共享守卫。 */
+  private workspaceFs(workspacePath: string): WorkspaceFs {
+    const writeFile = async (requested: string, content: string) => {
+      const bytes = Buffer.byteLength(content);
+      if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
+      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFileFs(target, content, "utf8");
+      return { path, bytes };
+    };
+    const editFile = async (requested: string, oldString: string, newString: string, replaceAll: boolean) => {
+      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      const current = await readFileFs(target, "utf8");
+      const { updated, replaced } = replaceTextExactly(current, oldString, newString, replaceAll);
+      const bytes = Buffer.byteLength(updated);
+      if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
+      await writeFileFs(target, updated, "utf8");
+      return { path, bytes, replaced };
+    };
+    const deleteFile = async (requested: string) => {
+      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      await rm(target, { force: false });
+      return { path, bytes: 0 };
+    };
+    const resolvePair = async (from: string, to: string, overwrite: boolean) => {
+      const source = await resolveWorktreePath(workspacePath, from);
+      const destination = await resolveWorktreePath(workspacePath, to);
+      if (!overwrite) {
+        const exists = await readFileFs(destination.target, "utf8").then(() => true).catch(() => false);
+        if (exists) throw new Error(`destination already exists: ${destination.path}`);
+      }
+      return { source, destination };
+    };
+    const moveFile = async (from: string, to: string, overwrite: boolean) => {
+      const { source, destination } = await resolvePair(from, to, overwrite);
+      await mkdir(dirname(destination.target), { recursive: true });
+      await rename(source.target, destination.target);
+      return { path: destination.path, bytes: 0 };
+    };
+    const copyFile = async (from: string, to: string, overwrite: boolean) => {
+      const { source, destination } = await resolvePair(from, to, overwrite);
+      await mkdir(dirname(destination.target), { recursive: true });
+      await copyFileFs(source.target, destination.target);
+      return { path: destination.path, bytes: 0 };
+    };
+    return { writeFile, editFile, deleteFile, moveFile, copyFile };
   }
 
   private async persistChanges(workspace: Workspace, conversationId: string, signal?: AbortSignal): Promise<void> {
@@ -616,9 +613,7 @@ export class ConversationRunner {
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
-              writeFile: (path, content) => this.writeWorkspaceFile(workspace.path, path, content),
-              editFile: (path, oldString, newString, replaceAll) =>
-                this.editWorkspaceFile(workspace.path, path, oldString, newString, replaceAll),
+              fs: this.workspaceFs(workspace.path),
             },
             workspace.path,
             signal,

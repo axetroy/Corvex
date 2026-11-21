@@ -592,7 +592,7 @@ export async function readAllowedFile(
   return result.text;
 }
 
-export function createReadOnlyFileExtension(
+export function createFsReadExtension(
   allowedRoots: string[],
   gitGrep?: GitGrep,
   gitDiff?: (path?: string) => Promise<{ diff: string; truncated: boolean }>,

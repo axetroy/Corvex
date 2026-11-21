@@ -25,7 +25,7 @@ import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
-import { createRepoWriteExtension } from "./repo-write.js";
+import { createFsWriteExtension, type WorkspaceFs } from "./fs-write.js";
 import { createGitLabConversationExtension } from "./gitlab-conversation.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
@@ -36,7 +36,7 @@ import {
   type MergeRequestComment,
   type MergeRequestMetadataUpdate,
 } from "../gitlab/client.js";
-import { createReadOnlyFileExtension } from "./repo-read.js";
+import { createFsReadExtension } from "./fs-read.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
 import {
   createToolResultBudgetExtension,
@@ -115,8 +115,7 @@ export interface ModelRequest {
   /** 只发文本、不注册任何工具；用于标题等不应读取仓库的模型调用。 */
   noTools?: boolean;
   /** 对话的本地文件写入能力；由 Runner 限定到当前 worktree 后传入。 */
-  writeFile?: (path: string, content: string) => Promise<{ path: string; bytes: number }>;
-  editFile?: (path: string, oldString: string, newString: string, replaceAll: boolean) => Promise<{ path: string; bytes: number; replaced?: number }>;
+  fs?: WorkspaceFs;
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
@@ -513,7 +512,7 @@ export class PiAgent {
         // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
         // 在 SDK 下一次压缩检查之前把窗口顶爆。
         createToolResultBudgetExtension(this.config.agent.contextWindow),
-        createReadOnlyFileExtension(
+        createFsReadExtension(
           allowedRoots,
           workspace && this.git
             ? (query, path) => this.git!.grep(workspace, query, path, signal)
@@ -623,8 +622,8 @@ export class PiAgent {
         ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
           ? [createPlanExtension()]
           : []),
-        ...(request.taskType === "conversation" && request.writeFile && request.editFile
-          ? [createRepoWriteExtension({ writeFile: request.writeFile, editFile: request.editFile })]
+        ...(request.taskType === "conversation" && request.fs
+          ? [createFsWriteExtension(request.fs)]
           : []),
         ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
           ? [createGitLabConversationExtension({

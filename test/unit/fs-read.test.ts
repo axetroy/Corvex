@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  createReadOnlyFileExtension,
+  createFsReadExtension,
   readAllowedDirectory,
   readAllowedFile,
   requireRelativeRepoPath,
   searchAllowedFiles,
   statAllowedPath,
-} from "../../src/agent/repo-read.js";
+} from "../../src/agent/fs-read.js";
 
 describe("readAllowedFile", () => {
   let root: string;
@@ -126,10 +126,10 @@ describe("readAllowedFile", () => {
       registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) =>
         registered.set(tool.name, tool),
     } as unknown as ExtensionAPI;
-    createReadOnlyFileExtension([root])(registrar);
+    createFsReadExtension([root])(registrar);
     expect(registered.has("git_grep")).toBe(false);
 
-    createReadOnlyFileExtension([root], async () => ({
+    createFsReadExtension([root], async () => ({
       matches: [{ path: "src/app.ts", line: 9, text: "const target = true" }],
       truncated: true,
     }))(registrar);
@@ -149,7 +149,7 @@ describe("readAllowedFile", () => {
   it("reuses a sequential range cursor without changing line headers", async () => {
     await writeFile(join(root, "large.txt"), Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n"));
     let readFileTool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
-    createReadOnlyFileExtension([root])({
+    createFsReadExtension([root])({
       registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
         if (tool.name === "read_file") readFileTool = tool;
       },
@@ -167,7 +167,7 @@ describe("readAllowedFile", () => {
 
   it("registers read_dir and stat as agent tools", () => {
     const registered = new Map<string, string | undefined>();
-    const extension = createReadOnlyFileExtension([root]);
+    const extension = createFsReadExtension([root]);
 
     extension({
       registerTool: (tool: { name: string; executionMode?: string }) => {
