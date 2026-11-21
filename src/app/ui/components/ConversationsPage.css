@@ -1,12 +1,12 @@
 .conversations-layout {
-  --conversation-border: #e1e6eb;
-  --conversation-border-strong: #d5dce3;
-  --conversation-muted: #71808e;
-  --conversation-ink: #17212b;
-  --conversation-surface: #fff;
-  --conversation-canvas: #f7f9fb;
-  --conversation-brand: #1769aa;
-  --conversation-brand-soft: #eaf2fa;
+  --conversation-border: var(--border);
+  --conversation-border-strong: var(--border-strong);
+  --conversation-muted: var(--text-muted);
+  --conversation-ink: var(--text);
+  --conversation-surface: var(--bg-panel);
+  --conversation-canvas: var(--bg-subtle);
+  --conversation-brand: var(--primary);
+  --conversation-brand-soft: var(--primary-soft);
 
   display: flex;
   flex: 1;
@@ -52,7 +52,7 @@
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--conversation-border);
-  background: linear-gradient(180deg, #fbfcfe 0%, #f6f8fa 100%);
+  background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-subtle) 100%);
 }
 
 /* 与右侧标签栏保持一致的高度：两侧内容从同一条水平线开始，不会因按钮更高而错位。 */
@@ -166,7 +166,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2f7fe0;
+  background: var(--blue);
   box-shadow: 0 0 0 0 rgb(47 127 224 / 55%);
   animation: conversation-summary-pulse 1.4s ease-out infinite;
 }
@@ -198,7 +198,7 @@
   margin-top: 4px;
   padding-inline: 12px;
   border-top: 1px solid var(--conversation-border);
-  background: #f6f8fa;
+  background: var(--bg-subtle);
   color: var(--conversation-muted);
   font-size: 11px;
   font-weight: 650;
@@ -273,7 +273,7 @@
 }
 
 .conversation-sidebar-list .ant-conversations-item:hover {
-  background: #eef3f8;
+  background: var(--bg-hover);
 }
 
 .conversation-sidebar-list .ant-conversations-item-active,
@@ -366,8 +366,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   border-color: var(--conversation-border-strong);
-  background: #f2f6fa;
-  color: #3b4a58;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
@@ -375,9 +375,9 @@
 .conversation-changes-tag.ant-tag {
   flex: 0 0 auto;
   margin: 0;
-  border-color: #ffd591;
-  background: #fff7e6;
-  color: #ad4e00;
+  border-color: var(--orange);
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 11px;
 }
 
@@ -400,7 +400,7 @@
 }
 
 .conversation-pinned code {
-  color: #4a5866;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -476,7 +476,7 @@
 
 .conversation-welcome .ant-welcome-description {
   margin-top: 6px;
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
@@ -485,8 +485,8 @@
   width: 44px;
   height: 44px;
   place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, #1d7fc9, var(--conversation-brand));
+  color: var(--bg-panel);
+  background: linear-gradient(135deg, var(--primary), var(--conversation-brand));
   border-radius: 12px;
   box-shadow: 0 8px 18px rgb(23 105 170 / 28%);
   font-size: 20px;
@@ -630,23 +630,23 @@
 }
 
 .conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(1) .ant-prompts-nested .ant-prompts-item {
-  border-left-color: #2f7fe0;
-  background: #eff6fd;
+  border-left-color: var(--blue);
+  background: var(--primary-soft);
 }
 
 .conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(2) .ant-prompts-nested .ant-prompts-item {
-  border-left-color: #2f9e73;
-  background: #eef8f3;
+  border-left-color: var(--success);
+  background: var(--success-soft);
 }
 
 .conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(3) .ant-prompts-nested .ant-prompts-item {
-  border-left-color: #d98a2b;
-  background: #fdf5e9;
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item:nth-child(4) .ant-prompts-nested .ant-prompts-item {
-  border-left-color: #8b6bb1;
-  background: #f5f0fa;
+  border-left-color: var(--purple);
+  background: var(--purple-soft);
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item .ant-prompts-label {
@@ -655,7 +655,7 @@
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item:hover {
-  background: #e3eefb;
+  background: var(--bg-selected);
   color: var(--conversation-brand);
 }
 
@@ -683,7 +683,7 @@
   padding: 8px 10px;
   border: 1px solid var(--conversation-border);
   border-radius: 8px;
-  background: #f7f9fb;
+  background: var(--bg-subtle);
   color: var(--conversation-muted);
   font-size: 12px;
 }
@@ -778,7 +778,7 @@
 }
 
 .conversation-process-body > .conversation-thinking::before {
-  background: #2f7fe0;
+  background: var(--blue);
 }
 
 /* 思考：OpenCode 式的小写标题 + 弱化正文，不占卡片。 */
@@ -798,7 +798,7 @@
   max-height: 14em;
   margin-top: 3px;
   overflow: auto;
-  color: #6b7784;
+  color: var(--text-secondary);
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
@@ -920,7 +920,7 @@
   margin-left: auto;
   padding: 1px 6px;
   border-radius: 6px;
-  background: #eef3f8;
+  background: var(--bg-hover);
   color: var(--conversation-muted);
   font-size: 11px;
   white-space: nowrap;
@@ -932,8 +932,8 @@
   padding: 8px;
   overflow: auto;
   border-radius: 6px;
-  background: #f7f9fb;
-  color: #4a5866;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -987,15 +987,15 @@
 }
 
 .conversation-tool-call-status-succeeded {
-  color: #1f8a4c;
+  color: var(--success);
 }
 
 .conversation-tool-call-status-running {
-  color: #b7791f;
+  color: var(--warning);
 }
 
 .conversation-tool-call-status-failed {
-  color: #b42318;
+  color: var(--danger);
 }
 
 .conversation-message-actions {
@@ -1207,7 +1207,7 @@
 
 .conversation-turn-error {
   margin: 0;
-  color: #b42318;
+  color: var(--danger);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1254,7 +1254,7 @@
   margin: 0;
   border: 1px solid var(--conversation-border-strong);
   border-radius: 14px;
-  background: #fff;
+  background: var(--bg-panel);
   box-shadow: 0 8px 24px rgb(23 33 43 / 12%);
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -1265,7 +1265,7 @@
 }
 
 .conversations-layout .conversation-chat .conversation-composer.ant-sender.ant-sender-disabled {
-  background: #f8f9fa;
+  background: var(--bg-subtle);
   box-shadow: none;
 }
 
@@ -1323,9 +1323,9 @@
 .composer-model-system.ant-tag {
   margin-inline-end: 0;
   padding-inline: 4px;
-  border-color: #91caff;
-  color: #0958d9;
-  background: #e6f4ff;
+  border-color: var(--primary-soft);
+  color: var(--primary-strong);
+  background: var(--primary-soft);
   font-size: 10px;
   line-height: 15px;
   margin-left: 4px;
@@ -1454,7 +1454,7 @@
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--conversation-border);
-  background: #fff;
+  background: var(--bg-panel);
 }
 
 .conversation-file-panel-tabs,
@@ -1542,7 +1542,7 @@
   flex: 1;
   overflow: auto;
   padding: 6px 4px;
-  background: #fafbfc;
+  background: var(--bg-subtle);
 }
 
 .conversation-file-tree .ant-tree {
@@ -1563,7 +1563,7 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: #fff;
+  background: var(--bg-panel);
 }
 
 .conversation-file-tabs {
@@ -1573,7 +1573,7 @@
   align-items: stretch;
   overflow-x: auto;
   border-bottom: 1px solid var(--conversation-border);
-  background: #f6f8fa;
+  background: var(--bg-subtle);
 }
 
 .conversation-file-tab {
@@ -1592,7 +1592,7 @@
 }
 
 .conversation-file-tab.is-active {
-  background: #fff;
+  background: var(--bg-panel);
   color: var(--conversation-ink);
   box-shadow: inset 0 2px 0 var(--conversation-brand);
 }
@@ -1636,7 +1636,7 @@
   width: 44px;
   flex: 0 0 44px;
   padding: 0 8px 0 0;
-  color: #9aa6b2;
+  color: var(--text-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 18px;
@@ -1675,7 +1675,7 @@
 }
 
 .file-tree-icon.folder {
-  color: #dcb67a;
+  color: var(--orange);
 }
 
 .conversation-file-empty {
@@ -1711,7 +1711,7 @@
   padding: 3px 10px;
   border: 1px solid var(--conversation-border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--bg-panel);
   color: var(--conversation-ink);
   cursor: pointer;
   font-size: 11px;
@@ -1737,7 +1737,7 @@
   overflow-x: auto;
   border: 1px solid var(--conversation-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-panel);
   box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
 }
 
@@ -1754,5 +1754,5 @@
 
 .conversation-command-suggestion:hover {
   background: var(--conversation-brand);
-  color: #fff;
+  color: var(--bg-panel);
 }

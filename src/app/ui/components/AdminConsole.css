@@ -1,8 +1,8 @@
 .admin-console {
   display: flex;
   min-height: 100vh;
-  background: #f7f9fb;
-  color: #17212b;
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
 .admin-console-sidebar {
@@ -12,8 +12,8 @@
   flex-direction: column;
   gap: 16px;
   padding: 18px 14px;
-  border-right: 1px solid #e1e6eb;
-  background: #fff;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
 .admin-console-brand {
@@ -29,13 +29,36 @@
   height: 28px;
   place-items: center;
   border-radius: 8px;
-  background: linear-gradient(135deg, #4f7dff, #9a5cff);
-  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--purple));
+  color: var(--bg-panel);
   font-size: 12px;
 }
 
+.admin-console-theme {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  place-items: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.admin-console-theme:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.admin-console-theme:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 .admin-console-label {
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -50,21 +73,21 @@
 .admin-console-nav a {
   padding: 8px 10px;
   border-radius: 7px;
-  color: #5b6b79;
+  color: var(--text-secondary);
   text-decoration: none;
   font-size: 13px;
 }
 
 .admin-console-nav a:hover,
 .admin-console-nav a.active {
-  background: #f0f4f8;
-  color: #1769aa;
+  background: var(--bg-hover);
+  color: var(--primary);
   font-weight: 600;
 }
 
 .admin-console-nav .admin-console-back {
   margin-top: 12px;
-  border-top: 1px solid #e1e6eb;
+  border-top: 1px solid var(--border);
   padding-top: 12px;
 }
 
@@ -80,7 +103,7 @@
   position: fixed;
   right: 16px;
   bottom: 12px;
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -89,7 +112,7 @@
   display: grid;
   min-height: 100vh;
   place-items: center;
-  color: #5b6b79;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 800px) {

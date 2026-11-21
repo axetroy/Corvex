@@ -4,12 +4,12 @@
 
 .remote-picker,
 .remote-picker-popup {
-  --remote-picker-border: var(--conversation-border-strong, #d5dce3);
-  --remote-picker-muted: var(--conversation-muted, #71808e);
-  --remote-picker-ink: var(--conversation-ink, #17212b);
-  --remote-picker-brand: var(--conversation-brand, #1769aa);
-  --remote-picker-brand-soft: var(--conversation-brand-soft, #eaf2fa);
-  --remote-picker-hover: #f4f7fa;
+  --remote-picker-border: var(--conversation-border-strong, var(--border-strong));
+  --remote-picker-muted: var(--conversation-muted, var(--text-muted));
+  --remote-picker-ink: var(--conversation-ink, var(--text));
+  --remote-picker-brand: var(--conversation-brand, var(--primary));
+  --remote-picker-brand-soft: var(--conversation-brand-soft, var(--primary-soft));
+  --remote-picker-hover: var(--bg-hover);
 }
 
 /* ============================ 触发器 ============================ */
@@ -24,7 +24,7 @@
   padding: 0 9px;
   border: 1px solid var(--remote-picker-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--bg-panel);
   box-shadow: 0 1px 2px rgb(23 33 43 / 4%);
   line-height: normal;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
@@ -41,7 +41,7 @@
 }
 
 .remote-picker.ant-select-disabled {
-  background: #f4f6f8;
+  background: var(--bg-page);
   box-shadow: none;
 }
 
@@ -49,7 +49,7 @@
 .remote-picker.ant-select-disabled .ant-select-placeholder,
 .remote-picker.ant-select-disabled .ant-select-prefix,
 .remote-picker.ant-select-disabled .ant-select-suffix {
-  color: #a7b1bb;
+  color: var(--text-faint);
 }
 
 .remote-picker .ant-select-content {
@@ -167,7 +167,7 @@
   padding: 6px;
   border: 1px solid var(--remote-picker-border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--bg-panel);
   box-shadow: 0 12px 32px -8px rgb(23 33 43 / 22%), 0 2px 8px rgb(23 33 43 / 8%);
 }
 
@@ -195,7 +195,7 @@
 /* 下拉列表：统一滚动条外观。 */
 .remote-picker-popup .rc-virtual-list-holder,
 .remote-picker-popup .ant-select-dropdown-list {
-  scrollbar-color: #c4cdd6 transparent;
+  scrollbar-color: var(--border-strong) transparent;
   scrollbar-width: thin;
 }
 
@@ -206,7 +206,7 @@
 .remote-picker-popup .rc-virtual-list-holder::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: #c4cdd6;
+  background: var(--border-strong);
   background-clip: content-box;
 }
 

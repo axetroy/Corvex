@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { fetchJson } from "../api.js";
 import { adminPath } from "../routing.js";
 import type { Copy, Locale } from "../i18n.js";
+import type { ResolvedTheme, ThemeMode } from "../theme.js";
+import { ThemeToggle } from "./ThemeToggle.js";
 import { AdminPanel } from "./AdminPanel.js";
 import { OverviewPage } from "./OverviewPage.js";
 import { Loading, PageHeading } from "./common.js";
@@ -15,6 +17,9 @@ interface Props {
   /** 当前 hash 路由，不含开头的 `#`。 */
   route: string;
   refreshToken: number;
+  themeMode: ThemeMode;
+  resolvedTheme: ResolvedTheme;
+  onThemeChange: (mode: ThemeMode) => void;
   onUpdated: (value: string) => void;
   onRefresh: () => void;
 }
@@ -29,7 +34,17 @@ const sections: { key: SettingsSection; labelKey: "settingsTabBasic" | "settings
 ];
 
 /** 独立管理页：左侧菜单就是设置分组与用户管理，右侧显示对应页面。 */
-export function AdminConsole({ copy, locale, route, refreshToken, onUpdated, onRefresh }: Props) {
+export function AdminConsole({
+  copy,
+  locale,
+  route,
+  refreshToken,
+  themeMode,
+  resolvedTheme,
+  onThemeChange,
+  onUpdated,
+  onRefresh,
+}: Props) {
   const [allowed, setAllowed] = useState<boolean>();
   const [updated, setUpdated] = useState<string>();
   const overviewActive = route === "admin/overview";
@@ -55,6 +70,13 @@ export function AdminConsole({ copy, locale, route, refreshToken, onUpdated, onR
         <div className="admin-console-brand">
           <span className="admin-console-mark">C</span>
           <span>Corvex</span>
+          <ThemeToggle
+            mode={themeMode}
+            resolved={resolvedTheme}
+            copy={copy}
+            onChange={onThemeChange}
+            className="admin-console-theme"
+          />
         </div>
         <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">

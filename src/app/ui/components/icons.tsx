@@ -168,6 +168,35 @@ export function LanguageIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 浅色主题图标：太阳。 */
+export function ThemeLightIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <circle cx="8" cy="8" r="3" />
+      <path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" />
+    </svg>
+  );
+}
+
+/** 深色主题图标：月亮。 */
+export function ThemeDarkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M13.2 9.8A5.7 5.7 0 0 1 6.2 2.8a5.7 5.7 0 1 0 7 7Z" />
+    </svg>
+  );
+}
+
+/** 跟随系统主题图标：半明半暗的圆。 */
+export function ThemeSystemIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <circle cx="8" cy="8" r="5.6" />
+      <path d="M8 2.4a5.6 5.6 0 0 1 0 11.2Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** 理解仓库分组图标：打开的书本。 */
 export function BookIcon(props: SVGProps<SVGSVGElement>) {
   return (

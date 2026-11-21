@@ -35,6 +35,10 @@ describe("operations UI locale", () => {
     expect(zhCN.pickerClear).toBe("清除选择");
     expect(zhCN.commitMinutesTemplate).toBe("{value} 分钟前");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
+    expect(en.themeLabel).toBe("Theme");
+    expect(zhCN.themeLabel).toBe("主题");
+    expect(en.themeSystem).toBe("Follow system");
+    expect(zhCN.themeDark).toBe("深色");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zhCN.statuses).sort()).toEqual(Object.keys(en.statuses).sort());
     expect(Object.keys(zhCN.types).sort()).toEqual(Object.keys(en.types).sort());

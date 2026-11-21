@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
-import { ConfigProvider, Dropdown, Menu } from "antd";
+import { ConfigProvider, Dropdown, Menu, theme as antdThemeApi } from "antd";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
@@ -10,6 +10,7 @@ import { LandingPage } from "./components/LandingPage.js";
 import { AdminConsole } from "./components/AdminConsole.js";
 import { SetupPage } from "./components/SetupPage.js";
 import { UserAvatar } from "./components/UserAvatar.js";
+import { ThemeToggle } from "./components/ThemeToggle.js";
 import {
   ConversationsIcon,
   EventsIcon,
@@ -25,6 +26,7 @@ import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
 import { eventQueueFromParams, eventsBackPath, eventsPath, conversationsPath } from "./routing.js";
 import type { EventQueue } from "./types.js";
+import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./theme.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
 const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
@@ -112,6 +114,9 @@ export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
   const copy = locale === "zh-CN" ? zhCN : en;
   const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
+  const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
+  const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
+  const resolvedTheme = resolveTheme(themeMode, systemDark);
   const location = useLocation();
   const navigate = useNavigate();
   const route = location.pathname.replace(/^\/+/, "");
@@ -160,6 +165,20 @@ export function App() {
     document.title = copy.documentTitle;
   }, [locale, copy]);
 
+  // 把实际主题写到 html 上，CSS 变量据此切换；跟随系统时实时响应浏览器设置变化。
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
   useEffect(() => {
     const timer = window.setInterval(() => setRefreshToken((value) => value + 1), refreshIntervalMs);
     return () => window.clearInterval(timer);
@@ -203,15 +222,28 @@ export function App() {
     setLocale(next);
   }, []);
 
+  const changeTheme = useCallback((value: ThemeMode) => {
+    saveThemeMode(value);
+    setThemeMode(value);
+  }, []);
+
   const languageOptions = [{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }];
   const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
   const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
 
   const onEvents = pageKind === "events" || pageKind === "event";
-  const theme = {
-    token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
-    components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
-  };
+  const theme = useMemo(
+    () => ({
+      algorithm: resolvedTheme === "dark" ? antdThemeApi.darkAlgorithm : antdThemeApi.defaultAlgorithm,
+      token: {
+        colorPrimary: resolvedTheme === "dark" ? "#4a9fe0" : "#1769aa",
+        borderRadius: 6,
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+      },
+      components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
+    }),
+    [resolvedTheme],
+  );
 
   // 公开首页是唯一的 pathname 路由；其余界面都在 /ops 下用 hash 路由。
   if (window.location.pathname === "/") {
@@ -231,6 +263,9 @@ export function App() {
           locale={locale}
           route={route}
           refreshToken={refreshToken}
+          themeMode={themeMode}
+          resolvedTheme={resolvedTheme}
+          onThemeChange={changeTheme}
           onUpdated={handleUpdated}
           onRefresh={refresh}
         />
@@ -284,6 +319,13 @@ export function App() {
                 <LanguageIcon />
               </button>
             </Dropdown>
+            <ThemeToggle
+              mode={themeMode}
+              resolved={resolvedTheme}
+              copy={copy}
+              onChange={changeTheme}
+              className="sidebar-theme"
+            />
             <button
               type="button"
               className="sidebar-toggle"

@@ -9,14 +9,14 @@
 
 .settings-config-path {
   margin: 0 0 12px;
-  color: #5a6673;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
 .settings-config-path code {
   padding: 1px 6px;
   border-radius: 4px;
-  background: #eef2f6;
+  background: var(--bg-code);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -56,15 +56,15 @@
 .settings-badge {
   padding: 1px 8px;
   border-radius: 10px;
-  background: #e6f0fa;
-  color: #1769aa;
+  background: var(--primary-soft);
+  color: var(--primary);
   font-size: 11px;
   font-weight: 600;
 }
 
 .settings-badge-adjusted {
-  background: #fff4e5;
-  color: #a15c00;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .settings-field-control {
@@ -93,12 +93,12 @@
 }
 
 .settings-unit {
-  color: #7a8593;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .settings-effective {
-  color: #a15c00;
+  color: var(--warning);
   font-size: 12px;
 }
 
@@ -109,7 +109,7 @@
 .settings-derived {
   margin: 0;
   padding-left: 18px;
-  color: #5a6673;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -150,29 +150,29 @@
   min-width: 0;
   padding: 6px 8px;
   border-radius: 6px;
-  background: #f7f9fb;
-  color: #3b4a58;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .settings-cleanup-time {
   flex: 0 0 auto;
-  color: #71808e;
+  color: var(--text-muted);
 }
 
 .settings-cleanup-source {
   flex: 0 0 auto;
   padding: 0 5px;
   border-radius: 4px;
-  background: #e8eef5;
-  color: #3b4a58;
+  background: var(--primary-soft);
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .settings-cleanup-mode {
   flex: 0 0 auto;
   margin-left: auto;
-  color: #71808e;
+  color: var(--text-muted);
 }
 
 .settings-cleanup-pagination {
@@ -200,7 +200,7 @@
 
 .model-provider {
   padding: 12px 14px;
-  border: 1px solid #e3e8ee;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 
@@ -232,9 +232,9 @@
 
 .model-provider-system.ant-tag {
   margin-inline-end: 0;
-  border-color: #91caff;
-  color: #0958d9;
-  background: #e6f4ff;
+  border-color: var(--primary-soft);
+  color: var(--primary-strong);
+  background: var(--primary-soft);
 }
 
 .model-provider-empty {

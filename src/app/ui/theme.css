@@ -1,0 +1,151 @@
+/*
+ * 控制台主题调色板。
+ * 所有界面颜色都从这里取变量，浅色值保持原有观感，深色值由 [data-theme="dark"] 覆盖。
+ * LandingPage 是独立的深色营销页，不读取这些变量。
+ */
+:root {
+  color-scheme: light;
+
+  --bg-page: #f4f6f8;
+  --bg-panel: #ffffff;
+  --bg-subtle: #f7f9fb;
+  --bg-code: #f5f7f8;
+  --bg-hover: #eef3f8;
+  --bg-selected: #e3eefb;
+
+  --border-soft: #eef1f4;
+  --border: #e1e6eb;
+  --border-strong: #d5dce3;
+
+  --text: #17212b;
+  --text-strong: #25313c;
+  --text-secondary: #5b6b79;
+  --text-muted: #71808e;
+  --text-faint: #9aa6b2;
+
+  --primary: #1769aa;
+  --primary-strong: #1466c3;
+  --primary-soft: #eaf2fa;
+
+  --success: #278150;
+  --success-soft: #eef7f2;
+  --warning: #ad4e00;
+  --warning-soft: #fff7e6;
+  --danger: #b63838;
+  --danger-soft: #fff3f1;
+  --purple: #8b6bb1;
+  --purple-soft: #f5eaff;
+  --orange: #df8c37;
+  --blue: #2f7fe0;
+  --green: #67a48a;
+  --cyan: #4fd8ff;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-page: #0d141c;
+  --bg-panel: #161f2a;
+  --bg-subtle: #131b24;
+  --bg-code: #111922;
+  --bg-hover: #1d2a38;
+  --bg-selected: #1b344a;
+
+  --border-soft: #22303d;
+  --border: #2b3a48;
+  --border-strong: #3b4b5b;
+
+  --text: #e7edf3;
+  --text-strong: #f3f7fa;
+  --text-secondary: #a9b8c6;
+  --text-muted: #8b9bab;
+  --text-faint: #6f8091;
+
+  --primary: #4a9fe0;
+  --primary-strong: #6cb4f0;
+  --primary-soft: #153049;
+
+  --success: #4fc68a;
+  --success-soft: #163329;
+  --warning: #f0a35e;
+  --warning-soft: #3a2b14;
+  --danger: #f2777a;
+  --danger-soft: #3a1d1d;
+  --purple: #b79ce6;
+  --purple-soft: #2b1f3d;
+  --orange: #f0a860;
+  --blue: #6cb4f0;
+  --green: #78c9a6;
+  --cyan: #6fe0ff;
+}
+
+/* highlight.js 的 github 主题是浅色的；深色模式下覆盖代码块与其 token 配色。 */
+[data-theme="dark"] .hljs {
+  color: #c9d1d9;
+  background: var(--bg-code);
+}
+[data-theme="dark"] .hljs-doctag,
+[data-theme="dark"] .hljs-keyword,
+[data-theme="dark"] .hljs-meta .hljs-keyword,
+[data-theme="dark"] .hljs-template-tag,
+[data-theme="dark"] .hljs-template-variable,
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-variable.language_ {
+  color: #ff7b72;
+}
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-title.class_,
+[data-theme="dark"] .hljs-title.class_.inherited__,
+[data-theme="dark"] .hljs-title.function_ {
+  color: #d2a8ff;
+}
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-attribute,
+[data-theme="dark"] .hljs-literal,
+[data-theme="dark"] .hljs-meta,
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-operator,
+[data-theme="dark"] .hljs-variable,
+[data-theme="dark"] .hljs-selector-attr,
+[data-theme="dark"] .hljs-selector-class,
+[data-theme="dark"] .hljs-selector-id {
+  color: #79c0ff;
+}
+[data-theme="dark"] .hljs-regexp,
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+[data-theme="dark"] .hljs-built_in,
+[data-theme="dark"] .hljs-symbol {
+  color: #ffa657;
+}
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-code,
+[data-theme="dark"] .hljs-formula {
+  color: #8b949e;
+}
+[data-theme="dark"] .hljs-name,
+[data-theme="dark"] .hljs-quote,
+[data-theme="dark"] .hljs-selector-tag,
+[data-theme="dark"] .hljs-selector-pseudo {
+  color: #7ee787;
+}
+[data-theme="dark"] .hljs-subst,
+[data-theme="dark"] .hljs-emphasis {
+  color: #c9d1d9;
+}
+[data-theme="dark"] .hljs-section {
+  color: #1f6feb;
+}
+[data-theme="dark"] .hljs-bullet {
+  color: #f2cc60;
+}
+[data-theme="dark"] .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+[data-theme="dark"] .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}

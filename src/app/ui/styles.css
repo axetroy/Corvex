@@ -1,6 +1,6 @@
 :root {
-  color: #17212b;
-  background: #f4f6f8;
+  color: var(--text);
+  background: var(--bg-page);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -17,7 +17,7 @@ body {
 }
 
 a {
-  color: #1466c3;
+  color: var(--primary-strong);
   text-decoration: none;
 }
 
@@ -46,8 +46,8 @@ a:hover {
   width: 232px;
   flex-direction: column;
   overflow: hidden;
-  background: #fff;
-  border-right: 1px solid #e1e6eb;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
   transition: width 0.18s ease;
 }
 
@@ -62,7 +62,7 @@ a:hover {
   gap: 4px;
   min-height: 48px;
   padding: 0 10px;
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .sidebar-collapsed .sidebar-head {
@@ -107,7 +107,7 @@ a:hover {
   min-width: 0;
   align-items: center;
   gap: 9px;
-  color: #17212b;
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -124,7 +124,7 @@ a:hover {
 .brand-name small {
   display: block;
   margin-top: 1px;
-  color: #72808d;
+  color: var(--text-muted);
   font-size: 9px;
   letter-spacing: 0.12em;
 }
@@ -139,20 +139,21 @@ a:hover {
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  color: #fff;
-  background: #1769aa;
+  color: var(--bg-panel);
+  background: var(--primary);
   border-radius: 8px;
 }
 
-/* 语言入口与侧边栏收起按钮共用同一图标按钮外观，置于顶栏右侧。 */
+/* 语言、主题入口与侧边栏收起按钮共用同一图标按钮外观，置于顶栏右侧。 */
 .sidebar-language,
+.sidebar-theme,
 .sidebar-toggle {
   display: grid;
   width: 30px;
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  color: #5b6b79;
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -167,7 +168,7 @@ a:hover {
   gap: 8px;
   margin-top: auto;
   padding: 10px 12px;
-  border-top: 1px solid var(--conversation-border, #e1e6eb);
+  border-top: 1px solid var(--conversation-border, var(--border));
 }
 
 /* 用户头像：管理后台用户列表与侧栏账号区共用同一个组件和同一套样式。 */
@@ -179,8 +180,8 @@ a:hover {
   place-items: center;
   border-radius: 50%;
   object-fit: cover;
-  background: #1769aa;
-  color: #fff;
+  background: var(--primary);
+  color: var(--bg-panel);
   font-size: 12px;
   font-weight: 600;
 }
@@ -218,7 +219,7 @@ a:hover {
 }
 
 .sidebar-account-username {
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -228,10 +229,10 @@ a:hover {
   align-items: center;
   flex: 0 0 auto;
   padding: 1px 6px;
-  border: 1px solid #e9d5ff;
+  border: 1px solid var(--purple-soft);
   border-radius: 4px;
-  background: #f5eaff;
-  color: #7e22ce;
+  background: var(--purple-soft);
+  color: var(--purple);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
@@ -240,9 +241,9 @@ a:hover {
 }
 
 .sidebar-admin:hover {
-  border-color: #d8b4fe;
-  background: #f0e0ff;
-  color: #6b21a8;
+  border-color: var(--purple);
+  background: var(--purple-soft);
+  color: var(--purple);
 }
 
 .sidebar-logout {
@@ -251,7 +252,7 @@ a:hover {
   height: 28px;
   flex: 0 0 auto;
   place-items: center;
-  color: #5b6b79;
+  color: var(--text-secondary);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -259,8 +260,8 @@ a:hover {
 }
 
 .sidebar-logout:hover {
-  color: #17212b;
-  background: #f0f4f8;
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .sidebar-toggle {
@@ -268,19 +269,22 @@ a:hover {
 }
 
 .sidebar-collapsed .sidebar-toggle,
-.sidebar-collapsed .sidebar-language {
+.sidebar-collapsed .sidebar-language,
+.sidebar-collapsed .sidebar-theme {
   margin-left: 0;
 }
 
 .sidebar-language:hover,
+.sidebar-theme:hover,
 .sidebar-toggle:hover {
-  color: #17212b;
-  background: #f0f4f8;
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .sidebar-language:focus-visible,
+.sidebar-theme:focus-visible,
 .sidebar-toggle:focus-visible {
-  outline: 2px solid #1769aa;
+  outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
 
@@ -303,7 +307,7 @@ a:hover {
   bottom: 8px;
   z-index: 5;
   padding: 2px 8px;
-  color: #71808e;
+  color: var(--text-muted);
   background: rgb(255 255 255 / 82%);
   border-radius: 6px;
   font-size: 11px;
@@ -369,7 +373,7 @@ h1 {
 
 .page-heading p {
   margin: 7px 0 0;
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
@@ -382,8 +386,8 @@ h1 {
 
 .card,
 .panel {
-  background: #fff;
-  border: 1px solid #e1e6eb;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 2px 6px rgb(23 33 43 / 3%);
 }
@@ -412,13 +416,13 @@ h1 {
 
 .status-item {
   padding: 12px 13px;
-  background: #f7f9fa;
+  background: var(--bg-subtle);
   border-radius: 7px;
 }
 
 .status-item span {
   display: block;
-  color: #6b7987;
+  color: var(--text-secondary);
   font-size: 12px;
   text-transform: capitalize;
 }
@@ -435,13 +439,13 @@ h1 {
   align-items: end;
   gap: 11px;
   padding: 15px 18px;
-  border-bottom: 1px solid #e8ecef;
+  border-bottom: 1px solid var(--border);
 }
 
 .field {
   display: grid;
   gap: 5px;
-  color: #61707e;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -463,8 +467,8 @@ h1 {
   align-items: center;
   justify-content: space-between;
   padding: 13px 17px;
-  color: #71808e;
-  border-top: 1px solid #e8ecef;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
   font-size: 12px;
 }
 
@@ -481,11 +485,11 @@ h1 {
 
 .detail-item {
   padding: 12px 0;
-  border-bottom: 1px solid #edf0f2;
+  border-bottom: 1px solid var(--border-soft);
 
   & dt {
     margin-bottom: 5px;
-    color: #71808e;
+    color: var(--text-muted);
     font-size: 11px;
     text-transform: uppercase;
   }
@@ -503,7 +507,7 @@ td details {
 }
 
 details summary {
-  color: #1769aa;
+  color: var(--primary);
   cursor: pointer;
   list-style-position: inside;
 }
@@ -514,7 +518,7 @@ details summary {
   min-width: 0;
   margin-left: 8px;
   overflow: hidden;
-  color: #536271;
+  color: var(--text-secondary);
   text-overflow: ellipsis;
   vertical-align: bottom;
   white-space: nowrap;
@@ -526,9 +530,9 @@ details summary {
   margin: 9px 0 2px;
   padding: 10px 12px;
   overflow: auto;
-  color: #25313c;
-  background: #f5f7f8;
-  border: 1px solid #e3e8eb;
+  color: var(--text-strong);
+  background: var(--bg-code);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
@@ -540,18 +544,18 @@ details summary {
 }
 
 .execution-event-status {
-  color: #278150;
+  color: var(--success);
   font-weight: 650;
 }
 
 .execution-event-status-failed,
 .execution-event-status-interrupted {
-  color: #b63838;
+  color: var(--danger);
 }
 
 .execution-event-status-ignored,
 .execution-event-status-unknown {
-  color: #687684;
+  color: var(--text-secondary);
 }
 
 .execution-event-identifiers {
@@ -585,17 +589,17 @@ details summary {
 
 .trace-session-summary {
   margin: 0 0 12px;
-  color: #64737f;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .trace-session-system-prompt {
   margin: 0 8px;
   padding: 8px 10px;
-  background: #f7f8f9;
-  border: 1px solid #e3e8eb;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  color: #536271;
+  color: var(--text-secondary);
   font-size: 12px;
 
   & .details-preview {
@@ -626,7 +630,7 @@ details summary {
 .trace-session-duration,
 .trace-session-time,
 .trace-session-model {
-  color: #64737f;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 
@@ -641,15 +645,15 @@ details summary {
 }
 
 .trace-session-status {
-  color: #278150;
+  color: var(--success);
 }
 
 .trace-session-status-failed {
-  color: #b63838;
+  color: var(--danger);
 }
 
 .trace-session-status-running {
-  color: #a56a11;
+  color: var(--warning);
 }
 
 .trace-session-status-queued,
@@ -657,7 +661,7 @@ details summary {
 .trace-session-status-analyzing,
 .trace-session-status-stale,
 .trace-session-status-cancelled {
-  color: #64737f;
+  color: var(--text-secondary);
 }
 
 .trace-session-turn {
@@ -665,11 +669,11 @@ details summary {
   align-items: baseline;
   gap: 8px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #e6eaed;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .trace-session-turn-label {
-  color: #40515e;
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
 }
@@ -677,7 +681,7 @@ details summary {
 .trace-session-turn-error {
   min-width: 0;
   overflow: hidden;
-  color: #b63838;
+  color: var(--danger);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -705,7 +709,7 @@ details summary {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  color: #64737f;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 
@@ -713,12 +717,12 @@ details summary {
   align-self: flex-end;
   max-width: min(84%, 720px);
   padding: 10px 13px;
-  background: #fff;
-  border: 1px solid #e0e6ea;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 8px;
 
   & .trace-session-role {
-    color: #1769aa;
+    color: var(--primary);
   }
 }
 
@@ -729,7 +733,7 @@ details summary {
 
 .trace-session-tool-details {
   max-width: 100%;
-  color: #536271;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
@@ -742,8 +746,8 @@ details summary {
   max-width: 100%;
   min-height: 34px;
   padding: 6px 10px;
-  background: #f5f7f8;
-  border: 1px solid #e1e6e9;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
 
@@ -762,8 +766,8 @@ details summary {
 .trace-session-detail {
   min-width: 0;
   padding: 10px 12px;
-  background: #fff;
-  border: 1px solid #e5e9ec;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 4px;
 
   & .trace-session-content {
@@ -776,15 +780,15 @@ details summary {
 }
 
 .trace-session-message-error {
-  color: #8e2f2f;
-  background: #fff3f1;
-  border-color: #efcfca;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 .trace-session-role {
   display: block;
   margin-bottom: 5px;
-  color: #536271;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 
@@ -806,17 +810,17 @@ details summary {
 }
 
 .trace-lane-header-tool {
-  color: #35705b;
-  background: #eef7f2;
-  border-color: #d7e9de;
+  color: var(--success);
+  background: var(--success-soft);
+  border-color: var(--success-soft);
 }
 
 .trace-connector-tool {
-  stroke: #67a48a;
+  stroke: var(--green);
 }
 
 .trace-record-status-failed {
-  color: #b63838;
+  color: var(--danger);
 }
 
 .trace-payload {
@@ -840,7 +844,7 @@ details summary {
 .trace-payload-empty {
   display: flex;
   gap: 8px;
-  color: #71808e;
+  color: var(--text-muted);
 }
 
 .pre-wrap {
@@ -917,7 +921,7 @@ details summary {
 
 .trace-overview {
   padding-bottom: 12px;
-  border-bottom: 1px solid #e6eaed;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .trace-overview-header {
@@ -930,14 +934,14 @@ details summary {
 
 .trace-overview-title,
 .trace-pane-heading {
-  color: #26333e;
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 650;
 }
 
 .trace-overview-summary,
 .trace-selection-status {
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -952,7 +956,7 @@ details summary {
   min-width: 30px;
   min-height: 28px;
   padding: 3px 7px;
-  color: #1769aa;
+  color: var(--primary);
 }
 
 .trace-overview-controls .trace-zoom-button {
@@ -962,14 +966,14 @@ details summary {
 
 .trace-zoom-value {
   min-width: 42px;
-  color: #536271;
+  color: var(--text-secondary);
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 
 .trace-overview-hint {
   margin: 2px 0 6px;
-  color: #7b8894;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -1002,7 +1006,7 @@ details summary {
 .trace-overview-axis {
   position: relative;
   height: 24px;
-  border-bottom: 1px solid #dfe5e9;
+  border-bottom: 1px solid var(--border);
 }
 
 .trace-overview-band-axis {
@@ -1010,7 +1014,7 @@ details summary {
   top: 0;
   bottom: 0;
   overflow: hidden;
-  border-left: 1px dashed #c7d1d8;
+  border-left: 1px dashed var(--border-strong);
 }
 
 .trace-overview-band-axis.is-ungrouped {
@@ -1023,7 +1027,7 @@ details summary {
   left: 4px;
   max-width: calc(100% - 8px);
   overflow: hidden;
-  color: #4c5b66;
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -1035,14 +1039,14 @@ details summary {
   top: 0;
   bottom: 0;
   z-index: 0;
-  border-left: 1px dashed #d8dfe4;
+  border-left: 1px dashed var(--border);
   pointer-events: none;
 }
 
 .trace-overview-tick {
   position: absolute;
   bottom: 4px;
-  color: #75828c;
+  color: var(--text-muted);
   font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   transform: translateX(-50%);
   white-space: nowrap;
@@ -1053,18 +1057,18 @@ details summary {
   bottom: -5px;
   left: 50%;
   height: 4px;
-  border-left: 1px solid #aeb9c1;
+  border-left: 1px solid var(--border-strong);
   content: "";
 }
 
 .trace-overview-track {
   min-height: 29px;
-  border-bottom: 1px solid #edf0f2;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .trace-overview-track-label {
   padding-left: 3px;
-  color: #687783;
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 650;
 }
@@ -1072,20 +1076,20 @@ details summary {
 .trace-overview-plot {
   position: relative;
   height: 28px;
-  background-image: linear-gradient(to right, #edf0f2 1px, transparent 1px);
+  background-image: linear-gradient(to right, var(--border-soft) 1px, transparent 1px);
   background-size: 25% 100%;
 }
 
 .trace-overview-plot-llm {
-  background-color: #fbf9fc;
+  background-color: var(--purple-soft);
 }
 
 .trace-overview-plot-tool {
-  background-color: #fbfcfa;
+  background-color: var(--success-soft);
 }
 
 .trace-overview-plot-context {
-  background-color: #f2f8fd;
+  background-color: var(--primary-soft);
 }
 
 .trace-time-bar {
@@ -1096,7 +1100,7 @@ details summary {
   min-height: 0;
   min-width: 4px;
   padding: 0;
-  background: #9b83b7;
+  background: var(--purple);
   border: 0;
   border-radius: 2px;
   cursor: pointer;
@@ -1105,39 +1109,39 @@ details summary {
 .trace-time-bar-tool {
   top: 9px;
   height: 10px;
-  background: #df8c37;
+  background: var(--orange);
 }
 
 .trace-time-bar-context {
   top: 9px;
   height: 10px;
-  background: #2f7fe0;
+  background: var(--blue);
 }
 
 .trace-time-bar-context:hover {
-  background: #1d63b0;
+  background: var(--primary-strong);
 }
 
 .trace-time-bar-failed {
-  background: #d94f42;
+  background: var(--danger);
 }
 
 .trace-time-bar:hover {
-  background: #80689d;
+  background: var(--purple);
 }
 
 .trace-time-bar-tool:hover {
-  background: #c97724;
+  background: var(--warning);
 }
 
 .trace-time-bar-failed:hover {
-  background: #b9362c;
+  background: var(--danger);
 }
 
 .trace-time-bar.is-selected,
 .trace-time-bar:focus-visible {
   z-index: 2;
-  outline: 2px solid #1769aa;
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -1146,7 +1150,7 @@ details summary {
   z-index: 4;
   top: 27px;
   bottom: 0;
-  border: 1px solid #1769aa;
+  border: 1px solid var(--primary);
   background: rgb(23 105 170 / 12%);
   pointer-events: none;
 }
@@ -1161,19 +1165,19 @@ details summary {
 .trace-selection-toolbar button {
   min-height: 26px;
   padding: 3px 8px;
-  color: #1769aa;
+  color: var(--primary);
 }
 
 .trace-workbench {
   display: grid;
   grid-template-columns: minmax(230px, 0.82fr) minmax(0, 1.5fr);
   min-height: 290px;
-  border-top: 1px solid #e6eaed;
+  border-top: 1px solid var(--border-soft);
 }
 
 .trace-events-pane {
   min-width: 0;
-  border-right: 1px solid #e6eaed;
+  border-right: 1px solid var(--border-soft);
 }
 
 .trace-pane-heading {
@@ -1182,7 +1186,7 @@ details summary {
   gap: 8px;
   min-height: 40px;
   padding: 0 12px;
-  border-bottom: 1px solid #e9edef;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .trace-event-count {
@@ -1190,8 +1194,8 @@ details summary {
   min-width: 20px;
   height: 20px;
   place-items: center;
-  color: #64737f;
-  background: #f0f3f5;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
   border-radius: 10px;
   font-size: 10px;
 }
@@ -1206,12 +1210,12 @@ details summary {
   align-items: baseline;
   gap: 8px;
   padding: 6px 10px 4px;
-  background: #f6f9fb;
-  border-bottom: 1px solid #e2e8ec;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 .trace-event-band-label {
-  color: #40515e;
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
@@ -1220,7 +1224,7 @@ details summary {
 .trace-event-band-request {
   min-width: 0;
   overflow: hidden;
-  color: #6b7a86;
+  color: var(--text-secondary);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1233,33 +1237,33 @@ details summary {
   width: 100%;
   min-height: 56px;
   padding: 8px 10px;
-  color: #25313c;
-  background: #fff;
+  color: var(--text-strong);
+  background: var(--bg-panel);
   border: 0;
-  border-bottom: 1px solid #edf0f2;
+  border-bottom: 1px solid var(--border-soft);
   cursor: pointer;
   text-align: left;
 }
 
 .trace-event-row:hover,
 .trace-event-row.is-selected {
-  background: #f1f7fa;
+  background: var(--bg-hover);
 }
 
 .trace-event-row.is-selected {
-  box-shadow: inset 3px 0 #1769aa;
+  box-shadow: inset 3px 0 var(--primary);
 }
 
 .trace-event-kind {
   grid-row: span 2;
   align-self: center;
-  color: #775a90;
+  color: var(--purple);
   font-size: 10px;
   font-weight: 650;
 }
 
 .trace-event-row-tool .trace-event-kind {
-  color: #b16b20;
+  color: var(--warning);
 }
 
 .trace-event-title {
@@ -1273,7 +1277,7 @@ details summary {
 .trace-event-round {
   grid-column: 2 / -1;
   overflow: hidden;
-  color: #778591;
+  color: var(--text-muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1283,19 +1287,19 @@ details summary {
 .trace-event-duration {
   grid-column: 3;
   grid-row: 1;
-  color: #278150;
+  color: var(--success);
   font-size: 10px;
   text-align: right;
 }
 
 .trace-event-duration {
   grid-row: 2;
-  color: #65737e;
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .trace-event-status-failed {
-  color: #b63838;
+  color: var(--danger);
 }
 
 .trace-inspector {
@@ -1312,13 +1316,13 @@ details summary {
   min-height: 38px;
   padding: 0 10px;
   overflow-x: auto;
-  border-bottom: 1px solid #e9edef;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .trace-inspector-tab {
   flex: 0 0 auto;
   padding: 0 8px;
-  color: #687783;
+  color: var(--text-secondary);
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -1327,8 +1331,8 @@ details summary {
 }
 
 .trace-inspector-tab[aria-selected="true"] {
-  color: #1769aa;
-  border-bottom-color: #1769aa;
+  color: var(--primary);
+  border-bottom-color: var(--primary);
 }
 
 .trace-inspector-content {
@@ -1357,7 +1361,7 @@ details summary {
   display: grid;
   min-height: 180px;
   place-items: center;
-  color: #71808e;
+  color: var(--text-muted);
   font-size: 12px;
   text-align: center;
 }
@@ -1370,8 +1374,8 @@ details summary {
   z-index: 10;
   padding: 8px 14px;
   border-radius: 6px;
-  background: #1769aa;
-  color: #ffffff;
+  background: var(--primary);
+  color: var(--bg-panel);
   font-size: 13px;
   text-decoration: none;
   transform: translateY(-200%);
@@ -1379,7 +1383,7 @@ details summary {
 
 .skip-link:focus-visible {
   transform: translateY(0);
-  outline: 2px solid #ffffff;
+  outline: 2px solid var(--bg-panel);
   outline-offset: 2px;
 }
 
@@ -1404,7 +1408,7 @@ details summary {
 
   .trace-events-pane {
     border-right: 0;
-    border-bottom: 1px solid #e6eaed;
+    border-bottom: 1px solid var(--border-soft);
   }
 
   .trace-event-list {

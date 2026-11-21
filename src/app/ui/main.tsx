@@ -5,6 +5,7 @@ import { HashRouter } from "react-router-dom";
 import "antd/dist/reset.css";
 import "highlight.js/styles/github.css";
 import { App } from "./App.js";
+import "./theme.css";
 import "./styles.css";
 
 /** 挂载 Agent 控制台根组件；缺少挂载节点说明页面模板被破坏。 */
