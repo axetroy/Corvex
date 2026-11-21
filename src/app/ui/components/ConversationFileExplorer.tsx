@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Input, Spin, Tree, Typography } from "antd";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import type { Layout } from "react-resizable-panels";
 import type { TreeDataNode } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -22,8 +24,33 @@ interface CachedContent extends FileContentResult {
   startLine: number;
 }
 
+const fileSplitLayoutKey = "corvex-ops-conversation-file-split-layout";
+
+function readFileSplitLayout(): Layout | undefined {
+  try {
+    const raw = window.localStorage.getItem(fileSplitLayoutKey);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Layout;
+    if (parsed && typeof parsed === "object" && Object.values(parsed).every(
+      (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100,
+    )) return parsed;
+  } catch (error) {
+    window.console.warn("read file split layout failed", error);
+  }
+  return undefined;
+}
+
+function saveFileSplitLayout(layout: Layout): void {
+  try {
+    window.localStorage.setItem(fileSplitLayoutKey, JSON.stringify(layout));
+  } catch (error) {
+    window.console.warn("save file split layout failed", error);
+  }
+}
+
 /** 类 VSCode 文件浏览：左侧可展开目录树，右侧多标签文本预览。 */
 export function ConversationFileExplorer({ conversationId, copy }: Props) {
+  const [savedSplit] = useState(readFileSplitLayout);
   const [treeData, setTreeData] = useState<FileTreeNode[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [search, setSearch] = useState("");
@@ -113,6 +140,10 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     });
   }, []);
 
+  function handleSplitChanged(layout: Layout, meta: { requestedLayout?: Layout }) {
+    saveFileSplitLayout(meta.requestedLayout ?? layout);
+  }
+
   const filteredTree = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return treeData;
@@ -141,36 +172,48 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
 
   return (
     <div className="conversation-file-explorer">
-      <div className="conversation-file-toolbar">
-        <Input
-          size="small"
-          allowClear
-          value={search}
-          placeholder={copy.filePanelSearch}
-          onChange={(event) => setSearch(event.target.value)}
-        />
-      </div>
-      {treeError ? <Typography.Text type="danger" className="conversation-file-error">{treeError}</Typography.Text> : null}
-      <div className="conversation-file-body">
-        <div className="conversation-file-tree">
-          {loadingRoot ? <Spin size="small" /> : renderedTree.length ? (
-            <Tree
-              blockNode
-              treeData={renderedTree}
-              expandedKeys={expandedKeys}
-              onExpand={(keys) => setExpandedKeys(keys.map(String))}
-              loadData={(node) => loadDirectory((node as unknown as FileTreeNode).path)}
-              onSelect={(_keys, info) => {
-                const node = info.node as unknown as FileTreeNode;
-                if (node.isLeaf) openFile(node.path);
-                else setExpandedKeys((keys) => keys.includes(node.path) ? keys.filter((key) => key !== node.path) : [...keys, node.path]);
-              }}
-            />
-          ) : (
-            <Typography.Text type="secondary" className="conversation-file-empty">{copy.filePanelEmpty}</Typography.Text>
-          )}
-        </div>
-        <div className="conversation-file-editor">
+      <Group
+        id="conversation-file-split"
+        className="conversation-file-group"
+        orientation="vertical"
+        defaultLayout={savedSplit ?? { tree: 42, editor: 58 }}
+        onLayoutChanged={handleSplitChanged}
+      >
+        <Panel id="tree" className="conversation-file-tree-panel" minSize={100} maxSize="65%" defaultSize={200}>
+          <div className="conversation-file-tree-wrap">
+            <div className="conversation-file-toolbar">
+              <Input
+                size="small"
+                allowClear
+                value={search}
+                placeholder={copy.filePanelSearch}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+            {treeError ? <Typography.Text type="danger" className="conversation-file-error">{treeError}</Typography.Text> : null}
+            <div className="conversation-file-tree">
+              {loadingRoot ? <Spin size="small" /> : renderedTree.length ? (
+                <Tree
+                  blockNode
+                  treeData={renderedTree}
+                  expandedKeys={expandedKeys}
+                  onExpand={(keys) => setExpandedKeys(keys.map(String))}
+                  loadData={(node) => loadDirectory((node as unknown as FileTreeNode).path)}
+                  onSelect={(_keys, info) => {
+                    const node = info.node as unknown as FileTreeNode;
+                    if (node.isLeaf) openFile(node.path);
+                    else setExpandedKeys((keys) => keys.includes(node.path) ? keys.filter((key) => key !== node.path) : [...keys, node.path]);
+                  }}
+                />
+              ) : (
+                <Typography.Text type="secondary" className="conversation-file-empty">{copy.filePanelEmpty}</Typography.Text>
+              )}
+            </div>
+          </div>
+        </Panel>
+        <Separator id="separator-file-tree-editor" className="conversation-file-separator" />
+        <Panel id="editor" className="conversation-file-editor-panel" minSize={120} defaultSize={260}>
+          <div className="conversation-file-editor">
           {openFiles.length ? (
             <>
               <div className="conversation-file-tabs">
@@ -229,8 +272,9 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
           ) : (
             <Typography.Text type="secondary" className="conversation-file-empty">{copy.filePanelEmpty}</Typography.Text>
           )}
-        </div>
-      </div>
+          </div>
+        </Panel>
+      </Group>
     </div>
   );
 }

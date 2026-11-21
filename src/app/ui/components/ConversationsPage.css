@@ -46,7 +46,9 @@
 
 .conversation-sidebar {
   display: flex;
+  width: 100%;
   min-width: 0;
+  flex: 1;
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--conversation-border);
@@ -287,8 +289,10 @@
 
 .conversation-workspace {
   display: flex;
+  width: 100%;
   min-width: 0;
   min-height: 0;
+  flex: 1;
   flex-direction: column;
 }
 
@@ -1425,8 +1429,10 @@
 /* 会话文件面板：与工作区同级的可收起 Tab 容器。 */
 .conversation-file-panel {
   display: flex;
+  width: 100%;
   min-width: 0;
   min-height: 0;
+  flex: 1;
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--conversation-border);
@@ -1435,7 +1441,9 @@
 
 .conversation-file-panel-tabs,
 .conversation-file-panel-tabs > .ant-tabs-content-holder,
-.conversation-file-panel-tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.conversation-file-panel-tabs > .ant-tabs-body-holder,
+.conversation-file-panel-tabs .ant-tabs-content,
+.conversation-file-panel-tabs .ant-tabs-body,
 .conversation-file-panel-tabs .ant-tabs-tabpane {
   display: flex;
   min-height: 0;
@@ -1472,25 +1480,50 @@
   font-size: 11px;
 }
 
-.conversation-file-body {
-  display: grid;
+/* 文件树与预览上下分布，由 react-resizable-panels 调整高度。 */
+.conversation-file-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-file-tree-panel,
+.conversation-file-editor-panel {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-file-separator {
+  width: 100%;
+  height: 4px;
+  flex: 0 0 4px;
+  background: var(--conversation-border);
+  cursor: row-resize;
+
+  &:hover,
+  &[data-separator-active] {
+    background: var(--conversation-brand);
+  }
+}
+
+.conversation-file-tree-wrap {
+  display: flex;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   flex: 1;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 42%) minmax(0, 1fr);
-}
-
-.conversation-file-tree,
-.conversation-file-editor {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
+  flex-direction: column;
 }
 
 .conversation-file-tree {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
   padding: 6px 4px;
-  border-bottom: 1px solid var(--conversation-border);
   background: #fafbfc;
 }
 
@@ -1507,6 +1540,10 @@
 
 .conversation-file-editor {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   background: #fff;
 }
