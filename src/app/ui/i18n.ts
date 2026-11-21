@@ -1,5 +1,7 @@
 /** Agent 控制台支持的界面语言。 */
 export type Locale = "en" | "zh-CN";
+/** 语言偏好：跟随浏览器或使用明确选择的语言。 */
+export type LocaleMode = "system" | Locale;
 
 /** 把任意语言标记归一化为受支持的界面语言；不支持时返回 undefined。 */
 function supportedLocale(value: string): Locale | undefined {
@@ -9,15 +11,22 @@ function supportedLocale(value: string): Locale | undefined {
   return undefined;
 }
 
-/** 依次用已保存偏好和浏览器语言选择界面语言，全部不支持时回退英文。 */
-export function resolveLocale(savedLocale: string, browserLanguages: readonly string[]): Locale {
-  const saved = supportedLocale(savedLocale);
-  if (saved) return saved;
+/** 按浏览器语言顺序选择界面语言，全部不支持时回退英文。 */
+export function resolveLocale(browserLanguages: readonly string[]): Locale {
   for (const language of browserLanguages) {
     const locale = supportedLocale(language);
     if (locale) return locale;
   }
   return "en";
+}
+
+/**
+ * 解析语言偏好；旧版本只保存具体语言，迁移时把旧值当作用户手动选择，
+ * 没有偏好时默认跟随系统。
+ */
+export function resolveLocaleMode(saved: string, legacy: string): LocaleMode {
+  if (saved === "system") return "system";
+  return supportedLocale(saved) ?? supportedLocale(legacy) ?? "system";
 }
 
 /** 用界面文案表安全查表，缺少条目时回退为原始键名。 */
@@ -36,6 +45,7 @@ export const en = {
   navEvents: "Events",
   navConversations: "Conversations",
   languageLabel: "Language",
+  languageSystem: "Follow system",
   themeLabel: "Theme",
   themeSystem: "Follow system",
   themeLight: "Light",
@@ -622,6 +632,7 @@ export const zhCN: Copy = {
   navEvents: "事件",
   navConversations: "对话",
   languageLabel: "语言",
+  languageSystem: "跟随系统",
   themeLabel: "主题",
   themeSystem: "跟随系统",
   themeLight: "浅色",

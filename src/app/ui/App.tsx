@@ -22,8 +22,8 @@ import {
 } from "./components/icons.js";
 import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
-import { en, resolveLocale, zhCN } from "./i18n.js";
-import type { Locale } from "./i18n.js";
+import { en, resolveLocale, resolveLocaleMode, zhCN } from "./i18n.js";
+import type { LocaleMode } from "./i18n.js";
 import { eventQueueFromParams, eventsBackPath, eventsPath, conversationsPath } from "./routing.js";
 import type { EventQueue } from "./types.js";
 import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./theme.js";
@@ -34,12 +34,16 @@ const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").the
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 const UserSettingsPage = lazy(() => import("./components/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
 
-/** localStorage 中保存 Agent 控制台手动选择语言的键名。 */
-const localePreferenceKey = "corvex-ops-locale";
+/** localStorage 中保存语言偏好的键名。 */
+const localePreferenceKey = "corvex-ops-locale-mode";
+/** 旧版本保存具体语言的键名，仅用于迁移已手动选过语言的用户。 */
+const legacyLocalePreferenceKey = "corvex-ops-locale";
 /** localStorage 中保存侧边栏展开状态的键名。 */
 const navigationPreferenceKey = "corvex-ops-navigation-collapsed";
-/** 浏览器按偏好顺序提供的语言候选，用于首次访问时选择界面语言。 */
-const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
+/** 读取浏览器按偏好顺序提供的语言候选。 */
+function currentBrowserLanguages(): string[] {
+  return [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
+}
 /** Agent 控制台自动刷新间隔（毫秒）。 */
 const refreshIntervalMs = 15_000;
 /** 非事件列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
@@ -47,20 +51,23 @@ const emptyParams = new URLSearchParams();
 /** Server 为当前 HTML 响应生成的 CSP nonce，供 Ant Design 样式标签使用。 */
 const cspNonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce;
 
-/** 读取已保存的语言偏好；localStorage 不可用时回退为空。 */
-function readSavedLocale(): string {
+/** 读取语言偏好；没有偏好时跟随系统，旧版本的具体语言视为手动选择。 */
+function readLocaleMode(): LocaleMode {
   try {
-    return window.localStorage.getItem(localePreferenceKey) ?? "";
+    return resolveLocaleMode(
+      window.localStorage.getItem(localePreferenceKey) ?? "",
+      window.localStorage.getItem(legacyLocalePreferenceKey) ?? "",
+    );
   } catch (error) {
     window.console.warn("read agent console language preference failed", error);
-    return "";
+    return "system";
   }
 }
 
 /** 保存语言偏好；隐私模式等场景下写入失败只记录告警。 */
-function saveLocale(locale: Locale): void {
+function saveLocaleMode(mode: LocaleMode): void {
   try {
-    window.localStorage.setItem(localePreferenceKey, locale);
+    window.localStorage.setItem(localePreferenceKey, mode);
   } catch (error) {
     window.console.warn("save agent console language preference failed", error);
   }
@@ -111,7 +118,9 @@ function ConversationRoute(props: Omit<ComponentProps<typeof ConversationsPage>,
 
 /** Agent 控制台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
 export function App() {
-  const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
+  const [localeMode, setLocaleMode] = useState<LocaleMode>(readLocaleMode);
+  const [browserLanguages, setBrowserLanguages] = useState<string[]>(currentBrowserLanguages);
+  const locale = localeMode === "system" ? resolveLocale(browserLanguages) : localeMode;
   const copy = locale === "zh-CN" ? zhCN : en;
   const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
   const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
@@ -179,6 +188,13 @@ export function App() {
     return () => media.removeEventListener("change", update);
   }, []);
 
+  // 跟随系统时实时响应浏览器语言顺序变化。
+  useEffect(() => {
+    const update = () => setBrowserLanguages(currentBrowserLanguages());
+    window.addEventListener("languagechange", update);
+    return () => window.removeEventListener("languagechange", update);
+  }, []);
+
   useEffect(() => {
     const timer = window.setInterval(() => setRefreshToken((value) => value + 1), refreshIntervalMs);
     return () => window.clearInterval(timer);
@@ -217,9 +233,9 @@ export function App() {
   }, []);
 
   const changeLocale = useCallback((value: string) => {
-    const next = resolveLocale(value, browserLanguages);
-    saveLocale(next);
-    setLocale(next);
+    const next = resolveLocaleMode(value, "");
+    saveLocaleMode(next);
+    setLocaleMode(next);
   }, []);
 
   const changeTheme = useCallback((value: ThemeMode) => {
@@ -227,7 +243,11 @@ export function App() {
     setThemeMode(value);
   }, []);
 
-  const languageOptions = [{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }];
+  const languageOptions = [
+    { value: "system", label: copy.languageSystem },
+    { value: "en", label: "English" },
+    { value: "zh-CN", label: "简体中文" },
+  ];
   const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
   const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
 
@@ -310,7 +330,7 @@ export function App() {
               placement="bottomRight"
               trigger={["click"]}
               menu={{
-                selectedKeys: [locale],
+                selectedKeys: [localeMode],
                 items: languageMenuItems,
                 onClick: ({ key }) => changeLocale(key),
               }}

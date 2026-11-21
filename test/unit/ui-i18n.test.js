@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { en, resolveLocale, zhCN } from "../../src/app/ui/i18n.ts";
+import { en, resolveLocale, resolveLocaleMode, zhCN } from "../../src/app/ui/i18n.ts";
 
 describe("operations UI locale", () => {
   it("uses Simplified Chinese when it is the browser language", () => {
-    expect(resolveLocale("", ["zh-CN", "en-US"])).toBe("zh-CN");
-  });
-
-  it("uses a saved language preference ahead of the browser language", () => {
-    expect(resolveLocale("en", ["zh-CN"])).toBe("en");
+    expect(resolveLocale(["zh-CN", "en-US"])).toBe("zh-CN");
   });
 
   it("falls back to English when the browser language is unsupported", () => {
-    expect(resolveLocale("", ["fr-FR", "de-DE"])).toBe("en");
+    expect(resolveLocale(["fr-FR", "de-DE"])).toBe("en");
+  });
+
+  it("defaults to following the system and migrates an old explicit choice", () => {
+    expect(resolveLocaleMode("", "")).toBe("system");
+    expect(resolveLocaleMode("", "zh-CN")).toBe("zh-CN");
+    expect(resolveLocaleMode("system", "en")).toBe("system");
+    expect(resolveLocaleMode("fr", "en")).toBe("en");
+    expect(resolveLocaleMode("fr", "de")).toBe("system");
   });
 
   it("provides matching English and Simplified Chinese dashboard catalogs", () => {
@@ -35,6 +39,8 @@ describe("operations UI locale", () => {
     expect(zhCN.pickerClear).toBe("清除选择");
     expect(zhCN.commitMinutesTemplate).toBe("{value} 分钟前");
     expect(zhCN.traceToolReadFileRangeTemplate).toBe("读取 {path} 文件（第 {start}-{end} 行）");
+    expect(en.languageSystem).toBe("Follow system");
+    expect(zhCN.languageSystem).toBe("跟随系统");
     expect(en.themeLabel).toBe("Theme");
     expect(zhCN.themeLabel).toBe("主题");
     expect(en.themeSystem).toBe("Follow system");
