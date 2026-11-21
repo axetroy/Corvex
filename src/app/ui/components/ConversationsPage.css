@@ -1665,3 +1665,76 @@
   padding: 14px 10px;
   font-size: 11px;
 }
+
+/* 已发起会话的快捷操作与输入框斜杠指令补全。 */
+.conversation-quick-prompts {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 0;
+  overflow-x: auto;
+}
+
+.conversation-quick-prompts-label {
+  flex: 0 0 auto;
+  color: var(--conversation-muted);
+  font-size: 11px;
+}
+
+.conversation-quick-prompts-list {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.conversation-quick-prompt {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--conversation-ink);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.conversation-quick-prompt:hover:not(:disabled) {
+  border-color: var(--conversation-brand);
+  color: var(--conversation-brand);
+}
+
+.conversation-quick-prompt:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.conversation-command-suggestions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin: 4px 14px 0;
+  padding: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
+}
+
+.conversation-command-suggestion {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--conversation-brand-soft);
+  color: var(--conversation-brand);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.conversation-command-suggestion:hover {
+  background: var(--conversation-brand);
+  color: #fff;
+}

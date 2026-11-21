@@ -13,7 +13,8 @@ import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import { translate } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
-import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
+import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
+import { conversationCommands } from "../../conversation-command.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
@@ -573,6 +574,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     const text = welcomePromptText(promptGroups, key);
     if (text) setDraftMessage(text.slice(0, 20_000));
   };
+  const quickPrompts = activeQuickPrompts(copy);
+  // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
+  const commandQuery = /^\/[a-z]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
+  const commandSuggestions = commandQuery === null
+    ? []
+    : conversationCommands.filter((command) => command.startsWith(commandQuery));
   const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
 
   // 面板的展开/收起交给 react-resizable-panels，自带键盘操作与尺寸约束。
@@ -919,6 +926,39 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         />
                       ) : <Welcome className="conversation-welcome conversation-welcome-empty" variant="borderless" title={copy.conversationPlaceholder} />}
                     </div>
+                    {!showCreate && currentConversation && bubbleItems.length ? (
+                      <div className="conversation-quick-prompts">
+                        <span className="conversation-quick-prompts-label">{copy.conversationQuickPrompts}</span>
+                        <div className="conversation-quick-prompts-list">
+                          {quickPrompts.map((prompt) => (
+                            <button
+                              key={prompt.key}
+                              type="button"
+                              className="conversation-quick-prompt"
+                              disabled={!canReply}
+                              title={prompt.label}
+                              onClick={() => setDraftMessage(prompt.label.slice(0, 20_000))}
+                            >
+                              {prompt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {commandSuggestions.length ? (
+                      <div className="conversation-command-suggestions" aria-label={copy.commandHint}>
+                        {commandSuggestions.map((command) => (
+                          <button
+                            key={command}
+                            type="button"
+                            className="conversation-command-suggestion"
+                            onClick={() => setDraftMessage(`/${command} `)}
+                          >
+                            <code>/{command}</code>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                     <Sender
                       className="conversation-composer"
                       aria-label={copy.initialMessage}

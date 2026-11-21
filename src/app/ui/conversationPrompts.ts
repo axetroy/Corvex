@@ -54,6 +54,18 @@ export function welcomePromptGroups(copy: Copy): WelcomePromptGroup[] {
   ];
 }
 
+/** 已发起会话的快捷操作：点击后填入输入框，部分以斜杠指令开头。 */
+export function activeQuickPrompts(copy: Copy): WelcomePrompt[] {
+  return [
+    { key: "review", label: copy.quickPromptReview },
+    { key: "commit", label: copy.quickPromptCommit },
+    { key: "mr", label: copy.quickPromptMr },
+    { key: "coverage", label: copy.quickPromptCoverage },
+    { key: "explain", label: copy.quickPromptExplain },
+    { key: "docs", label: copy.quickPromptDocs },
+  ];
+}
+
 /** 点击提示词时按 key 还原原文，避免依赖 ReactNode 类型的 label。 */
 export function welcomePromptText(groups: readonly WelcomePromptGroup[], key: string): string {
   for (const group of groups) {

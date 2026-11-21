@@ -10,7 +10,8 @@ import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
-import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
+import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
+import { parseConversationCommand } from "./conversation-command.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
 interface CachedConversationWorkspace {
@@ -471,7 +472,10 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      const systemPrompt = getConversationSystemPrompt(language, turn.mode);
+      const command = parseConversationCommand(turn.request);
+      const systemPrompt = command
+        ? `${getConversationSystemPrompt(language, turn.mode)}\n\n${getConversationCommandInstruction(command.command, language)}`
+        : getConversationSystemPrompt(language, turn.mode);
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,

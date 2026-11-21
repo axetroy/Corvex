@@ -4,6 +4,7 @@ import type { CorvexConfig } from "../config/config.js";
 import type { ModelRequest, ModelResponse } from "../agent/pi.js";
 import type { ConversationTurnContext, Event, ResponseLanguage, TraceScope } from "../events/model.js";
 import { normalizeConversationTitle } from "../events/model.js";
+import { stripConversationCommand } from "./conversation-command.js";
 import type { AuthUser } from "./auth/model.js";
 
 /** 发起会话时的钩子输入；标题应来自这里的用户消息。 */
@@ -108,7 +109,7 @@ export function createCorvexHooks(): CorvexHooks {
   // 默认实现：标题只来自用户消息，不做额外的模型调用。
   // 默认实现放在较低优先级的 stage，插件可以先行返回自定义标题。
   hooks.conversationStart.tap({ name: "user-request", stage: 100 }, (input) =>
-    normalizeConversationTitle(input.request, input.language),
+    normalizeConversationTitle(stripConversationCommand(input.request), input.language),
   );
   return hooks;
 }
