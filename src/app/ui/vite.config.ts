@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import nesting from "postcss-nesting";
 import { defineConfig } from "vite";
 
 /**
@@ -9,6 +10,8 @@ export default defineConfig({
   root: "src/app/ui",
   base: "/ops/",
   plugins: [react()],
+  // Vite 的 root 在 src/app/ui，显式指定 PostCSS 插件，避免配置查找路径歧义。
+  css: { postcss: { plugins: [nesting()] } },
   build: {
     outDir: "../../../dist/app/ui",
     emptyOutDir: true,

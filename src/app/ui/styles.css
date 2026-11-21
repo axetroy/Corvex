@@ -475,19 +475,19 @@ h1 {
 .detail-item {
   padding: 12px 0;
   border-bottom: 1px solid #edf0f2;
-}
 
-.detail-item dt {
-  margin-bottom: 5px;
-  color: #71808e;
-  font-size: 11px;
-  text-transform: uppercase;
-}
+  & dt {
+    margin-bottom: 5px;
+    color: #71808e;
+    font-size: 11px;
+    text-transform: uppercase;
+  }
 
-.detail-item dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: 13px;
+  & dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
 }
 
 .detail-item details,
@@ -590,10 +590,10 @@ details summary {
   border-radius: 6px;
   color: #536271;
   font-size: 12px;
-}
 
-.trace-session-system-prompt .details-preview {
-  max-width: 100%;
+  & .details-preview {
+    max-width: 100%;
+  }
 }
 
 .trace-session-list {
@@ -686,11 +686,11 @@ details summary {
   flex-wrap: wrap;
   gap: 4px 10px;
   margin-bottom: 6px;
-}
 
-.trace-session-message-header .trace-session-role {
-  display: inline;
-  margin: 0;
+  & .trace-session-role {
+    display: inline;
+    margin: 0;
+  }
 }
 
 .trace-session-message-meta {
@@ -709,10 +709,10 @@ details summary {
   background: #fff;
   border: 1px solid #e0e6ea;
   border-radius: 8px;
-}
 
-.trace-session-message-user .trace-session-role {
-  color: #1769aa;
+  & .trace-session-role {
+    color: #1769aa;
+  }
 }
 
 .trace-session-message-assistant {
@@ -739,10 +739,10 @@ details summary {
   border: 1px solid #e1e6e9;
   border-radius: 6px;
   cursor: pointer;
-}
 
-.trace-session-tool-tip .trace-session-title {
-  font-size: 12px;
+  & .trace-session-title {
+    font-size: 12px;
+  }
 }
 
 .trace-session-detail-grid {
@@ -758,14 +758,14 @@ details summary {
   background: #fff;
   border: 1px solid #e5e9ec;
   border-radius: 4px;
-}
 
-.trace-session-detail .trace-session-content {
-  max-height: min(42vh, 360px);
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
+  & .trace-session-content {
+    max-height: min(42vh, 360px);
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+  }
 }
 
 .trace-session-message-error {

@@ -38,34 +38,38 @@
   border-bottom: 1px solid var(--conversation-border);
 }
 
-.conversation-archived-toggle.ant-btn {
-  padding: 0 4px;
-  color: var(--conversation-muted);
-  font-size: 11px;
+.conversation-archived-toggle {
+  &.ant-btn {
+    padding: 0 4px;
+    color: var(--conversation-muted);
+    font-size: 11px;
+  }
+
+  &.ant-btn.is-active {
+    color: var(--conversation-brand);
+    font-weight: 600;
+  }
 }
 
-.conversation-archived-toggle.ant-btn.is-active {
-  color: var(--conversation-brand);
-  font-weight: 600;
-}
+.conversation-new-button {
+  &.ant-btn {
+    display: flex;
+    height: 29px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 12px;
+    border-radius: 7px;
+    box-shadow: 0 2px 7px rgb(23 105 170 / 18%);
+    font-size: 13px;
+    font-weight: 550;
+  }
 
-.conversation-new-button.ant-btn {
-  display: flex;
-  height: 29px;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 0 12px;
-  border-radius: 7px;
-  box-shadow: 0 2px 7px rgb(23 105 170 / 18%);
-  font-size: 13px;
-  font-weight: 550;
-}
-
-.conversation-new-button > span[aria-hidden="true"] {
-  font-size: 16px;
-  font-weight: 400;
-  line-height: 1;
+  & > span[aria-hidden="true"] {
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1;
+  }
 }
 
 .conversation-sidebar-list {
@@ -77,11 +81,11 @@
   /* 列表只做纵向滚动：分组标题、长标题都不应产生横向滚动条。 */
   overflow-x: hidden;
   overflow-y: auto;
-}
 
-.conversation-sidebar-list > .ant-empty {
-  margin: auto;
-  padding: 24px 12px;
+  & > .ant-empty {
+    margin: auto;
+    padding: 24px 12px;
+  }
 }
 
 .conversation-summary-label {
@@ -90,17 +94,17 @@
   align-items: center;
   min-width: 0;
   padding: 5px 12px 5px 4px;
-}
 
-.conversation-summary-label > * {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+  & > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-.conversation-summary-label.is-archived {
-  opacity: 0.55;
-  font-style: italic;
+  &.is-archived {
+    opacity: 0.55;
+    font-style: italic;
+  }
 }
 
 /* 运行中的会话：列表项右侧一个呼吸的蓝点，比文字标签更轻量。 */

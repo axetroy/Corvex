@@ -190,6 +190,8 @@ test/
   integration/
 ```
 
+控制台样式通过 PostCSS 编译：`postcss.config.mjs` 与 `src/app/ui/vite.config.ts` 都启用了 `postcss-nesting`，允许用标准 `&` 嵌套把重复的长祖先选择器收拢到父规则内；编译产物仍是扁平选择器，Ant Design 覆盖所需的优先级不变。
+
 HTTP 层使用 Fastify，路由按系统检查、GitLab webhook、运维 API 和控制台静态资源拆分在
 `src/app/http`；`CorvexServer` 只保留生命周期、内联事件执行、内联对话轮次与清理任务。应用级扩展点由
 `tapable` 提供（见 `src/app/hooks.ts`）：启动/关闭、认证用户解析、设置生效、事件处理前后与
