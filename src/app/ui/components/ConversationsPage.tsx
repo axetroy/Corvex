@@ -748,7 +748,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           collapsible
           collapsedSize={0}
           defaultSize={288}
-          minSize={160}
+          minSize={190}
           maxSize={480}
         >
         <aside className="conversation-sidebar" aria-label={copy.conversationList}>
