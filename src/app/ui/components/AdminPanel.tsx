@@ -54,7 +54,11 @@ export function AdminPanel({ copy }: Props) {
       <div className="admin-users">
         {users.map((user) => (
           <div className="admin-user" key={user.id}>
-            {user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span aria-hidden="true">{[...user.username][0]?.toUpperCase() ?? "?"}</span>}
+            {user.avatarUrl ? (
+              <img src={user.avatarUrl} alt="" />
+            ) : (
+              <span aria-hidden="true">{[...(user.name || user.username)][0]?.toUpperCase() ?? "?"}</span>
+            )}
             <span className="admin-user-name">
               {user.name || user.username} <small>@{user.username}</small>
             </span>

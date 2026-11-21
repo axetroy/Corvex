@@ -293,7 +293,7 @@ export function App() {
                 <img className="sidebar-account-avatar" src={account.avatarUrl} alt="" />
               ) : (
                 <span className="sidebar-account-avatar sidebar-account-avatar-fallback" aria-hidden="true">
-                  {[...account.username][0]?.toUpperCase() ?? "?"}
+                  {[...(account.name || account.username)][0]?.toUpperCase() ?? "?"}
                 </span>
               )}
               <span className="sidebar-account-text">
