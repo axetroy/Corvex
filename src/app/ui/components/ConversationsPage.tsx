@@ -21,7 +21,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
-import { BookIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, ListCollapseIcon, ListExpandIcon, RocketIcon, SearchIcon, WrenchIcon } from "./icons.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -730,7 +730,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 saveConversationListCollapsed(next);
               }}
             >
-              {listCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
+              {listCollapsed ? <ListExpandIcon /> : <ListCollapseIcon />}
             </Button>
           </div>
           {listCollapsed ? null : <div className="conversation-sidebar-list">
