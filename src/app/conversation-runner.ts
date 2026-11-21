@@ -1,5 +1,6 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
+import { applyActiveModel } from "../config/settings.js";
 import { conversationCapabilities, normalizeConversationTitle } from "../events/model.js";
 import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
@@ -94,7 +95,16 @@ export class ConversationRunner {
     try {
       const language = responseLanguage ?? this.config.agent.responseLanguage;
       await callAsyncHook(this.hooks.conversationBeforeTurn, turn);
-      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language);
+      // 用户可在个人设置里选择自己的模型：用克隆配置承载它，避免改动全局配置影响并发轮次。
+      let agent = this.agent;
+      const ownerUserId = this.store.getConversation(turn.conversationId)?.ownerUserId;
+      const active = ownerUserId ? this.store.getActiveModelForUser(ownerUserId) : undefined;
+      if (active) {
+        const config = structuredClone(this.config);
+        applyActiveModel(config, active);
+        agent = new PiAgent(config, this.store, this.repo, undefined, undefined, undefined, gitlab ?? this.gitlab, this.hooks);
+      }
+      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language, agent);
       await callAsyncHook(this.hooks.conversationAfterTurn, turn);
     } finally {
       this.running.delete(turnId);
@@ -404,7 +414,13 @@ export class ConversationRunner {
     });
   }
 
-  private async execute(turn: ConversationTurnContext, signal: AbortSignal, gitlab: GitLabClient, language: ResponseLanguage): Promise<void> {
+  private async execute(
+    turn: ConversationTurnContext,
+    signal: AbortSignal,
+    gitlab: GitLabClient,
+    language: ResponseLanguage,
+    agent: PiAgent,
+  ): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
       return;
@@ -493,7 +509,7 @@ export class ConversationRunner {
             headSha: turn.headSha,
             requestCharacters: [...turn.request].length,
           },
-          () => this.agent.generate(
+          () => agent.generate(
             {
               taskType: "conversation",
               conversationMode: turn.mode,

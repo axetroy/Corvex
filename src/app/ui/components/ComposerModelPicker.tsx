@@ -33,7 +33,7 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetchJson<{ items: ModelProviderDetails[] }>("/api/ops/model-providers", copy)
+    fetchJson<{ items: ModelProviderDetails[] }>("/api/ops/me/model-providers", copy)
       .then((response) => {
         if (!active) return;
         setProviders(response.items);
@@ -62,7 +62,7 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
     setSwitching(true);
     setError("");
     try {
-      const path = `/api/ops/model-providers/${encodeURIComponent(target.provider.id)}/models/${encodeURIComponent(target.model.id)}/activate`;
+      const path = `/api/ops/me/model-providers/${encodeURIComponent(target.provider.id)}/models/${encodeURIComponent(target.model.id)}/activate`;
       await sendJson(path, {}, copy, "POST");
       setProviders((current) =>
         current.map((provider) => ({

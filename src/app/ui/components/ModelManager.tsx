@@ -30,7 +30,16 @@ function emptyModel(): ModelDraft {
  * 模型目录：供应商保存连接参数（Base URL、密钥），供应商下面挂模型。
  * 全局只有一个模型处于使用中；密钥不会被接口回显，编辑时留空表示保留原值。
  */
-export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () => void }) {
+export function ModelManager({
+  copy,
+  onChanged,
+  scope = "system",
+}: {
+  copy: Copy;
+  onChanged: () => void;
+  scope?: "system" | "user";
+}) {
+  const apiBase = scope === "user" ? "/api/ops/me/model-providers" : "/api/ops/model-providers";
   const [providers, setProviders] = useState<ModelProviderDetails[]>([]);
   const [editingProvider, setEditingProvider] = useState<ModelProviderDetails | "new" | undefined>();
   const [providerDraft, setProviderDraft] = useState<ProviderDraft>(emptyProvider());
@@ -44,7 +53,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
 
   async function refresh() {
     try {
-      const response = await fetchJson<{ items: ModelProviderDetails[] }>("/api/ops/model-providers", copy);
+      const response = await fetchJson<{ items: ModelProviderDetails[] }>(apiBase, copy);
       setProviders(response.items);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -73,9 +82,9 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
       const body: Record<string, unknown> = { ...providerDraft };
       if (!body.apiKey) delete body.apiKey;
       if (editingProvider === "new") {
-        await sendJson("/api/ops/model-providers", body, copy, "POST");
+        await sendJson(apiBase, body, copy, "POST");
       } else if (editingProvider) {
-        await sendJson(`/api/ops/model-providers/${encodeURIComponent(editingProvider.id)}`, body, copy, "PUT");
+        await sendJson(`${apiBase}/${encodeURIComponent(editingProvider.id)}`, body, copy, "PUT");
       }
       setEditingProvider(undefined);
       setNotice(copy.modelManagerSaved);
@@ -95,7 +104,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
       onOk: async () => {
         resetMessages();
         try {
-          await sendJson(`/api/ops/model-providers/${encodeURIComponent(provider.id)}`, {}, copy, "DELETE");
+          await sendJson(`${apiBase}/${encodeURIComponent(provider.id)}`, {}, copy, "DELETE");
           await refresh();
           onChanged();
         } catch (cause) {
@@ -118,7 +127,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
     setSaving(true);
     setError("");
     try {
-      const base = `/api/ops/model-providers/${encodeURIComponent(modelTarget.provider.id)}/models`;
+      const base = `${apiBase}/${encodeURIComponent(modelTarget.provider.id)}/models`;
       if (modelTarget.model) {
         await sendJson(`${base}/${encodeURIComponent(modelTarget.model.id)}`, modelDraft, copy, "PUT");
       } else {
@@ -138,7 +147,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
   async function activate(provider: ModelProviderDetails, model: ProviderModel) {
     resetMessages();
     try {
-      const path = `/api/ops/model-providers/${encodeURIComponent(provider.id)}/models/${encodeURIComponent(model.id)}/activate`;
+      const path = `${apiBase}/${encodeURIComponent(provider.id)}/models/${encodeURIComponent(model.id)}/activate`;
       await sendJson(path, {}, copy, "POST");
       await refresh();
       onChanged();
@@ -154,7 +163,7 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
       onOk: async () => {
         resetMessages();
         try {
-          const path = `/api/ops/model-providers/${encodeURIComponent(provider.id)}/models/${encodeURIComponent(model.id)}`;
+          const path = `${apiBase}/${encodeURIComponent(provider.id)}/models/${encodeURIComponent(model.id)}`;
           await sendJson(path, {}, copy, "DELETE");
           await refresh();
           onChanged();
@@ -190,12 +199,23 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
               <div className="model-provider-meta">
                 <Typography.Text strong>{provider.name}</Typography.Text>
                 <Typography.Text type="secondary" className="model-provider-url">{provider.baseUrl}</Typography.Text>
+                {provider.ownerUserId === "" ? <Tag className="model-provider-system">{copy.systemProviderBadge}</Tag> : null}
                 {provider.apiKey ? <Tag className="model-provider-key">{copy.modelManagerKeyConfigured}</Tag> : null}
               </div>
               <Space size={4} wrap>
-                <Button size="small" onClick={() => openModel(provider)}>{copy.modelManagerAddModel}</Button>
-                <Button size="small" onClick={() => openProvider(provider)}>{copy.modelManagerEdit}</Button>
-                <Button size="small" danger onClick={() => removeProvider(provider)}>{copy.modelManagerDelete}</Button>
+                {scope === "user" && provider.ownerUserId !== "" ? (
+                  <>
+                    <Button size="small" onClick={() => openModel(provider)}>{copy.modelManagerAddModel}</Button>
+                    <Button size="small" onClick={() => openProvider(provider)}>{copy.modelManagerEdit}</Button>
+                    <Button size="small" danger onClick={() => removeProvider(provider)}>{copy.modelManagerDelete}</Button>
+                  </>
+                ) : scope === "system" ? (
+                  <>
+                    <Button size="small" onClick={() => openModel(provider)}>{copy.modelManagerAddModel}</Button>
+                    <Button size="small" onClick={() => openProvider(provider)}>{copy.modelManagerEdit}</Button>
+                    <Button size="small" danger onClick={() => removeProvider(provider)}>{copy.modelManagerDelete}</Button>
+                  </>
+                ) : null}
               </Space>
             </div>
             {provider.models.length === 0 ? (
@@ -234,11 +254,15 @@ export function ModelManager({ copy, onChanged }: { copy: Copy; onChanged: () =>
                     key: "actions",
                     render: (_: unknown, model: ProviderModel) => (
                       <Space size={4}>
-                        <Button type="link" size="small" onClick={() => openModel(provider, model)}>{copy.modelManagerEdit}</Button>
+                        {scope === "system" || provider.ownerUserId !== "" ? (
+                          <>
+                            <Button type="link" size="small" onClick={() => openModel(provider, model)}>{copy.modelManagerEdit}</Button>
+                            <Button type="link" size="small" danger onClick={() => removeModel(provider, model)}>{copy.modelManagerDelete}</Button>
+                          </>
+                        ) : null}
                         {model.active ? null : (
                           <Button type="link" size="small" onClick={() => void activate(provider, model)}>{copy.modelManagerActivate}</Button>
                         )}
-                        <Button type="link" size="small" danger onClick={() => removeModel(provider, model)}>{copy.modelManagerDelete}</Button>
                       </Space>
                     ),
                   },

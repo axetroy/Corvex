@@ -29,8 +29,8 @@ function invalidTurnId(reply: FastifyReply): void {
 }
 
 /** 没有可用模型时禁止入队，否则轮次只会立刻失败且不会产生标题。 */
-function ensureModelSelected(ctx: OpsContext, reply: FastifyReply): boolean {
-  if (ctx.store.getActiveModel() || ctx.config.agent.model.trim()) return true;
+function ensureModelSelected(ctx: OpsContext, reply: FastifyReply, userId?: string): boolean {
+  if ((userId && ctx.store.getActiveModelForUser(userId)) || ctx.store.getActiveModel() || ctx.config.agent.model.trim()) return true;
   sendJson(reply, 409, {
     error: ctx.config.agent.responseLanguage === "zh-CN"
       ? "尚未选择模型，请先在「设置 → 模型」中配置并激活模型。"
@@ -97,7 +97,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "invalid conversation request" });
       return;
     }
-    if (!ensureModelSelected(ctx, reply)) return;
+    if (!ensureModelSelected(ctx, reply, user.id)) return;
     try {
       const gitlab = ctx.gitlabForRequest(request);
       const project = await gitlab.getProject(projectId);
@@ -347,6 +347,8 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
+    const user = requireUser(request, reply);
+    if (!user) return;
     const body = readJsonObject(request, reply);
     if (!body) return;
     const message = typeof body.message === "string" ? body.message : "";
@@ -357,7 +359,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "message must be between 1 and 20000 characters" });
       return;
     }
-    if (!ensureModelSelected(ctx, reply)) return;
+    if (!ensureModelSelected(ctx, reply, user.id)) return;
     try {
       const gitlab = ctx.gitlabForRequest(request);
       const headSha = (await gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;

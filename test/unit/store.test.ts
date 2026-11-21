@@ -79,6 +79,36 @@ describe("EventStore", () => {
     expect(store.listModelProviders()[0]?.models).toEqual([]);
   });
 
+  it("用户专属供应商与系统供应商共存且相互隔离", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-user-models-"));
+    store = await EventStore.open(join(directory, "state.db"));
+    const system = store.createModelProvider({ name: "system", baseUrl: "https://api.system.example/v1", apiKey: "sk-system" });
+    const mine = store.createModelProvider({ name: "mine", baseUrl: "https://api.mine.example/v1", apiKey: "sk-mine" }, "user-1");
+    expect(system.ownerUserId).toBe("");
+    expect(mine.ownerUserId).toBe("user-1");
+
+    expect(store.listModelProvidersForUser("user-1").map((provider) => provider.id)).toEqual([system.id, mine.id]);
+    expect(store.listModelProvidersForUser("user-2").map((provider) => provider.id)).toEqual([system.id]);
+    expect(store.getModelProvider(mine.id, "user-2")).toBeUndefined();
+
+    const model = store.createProviderModel(mine.id, {
+      name: "my-model", contextWindow: 131_072, maxOutputTokens: 8_192,
+    }, "user-1")!;
+    expect(model.active).toBe(false);
+    expect(store.createProviderModel(mine.id, {
+      name: "other", contextWindow: 131_072, maxOutputTokens: 8_192,
+    }, "user-2")).toBeUndefined();
+    expect(store.updateModelProvider(mine.id, { name: "hacked", baseUrl: "https://evil.example/v1", apiKey: "" }, "user-2")).toBeUndefined();
+
+    expect(store.setUserModelSelection("user-1", mine.id, model.id)).toBe(true);
+    expect(store.setUserModelSelection("user-2", mine.id, model.id)).toBe(false);
+    expect(store.getActiveModelForUser("user-1")?.model.id).toBe(model.id);
+    expect(store.getActiveModelForUser("user-2")).toBeUndefined();
+    expect(store.deleteModelProvider(mine.id, "user-2")).toBe(false);
+    expect(store.deleteModelProvider(mine.id, "user-1")).toBe(true);
+    expect(store.getActiveModelForUser("user-1")).toBeUndefined();
+  });
+
   it("记录上下文变化轨迹并纳入对话过程快照", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await EventStore.open(join(directory, "state.db"));

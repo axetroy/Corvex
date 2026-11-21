@@ -288,7 +288,17 @@ export interface ModelProvider {
   baseUrl: string;
   /** 仅用于内部连接与保存；接口一律不回显原文。 */
   apiKey: string;
+  /** 空字符串代表系统级供应商；否则为所属用户 ID。 */
+  ownerUserId: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+/** 用户选择的模型；未选择时回退到系统当前模型。 */
+export interface UserModelSelection {
+  userId: string;
+  providerId: string;
+  modelId: string;
   updatedAt: string;
 }
 

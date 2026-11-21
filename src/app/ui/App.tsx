@@ -15,6 +15,7 @@ import {
   LogoutIcon,
   OverviewIcon,
   SidebarCollapseIcon,
+  SettingsIcon,
   SidebarExpandIcon,
 } from "./components/icons.js";
 import { fetchJson } from "./api.js";
@@ -29,6 +30,7 @@ const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((mod
 const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
 const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
+const UserSettingsPage = lazy(() => import("./components/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
 
 /** localStorage 中保存 Agent 控制台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
@@ -274,7 +276,7 @@ export function App() {
             className="sidebar-nav"
             mode="inline"
             inlineCollapsed={navigationCollapsed}
-            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
+            selectedKeys={[page.kind === "settings" ? "settings" : page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
               window.location.hash = key === "events"
                 ? eventsHash(queue)
@@ -286,6 +288,7 @@ export function App() {
               { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
               { key: "events", icon: <EventsIcon />, label: copy.navEvents },
               { key: "overview", icon: <OverviewIcon />, label: copy.navOverview },
+              { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
           {account ? (
@@ -351,6 +354,9 @@ export function App() {
                 onUpdated={handleUpdated}
                 onRefresh={refresh}
               />
+            ) : null}
+            {page.kind === "settings" ? (
+              <UserSettingsPage copy={copy} onChanged={refresh} />
             ) : null}
             {page.kind === "conversations" ? (
               <ConversationsPage

@@ -219,6 +219,13 @@
   word-break: break-all;
 }
 
+.model-provider-system.ant-tag {
+  margin-inline-end: 0;
+  border-color: #91caff;
+  color: #0958d9;
+  background: #e6f4ff;
+}
+
 .model-provider-empty {
   margin: 8px 0 0 !important;
   font-size: 12px;

@@ -52,6 +52,7 @@ import {
   type ModelProvider,
   type ModelProviderDetails,
   type ModelProviderInput,
+  type UserModelSelection,
   type ProviderModel,
   type ProviderModelInput,
   type ConversationTurnTransition,
@@ -2389,9 +2390,24 @@ export class EventStore {
     }));
   }
 
+  /** 全部供应商（管理员视角），包括系统级与用户级。 */
   listModelProviders(): ModelProviderDetails[] {
-    const providers = (this.db.prepare("SELECT * FROM model_providers ORDER BY created_at,id").all() as Record<string, unknown>[])
-      .map((row) => this.readModelProvider(row));
+    return this.collectModelProviders(
+      this.db.prepare("SELECT * FROM model_providers ORDER BY created_at,id").all() as Record<string, unknown>[],
+    );
+  }
+
+  /** 用户可见的供应商：系统级共享，外加该用户自己创建的。 */
+  listModelProvidersForUser(userId: string): ModelProviderDetails[] {
+    return this.collectModelProviders(
+      this.db
+        .prepare("SELECT * FROM model_providers WHERE owner_user_id='' OR owner_user_id=? ORDER BY created_at,id")
+        .all(userId) as Record<string, unknown>[],
+    );
+  }
+
+  private collectModelProviders(rows: Record<string, unknown>[]): ModelProviderDetails[] {
+    const providers = rows.map((row) => this.readModelProvider(row));
     const models = (this.db.prepare("SELECT * FROM provider_models ORDER BY created_at,id").all() as Record<string, unknown>[])
       .map((row) => this.readProviderModel(row));
     return providers.map((provider) => ({
@@ -2400,32 +2416,42 @@ export class EventStore {
     }));
   }
 
-  getModelProvider(id: string): ModelProvider | undefined {
-    const row = this.db.prepare("SELECT * FROM model_providers WHERE id=?").get(id) as Record<string, unknown> | undefined;
+  /** 传入 ownerUserId 时只允许读取系统级或该用户自己的供应商。 */
+  getModelProvider(id: string, ownerUserId?: string): ModelProvider | undefined {
+    const row = (
+      ownerUserId === undefined
+        ? this.db.prepare("SELECT * FROM model_providers WHERE id=?").get(id)
+        : this.db.prepare("SELECT * FROM model_providers WHERE id=? AND (owner_user_id='' OR owner_user_id=?)").get(id, ownerUserId)
+    ) as Record<string, unknown> | undefined;
     return row ? this.readModelProvider(row) : undefined;
   }
 
-  createModelProvider(input: ModelProviderInput): ModelProvider {
+  createModelProvider(input: ModelProviderInput, ownerUserId = ""): ModelProvider {
     const now = new Date().toISOString();
     const id = randomUUID();
     this.db.prepare(
-      "INSERT INTO model_providers (id,name,base_url,api_key,created_at,updated_at) VALUES (?,?,?,?,?,?)",
-    ).run(id, input.name, input.baseUrl, input.apiKey, now, now);
+      "INSERT INTO model_providers (id,name,base_url,api_key,owner_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+    ).run(id, input.name, input.baseUrl, input.apiKey, ownerUserId, now, now);
     return this.getModelProvider(id)!;
   }
 
-  updateModelProvider(id: string, input: ModelProviderInput): ModelProvider | undefined {
+  updateModelProvider(id: string, input: ModelProviderInput, ownerUserId?: string): ModelProvider | undefined {
+    const existing = ownerUserId === undefined ? this.getModelProvider(id) : this.getModelProvider(id, ownerUserId);
+    if (!existing || (ownerUserId !== undefined && existing.ownerUserId !== ownerUserId)) return undefined;
     const result = this.db.prepare(
       "UPDATE model_providers SET name=?,base_url=?,api_key=?,updated_at=? WHERE id=?",
     ).run(input.name, input.baseUrl, input.apiKey, new Date().toISOString(), id);
     return result.changes === 1 ? this.getModelProvider(id) : undefined;
   }
 
-  deleteModelProvider(id: string): boolean {
+  deleteModelProvider(id: string, ownerUserId?: string): boolean {
+    const existing = ownerUserId === undefined ? this.getModelProvider(id) : this.getModelProvider(id, ownerUserId);
+    if (!existing || (ownerUserId !== undefined && existing.ownerUserId !== ownerUserId)) return false;
     return this.transaction(() => {
       const removed = this.db.prepare("DELETE FROM model_providers WHERE id=?").run(id).changes === 1;
       // 删除供应商会级联删除其模型；若删掉的是当前模型，提升剩余的第一个。
       if (removed) this.promoteFirstProviderModel();
+      if (removed) this.db.prepare("DELETE FROM user_model_selections WHERE provider_id=?").run(id);
       return removed;
     });
   }
@@ -2437,12 +2463,16 @@ export class EventStore {
     return row ? this.readProviderModel(row) : undefined;
   }
 
-  createProviderModel(providerId: string, input: ProviderModelInput): ProviderModel | undefined {
+  createProviderModel(providerId: string, input: ProviderModelInput, ownerUserId?: string): ProviderModel | undefined {
     return this.transaction(() => {
-      if (!this.getModelProvider(providerId)) return undefined;
+      const provider = ownerUserId === undefined
+        ? this.getModelProvider(providerId)
+        : this.getModelProvider(providerId, ownerUserId);
+      if (!provider || (ownerUserId !== undefined && provider.ownerUserId !== ownerUserId)) return undefined;
       const now = new Date().toISOString();
       const id = randomUUID();
-      const first = (this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number }).count === 0;
+      const first = ownerUserId === undefined &&
+        (this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number }).count === 0;
       this.db.prepare(
         `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,active,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,?)`,
@@ -2451,7 +2481,9 @@ export class EventStore {
     });
   }
 
-  updateProviderModel(providerId: string, id: string, input: ProviderModelInput): ProviderModel | undefined {
+  updateProviderModel(providerId: string, id: string, input: ProviderModelInput, ownerUserId?: string): ProviderModel | undefined {
+    const provider = ownerUserId === undefined ? this.getModelProvider(providerId) : this.getModelProvider(providerId, ownerUserId);
+    if (!provider || (ownerUserId !== undefined && provider.ownerUserId !== ownerUserId)) return undefined;
     const result = this.db.prepare(
       "UPDATE provider_models SET name=?,context_window=?,max_output_tokens=?,updated_at=? WHERE provider_id=? AND id=?",
     ).run(input.name, input.contextWindow, input.maxOutputTokens, new Date().toISOString(), providerId, id);
@@ -2480,12 +2512,15 @@ export class EventStore {
     });
   }
 
-  deleteProviderModel(providerId: string, id: string): boolean {
+  deleteProviderModel(providerId: string, id: string, ownerUserId?: string): boolean {
+    const provider = ownerUserId === undefined ? this.getModelProvider(providerId) : this.getModelProvider(providerId, ownerUserId);
+    if (!provider || (ownerUserId !== undefined && provider.ownerUserId !== ownerUserId)) return false;
     return this.transaction(() => {
       const removed = this.db
         .prepare("DELETE FROM provider_models WHERE provider_id=? AND id=?")
         .run(providerId, id).changes === 1;
       if (removed) this.promoteFirstProviderModel();
+      if (removed) this.db.prepare("DELETE FROM user_model_selections WHERE model_id=?").run(id);
       return removed;
     });
   }
@@ -2506,6 +2541,38 @@ export class EventStore {
     const model = this.readProviderModel(row);
     const provider = this.getModelProvider(model.providerId);
     return provider ? { provider, model } : undefined;
+  }
+
+  /** 用户自己选择的模型记录。 */
+  getUserModelSelection(userId: string): UserModelSelection | undefined {
+    const row = this.db.prepare("SELECT * FROM user_model_selections WHERE user_id=?").get(userId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      userId: stringColumn(row, "user_id"),
+      providerId: stringColumn(row, "provider_id"),
+      modelId: stringColumn(row, "model_id"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
+  }
+
+  /** 设置用户选择的模型；return false 表示供应商或模型不存在/无权访问。 */
+  setUserModelSelection(userId: string, providerId: string, modelId: string): boolean {
+    const provider = this.getModelProvider(providerId, userId);
+    if (!provider || !this.getProviderModel(providerId, modelId)) return false;
+    this.db.prepare(
+      `INSERT INTO user_model_selections (user_id,provider_id,model_id,updated_at) VALUES (?,?,?,?)
+       ON CONFLICT(user_id) DO UPDATE SET provider_id=excluded.provider_id,model_id=excluded.model_id,updated_at=excluded.updated_at`,
+    ).run(userId, providerId, modelId, new Date().toISOString());
+    return true;
+  }
+
+  /** 用户当前生效的模型：优先用户选择，否则回退到系统当前模型。 */
+  getActiveModelForUser(userId: string): ActiveModel | undefined {
+    const selection = this.getUserModelSelection(userId);
+    if (!selection) return this.getActiveModel();
+    const provider = this.getModelProvider(selection.providerId, userId);
+    const model = provider ? this.getProviderModel(selection.providerId, selection.modelId) : undefined;
+    return provider && model ? { provider, model } : this.getActiveModel();
   }
 
   /**
@@ -2632,6 +2699,7 @@ export class EventStore {
       name: stringColumn(row, "name"),
       baseUrl: stringColumn(row, "base_url"),
       apiKey: stringColumn(row, "api_key"),
+      ownerUserId: stringColumn(row, "owner_user_id"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
     };
@@ -2940,7 +3008,12 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS storage_cleanup_log_order_idx ON storage_cleanup_log(started_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS model_providers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL,
-        api_key TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        api_key TEXT NOT NULL DEFAULT '', owner_user_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_model_selections (
+        user_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, model_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS provider_models (
         id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
@@ -3061,6 +3134,13 @@ export class EventStore {
       (this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((column) => column.name),
     );
     if (!userColumns.has("is_admin")) this.db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+    // 供应商可属于某个用户；空 owner 表示系统级，迁移时把已有供应商都归为系统级。
+    const providerColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(model_providers)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!providerColumns.has("owner_user_id")) {
+      this.db.exec("ALTER TABLE model_providers ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''");
+    }
     const adminCount = (this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE is_admin=1").get() as { count: number }).count;
     if (adminCount === 0) {
       const firstUser = this.db.prepare("SELECT id FROM users ORDER BY created_at,id LIMIT 1").get() as { id: string } | undefined;

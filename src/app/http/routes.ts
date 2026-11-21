@@ -7,6 +7,7 @@ import { registerObservabilityRoutes } from "./ops/observability.js";
 import { registerConversationRoutes } from "./ops/conversations.js";
 import { registerAdminRoutes } from "./ops/admin.js";
 import { registerModelRoutes } from "./ops/models.js";
+import { registerUserModelRoutes } from "./ops/user-models.js";
 import { registerProjectRoutes } from "./ops/projects.js";
 import { registerSettingsRoutes } from "./ops/settings.js";
 import { registerStorageRoutes } from "./ops/storage.js";
@@ -48,6 +49,7 @@ export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerProjectRoutes(app, ctx);
   registerConversationRoutes(app, ctx);
   registerModelRoutes(app, ctx);
+  registerUserModelRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
