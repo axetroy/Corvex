@@ -18,6 +18,14 @@ interface ModelDraft {
   maxOutputTokens: number;
 }
 
+interface TestResult {
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  status?: number;
+  models?: number;
+}
+
 function emptyProvider(): ProviderDraft {
   return { name: "", baseUrl: "", apiKey: "" };
 }
@@ -46,10 +54,33 @@ export function ModelManager({
   const [modelTarget, setModelTarget] = useState<{ provider: ModelProviderDetails; model?: ProviderModel } | undefined>();
   const [modelDraft, setModelDraft] = useState<ModelDraft>(emptyModel());
   const [saving, setSaving] = useState(false);
+  const [testingProvider, setTestingProvider] = useState(false);
+  const [testingModel, setTestingModel] = useState(false);
+  const [providerTest, setProviderTest] = useState<TestResult | undefined>();
+  const [modelTest, setModelTest] = useState<TestResult | undefined>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
   const [modal, modalContextHolder] = Modal.useModal();
+
+  function renderTestResult(result: TestResult | undefined) {
+    if (!result) return null;
+    const detail = [
+      copy.modelTestLatency.replace("{value}", String(result.latencyMs)),
+      result.status ? `HTTP ${result.status}` : "",
+      result.models !== undefined ? copy.modelTestModels.replace("{value}", String(result.models)) : "",
+      result.ok ? "" : result.message,
+    ].filter(Boolean).join(" · ");
+    return (
+      <Alert
+        className="settings-alert"
+        type={result.ok ? "success" : "error"}
+        showIcon
+        message={result.ok ? copy.modelTestSuccess : copy.modelTestFailed}
+        description={detail}
+      />
+    );
+  }
 
   async function refresh() {
     try {
@@ -71,8 +102,27 @@ export function ModelManager({
 
   function openProvider(provider?: ModelProviderDetails) {
     resetMessages();
+    setProviderTest(undefined);
     setEditingProvider(provider ?? "new");
     setProviderDraft(provider ? { name: provider.name, baseUrl: provider.baseUrl, apiKey: "" } : emptyProvider());
+  }
+
+  async function testProviderDraft() {
+    setTestingProvider(true);
+    setProviderTest(undefined);
+    try {
+      const result = await sendJson<TestResult>(
+        `${apiBase}/test`,
+        { baseUrl: providerDraft.baseUrl, apiKey: providerDraft.apiKey },
+        copy,
+        "POST",
+      );
+      setProviderTest(result);
+    } catch (cause) {
+      setProviderTest({ ok: false, message: errorMessage(cause), latencyMs: 0 });
+    } finally {
+      setTestingProvider(false);
+    }
   }
 
   async function saveProvider() {
@@ -116,10 +166,30 @@ export function ModelManager({
 
   function openModel(provider: ModelProviderDetails, model?: ProviderModel) {
     resetMessages();
+    setModelTest(undefined);
     setModelTarget({ provider, model });
     setModelDraft(model
       ? { name: model.name, contextWindow: model.contextWindow, maxOutputTokens: model.maxOutputTokens }
       : emptyModel());
+  }
+
+  async function testModelDraft() {
+    if (!modelTarget) return;
+    setTestingModel(true);
+    setModelTest(undefined);
+    try {
+      const result = await sendJson<TestResult>(
+        `${apiBase}/${encodeURIComponent(modelTarget.provider.id)}/models/test`,
+        { name: modelDraft.name },
+        copy,
+        "POST",
+      );
+      setModelTest(result);
+    } catch (cause) {
+      setModelTest({ ok: false, message: errorMessage(cause), latencyMs: 0 });
+    } finally {
+      setTestingModel(false);
+    }
   }
 
   async function saveModel() {
@@ -309,6 +379,10 @@ export function ModelManager({
             <Typography.Text type="secondary" className="settings-field-hint">{copy.settingsModelApiKeyHint}</Typography.Text>
           </div>
         </div>
+        <div className="settings-test-row">
+          <Button loading={testingProvider} onClick={() => void testProviderDraft()}>{copy.modelTestConnection}</Button>
+          {renderTestResult(providerTest)}
+        </div>
       </Modal>
       <Modal
         open={Boolean(modelTarget)}
@@ -349,6 +423,10 @@ export function ModelManager({
             />
             <Typography.Text type="secondary" className="settings-field-hint">{copy.settingsMaxOutputTokensHint}</Typography.Text>
           </div>
+        </div>
+        <div className="settings-test-row">
+          <Button loading={testingModel} onClick={() => void testModelDraft()}>{copy.modelTestModel}</Button>
+          {renderTestResult(modelTest)}
         </div>
       </Modal>
     </Panel>

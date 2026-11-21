@@ -30,6 +30,17 @@
   gap: 18px;
 }
 
+.settings-test-row {
+  display: flex;
+  margin-top: 20px;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-test-row .settings-alert {
+  margin: 0;
+}
+
 .settings-field {
   display: flex;
   flex-direction: column;

@@ -3,6 +3,7 @@ import { requireUser } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import type { ModelProviderDetails } from "../../../events/model.js";
 import { idParam, readJsonObject, secretSettingPlaceholder, sendJson } from "../respond.js";
+import { testModelConnection, testProviderConnection } from "./model-test.js";
 
 /** 接口不回显 API Key：有值时只显示占位符，空值保持为空。 */
 function redactProvider<T extends { apiKey: string }>(provider: T): T {
@@ -73,6 +74,32 @@ export function registerUserModelRoutes(app: FastifyInstance, ctx: OpsContext): 
         const user = requireUser(request, reply);
         if (!user) return;
         sendJson(reply, 200, { items: visible(user.id).map((provider) => redactProvider(provider)) });
+      });
+
+      me.post("/model-providers/test", async (request, reply) => {
+        const body = readJsonObject(request, reply);
+        if (!body) return;
+        const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+        const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+        sendJson(reply, 200, await testProviderConnection(baseUrl, apiKey));
+      });
+
+      me.post("/model-providers/:id/models/test", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
+        const providerId = idParam((request.params as { id: string }).id);
+        const body = readJsonObject(request, reply);
+        if (!providerId || !body) return;
+        const provider = ctx.store.getModelProvider(providerId, user.id);
+        if (!provider) {
+          sendJson(reply, 404, { error: "model provider not found" });
+          return;
+        }
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        const apiKey = typeof body.apiKey === "string" && body.apiKey && body.apiKey !== secretSettingPlaceholder
+          ? body.apiKey
+          : provider.apiKey;
+        sendJson(reply, 200, await testModelConnection(provider.baseUrl, apiKey, name));
       });
 
       me.post("/model-providers", async (request, reply) => {
