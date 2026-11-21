@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Dropdown, Modal, Select, Space, Tabs, Tag, Typography } from "antd";
+import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -50,7 +50,7 @@ function messageStatus(message: ConversationMessage, copy: Copy): string {
 }
 
 /** 对话模式标签文案；未知模式回退为原始值，避免界面留白。 */
-function conversationModeLabel(mode: ConversationSummary["mode"], copy: Copy): string {
+function conversationModeText(mode: ConversationSummary["mode"], copy: Copy): string {
   return translate(copy.conversationModes, mode);
 }
 
@@ -137,7 +137,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [mode, setMode] = useState<ConversationSummary["mode"]>("read_only");
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -337,7 +336,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch("/api/ops/conversations", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, mode, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
+        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
@@ -471,7 +470,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setProject(undefined);
     setSelectedBranch("");
     setDraftMessage("");
-    setMode("read_only");
     setError("");
   }
 
@@ -645,19 +643,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         disabled={busy}
         onChange={setSelectedBranch}
       />
-      <span className="conversation-composer-model-label">{copy.conversationModeLabel}</span>
-      <Select<ConversationSummary["mode"]>
-        className="conversation-mode-select"
-        size="small"
-        variant="borderless"
-        aria-label={copy.conversationModeLabel}
-        title={copy.conversationModeHint}
-        value={mode}
-        disabled={busy}
-        options={(Object.entries(copy.conversationModes) as [ConversationSummary["mode"], string][])
-          .map(([value, label]) => ({ value, label }))}
-        onChange={setMode}
-      />
     </div>
   ) : null;
 
@@ -741,7 +726,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         </Typography.Text>
                       </button>
                       <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
-                      <Tag className="conversation-mode-tag">{conversationModeLabel(currentConversation.mode, copy)}</Tag>
+                      <Tag className="conversation-mode-tag">{conversationModeText(currentConversation.mode, copy)}</Tag>
                       <Typography.Text type="secondary" className="conversation-pinned">
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
                       </Typography.Text>

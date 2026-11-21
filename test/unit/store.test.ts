@@ -286,8 +286,8 @@ describe("EventStore", () => {
       projectId: 7,
       projectName: "group/project",
       targetBranch: "main",
-      // 未指定模式时默认为只读。
-      mode: "read_only",
+      // 未指定模式时默认为可读可写。
+      mode: "gitlab",
       turnCount: 1,
       lastTurnStatus: "queued",
       messages: [
@@ -304,7 +304,7 @@ describe("EventStore", () => {
       turnId: result.turnId,
       projectId: 7,
       targetBranch: "main",
-      mode: "read_only",
+      mode: "gitlab",
       headSha: "a".repeat(40),
       request: "Explain the routing module",
       attempt: 1,
@@ -439,7 +439,7 @@ describe("EventStore", () => {
     store.recordExecutionStep({
       turnId: claimed.turnId,
       attempt: claimed.attempt,
-      step: "workflow.read_only_conversation",
+      step: "workflow.gitlab_conversation",
       status: "succeeded",
       input: { requestCharacters: 24 },
       output: { textBytes: 18 },
@@ -460,7 +460,7 @@ describe("EventStore", () => {
     });
     expect(turn?.trajectory).toHaveLength(1);
     expect(turn?.trajectory[0]).toMatchObject({ kind: "llm", status: "succeeded", output: "assistant response" });
-    expect(turn?.events.some((step) => step.step === "workflow.read_only_conversation")).toBe(true);
+    expect(turn?.events.some((step) => step.step === "workflow.gitlab_conversation")).toBe(true);
     expect(turn?.timeline.some((transition) => transition.to === "completed")).toBe(true);
     // 轮次记录必须绑定到该对话，跨对话或未知轮次返回 undefined。
     expect(store.getConversationTurn("other-conversation", created.turnId)).toBeUndefined();
@@ -492,7 +492,7 @@ describe("EventStore", () => {
     store.recordExecutionStep({
       turnId: first.turnId,
       attempt: first.attempt,
-      step: "workflow.read_only_conversation",
+      step: "workflow.gitlab_conversation",
       status: "succeeded",
     });
     store.finishConversationTurn(first.turnId, "First answer.");
@@ -519,7 +519,7 @@ describe("EventStore", () => {
     store.recordExecutionStep({
       turnId: second.turnId,
       attempt: second.attempt,
-      step: "workflow.read_only_conversation",
+      step: "workflow.gitlab_conversation",
       status: "succeeded",
     });
     store.finishConversationTurn(second.turnId, "Second answer.");

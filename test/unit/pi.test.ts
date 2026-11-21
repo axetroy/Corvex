@@ -36,8 +36,8 @@ describe("PiAgent", () => {
     expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
     expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true, mrMetadata: true, gitHistory: true, gitWrite: true });
     expect(getAgentToolAccess("implement", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
-    // 对话按模式派生能力：只读模式禁用仓库写入，且省略模式时回退为只读。
-    expect(getAgentToolAccess("conversation", config, "read_only")).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: true, gitWrite: false });
+    // 对话统一为可读可写（GitLab 写入）；仓库写入仍关闭，省略模式时回退为默认模式。
+    expect(getAgentToolAccess("conversation", config, "gitlab")).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: true, gitWrite: false });
     expect(getAgentToolAccess("conversation", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: true, gitWrite: false });
     expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
       webFetch: false,

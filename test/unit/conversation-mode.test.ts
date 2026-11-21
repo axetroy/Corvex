@@ -2,14 +2,13 @@ import { describe, expect, it } from "vitest";
 import { conversationCapabilities, isConversationMode, normalizeConversationTitle } from "../../src/events/model.ts";
 
 describe("conversation modes", () => {
-  it("recognizes the GitLab collaboration mode", () => {
-    expect(isConversationMode("read_only")).toBe(true);
+  it("recognizes the single read-write mode", () => {
     expect(isConversationMode("gitlab")).toBe(true);
+    expect(isConversationMode("read_only")).toBe(false);
     expect(isConversationMode("unknown")).toBe(false);
   });
 
-  it("grants GitLab writes only in collaboration mode", () => {
-    expect(conversationCapabilities("read_only")).toMatchObject({ repositoryWrite: false, gitlabWrite: false });
+  it("grants GitLab writes in the read-write mode", () => {
     expect(conversationCapabilities("gitlab")).toMatchObject({ repositoryWrite: false, gitlabWrite: true });
   });
 });

@@ -1,8 +1,7 @@
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
-import { conversationCapabilities } from "../events/model.js";
+import { conversationCapabilities, normalizeConversationTitle } from "../events/model.js";
 import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../events/model.js";
-import { normalizeConversationTitle } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
 import { traceExecutionStep } from "../events/execution.js";
 import { GitManager } from "../git/manager.js";
@@ -24,12 +23,13 @@ interface RunningTurn {
 }
 
 /**
- * 在 Server 进程内联执行对话轮次：不进入事件队列、不占用事件租约，也从不向
- * GitLab 发布内容。每次执行都重新校验分支快照，过期即以 `stale` 结束。
- * 后续如需隔离执行环境，可把这里的模型调用替换为容器调用，其余流程不变。
+ * 在 Server 进程内联执行对话轮次：不进入事件队列、不占用事件租约。对话统一为
+ * 可读可写，可在用户明确要求时通过 GitLab 写工具发布内容。每次执行都重新校验
+ * 分支快照，过期即以 `stale` 结束。后续如需隔离执行环境，可把这里的模型调用
+ * 替换为容器调用，其余流程不变。
  *
  * 每个对话常驻一个只读 worktree 并跨轮次复用：同一快照的追问只做一次
- * `rev-parse` 校验，不再重复 checkout 整棵工作树再删除。对话是只读的，
+ * `rev-parse` 校验，不再重复 checkout 整棵工作树再删除。对话从不写入 worktree，
  * 且同一对话的轮次串行执行，因此复用在授权与并发上都安全。
  */
 export class ConversationRunner {
@@ -60,6 +60,21 @@ export class ConversationRunner {
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
     this.agent = new PiAgent(config, store, this.repo, undefined, undefined, undefined, gitlab, this.hooks);
+    // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。
+    this.hooks.conversationTitleRefine.tapPromise({ name: "llm-summary", stage: 100 }, async (input) => {
+      const result = await this.agent.generate(
+        {
+          taskType: "conversation",
+          systemPrompt: getConversationTitleSystemPrompt(input.language),
+          userPrompt: input.request,
+          noTools: true,
+        },
+        input.workspacePath,
+        input.signal,
+        input.trace ? { scope: input.trace, attempt: 1, taskType: "conversation" } : undefined,
+      );
+      return normalizeConversationTitle(result.content, input.language);
+    });
   }
 
   /** 运维台修改 GitLab 连接设置后同步重建对话侧 Git 客户端。 */
@@ -307,34 +322,28 @@ export class ConversationRunner {
     }
   }
 
-  /**
-   * 为首轮对话生成标题：只根据用户的首条提问推断主题并持久化。
-   * 标题失败不影响本轮结果——它只是列表展示的优化，不能让已回答的轮次变失败。
-   */
-  private async updateTitle(
+  /** 首轮完成后用 LLM 从用户消息精炼标题；失败时保留创建时的确定性标题。 */
+  private async refineTitle(
     turn: ConversationTurnContext,
     workspacePath: string,
     signal: AbortSignal,
     trace: EventTraceContext,
     language: ResponseLanguage,
   ): Promise<void> {
-    // 以数据库里的标题为准：首轮可能因快照过期等原因失败，真正成功的那一轮
-    // 历史未必为空，不能因此跳过标题。
-    if (this.store.getConversation(turn.conversationId)?.title) return;
+    if (turn.history.length > 0) return;
     try {
-      const title = await this.agent.generate(
-        {
-          taskType: "conversation",
-          systemPrompt: getConversationTitleSystemPrompt(language),
-          userPrompt: turn.request,
-        },
+      const title = await callAsyncHook(this.hooks.conversationTitleRefine, {
+        conversationId: turn.conversationId,
+        turnId: turn.turnId,
+        request: turn.request,
+        language,
         workspacePath,
         signal,
-        trace,
-      );
-      this.store.saveConversationTitle(turn.conversationId, normalizeConversationTitle(title.content, language));
+        trace: trace.scope,
+      });
+      if (title) this.store.refineConversationTitle(turn.conversationId, title);
     } catch (error) {
-      console.warn("conversation title generation failed", {
+      console.warn("conversation title refinement failed", {
         conversationId: turn.conversationId,
         error: errorMessage(error),
       });
@@ -512,12 +521,11 @@ export class ConversationRunner {
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
-      // 标题在 done 之前落库，界面收到 done 刷新列表时就能立刻看到新标题。
-      await this.updateTitle(turn, workspace.path, signal, trace, language);
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
-      // 正文与标题都已落库，再结束流，界面收到 done 后刷新即可拿到新标题。
+      // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });
+      void this.refineTitle(turn, workspace.path, signal, trace, language);
       await this.updateSummary(turn, dropped, workspace.path, signal, language);
     } catch (error) {
       // 失败/取消也保留已发生的思考与工具调用，刷新后仍能看到过程停在哪一步。

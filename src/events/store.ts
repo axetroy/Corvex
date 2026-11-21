@@ -1684,6 +1684,16 @@ export class EventStore {
     });
   }
 
+  /**
+   * 用 LLM 精炼后的标题覆盖创建时的临时标题；失败不影响会话。
+   */
+  refineConversationTitle(conversationId: string, title: string): void {
+    const trimmed = title.trim().replaceAll(/\s+/g, " ").slice(0, maxConversationTitleCharacters);
+    if (!trimmed) return;
+    this.db.prepare("UPDATE conversations SET title=?,updated_at=? WHERE id=?")
+      .run(trimmed, new Date().toISOString(), conversationId);
+  }
+
   /** 读取 Agent 控制台可覆盖的运行时设置；键不存在时返回 undefined。 */
   getRuntimeSetting(key: string): string | undefined {
     const row = this.db.prepare("SELECT value FROM runtime_settings WHERE key=?").get(key) as
@@ -2896,7 +2906,7 @@ export class EventStore {
       CREATE INDEX IF NOT EXISTS user_sessions_expiry_idx ON user_sessions(expires_at);
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
-        target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only',
+        target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'gitlab',
         owner_user_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -3075,8 +3085,8 @@ export class EventStore {
     for (const [name, definition] of Object.entries({
       summary: "TEXT NOT NULL DEFAULT ''",
       summary_message_id: "TEXT NOT NULL DEFAULT ''",
-      // 对话模式：旧库默认只读，与旧行为一致。
-      mode: "TEXT NOT NULL DEFAULT 'read_only'",
+      // 对话模式：统一为可读可写，旧库补齐时直接落在 gitlab 模式。
+      mode: "TEXT NOT NULL DEFAULT 'gitlab'",
       // 模型生成的标题：旧库留空，首次生成后写入。
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
@@ -3100,6 +3110,17 @@ export class EventStore {
         .run("schema:user-owned-conversations", now, now, "migration");
       // 旧的控制台 Basic 凭据不再使用。
       this.db.exec("DELETE FROM runtime_settings WHERE key IN ('operations_username','operations_password')");
+    }
+    // 对话不再区分只读/可写：把所有旧模式统一迁移到可读可写的 gitlab 模式。
+    const modeMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:read-write-conversations'")
+      .get() as { value: string } | undefined;
+    if (!modeMigration) {
+      this.db.exec("UPDATE conversations SET mode='gitlab' WHERE mode <> 'gitlab'");
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:read-write-conversations", now, now, "migration");
     }
     this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
     // 早期模型可能把整段回答当作标题；按当前规则收敛已有的长标题。

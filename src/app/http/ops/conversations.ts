@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { isConversationMode } from "../../../events/model.js";
 import type { Conversation, ConversationStreamEvent } from "../../../events/model.js";
 import { requireUser } from "../../auth/context.js";
+import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import type { OpsContext } from "../context.js";
 import {
@@ -111,6 +112,13 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
         ...(mode ? { mode } : {}),
       });
+      const title = await callAsyncHook(ctx.hooks.conversationStart, {
+        conversationId: created.conversationId,
+        turnId: created.turnId,
+        request: message,
+        language: responseLanguage ?? ctx.config.agent.responseLanguage,
+      });
+      if (title) ctx.store.saveConversationTitle(created.conversationId, title);
       ctx.startConversationTurn(created.turnId, gitlab, responseLanguage);
       sendJson(reply, 202, created);
     } catch (error) {

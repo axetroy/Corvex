@@ -108,9 +108,11 @@ export interface ModelRequest {
   history?: { role: "user" | "assistant"; content: string }[];
   /**
    * 对话轮次的模式；仅 `taskType === "conversation"` 时使用，用于派生工具能力。
-   * 省略时按 `defaultConversationMode`（只读）处理，保持既有只读行为。
+   * 省略时按 `defaultConversationMode`（可读可写）处理。
    */
   conversationMode?: ConversationMode;
+  /** 只发文本、不注册任何工具；用于标题等不应读取仓库的模型调用。 */
+  noTools?: boolean;
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
@@ -150,8 +152,8 @@ export function getAgentToolAccess(
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
     gitHistory: taskType === "chat" || taskType === "conversation",
-    // 对话是否可写由模式决定：当前只有只读模式，`repositoryWrite` 恒为 false。
-    // 新增可写模式时此处即生效，但仍需在 Runner 中接线写入工具所需的上下文。
+    // 对话统一可读可写（GitLab 写入）；仓库写入当前仍由模式能力决定且保持关闭，
+    // 因为对话绑定分支而非 MR，写入工具所需的 MR 上下文尚不存在。
     gitWrite: taskType === "chat" || (taskType === "conversation" && conversationCapabilities(conversationMode).repositoryWrite),
   };
 }
@@ -677,7 +679,7 @@ export class PiAgent {
         },
       }),
       sessionManager: SessionManager.inMemory(),
-      noTools: "builtin",
+      noTools: request.noTools ? "all" : "builtin",
     });
     // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
     // SDK 的压缩切点也才能在正确的轮次边界上工作。

@@ -36,17 +36,17 @@ export function isConversationTurnStatus(value: string): value is ConversationTu
 }
 
 /**
- * 对话模式：决定该对话允许的仓库能力。
+ * 对话模式：决定该对话允许的能力。
  *
- * `read_only` 是当前唯一实现，而不是永久约束——以后要开放修改时新增一个模式即可。
- * 新增模式必须同时在 `conversationCapabilities` 中声明能力，并在存储、执行与界面
- * 三处接线，避免把「只读」继续散落成隐式假设。
+ * 对话统一为可读可写：既能读取仓库，也能读取并按用户明确要求写入 GitLab。
+ * 保留显式的模式字段是为了让 `conversationCapabilities` 继续作为能力的唯一来源，
+ * 新增模式必须同时在存储、执行与界面三处接线。
  */
-export const conversationModes = ["read_only", "gitlab"] as const;
+export const conversationModes = ["gitlab"] as const;
 export type ConversationMode = (typeof conversationModes)[number];
 
 /** 新建对话默认使用的模式。 */
-export const defaultConversationMode: ConversationMode = "read_only";
+export const defaultConversationMode: ConversationMode = "gitlab";
 
 /** 在边界处校验外部字符串是否为已知对话模式。 */
 export function isConversationMode(value: string): value is ConversationMode {
@@ -66,8 +66,6 @@ export interface ConversationCapabilities {
 /** 由模式派生能力；新增模式时这里会因缺少分支而编译失败，强制补齐声明。 */
 export function conversationCapabilities(mode: ConversationMode): ConversationCapabilities {
   switch (mode) {
-    case "read_only":
-      return { workflowStep: "workflow.read_only_conversation", repositoryWrite: false, gitlabWrite: false };
     case "gitlab":
       return { workflowStep: "workflow.gitlab_conversation", repositoryWrite: false, gitlabWrite: true };
     default: {
@@ -151,7 +149,7 @@ export interface ConversationSummary {
   projectId: number;
   projectName: string;
   targetBranch: string;
-  /** 该对话的模式；决定允许的仓库能力（当前只有 `read_only`）。 */
+  /** 该对话的模式；决定允许的能力（当前统一为可读可写的 `gitlab`）。 */
   mode: ConversationMode;
   createdAt: string;
   updatedAt: string;

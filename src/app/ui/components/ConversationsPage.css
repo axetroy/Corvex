@@ -463,10 +463,6 @@
   max-width: 120px;
 }
 
-.conversation-composer-setup .conversation-mode-select.ant-select {
-  width: 100px;
-}
-
 .conversations-layout .conversation-chat .conversation-composer .conversation-composer-setup .remote-picker .ant-select-content {
   height: auto;
   padding: 0;

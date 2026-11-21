@@ -565,8 +565,8 @@ describe("review task loop", () => {
       // 稍作延迟，确保 SSE 已建连后再开始输出正文，断言才不依赖调度顺序。
       delayMs: 100,
     });
-    // 正文落库后、done 之前生成标题，使用模型的独立动作。
-    modelActions.push({ content: "Value assignment in input.ts" });
+    // 首轮结束后 LLM 只根据用户消息精炼标题，使用独立的模型动作。
+    modelActions.push({ content: "Value assignment question" });
     const cipher = createTokenCipher(serverStore.getOrCreateSessionSecret());
     const user = serverStore.upsertUser({
       gitlabUserId: 2,
@@ -634,10 +634,10 @@ describe("review task loop", () => {
     expect(streamEvents.at(-1)).toMatchObject({ type: "done", status: "completed" });
     await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
     const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
-    expect(conversationDetail?.mode).toBe("read_only");
-    // 首轮完成后由模型总结标题；失败不影响轮次，因此这里等待列表标题出现。
-    await waitFor(() => Boolean(serverStore.getConversation(createdConversation.conversationId)?.title));
-    expect(serverStore.getConversation(createdConversation.conversationId)?.title).toBe("Value assignment in input.ts");
+    expect(conversationDetail?.mode).toBe("gitlab");
+    // 创建时先按用户消息设置标题，首轮结束后再由 LLM 精炼。
+    expect(serverStore.getConversation(createdConversation.conversationId)?.title).toBe("Where is the value assigned");
+    await waitFor(() => serverStore.getConversation(createdConversation.conversationId)?.title === "Value assignment question");
     expect(conversationDetail?.messages[1]).toMatchObject({
       role: "assistant",
       status: "completed",
@@ -654,7 +654,7 @@ describe("review task loop", () => {
     expect(conversationDetail?.messages[1]?.process).toEqual(process);
     expect(conversationTurn?.trajectory.some((entry) => entry.kind === "tool" && entry.name === "read_file")).toBe(true);
     expect(conversationTurn?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
-      "workflow.read_only_conversation",
+      "workflow.gitlab_conversation",
       "git.prepare_conversation_workspace",
     ]));
     // 对话工作区跨轮次复用：第二轮不应再重建目录，也不应再出现清理步骤。

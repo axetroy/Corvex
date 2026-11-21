@@ -76,11 +76,11 @@ describe("review and fix response validation", () => {
     }
   });
 
-  it("derives the conversation system prompt from the mode in both languages", () => {
-    expect(getConversationSystemPrompt("en", "read_only")).toContain("read-only code assistant");
-    expect(getConversationSystemPrompt("en", "read_only")).toContain("Never modify files");
-    expect(getConversationSystemPrompt("zh-CN", "read_only")).toContain("只读代码助手");
-    expect(getConversationSystemPrompt("zh-CN", "read_only")).toContain("不得修改文件");
+  it("describes a read-write conversation assistant in both languages", () => {
+    expect(getConversationSystemPrompt("en", "gitlab")).toContain("general-purpose collaboration assistant");
+    expect(getConversationSystemPrompt("en", "gitlab")).toContain("explicitly asks");
+    expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("通用协作助手");
+    expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("明确要求");
   });
 
   it("titles a conversation from the first request and keeps the tool budget a soft checkpoint", () => {

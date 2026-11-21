@@ -293,7 +293,7 @@ describe("CorvexServer", () => {
         ],
       });
       // 详情附带与执行器一致的系统提示词；未执行过轮次的新对话也能查看。
-      expect(conversationDetail.systemPrompt).toContain("read-only code assistant");
+      expect(conversationDetail.systemPrompt).toContain("general-purpose collaboration assistant");
       // 单轮对话记录端点返回该轮的轨迹与执行步骤，并拒绝跨对话或未知轮次。
       const conversationTurnResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}`,

@@ -2,9 +2,28 @@ import type { FastifyRequest } from "fastify";
 import { AsyncSeriesBailHook, AsyncSeriesHook, SyncHook } from "tapable";
 import type { CorvexConfig } from "../config/config.js";
 import type { ModelRequest, ModelResponse } from "../agent/pi.js";
-import type { TraceScope } from "../events/model.js";
+import type { ConversationTurnContext, Event, ResponseLanguage, TraceScope } from "../events/model.js";
+import { normalizeConversationTitle } from "../events/model.js";
 import type { AuthUser } from "./auth/model.js";
-import type { ConversationTurnContext, Event } from "../events/model.js";
+
+/** 发起会话时的钩子输入；标题应来自这里的用户消息。 */
+export interface ConversationStartInput {
+  conversationId: string;
+  turnId: string;
+  request: string;
+  language: ResponseLanguage;
+}
+
+/** 首轮完成后用 LLM 精炼标题的输入；仍然只把用户消息交给模型。 */
+export interface ConversationTitleRefineInput {
+  conversationId: string;
+  turnId: string;
+  request: string;
+  language: ResponseLanguage;
+  workspacePath: string;
+  signal: AbortSignal;
+  trace?: TraceScope;
+}
 
 /** 工具执行前后的钩子上下文；轨迹字段可用于把扩展逻辑关联到同一轮。 */
 export interface ToolHookContext {
@@ -37,6 +56,10 @@ export interface CorvexHooks {
   eventAfterProcess: AsyncSeriesHook<[Event]>;
   conversationBeforeTurn: AsyncSeriesHook<[ConversationTurnContext]>;
   conversationAfterTurn: AsyncSeriesHook<[ConversationTurnContext]>;
+  /** 发起会话：第一个返回非空标题的 tap 生效；默认从用户消息派生标题。 */
+  conversationStart: AsyncSeriesBailHook<[ConversationStartInput], string | undefined>;
+  /** 首轮完成后用 LLM 从用户消息精炼标题；默认实现注册在 ConversationRunner。 */
+  conversationTitleRefine: AsyncSeriesBailHook<[ConversationTitleRefineInput], string | undefined>;
   /** 模型调用前后；一次 generate 可能包含多次 SDK 会话（超限重试）。 */
   agentBeforeModel: AsyncSeriesHook<[ModelRequest]>;
   agentAfterModel: AsyncSeriesHook<[ModelRequest, ModelResponse]>;
@@ -64,7 +87,7 @@ export function callAsyncHook<T extends unknown[], R = void>(
 }
 
 export function createCorvexHooks(): CorvexHooks {
-  return {
+  const hooks: CorvexHooks = {
     serverBeforeListen: new AsyncSeriesHook([]),
     serverAfterListen: new AsyncSeriesHook(["address"]),
     serverBeforeClose: new AsyncSeriesHook([]),
@@ -75,9 +98,17 @@ export function createCorvexHooks(): CorvexHooks {
     eventAfterProcess: new AsyncSeriesHook(["event"]),
     conversationBeforeTurn: new AsyncSeriesHook(["turn"]),
     conversationAfterTurn: new AsyncSeriesHook(["turn"]),
+    conversationStart: new AsyncSeriesBailHook(["input"]),
+    conversationTitleRefine: new AsyncSeriesBailHook(["input"]),
     agentBeforeModel: new AsyncSeriesHook(["request"]),
     agentAfterModel: new AsyncSeriesHook(["request", "response"]),
     toolBefore: new AsyncSeriesHook(["context"]),
     toolAfter: new AsyncSeriesHook(["context"]),
   };
+  // 默认实现：标题只来自用户消息，不做额外的模型调用。
+  // 默认实现放在较低优先级的 stage，插件可以先行返回自定义标题。
+  hooks.conversationStart.tap({ name: "user-request", stage: 100 }, (input) =>
+    normalizeConversationTitle(input.request, input.language),
+  );
+  return hooks;
 }
