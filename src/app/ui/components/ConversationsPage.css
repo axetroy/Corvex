@@ -51,11 +51,11 @@
 
 /* 文件面板在工作区右侧：展开时挤压工作台空间。 */
 .conversations-layout.conversation-files-open {
-  grid-template-columns: 288px minmax(0, 1fr) 340px;
+  grid-template-columns: 288px minmax(0, 1fr) var(--file-panel-width, 340px);
 }
 
 .conversations-layout.conversations-list-collapsed.conversation-files-open {
-  grid-template-columns: 0 minmax(0, 1fr) 340px;
+  grid-template-columns: 0 minmax(0, 1fr) var(--file-panel-width, 340px);
 }
 
 .conversation-file-toggle.ant-btn {
@@ -1339,11 +1339,11 @@
   }
 
   .conversations-layout.conversation-files-open {
-    grid-template-columns: 224px minmax(0, 1fr) 300px;
+    grid-template-columns: 224px minmax(0, 1fr) min(var(--file-panel-width, 340px), 44vw);
   }
 
   .conversations-layout.conversations-list-collapsed.conversation-files-open {
-    grid-template-columns: 0 minmax(0, 1fr) 300px;
+    grid-template-columns: 0 minmax(0, 1fr) min(var(--file-panel-width, 340px), 44vw);
   }
 
   .conversation-workspace-project.ant-typography {
@@ -1367,6 +1367,10 @@
   .conversations-layout.conversation-files-open {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) minmax(180px, 40%);
+  }
+
+  .conversation-file-resizer {
+    display: none;
   }
 
   .conversation-sidebar {
@@ -1448,6 +1452,21 @@
   .conversation-trace-pane .trace-event-list {
     max-height: 260px;
   }
+}
+
+/* 文件面板左缘的拖拽手柄，像 VSCode 的面板分割线。 */
+.conversation-file-resizer {
+  width: 4px;
+  min-width: 4px;
+  cursor: col-resize;
+  background: var(--conversation-border);
+  transition: background 0.15s;
+  touch-action: none;
+}
+
+.conversation-file-resizer:hover,
+.conversation-file-resizer:active {
+  background: var(--conversation-brand);
 }
 
 /* 会话文件面板：与工作区同级的可收起 Tab 容器。 */
@@ -1599,34 +1618,56 @@
   padding: 6px 0;
 }
 
-.conversation-file-content pre {
-  margin: 0;
+.conversation-file-code {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.conversation-file-gutter {
+  width: 44px;
+  flex: 0 0 44px;
+  padding: 0 8px 0 0;
+  color: #9aa6b2;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 18px;
-}
-
-.conversation-file-line {
-  display: flex;
-  min-height: 18px;
-}
-
-.conversation-file-line:hover {
-  background: #f5f8fc;
-}
-
-.conversation-file-line-no {
-  width: 42px;
-  flex: 0 0 42px;
-  padding-inline-end: 8px;
-  color: #9aa6b2;
   text-align: right;
   user-select: none;
 }
 
-.conversation-file-line-text {
-  white-space: pre;
+.conversation-file-code-pre {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow-x: auto;
+}
+
+.conversation-file-code-pre code {
+  display: block;
   padding-inline-end: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: pre;
+}
+
+.conversation-file-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.file-tree-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  vertical-align: -2px;
+}
+
+.file-tree-icon.folder {
+  color: #dcb67a;
 }
 
 .conversation-file-empty {

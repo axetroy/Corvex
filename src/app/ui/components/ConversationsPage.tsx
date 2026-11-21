@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
@@ -47,6 +48,10 @@ const collapsedGroupsKey = "corvex-ops-conversation-collapsed-groups";
 const conversationListCollapsedKey = "corvex-ops-conversation-list-collapsed";
 /** localStorage 中保存文件面板展开状态的键名。 */
 const filePanelOpenKey = "corvex-ops-conversation-file-panel-open";
+/** localStorage 中保存文件面板宽度的键名。 */
+const filePanelWidthKey = "corvex-ops-conversation-file-panel-width";
+const filePanelMinWidth = 260;
+const filePanelMaxWidth = 720;
 
 /** 读取已收起的仓库分组；localStorage 不可用时回退为空集合。 */
 function readCollapsedGroups(): Set<string> {
@@ -103,6 +108,26 @@ function saveFilePanelOpen(open: boolean): void {
     window.localStorage.setItem(filePanelOpenKey, String(open));
   } catch (error) {
     window.console.warn("save file panel preference failed", error);
+  }
+}
+
+/** 读取已保存的文件面板宽度；越界时回退默认值。 */
+function readFilePanelWidth(): number {
+  try {
+    const saved = Number(window.localStorage.getItem(filePanelWidthKey));
+    if (Number.isFinite(saved) && saved >= filePanelMinWidth && saved <= filePanelMaxWidth) return saved;
+  } catch (error) {
+    window.console.warn("read file panel width preference failed", error);
+  }
+  return 340;
+}
+
+/** 保存文件面板宽度；写入失败只记录告警。 */
+function saveFilePanelWidth(width: number): void {
+  try {
+    window.localStorage.setItem(filePanelWidthKey, String(width));
+  } catch (error) {
+    window.console.warn("save file panel width preference failed", error);
   }
 }
 
@@ -205,6 +230,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
   const [listCollapsed, setListCollapsed] = useState(readConversationListCollapsed);
   const [filePanelOpen, setFilePanelOpen] = useState(readFilePanelOpen);
+  const [filePanelWidth, setFilePanelWidth] = useState(readFilePanelWidth);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -583,6 +609,40 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   };
   const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
 
+  // 拖动面板左边缘调整宽度：面板在右侧，鼠标左移使面板变宽。
+  function startFilePanelResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const startX = event.clientX;
+    const startWidth = filePanelWidth;
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // 合成事件或不支持捕获的环境忽略，window 监听仍能完成拖动。
+    }
+    const onMove = (move: PointerEvent) => {
+      const next = Math.max(filePanelMinWidth, Math.min(filePanelMaxWidth, startWidth + (startX - move.clientX)));
+      setFilePanelWidth(next);
+    };
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+      try {
+        handle.releasePointerCapture(event.pointerId);
+      } catch {
+        // 已释放或不支持捕获时忽略。
+      }
+      setFilePanelWidth((width) => {
+        saveFilePanelWidth(width);
+        return width;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("pointercancel", onEnd);
+  }
+
   // 列表按最近更新排序：分组按首次出现的顺序排列，因此每组及其内部都是最近优先。
   const sortedConversations = [...conversations].sort(
     (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
@@ -721,7 +781,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     <>
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
-      <section className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}${filePanelOpen ? " conversation-files-open" : ""}`} aria-label={copy.conversationsDescription}>
+      <section
+        className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}${filePanelOpen ? " conversation-files-open" : ""}`}
+        style={{ "--file-panel-width": `${filePanelWidth}px` } as CSSProperties}
+        aria-label={copy.conversationsDescription}
+      >
         <aside className="conversation-sidebar" aria-label={copy.conversationList}>
           <div className="conversation-sidebar-heading">
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
@@ -961,6 +1025,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             ]}
           />
         </section>
+        {filePanelOpen ? <div className="conversation-file-resizer" onPointerDown={startFilePanelResize} role="separator" aria-orientation="vertical" /> : null}
         {filePanelOpen ? (
           <ConversationFilePanel
             conversationId={selectedConversationId}

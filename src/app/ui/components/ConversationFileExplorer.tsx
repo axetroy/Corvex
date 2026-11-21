@@ -7,7 +7,9 @@ import type { Copy } from "../i18n.js";
 import type { FileContentResult, FileListResult } from "../../files/source.js";
 import { entriesToTreeNodes, mergeTreeChildren, pathSegments } from "../fileTree.js";
 import type { FileTreeNode } from "../fileTree.js";
-import { FileIcon, FolderIcon } from "./icons.js";
+import { FileIcon } from "./icons.js";
+import { renderFileIcon } from "../fileIcons.js";
+import { highlightCode } from "../codeHighlight.js";
 
 interface Props {
   conversationId: string;
@@ -126,7 +128,12 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
 
   const renderedTree: TreeDataNode[] = filteredTree.map((node) => ({
     ...node,
-    icon: node.type === "directory" ? <FolderIcon /> : <FileIcon />,
+    title: (
+      <span className="conversation-file-title">
+        {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
+        <span>{node.title}</span>
+      </span>
+    ),
   }));
 
   const active = activeFile ? contents[activeFile] : undefined;
@@ -196,14 +203,16 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
                   <Typography.Text type="danger">{active.error}</Typography.Text>
                 ) : active ? (
                   <>
-                    <pre>
-                      {active.content.split("\n").map((line, index) => (
-                        <div className="conversation-file-line" key={index}>
-                          <span className="conversation-file-line-no">{(active.startLine ?? 1) + index}</span>
-                          <span className="conversation-file-line-text">{line || " "}</span>
-                        </div>
-                      ))}
-                    </pre>
+                    <div className="conversation-file-code">
+                      <div className="conversation-file-gutter" aria-hidden="true">
+                        {Array.from({ length: lineCount }, (_, index) => (
+                          <div key={index}>{(active.startLine ?? 1) + index}</div>
+                        ))}
+                      </div>
+                      <pre className="conversation-file-code-pre">
+                        <code dangerouslySetInnerHTML={{ __html: highlightCode(active.content, activeFile) }} />
+                      </pre>
+                    </div>
                     {active.truncated ? (
                       <Button
                         size="small"

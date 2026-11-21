@@ -137,6 +137,16 @@ export function FolderIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 打开的目录图标，用于树中展开的节点。 */
+export function FolderOpenIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M2.2 4.6h4l1.3 1.6h6.3v7.2H2.2z" />
+      <path d="M4.6 8.4h9.2l-1.4 4.9H3.2z" />
+    </svg>
+  );
+}
+
 /** 文件图标：单页文档。 */
 export function FileIcon(props: SVGProps<SVGSVGElement>) {
   return (
