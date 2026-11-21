@@ -1,4 +1,4 @@
-import { lstat, mkdir, realpath, writeFile as writeFileFs } from "node:fs/promises";
+import { lstat, mkdir, readFile as readFileFs, realpath, writeFile as writeFileFs } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
@@ -11,7 +11,7 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
-import { maxWriteBytes } from "../agent/repo-write.js";
+import { maxWriteBytes, replaceTextExactly } from "../agent/repo-write.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { parseConversationCommand } from "./conversation-command.js";
@@ -157,15 +157,13 @@ export class ConversationRunner {
   }
 
   /** 把模型写入限定在该会话 worktree：拒绝绝对路径、上层遍历与 .git。 */
-  private async writeWorkspaceFile(workspacePath: string, requested: string, content: string) {
+  private async resolveWritablePath(workspacePath: string, requested: string): Promise<{ root: string; target: string; path: string }> {
     if (!requested || [...requested].length > 4096 || requested.includes("\0")) {
       throw new Error("invalid file path");
     }
     if (isAbsolute(requested) || /^[a-zA-Z]:/.test(requested)) {
       throw new Error("absolute paths are not allowed; use a repository-relative path");
     }
-    const bytes = Buffer.byteLength(content);
-    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
     const parts = requested.replace(/\\/g, "/").replace(/^\/+/, "").split("/");
     if (parts.some((part) => !part || part === "." || part === "..")) {
       throw new Error("invalid repository-relative path");
@@ -181,9 +179,32 @@ export class ConversationRunner {
     // 目标本身若为符号链接，写入会跟随到 worktree 之外；直接拒绝。
     const existing = await lstat(target).catch(() => undefined);
     if (existing?.isSymbolicLink()) throw new Error("cannot write through a symbolic link");
-    await mkdir(parent, { recursive: true });
+    return { root, target, path: parts.join("/") };
+  }
+
+  private async writeWorkspaceFile(workspacePath: string, requested: string, content: string) {
+    const bytes = Buffer.byteLength(content);
+    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
+    const { target, path } = await this.resolveWritablePath(workspacePath, requested);
+    await mkdir(dirname(target), { recursive: true });
     await writeFileFs(target, content, "utf8");
-    return { path: parts.join("/"), bytes };
+    return { path, bytes };
+  }
+
+  private async editWorkspaceFile(
+    workspacePath: string,
+    requested: string,
+    oldString: string,
+    newString: string,
+    replaceAll: boolean,
+  ) {
+    const { target, path } = await this.resolveWritablePath(workspacePath, requested);
+    const current = await readFileFs(target, "utf8");
+    const { updated, replaced } = replaceTextExactly(current, oldString, newString, replaceAll);
+    const bytes = Buffer.byteLength(updated);
+    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
+    await writeFileFs(target, updated, "utf8");
+    return { path, bytes, replaced };
   }
 
   private async persistChanges(workspace: Workspace, conversationId: string, signal?: AbortSignal): Promise<void> {
@@ -596,6 +617,8 @@ export class ConversationRunner {
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               writeFile: (path, content) => this.writeWorkspaceFile(workspace.path, path, content),
+              editFile: (path, oldString, newString, replaceAll) =>
+                this.editWorkspaceFile(workspace.path, path, oldString, newString, replaceAll),
             },
             workspace.path,
             signal,

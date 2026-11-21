@@ -116,6 +116,7 @@ export interface ModelRequest {
   noTools?: boolean;
   /** 对话的本地文件写入能力；由 Runner 限定到当前 worktree 后传入。 */
   writeFile?: (path: string, content: string) => Promise<{ path: string; bytes: number }>;
+  editFile?: (path: string, oldString: string, newString: string, replaceAll: boolean) => Promise<{ path: string; bytes: number; replaced?: number }>;
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
@@ -622,8 +623,8 @@ export class PiAgent {
         ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
           ? [createPlanExtension()]
           : []),
-        ...(request.taskType === "conversation" && request.writeFile
-          ? [createRepoWriteExtension({ writeFile: request.writeFile })]
+        ...(request.taskType === "conversation" && request.writeFile && request.editFile
+          ? [createRepoWriteExtension({ writeFile: request.writeFile, editFile: request.editFile })]
           : []),
         ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
           ? [createGitLabConversationExtension({
