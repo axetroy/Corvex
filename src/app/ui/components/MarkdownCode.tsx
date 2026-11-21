@@ -1,6 +1,8 @@
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, useEffect, useState, type ReactNode } from "react";
 import type { ComponentProps } from "@ant-design/x-markdown";
+import type { Copy } from "../i18n.js";
 import { highlightCode } from "../codeHighlight.js";
+import { CheckIcon, CopyIcon } from "./icons.js";
 
 /** 从 XMarkdown 传入的已解析 React 子节点里取回纯文本源码。 */
 function nodeText(node: ReactNode): string {
@@ -10,11 +12,70 @@ function nodeText(node: ReactNode): string {
   return "";
 }
 
-/** 替换 XMarkdown 的 code 节点：块级代码走 highlight.js，行内代码保持原样。 */
-function MarkdownCode({ children, block, lang }: ComponentProps) {
-  if (!block) return <code>{children}</code>;
+interface CodeProps extends ComponentProps {
+  /** 由 componentsProps 注入，保持组件引用稳定。 */
+  copy?: Copy;
+  copiedLabel?: string;
+  failedLabel?: string;
+}
+
+type CopyState = "idle" | "copied" | "failed";
+
+/** 复制按钮用局部状态反馈，不调用全局 message（控制台的 CSP 不允许无 nonce 的静态提示）。 */
+function CopyButton({ source, copy, copiedLabel, failedLabel }: {
+  source: string;
+  copy: Copy;
+  copiedLabel: string;
+  failedLabel: string;
+}) {
+  const [state, setState] = useState<CopyState>("idle");
+
+  useEffect(() => {
+    if (state === "idle") return;
+    const timer = window.setTimeout(() => setState("idle"), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(source);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+  };
+
+  const title = state === "copied" ? copiedLabel : state === "failed" ? failedLabel : copy.copyMessage;
   return (
-    <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightCode(nodeText(children), lang) }} />
+    <button
+      type="button"
+      className={`conversation-code-copy${state === "copied" ? " is-copied" : ""}${state === "failed" ? " is-failed" : ""}`}
+      onClick={() => void copyCode()}
+      aria-label={title}
+      title={title}
+    >
+      {state === "copied" ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  );
+}
+
+/** 替换 XMarkdown 的 code 节点：块级代码高亮并提供复制，行内代码保持原样。 */
+function MarkdownCode({ children, block, lang, streamStatus, copy, copiedLabel, failedLabel }: CodeProps) {
+  if (!block) return <code>{children}</code>;
+  const source = nodeText(children);
+  return (
+    <span className="conversation-code-block">
+      {/* 流式生成中的代码块不完整，不提供复制。 */}
+      {copy && streamStatus !== "loading" ? (
+        <CopyButton
+          source={source}
+          copy={copy}
+          copiedLabel={copiedLabel ?? copy.copyMessage}
+          failedLabel={failedLabel ?? copy.copyMessage}
+        />
+      ) : null}
+      <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightCode(source, lang) }} />
+    </span>
   );
 }
 

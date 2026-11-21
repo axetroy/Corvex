@@ -976,13 +976,50 @@
   background: var(--bg-code);
 }
 
+.conversation-code-block {
+  position: relative;
+  display: block;
+}
+
 .conversation-message-markdown .x-markdown pre code.hljs {
-  padding: 0;
+  padding: 0 36px 0 0;
   background: transparent;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
   white-space: pre;
+}
+
+.conversation-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 1;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--conversation-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.12s ease;
+}
+
+.conversation-code-copy:hover,
+.conversation-code-copy:focus-visible {
+  color: var(--text);
+  opacity: 1;
+}
+
+.conversation-code-copy.is-copied {
+  color: var(--success);
+}
+
+.conversation-code-copy.is-failed {
+  color: var(--danger);
 }
 
 /* 流式回复末尾的光标：正文仍在增长时提示「还在写」，落库后随状态移除。 */

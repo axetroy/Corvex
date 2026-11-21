@@ -157,6 +157,25 @@ export function FileIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 复制图标：两页叠放的纸张，用于代码块复制按钮。 */
+export function CopyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.4" />
+      <path d="M10.5 3.5H4.2A1.2 1.2 0 0 0 3 4.7v6.3" />
+    </svg>
+  );
+}
+
+/** 完成图标：对勾，用于复制成功反馈。 */
+export function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="m3 8.4 3.1 3.1L13 4.6" />
+    </svg>
+  );
+}
+
 /** 语言图标：翻译字形，用于侧栏与首页的语言切换入口。 */
 export function LanguageIcon(props: SVGProps<SVGSVGElement>) {
   return (

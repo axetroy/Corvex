@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
@@ -124,6 +124,9 @@ function MessageContent({
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
 }) {
+  const codeComponentsProps = useMemo(() => ({
+    code: { copy, copiedLabel: copy.codeCopied, failedLabel: copy.codeCopyFailed },
+  }), [copy]);
   if (message.role === "user") {
     return <div className="conversation-message-text">{message.content}</div>;
   }
@@ -140,6 +143,7 @@ function MessageContent({
           escapeRawHtml
           openLinksInNewTab
           components={markdownCodeComponents}
+          componentsProps={codeComponentsProps}
         />
       ) : null}
       {settled ? (

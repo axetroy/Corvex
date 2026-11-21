@@ -49,6 +49,8 @@ describe("operations UI locale", () => {
     expect(zhCN.filePanelImageError).toBe("图片无法预览（格式不支持或文件过大）。");
     expect(en.filePanelSourceTemplate).toBe("Source: {value}");
     expect(zhCN.filePanelSourceLocal).toBe("本地工作区");
+    expect(en.codeCopied).toBe("Copied");
+    expect(zhCN.codeCopyFailed).toBe("复制失败");
     expect(en.filePanelReadOnlyMessage).toBe("Cannot edit in read-only editor");
     expect(zhCN.filePanelReadOnlyMessage).toBe("无法在只读编辑器中编辑");
     expect(en.filePanelImageFit).toBe("Fit");
