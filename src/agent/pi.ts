@@ -18,6 +18,7 @@ import { errorMessage } from "../errors.js";
 import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
 import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, EventTraceEntry, EventTraceKind, ModelTaskType, TraceScope } from "../events/model.js";
 import type { EventStore } from "../events/store.js";
+import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
@@ -251,6 +252,7 @@ export class PiAgent {
       "writeEnabled" | "getWorkspaceStatus" | "applyWorkspacePatch" | "commitWorkspace" | "pushWorkspace" | "revertWorkspaceCommit"
     >,
     private readonly gitlab?: GitLabClient,
+    private readonly hooks?: CorvexHooks,
   ) {}
 
   getTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
@@ -263,6 +265,7 @@ export class PiAgent {
     signal?: AbortSignal,
     trace?: EventTraceContext,
   ): Promise<ModelResponse> {
+    if (this.hooks) await callAsyncHook(this.hooks.agentBeforeModel, request);
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }
@@ -363,6 +366,7 @@ export class PiAgent {
         throw new Error(`settle daily model token budget: ${String(error)}`, { cause: error });
       }
     }
+    if (this.hooks) await callAsyncHook(this.hooks.agentAfterModel, request, response);
     return response;
   }
 
@@ -920,9 +924,30 @@ export class PiAgent {
         if (traceId !== undefined) {
           activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
         }
+        if (this.hooks) {
+          void callAsyncHook(this.hooks.toolBefore, {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            input: event.args,
+            scope: trace?.scope,
+            attempt: trace?.attempt,
+          }).catch((error: unknown) => console.warn("tool before hook failed", { error: errorMessage(error) }));
+        }
       } else if (event.type === "tool_execution_end") {
         const active = activeTools.get(event.toolCallId);
         if (!active) return;
+        if (this.hooks) {
+          void callAsyncHook(this.hooks.toolAfter, {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            input: streamToolInputs.get(event.toolCallId) ?? null,
+            output: event.result,
+            status: event.isError ? "failed" : "succeeded",
+            durationMs: event.durationMs ?? performance.now() - active.startedAt,
+            scope: trace?.scope,
+            attempt: trace?.attempt,
+          }).catch((error: unknown) => console.warn("tool after hook failed", { error: errorMessage(error) }));
+        }
         this.finishTrace(
           active.traceId,
           event.isError ? "failed" : "succeeded",

@@ -13,7 +13,8 @@ import { GitLabClient } from "../gitlab/client.js";
 import { MAX_WEBHOOK_BODY_BYTES } from "../gitlab/webhook.js";
 import { ConversationRunner } from "./conversation-runner.js";
 import { EventRunner } from "./event-runner.js";
-import { attachOperationsAuth } from "./http/auth.js";
+import { attachOperationsAuth, readCookie, sessionCookieName } from "./http/auth.js";
+import { callAsyncHook, createCorvexHooks, type CorvexHooks } from "./hooks.js";
 import type { OpsContext } from "./http/context.js";
 import { sendJson, sendText } from "./http/respond.js";
 import { registerRoutes } from "./http/routes.js";
@@ -49,6 +50,7 @@ export class CorvexServer {
   private readonly settings: SettingsService;
   private readonly cipher: TokenCipher;
   private readonly oauth: GitLabOAuthService;
+  private readonly hooks: CorvexHooks;
   private readonly conversationAbort = new AbortController();
   /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `app.close()`。 */
   private readonly conversationStreams = new Set<ServerResponse>();
@@ -59,15 +61,23 @@ export class CorvexServer {
     private readonly gitlab: GitLabClient,
     /** 配置文件路径；提供时 Agent 控制台可在运行时覆盖上下文设置并持久化。 */
     configPath?: string,
+    hooks: CorvexHooks = createCorvexHooks(),
   ) {
+    this.hooks = hooks;
     this.address = parseListenAddress(config.server.listen);
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
-    this.conversations = new ConversationRunner(config, store, gitlab);
+    this.conversations = new ConversationRunner(config, store, gitlab, this.hooks);
     // 内联事件执行器与 HTTP 服务共用同一个进程、同一个 SQLite 和同一份 Git 存储。
-    this.events = new EventRunner(config, store, gitlab);
-    // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
-    this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
+    this.events = new EventRunner(config, store, gitlab, this.hooks);
+    // 默认行为也走钩子：认证会话解析与设置热更新都可被插件扩展或替换。
+    this.hooks.authResolveUser.tapPromise("session", async (request) => {
+      const sessionId = readCookie(request.headers.cookie, sessionCookieName);
+      const session = sessionId ? store.readUserSession(sessionId) : undefined;
+      const user = session ? store.readUser(session.userId, this.cipher) : undefined;
+      return user ? this.oauth.refresh(user) : undefined;
+    });
+    this.hooks.settingsApplied.tap("runners", (applied) => {
       this.conversations.reconfigureGitLab(
         applied.gitlab.baseUrl,
         applied.gitlab.readToken,
@@ -75,6 +85,43 @@ export class CorvexServer {
       );
       // 事件执行器持有构造期读取的参数，设置变更后立即重建，无需等下一轮循环。
       this.events.refreshRuntimeSettings();
+    });
+    this.hooks.serverAfterListen.tapPromise("startup", async () => {
+      const interruptedTurns = this.store.recoverInterruptedConversationTurns();
+      if (interruptedTurns > 0) {
+        console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
+      }
+      // 重启后没有在途轮次，清掉上次进程留下的对话 worktree。
+      const sweepStarted = new Date().toISOString();
+      try {
+        const removed = await this.conversations.cleanupStaleWorkspaces();
+        this.store.recordStorageCleanup({
+          startedAt: sweepStarted,
+          finishedAt: new Date().toISOString(),
+          source: "startup",
+          applied: true,
+          olderThanDays: 0,
+          removedWorkspaces: removed,
+          removedMirrors: 0,
+          error: "",
+        });
+      } catch (error) {
+        console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
+        this.store.recordStorageCleanup({
+          startedAt: sweepStarted,
+          finishedAt: new Date().toISOString(),
+          source: "startup",
+          applied: true,
+          olderThanDays: 0,
+          removedWorkspaces: 0,
+          removedMirrors: 0,
+          error: errorMessage(error),
+        });
+      }
+    });
+    // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
+    this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
+      this.hooks.settingsApplied.call(applied);
     });
     this.app = Fastify({
       // 原实现对 HEAD 不额外放行，交给路由兜底；保持同样的可见行为。
@@ -89,7 +136,7 @@ export class CorvexServer {
       done(null, body);
     });
     this.app.server.headersTimeout = config.server.readTimeout;
-    attachOperationsAuth(this.app, { store, cipher: this.cipher, oauth: this.oauth });
+    attachOperationsAuth(this.app, { hooks: this.hooks, oauthConfigured: () => this.oauth.configured });
     this.app.setNotFoundHandler((_request, reply) => {
       sendText(reply, 404, "not found\n");
     });
@@ -119,6 +166,7 @@ export class CorvexServer {
       conversations: this.conversations,
       events: this.events,
       oauth: this.oauth,
+      hooks: this.hooks,
       settings: this.settings,
       gitlabForRequest: (request: FastifyRequest) => {
         const user = currentUser(request);
@@ -143,43 +191,12 @@ export class CorvexServer {
 
   async run(signal: AbortSignal): Promise<void> {
     this.settings.applyStored();
+    await callAsyncHook(this.hooks.serverBeforeListen);
     await this.app.listen({ host: this.address.host, port: this.address.port });
     console.info("Corvex server listening", {
       address: `${this.address.host}:${this.address.port}`,
     });
-    // 对话轮次由本进程内联执行，没有跨进程队列；重启后把残留轮次显式标记失败，
-    // 避免界面永远停在「执行中」。
-    const interruptedTurns = this.store.recoverInterruptedConversationTurns();
-    if (interruptedTurns > 0) {
-      console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
-    }
-    // 重启后没有在途轮次，清掉上次进程留下的对话 worktree，避免磁盘占用只增不减。
-    const sweepStarted = new Date().toISOString();
-    try {
-      const removed = await this.conversations.cleanupStaleWorkspaces();
-      this.store.recordStorageCleanup({
-        startedAt: sweepStarted,
-        finishedAt: new Date().toISOString(),
-        source: "startup",
-        applied: true,
-        olderThanDays: 0,
-        removedWorkspaces: removed,
-        removedMirrors: 0,
-        error: "",
-      });
-    } catch (error) {
-      console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
-      this.store.recordStorageCleanup({
-        startedAt: sweepStarted,
-        finishedAt: new Date().toISOString(),
-        source: "startup",
-        applied: true,
-        olderThanDays: 0,
-        removedWorkspaces: 0,
-        removedMirrors: 0,
-        error: errorMessage(error),
-      });
-    }
+    await callAsyncHook(this.hooks.serverAfterListen, this.getListeningAddress());
     const retention = new AbortController();
     const stopRetention = () => {
       retention.abort();
@@ -202,19 +219,30 @@ export class CorvexServer {
     try {
       await new Promise<void>((resolvePromise, rejectPromise) => {
         const close = () => {
-          const timeout = setTimeout(() => {
-            rejectPromise(new Error("HTTP server shutdown timed out"));
-          }, this.config.server.shutdownTimeout);
-          this.app.close().then(
-            () => {
-              clearTimeout(timeout);
-              resolvePromise();
-            },
-            (error: unknown) => {
-              clearTimeout(timeout);
+          void (async () => {
+            try {
+              await callAsyncHook(this.hooks.serverBeforeClose);
+            } catch (error) {
               rejectPromise(error);
-            },
-          );
+              return;
+            }
+            const timeout = setTimeout(() => {
+              rejectPromise(new Error("HTTP server shutdown timed out"));
+            }, this.config.server.shutdownTimeout);
+            this.app.close().then(
+              () => {
+                clearTimeout(timeout);
+                callAsyncHook(this.hooks.serverAfterClose).then(
+                  () => resolvePromise(),
+                  (error: unknown) => rejectPromise(error),
+                );
+              },
+              (error: unknown) => {
+                clearTimeout(timeout);
+                rejectPromise(error);
+              },
+            );
+          })();
         };
         if (signal.aborted) close();
         else signal.addEventListener("abort", close, { once: true });

@@ -13,6 +13,7 @@ import { GitLabApiError, GitLabClient, GitLabWriteError, repositoryCloneUrl, typ
 import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { ReviewWorkflow, type Finding, type ReviewContext } from "../review/workflow.js";
 import { traceExecutionStep } from "../events/execution.js";
+import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
 /** 事件执行器租约时长，单位为毫秒；执行期间按该时长的三分之一续租。 */
 const leaseMs = 30_000;
@@ -113,6 +114,7 @@ export class EventRunner {
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
+    private readonly hooks: CorvexHooks,
   ) {
     this.baseline = structuredClone(config);
     this.repo = new GitManager(
@@ -128,6 +130,8 @@ export class EventRunner {
       (projectId, mrIid, limit, signal) => this.gitlab.getMergeRequestComments(projectId, mrIid, limit, signal),
       (projectId, mrIid, update, signal) => this.gitlab.updateMergeRequest(projectId, mrIid, update, signal),
       this.repo,
+      undefined,
+      this.hooks,
     );
     this.buildWorkflows();
   }
@@ -282,6 +286,7 @@ export class EventRunner {
     const heartbeat = this.maintainLease(event, eventSignal, controller);
     let processingError: unknown;
     try {
+      await callAsyncHook(this.hooks.eventBeforeProcess, event);
       await this.execute(event, eventSignal, (next) => {
         const previous = stage;
         this.store.updateLeasedStatus(event.id, event.leaseToken, stage, next);
@@ -303,6 +308,7 @@ export class EventRunner {
       controller.abort();
       shutdownSignal.removeEventListener("abort", onShutdown);
       await heartbeat;
+      await callAsyncHook(this.hooks.eventAfterProcess, event);
     }
     if (!processingError) {
       console.info("Corvex event completed", {

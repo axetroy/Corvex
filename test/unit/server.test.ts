@@ -10,6 +10,7 @@ import type { CorvexConfig } from "../../src/config/config.js";
 import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
 import { createTokenCipher } from "../../src/tokens.js";
+import { createCorvexHooks } from "../../src/app/hooks.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -169,10 +170,17 @@ describe("CorvexServer", () => {
       issue: { implementEnabled: false, historyComments: 20 },
     };
     const controller = new AbortController();
+    const hooks = createCorvexHooks();
+    const tapped: string[] = [];
+    hooks.serverBeforeListen.tap("test", async () => { tapped.push("beforeListen"); });
+    hooks.serverAfterListen.tap("test", async () => { tapped.push("afterListen"); });
+    hooks.serverBeforeClose.tap("test", async () => { tapped.push("beforeClose"); });
     const application = new CorvexServer(
       config,
       store,
       new GitLabClient(config.gitlab.baseUrl, "read", "write"),
+      undefined,
+      hooks,
     );
     const running = application.run(controller.signal);
     try {
@@ -185,6 +193,7 @@ describe("CorvexServer", () => {
         }
       }
       const address = application.getListeningAddress();
+      expect(tapped).toEqual(["beforeListen", "afterListen"]);
       const base = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
       const landing = await fetch(`${base}/`);
@@ -712,6 +721,7 @@ describe("CorvexServer", () => {
     } finally {
       controller.abort();
       await running;
+      expect(tapped).toContain("beforeClose");
       store.close();
       await new Promise<void>((resolve, reject) =>
         fakeGitLab.close((error) => (error ? reject(error) : resolve())),

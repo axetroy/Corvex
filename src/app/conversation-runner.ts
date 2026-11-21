@@ -11,6 +11,7 @@ import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
+import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
 interface CachedConversationWorkspace {
   workspace: Workspace;
@@ -48,6 +49,7 @@ export class ConversationRunner {
     private readonly config: CorvexConfig,
     private readonly store: EventStore,
     private readonly gitlab: GitLabClient,
+    private readonly hooks: CorvexHooks,
   ) {
     this.repo = new GitManager(
       config.storage.root,
@@ -57,7 +59,7 @@ export class ConversationRunner {
     );
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
-    this.agent = new PiAgent(config, store, this.repo, undefined, undefined, undefined, gitlab);
+    this.agent = new PiAgent(config, store, this.repo, undefined, undefined, undefined, gitlab, this.hooks);
   }
 
   /** 运维台修改 GitLab 连接设置后同步重建对话侧 Git 客户端。 */
@@ -76,7 +78,9 @@ export class ConversationRunner {
     this.running.set(turnId, { controller, conversationId: turn.conversationId });
     try {
       const language = responseLanguage ?? this.config.agent.responseLanguage;
+      await callAsyncHook(this.hooks.conversationBeforeTurn, turn);
       await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language);
+      await callAsyncHook(this.hooks.conversationAfterTurn, turn);
     } finally {
       this.running.delete(turnId);
       signal.removeEventListener("abort", abort);

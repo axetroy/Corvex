@@ -191,7 +191,10 @@ test/
 ```
 
 HTTP 层使用 Fastify，路由按系统检查、GitLab webhook、运维 API 和控制台静态资源拆分在
-`src/app/http`；`CorvexServer` 只保留生命周期、内联事件执行、内联对话轮次与清理任务。选择 Fastify 是因为
+`src/app/http`；`CorvexServer` 只保留生命周期、内联事件执行、内联对话轮次与清理任务。应用级扩展点由
+`tapable` 提供（见 `src/app/hooks.ts`）：启动/关闭、认证用户解析、设置生效、事件处理前后与
+对话轮次前后都有钩子；默认行为同样注册为 tap，后续功能可追加 tap 而无需修改主流程。
+选择 Fastify 是因为
 它在不引入 ORM 或额外中间件的前提下提供成熟的路由、请求体上限和钩子机制，同时仍允许
 webhook 以原始字节读取、SSE 直接写原生响应，从而保留既有的验签、响应头、状态码与日志。
 信号、进程管理、SQLite 和文件系统操作继续使用 Node.js 内置能力。外部依赖保持精简，

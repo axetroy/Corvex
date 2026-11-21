@@ -1,8 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { callAsyncHook, type CorvexHooks } from "../hooks.js";
 import { currentUser, setCurrentUser } from "../auth/context.js";
-import type { GitLabOAuthService } from "../auth/service.js";
-import type { EventStore } from "../../events/store.js";
-import type { TokenCipher } from "../../tokens.js";
 import { sendJson } from "./respond.js";
 
 /** 控制台与运维 API 共用的会话 Cookie 名。 */
@@ -13,9 +11,8 @@ export const oauthStateCookieName = "corvex_oauth_state";
 export const sessionMaxAgeSeconds = 7 * 24 * 60 * 60;
 
 export interface OperationsAuthContext {
-  store: EventStore;
-  cipher: TokenCipher;
-  oauth: GitLabOAuthService;
+  hooks: CorvexHooks;
+  oauthConfigured: () => boolean;
 }
 
 /** 需要登录的路径前缀；健康检查、Webhook 与 OAuth 回调保持公开。 */
@@ -48,17 +45,11 @@ export function readCookie(header: string | undefined, name: string): string {
 export function attachOperationsAuth(app: FastifyInstance, ctx: OperationsAuthContext): void {
   app.addHook("onRequest", async (request, reply) => {
     const pathname = requestPathname(request.raw.url);
-    const sessionId = readCookie(request.headers.cookie, sessionCookieName);
-    if (sessionId) {
-      const session = ctx.store.readUserSession(sessionId);
-      const user = session ? ctx.store.readUser(session.userId, ctx.cipher) : undefined;
-      if (user) {
-        setCurrentUser(request, await ctx.oauth.refresh(user));
-      }
-    }
+    const resolved = await callAsyncHook(ctx.hooks.authResolveUser, request);
+    if (resolved) setCurrentUser(request, resolved);
     if (!requiresOperationsAuth(pathname)) return;
     const user = currentUser(request);
-    if (!user && !ctx.oauth.configured) {
+    if (!user && !ctx.oauthConfigured()) {
       if (pathname.startsWith("/api/ops/")) {
         sendJson(reply, 401, { error: "setup required", setupRequired: true });
         return reply;
