@@ -372,15 +372,6 @@
   font-size: 12px;
 }
 
-.conversation-mode-tag.ant-tag {
-  flex: 0 0 auto;
-  margin: 0;
-  border-color: var(--conversation-border-strong);
-  background: #eef3f8;
-  color: #3b4a58;
-  font-size: 12px;
-}
-
 .conversation-changes-tag.ant-tag {
   flex: 0 0 auto;
   margin: 0;

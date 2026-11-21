@@ -101,7 +101,7 @@ export const en = {
   setupSubmit: "Save and sign in",
   loading: "Loading GitLab agent data...",
   conversationsTitle: "Conversations",
-  conversationsDescription: "Persistent, read-write conversations pinned to a repository branch.",
+  conversationsDescription: "Persistent conversations pinned to a repository branch.",
   conversationWelcomeTitle: "Chat with your repository",
   conversationWelcomeDescription: "Pick a repository and branch, then ask anything about the code. Every reply reads one pinned snapshot and never changes the repository.",
   newConversation: "New conversation",
@@ -272,10 +272,6 @@ export const en = {
   outcomes: {
     success: "Success",
     failure: "Failure",
-  },
-  /** 对话模式标签；当前统一为可读可写，新增模式时同步补齐。 */
-  conversationModes: {
-    gitlab: "Read & write",
   },
   eventsTitle: "Events",
   eventsDescription: "Filter and inspect recent work.",
@@ -680,7 +676,7 @@ export const zhCN: Copy = {
   setupSubmit: "保存并登录",
   loading: "正在加载 GitLab Agent 数据...",
   conversationsTitle: "对话",
-  conversationsDescription: "绑定仓库分支的持久可读可写对话。",
+  conversationsDescription: "绑定到仓库分支的持久对话。",
   conversationWelcomeTitle: "和仓库对话",
   conversationWelcomeDescription: "选择仓库和分支后即可就代码自由提问。每轮回复只读取固定版本快照，不会修改仓库。",
   newConversation: "新建对话",
@@ -851,10 +847,6 @@ export const zhCN: Copy = {
   outcomes: {
     success: "成功",
     failure: "失败",
-  },
-  /** 对话模式标签；当前统一为可读可写，新增模式时同步补齐。 */
-  conversationModes: {
-    gitlab: "可读可写",
   },
   eventsTitle: "事件",
   eventsDescription: "筛选并查看近期事件。",

@@ -11,7 +11,6 @@ import { streamConversationTurn } from "../stream.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
-import { translate } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
 import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { conversationCommands } from "../../conversation-command.js";
@@ -102,11 +101,6 @@ function messageStatus(message: ConversationMessage, copy: Copy): string {
   if (message.status === "running") return copy.statuses.analyzing;
   if (message.status === "failed") return copy.statuses.failed;
   return "";
-}
-
-/** 对话模式标签文案；未知模式回退为原始值，避免界面留白。 */
-function conversationModeText(mode: ConversationSummary["mode"], copy: Copy): string {
-  return translate(copy.conversationModes, mode);
 }
 
 /** 按仓库 ID 取一个稳定的分组色，让相邻仓库在视觉上立刻能区分。 */
@@ -873,7 +867,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         </Typography.Text>
                       </button>
                       <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
-                      <Tag className="conversation-mode-tag">{conversationModeText(currentConversation.mode, copy)}</Tag>
                       <Typography.Text type="secondary" className="conversation-pinned">
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
                       </Typography.Text>
