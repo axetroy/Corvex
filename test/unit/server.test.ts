@@ -200,7 +200,7 @@ describe("CorvexServer", () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(cleanupHook).toHaveBeenCalled();
-      expect(cleanupHook.mock.calls[0]?.[0]).toMatchObject({ source: "startup", pruneHistory: false });
+      expect(cleanupHook.mock.calls[0]?.[0]).toMatchObject({ source: "startup", pruneHistory: true });
       const base = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
       const landing = await fetch(`${base}/`);

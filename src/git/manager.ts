@@ -580,17 +580,18 @@ export class GitManager {
       signal,
       { timeoutMs: 10_000 },
     );
-    // 工作区文件保留实际改动，暂存区回到 pinned 快照，避免后续状态重复上报。
-    await this.run(workspace.path, ["reset", "--mixed", "HEAD"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    // 工作区文件保留实际改动，只把暂存区对齐到新 ref，避免后续状态重复上报。
+    await this.run(workspace.path, ["read-tree", sha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
     return { sha, paths: status.files.map((file) => file.path) };
   }
 
-  /** 列出镜像中所有对话改动 ref（ID → commit SHA）。 */
-  async listConversationChanges(signal?: AbortSignal): Promise<Map<string, string>> {
-    const result = new Map<string, string>();
+  private async listConversationChangeEntries(signal?: AbortSignal): Promise<Array<{ projectId: number; conversationId: string; sha: string }>> {
+    const entries: Array<{ projectId: number; conversationId: string; sha: string }> = [];
     const mirrors = await readdir(this.mirrorRoot).catch(() => [] as string[]);
     for (const name of mirrors) {
-      if (!/^[1-9]\d*\.git$/.test(name)) continue;
+      const match = /^([1-9]\d*)\.git$/.exec(name);
+      if (!match) continue;
+      const projectId = Number(match[1]);
       const mirror = join(this.mirrorRoot, name);
       const refs = await this.run(
         this.mirrorRoot,
@@ -604,31 +605,34 @@ export class GitManager {
       for (const line of refs.stdout.toString().split("\n")) {
         const [ref, sha] = line.trim().split(" ");
         if (!ref?.startsWith(prefix) || !sha || !shaPattern.test(sha)) continue;
-        result.set(ref.slice(prefix.length), sha);
+        entries.push({ projectId, conversationId: ref.slice(prefix.length), sha });
       }
     }
-    return result;
+    return entries;
+  }
+
+  /** 列出镜像中所有对话改动 ref（ID → commit SHA）。 */
+  async listConversationChanges(signal?: AbortSignal): Promise<Map<string, string>> {
+    return new Map((await this.listConversationChangeEntries(signal)).map((entry) => [entry.conversationId, entry.sha]));
   }
 
   /** 删除镜像中已无对应会话的改动 ref，返回删除数量。 */
   async pruneConversationChanges(validIds: ReadonlySet<string>, signal?: AbortSignal): Promise<number> {
-    const existing = await this.listConversationChanges(signal);
+    const entries = await this.listConversationChangeEntries(signal);
     let removed = 0;
-    for (const [conversationId] of existing) {
-      if (validIds.has(conversationId)) continue;
-      const projectIds = await readdir(this.mirrorRoot).catch(() => [] as string[]);
-      for (const name of projectIds) {
-        if (!/^[1-9]\d*\.git$/.test(name)) continue;
-        const mirror = join(this.mirrorRoot, name);
-        await this.run(
-          this.mirrorRoot,
-          ["--git-dir", mirror, "update-ref", "-d", conversationChangesRef(conversationId)],
-          undefined,
-          maxErrorOutput,
-          signal,
-          { timeoutMs: 10_000, allowExitCodes: [0, 1] },
-        );
-      }
+    const removedIds = new Set<string>();
+    for (const entry of entries) {
+      if (validIds.has(entry.conversationId) || removedIds.has(entry.conversationId)) continue;
+      removedIds.add(entry.conversationId);
+      const mirror = join(this.mirrorRoot, `${entry.projectId}.git`);
+      await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "update-ref", "-d", conversationChangesRef(entry.conversationId)],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
       removed += 1;
     }
     return removed;

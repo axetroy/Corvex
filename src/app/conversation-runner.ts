@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile as writeFileFs } from "node:fs/promises";
+import { lstat, mkdir, realpath, writeFile as writeFileFs } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
@@ -178,9 +178,23 @@ export class ConversationRunner {
     if (inside.startsWith("..") || isAbsolute(inside)) {
       throw new Error("file path escapes the conversation worktree");
     }
+    // 目标本身若为符号链接，写入会跟随到 worktree 之外；直接拒绝。
+    const existing = await lstat(target).catch(() => undefined);
+    if (existing?.isSymbolicLink()) throw new Error("cannot write through a symbolic link");
     await mkdir(parent, { recursive: true });
     await writeFileFs(target, content, "utf8");
     return { path: parts.join("/"), bytes };
+  }
+
+  private async persistChanges(workspace: Workspace, conversationId: string, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.repo.saveConversationChanges(workspace, conversationId, signal);
+    } catch (error) {
+      console.warn("save conversation workspace changes failed", {
+        conversationId,
+        error: errorMessage(error),
+      });
+    }
   }
 
   /** 查询/放弃会话的本地改动；放弃时同时清掉 worktree。 */
@@ -189,6 +203,10 @@ export class ConversationRunner {
   }
 
   async discardConversationChanges(conversationId: string, projectId: number): Promise<void> {
+    if (this.running.has(conversationId) || this.hasActiveTurn(conversationId) ||
+      this.store.activeConversationIds().has(conversationId)) {
+      throw new Error("cannot discard changes while a turn is active");
+    }
     this.workspaces.delete(conversationId);
     await this.repo.discardConversationChanges(projectId, conversationId);
   }
@@ -587,17 +605,13 @@ export class ConversationRunner {
         );
       } catch (error) {
         this.store.recordModelCall("conversation", "failure", Date.now() - started, 0, 0);
+        // 失败的轮次里模型也可能已经写入文件；取消信号已中止时用无信号保存，
+        // 否则这些改动会随下一次 worktree 淘汰而丢失。
+        await this.persistChanges(workspace, turn.conversationId, signal.aborted ? undefined : signal);
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
-      try {
-        await this.repo.saveConversationChanges(workspace, turn.conversationId, signal);
-      } catch (error) {
-        console.warn("save conversation workspace changes failed", {
-          conversationId: turn.conversationId,
-          error: errorMessage(error),
-        });
-      }
+      await this.persistChanges(workspace, turn.conversationId, signal);
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。

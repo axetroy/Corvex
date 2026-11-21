@@ -266,7 +266,15 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
-    await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
+    try {
+      await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("turn is active")) {
+        sendJson(reply, 409, { error: "a turn is still running for this conversation" });
+        return;
+      }
+      throw error;
+    }
     sendJson(reply, 200, { deleted: true });
   });
 

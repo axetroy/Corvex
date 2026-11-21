@@ -137,13 +137,19 @@ export class CorvexServer {
         console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
       }
       // 重启后没有在途轮次，清掉上次进程留下的对话 worktree 并执行统一清理钩子。
+      // 启动只跑一次完整清理（含历史裁剪），每日保留任务因此先等待一个周期。
+      const now = new Date();
+      const historyBefore = new Date(now);
+      historyBefore.setUTCDate(historyBefore.getUTCDate() - config.storage.retentionDays);
+      const auditBefore = new Date(now);
+      auditBefore.setUTCDate(auditBefore.getUTCDate() - config.storage.auditRetentionDays);
       const context: StorageCleanupContext = {
         source: "startup",
         startedAt: new Date().toISOString(),
-        retentionDays: this.config.storage.retentionDays,
-        pruneHistory: false,
-        historyBefore: new Date(0),
-        auditBefore: new Date(0),
+        retentionDays: config.storage.retentionDays,
+        pruneHistory: true,
+        historyBefore,
+        auditBefore,
         removedWorkspaces: 0,
         removedRefs: 0,
         gcCount: 0,
@@ -309,6 +315,14 @@ export class CorvexServer {
 
   /** 每日保留策略：裁剪历史、回收空闲工作区，并记录清理日志。 */
   private async runRetention(signal: AbortSignal): Promise<void> {
+    // 启动时的清扫由 serverAfterListen 的 storageCleanup(startup) 完成；
+    // 这里先等一个周期，避免同一时刻执行两遍清理与 gc。
+    try {
+      await sleep(24 * 60 * 60_000, undefined, { signal });
+    } catch {
+      if (signal.aborted) return;
+      throw new Error("retention timer failed");
+    }
     while (!signal.aborted) {
       const now = new Date();
       const historyBefore = new Date(now);
