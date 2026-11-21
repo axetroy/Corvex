@@ -1321,6 +1321,8 @@
   background: #e6f4ff;
   font-size: 10px;
   line-height: 15px;
+  margin-left: 4px;
+  margin-right: 4px;
 }
 
 .composer-model-option {
