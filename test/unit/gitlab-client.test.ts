@@ -668,3 +668,85 @@ describe("GitLab MR commit pagination", () => {
     await expect(client.getMergeRequestCommits(7, 3, 1, 21)).rejects.toThrow("page size must be between 1 and 20");
   });
 });
+
+describe("GitLab discovery and MR changes", () => {
+  it("lists bounded issue and merge request summaries in the current project", async () => {
+    let issuesUrl = "";
+    let mrsUrl = "";
+    const server = createServer((request, response) => {
+      const url = request.url ?? "";
+      if (url.includes("/issues?")) {
+        issuesUrl = url;
+        response.end(JSON.stringify([
+          { iid: 1, title: "Issue one", state: "opened", web_url: "https://git.example/i/1" },
+          { iid: 2, title: "Issue two", state: "closed" },
+        ]));
+      } else if (url.includes("/merge_requests?")) {
+        mrsUrl = url;
+        response.end(JSON.stringify([
+          {
+            iid: 3, title: "MR three", state: "opened",
+            source_branch: "feature", target_branch: "main", web_url: "https://git.example/mr/3",
+          },
+        ]));
+      } else {
+        response.statusCode = 404;
+        response.end("{}");
+      }
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const issues = await client.listIssues(7, { state: "all", search: "parser", page: 2, perPage: 10 });
+      expect(issuesUrl).toContain("/api/v4/projects/7/issues?");
+      expect(issuesUrl).toContain("state=all");
+      expect(issuesUrl).toContain("search=parser");
+      expect(issuesUrl).toContain("page=2");
+      expect(issues).toMatchObject([
+        { iid: 1, title: "Issue one", state: "opened", webUrl: "https://git.example/i/1" },
+        { iid: 2, title: "Issue two", state: "closed" },
+      ]);
+
+      const mrs = await client.listMergeRequests(7, {});
+      expect(mrsUrl).toContain("/api/v4/projects/7/merge_requests?");
+      expect(mrsUrl).toContain("state=opened");
+      expect(mrs).toMatchObject([{ iid: 3, title: "MR three", sourceBranch: "feature", targetBranch: "main" }]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("caps MR changes by file count and total patch bytes", async () => {
+    const server = createServer((request, response) => {
+      if (!(request.url ?? "").endsWith("/api/v4/projects/7/merge_requests/3/changes")) {
+        response.statusCode = 404;
+        response.end("{}");
+        return;
+      }
+      response.end(JSON.stringify({
+        changes: [
+          { old_path: "a.ts", new_path: "a.ts", patch: "one" },
+          { old_path: "b.ts", new_path: "b.ts", patch: "two" },
+          { old_path: "c.ts", new_path: "c.ts", patch: "three" },
+        ],
+      }));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const changes = await client.getMergeRequestChanges(7, 3);
+      expect(changes.changes).toHaveLength(3);
+      expect(changes.truncated).toBe(false);
+      expect(changes.changes[0]).toEqual({ oldPath: "a.ts", newPath: "a.ts", patch: "one" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("rejects invalid discovery parameters before calling GitLab", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    await expect(client.listIssues(7, { perPage: 21 })).rejects.toThrow("page size must be between 1 and 20");
+    await expect(client.listMergeRequests(7, { page: 0 })).rejects.toThrow("page must be between 1 and 10000");
+    await expect(client.getMergeRequestChanges(0, 3)).rejects.toThrow("must be positive");
+  });
+});

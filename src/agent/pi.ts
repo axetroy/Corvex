@@ -623,8 +623,11 @@ export class PiAgent {
           ? [createGitLabConversationExtension({
               projectId: request.conversationProjectId,
               getProject: () => gitlab!.getProject(request.conversationProjectId!),
+              listIssues: (options) => gitlab!.listIssues(request.conversationProjectId!, options, signal),
+              listMergeRequests: (options) => gitlab!.listMergeRequests(request.conversationProjectId!, options, signal),
               getIssue: (issueIid) => gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
               getMergeRequest: (mrIid) => gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
+              getMergeRequestChanges: (mrIid) => gitlab!.getMergeRequestChanges(request.conversationProjectId!, mrIid, signal),
               getIssueComments: (issueIid, limit) => gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
               getMergeRequestComments: (mrIid, limit) => gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
               getMergeRequestCommits: (mrIid, page, perPage) => gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),

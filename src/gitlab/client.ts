@@ -112,6 +112,38 @@ export interface MergeRequestCommitPage {
   nextPage: number | null;
 }
 
+/** Issue/MR 列表项：只保留定位与展示所需字段，避免整段正文进入上下文。 */
+export interface IssueSummary {
+  iid: number;
+  title: string;
+  state: string;
+  webUrl?: string;
+}
+
+export interface MergeRequestSummary {
+  iid: number;
+  title: string;
+  state: string;
+  sourceBranch: string;
+  targetBranch: string;
+  webUrl?: string;
+}
+
+/** MR 变更集：文件路径与补丁文本，按总量截断。 */
+export interface MergeRequestChange {
+  oldPath: string;
+  newPath: string;
+  patch: string;
+}
+
+export interface MergeRequestChanges {
+  changes: MergeRequestChange[];
+  /** 因文件数或字节上限被截断；模型据此提示用户缩小范围。 */
+  truncated: boolean;
+}
+
+export type GitLabListState = "opened" | "closed" | "all";
+
 export interface MergeRequestMetadataUpdate {
   title?: string;
   description?: string;
@@ -171,6 +203,10 @@ const ISSUE_COMMENT_CONTEXT_BUDGET_BYTES = 24 << 10;
 const MAX_COMMENT_PAGES = 10;
 const MAX_MR_COMMITS_PER_PAGE = 20;
 const MAX_MR_COMMIT_TITLE_CHARACTERS = 300;
+/** Issue/MR 列表与变更集都按页限量，避免小窗口模型被大段输出淹没。 */
+const MAX_LIST_PER_PAGE = 20;
+const MAX_MR_CHANGES = 50;
+const MAX_MR_CHANGE_PATCH_BYTES = 256 << 10;
 /** MR 标题和描述工具的输入上限。 */
 const MAX_MR_TITLE_CHARACTERS = 255;
 const MAX_MR_DESCRIPTION_CHARACTERS = 100_000;
@@ -335,6 +371,122 @@ export class GitLabClient {
       throw new Error("GitLab returned incomplete or mismatched Issue metadata");
     }
     return result as unknown as GitLabIssue;
+  }
+
+  /**
+   * 分页列出当前项目的 Issue。只返回摘要字段；state 支持 opened/closed/all。
+   * 调用方必须按页获取，不能一次性拼接全部历史。
+   */
+  async listIssues(
+    projectId: number,
+    options: { search?: string; state?: GitLabListState; page?: number; perPage?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<IssueSummary[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const page = options.page ?? 1;
+    const perPage = options.perPage ?? MAX_LIST_PER_PAGE;
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("issue page must be between 1 and 10000");
+    }
+    if (!Number.isSafeInteger(perPage) || perPage < 1 || perPage > MAX_LIST_PER_PAGE) {
+      throw new Error(`issue page size must be between 1 and ${MAX_LIST_PER_PAGE}`);
+    }
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page), order_by: "updated_at", sort: "desc" });
+    const state = options.state ?? "opened";
+    query.set("state", state);
+    const search = (options.search ?? "").trim();
+    if (search) {
+      if ([...search].length > 100) throw new Error("issue search must be at most 100 characters");
+      query.set("search", search);
+    }
+    const result = await this.getJson(`/projects/${projectId}/issues?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab issue list is not an array");
+    return result.map((value) => {
+      if (!isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" || typeof value.state !== "string") {
+        throw new Error("GitLab returned an incomplete issue list entry");
+      }
+      const webUrl = typeof value.web_url === "string" ? value.web_url : undefined;
+      return {
+        iid: value.iid as number,
+        title: value.title.slice(0, MAX_MR_TITLE_CHARACTERS),
+        state: value.state,
+        ...(webUrl ? { webUrl } : {}),
+      };
+    });
+  }
+
+  /** 分页列出当前项目的 MR，返回摘要字段。 */
+  async listMergeRequests(
+    projectId: number,
+    options: { search?: string; state?: GitLabListState; page?: number; perPage?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<MergeRequestSummary[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const page = options.page ?? 1;
+    const perPage = options.perPage ?? MAX_LIST_PER_PAGE;
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("merge request page must be between 1 and 10000");
+    }
+    if (!Number.isSafeInteger(perPage) || perPage < 1 || perPage > MAX_LIST_PER_PAGE) {
+      throw new Error(`merge request page size must be between 1 and ${MAX_LIST_PER_PAGE}`);
+    }
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page), order_by: "updated_at", sort: "desc" });
+    const state = options.state ?? "opened";
+    query.set("state", state);
+    const search = (options.search ?? "").trim();
+    if (search) {
+      if ([...search].length > 100) throw new Error("merge request search must be at most 100 characters");
+      query.set("search", search);
+    }
+    const result = await this.getJson(`/projects/${projectId}/merge_requests?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab merge request list is not an array");
+    return result.map((value) => {
+      if (
+        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
+        typeof value.state !== "string" || typeof value.source_branch !== "string" || typeof value.target_branch !== "string"
+      ) {
+        throw new Error("GitLab returned an incomplete merge request list entry");
+      }
+      const webUrl = typeof value.web_url === "string" ? value.web_url : undefined;
+      return {
+        iid: value.iid as number,
+        title: value.title.slice(0, MAX_MR_TITLE_CHARACTERS),
+        state: value.state,
+        sourceBranch: value.source_branch.slice(0, 255),
+        targetBranch: value.target_branch.slice(0, 255),
+        ...(webUrl ? { webUrl } : {}),
+      };
+    });
+  }
+
+  /**
+   * 读取 MR 的逐文件变更。按文件数与补丁总字节双重截断，
+   * 让模型先看关键改动；完整 diff 仍需从固定快照的 worktree 读取。
+   */
+  async getMergeRequestChanges(projectId: number, mrIid: number, signal?: AbortSignal): Promise<MergeRequestChanges> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    const result = await this.getJson(`/projects/${projectId}/merge_requests/${mrIid}/changes`, signal);
+    if (!isRecord(result) || !Array.isArray(result.changes)) {
+      throw new Error("GitLab returned invalid merge request changes");
+    }
+    const changes: MergeRequestChange[] = [];
+    let bytes = 0;
+    let truncated = false;
+    for (const entry of result.changes) {
+      if (!isRecord(entry)) throw new Error("GitLab returned an invalid merge request change");
+      const oldPath = typeof entry.old_path === "string" ? entry.old_path : "";
+      const newPath = typeof entry.new_path === "string" ? entry.new_path : "";
+      const patch = typeof entry.patch === "string" ? entry.patch : "";
+      if (!oldPath && !newPath) throw new Error("GitLab returned a change without a path");
+      const patchBytes = Buffer.byteLength(patch);
+      if (changes.length >= MAX_MR_CHANGES || bytes + patchBytes > MAX_MR_CHANGE_PATCH_BYTES) {
+        truncated = true;
+        break;
+      }
+      changes.push({ oldPath, newPath, patch });
+      bytes += patchBytes;
+    }
+    return { changes, truncated };
   }
 
   async getProject(projectId: number, signal?: AbortSignal): Promise<Project> {
