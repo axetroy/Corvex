@@ -12,6 +12,10 @@
   --bg-code: #f5f7f8;
   --bg-hover: #eef3f8;
   --bg-selected: #e3eefb;
+  /* 半透明表面：顶栏毛玻璃、悬浮提示与内嵌输入框。 */
+  --bg-panel-translucent: rgb(255 255 255 / 90%);
+  --bg-panel-soft: rgb(255 255 255 / 82%);
+  --bg-inset: rgb(0 0 0 / 4%);
 
   --border-soft: #eef1f4;
   --border: #e1e6eb;
@@ -26,6 +30,7 @@
   --primary: #1769aa;
   --primary-strong: #1466c3;
   --primary-soft: #eaf2fa;
+  --primary-tint: rgb(23 105 170 / 12%);
 
   --success: #278150;
   --success-soft: #eef7f2;
@@ -50,6 +55,9 @@
   --bg-code: #111922;
   --bg-hover: #1d2a38;
   --bg-selected: #1b344a;
+  --bg-panel-translucent: rgb(22 31 42 / 90%);
+  --bg-panel-soft: rgb(22 31 42 / 82%);
+  --bg-inset: rgb(255 255 255 / 5%);
 
   --border-soft: #22303d;
   --border: #2b3a48;
@@ -64,6 +72,7 @@
   --primary: #4a9fe0;
   --primary-strong: #6cb4f0;
   --primary-soft: #153049;
+  --primary-tint: rgb(74 159 224 / 20%);
 
   --success: #4fc68a;
   --success-soft: #163329;

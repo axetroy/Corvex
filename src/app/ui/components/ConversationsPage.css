@@ -533,7 +533,7 @@
   padding: 0 4px;
   border: 1px solid transparent;
   border-radius: 4px;
-  background: rgb(0 0 0 / 4%);
+  background: var(--bg-inset);
   font-size: 12px;
 }
 
@@ -1042,7 +1042,7 @@
   align-items: center;
   margin: 0;
   padding: 0 20px;
-  background: rgb(255 255 255 / 90%);
+  background: var(--bg-panel-translucent);
   border-bottom: 1px solid var(--conversation-border);
   backdrop-filter: blur(8px);
 }

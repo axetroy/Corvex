@@ -308,7 +308,7 @@ a:hover {
   z-index: 5;
   padding: 2px 8px;
   color: var(--text-muted);
-  background: rgb(255 255 255 / 82%);
+  background: var(--bg-panel-soft);
   border-radius: 6px;
   font-size: 11px;
   pointer-events: none;
@@ -1151,7 +1151,7 @@ details summary {
   top: 27px;
   bottom: 0;
   border: 1px solid var(--primary);
-  background: rgb(23 105 170 / 12%);
+  background: var(--primary-tint);
   pointer-events: none;
 }
 
