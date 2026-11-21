@@ -48,7 +48,7 @@ export function AdminPanel({ copy }: Props) {
   };
 
   return (
-    <Panel title={copy.adminTitle}>
+    <Panel title={copy.adminUsersTitle}>
       <Typography.Paragraph type="secondary">{copy.adminHint}</Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       <div className="admin-users">

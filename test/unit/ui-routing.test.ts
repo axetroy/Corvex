@@ -7,10 +7,18 @@ import {
   eventQueueQuery,
   eventsBackHash,
   eventsHash,
+  normalizeHashRoute,
   parseHash,
 } from "../../src/app/ui/routing.ts";
 
 describe("operations UI routing", () => {
+  it("normalizes a leading slash so admin deep links work", () => {
+    expect(normalizeHashRoute("#/admin/users")).toBe("admin/users");
+    expect(normalizeHashRoute("/admin/settings/model")).toBe("admin/settings/model");
+    expect(parseHash("#/admin/users").page).toEqual({ kind: "unknown" });
+    expect(normalizeHashRoute("")).toBe("conversations");
+  });
+
   it("treats an empty hash as the conversation page", () => {
     expect(parseHash("").page).toEqual({ kind: "conversations" });
     expect(parseHash("#").page).toEqual({ kind: "conversations" });

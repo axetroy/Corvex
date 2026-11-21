@@ -60,7 +60,7 @@ export function AdminConsole({ copy, locale, route }: Props) {
               navigateTo("#/admin/users");
             }}
           >
-            {copy.adminTitle}
+            {copy.adminUsersTitle}
           </a>
           {sections.map((item) => (
             <a
@@ -81,7 +81,7 @@ export function AdminConsole({ copy, locale, route }: Props) {
       <main className="admin-console-main">
         {usersActive ? (
           <>
-            <PageHeading title={copy.adminTitle} description={copy.adminHint} />
+            <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />
           </>
         ) : (

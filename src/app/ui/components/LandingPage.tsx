@@ -1,4 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from "react";
+import { LandingParticles } from "./LandingParticles.js";
 import type { Copy, Locale } from "../i18n.js";
 import { LanguageIcon } from "./icons.js";
 import "./LandingPage.css";
@@ -76,6 +77,13 @@ export function LandingPage({ copy, locale, onLocaleChange }: Props) {
 
   return (
     <div className="landing" ref={root}>
+      <div className="landing-bg" aria-hidden="true">
+        <div className="landing-grid" />
+        <div className="landing-beam landing-beam-a" />
+        <div className="landing-beam landing-beam-b" />
+        <div className="landing-scanlines" />
+        <LandingParticles />
+      </div>
       <div className="landing-orb landing-orb-a" data-parallax="0.06" aria-hidden="true" />
       <div className="landing-orb landing-orb-b" data-parallax="-0.04" aria-hidden="true" />
       <nav className="landing-nav landing-wrap">

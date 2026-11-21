@@ -43,11 +43,17 @@ function parsePath(route: string): Route {
   return { kind: "unknown" };
 }
 
+/** 归一化 hash 路由：忽略前导 `#` 与 `/`，空值回到对话页。 */
+export function normalizeHashRoute(hash: string): string {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  return raw.replace(/^\/+/, "") || "conversations";
+}
+
 /** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为对话页。 */
 export function parseHash(hash: string): ParsedHash {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const queryIndex = raw.indexOf("?");
-  const path = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+  const path = (queryIndex === -1 ? raw : raw.slice(0, queryIndex)).replace(/^\/+/, "");
   const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
   return { page: parsePath(path), params: new URLSearchParams(query) };
 }

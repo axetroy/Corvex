@@ -20,7 +20,7 @@ import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { eventQueueFromParams, eventsBackHash, eventsHash, parseHash, conversationsHash } from "./routing.js";
+import { eventQueueFromParams, eventsBackHash, eventsHash, navigateTo, normalizeHashRoute, parseHash, conversationsHash } from "./routing.js";
 import type { EventQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
@@ -83,9 +83,9 @@ function saveNavigationCollapsed(collapsed: boolean): void {
 
 /** 当前地址栏 hash 对应的原始路由文本，默认回到对话页。 */
 function useHashRoute(): string {
-  const [route, setRoute] = useState(() => window.location.hash.slice(1) || "conversations");
+  const [route, setRoute] = useState(() => normalizeHashRoute(window.location.hash));
   useEffect(() => {
-    const onChange = () => setRoute(window.location.hash.slice(1) || "conversations");
+    const onChange = () => setRoute(normalizeHashRoute(window.location.hash));
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
@@ -106,8 +106,8 @@ export function App() {
     fetch("/api/setup/status")
       .then((response) => response.json() as Promise<{ configured: boolean }>)
       .then((status) => {
-        if (active && !status.configured && window.location.hash !== "#/setup") {
-          window.location.hash = "#/setup";
+        if (active && !status.configured && normalizeHashRoute(window.location.hash) !== "setup") {
+          navigateTo("setup");
         }
       })
       .catch(() => undefined);
@@ -148,7 +148,7 @@ export function App() {
 
   // 未知路由与非法事件 ID 统一回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") window.location.hash = "conversations";
+    if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") navigateTo("conversations");
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
