@@ -24,7 +24,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
@@ -212,6 +212,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
   const transcriptPaneRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
+  /** 离开底部一段距离后显示「滚动到底部」，避免刚打开对话就弹出按钮。 */
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
   const [modal, modalContextHolder] = Modal.useModal();
 
@@ -731,7 +733,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   function handleTranscriptScroll() {
     const pane = transcriptPaneRef.current;
     if (!pane) return;
-    pinnedToBottom.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 72;
+    const distance = pane.scrollHeight - pane.scrollTop - pane.clientHeight;
+    pinnedToBottom.current = distance < 72;
+    setShowScrollBottom(distance > 160);
+  }
+
+  function scrollTranscriptToBottom() {
+    const pane = transcriptPaneRef.current;
+    if (!pane) return;
+    pane.scrollTo({ top: pane.scrollHeight, behavior: "smooth" });
+    pinnedToBottom.current = true;
+    setShowScrollBottom(false);
   }
 
   // Bubble.List 关闭内置滚动后由整个对话窗格统一滚动：新消息/新 token 到达时只有
@@ -988,6 +1000,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         />
                       ) : <Welcome className="conversation-welcome conversation-welcome-empty" variant="borderless" title={copy.conversationPlaceholder} />}
                     </div>
+                    {showScrollBottom ? (
+                      <button
+                        type="button"
+                        className="conversation-scroll-bottom"
+                        onClick={scrollTranscriptToBottom}
+                        aria-label={copy.scrollToBottom}
+                        title={copy.scrollToBottom}
+                      >
+                        <ScrollBottomIcon />
+                        {copy.scrollToBottom}
+                      </button>
+                    ) : null}
                     <div className="conversation-composer-area">
                     {!showCreate && currentConversation && bubbleItems.length ? (
                       <div className="conversation-quick-prompts">

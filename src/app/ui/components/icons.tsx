@@ -157,6 +157,17 @@ export function FileIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 滚动到底部图标：向下的箭头，用于聊天记录的「回到最新」按钮。 */
+export function ScrollBottomIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M8 3.2v9.3" />
+      <path d="m4.6 9.1 3.4 3.4 3.4-3.4" />
+      <path d="M3.2 2.6h9.6" />
+    </svg>
+  );
+}
+
 /** 复制图标：两页叠放的纸张，用于代码块复制按钮。 */
 export function CopyIcon(props: SVGProps<SVGSVGElement>) {
   return (
