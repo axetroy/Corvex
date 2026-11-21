@@ -4,7 +4,7 @@
  */
 
 /** 允许预览的图片扩展名（小写，含点）。 */
-const imageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".svg"];
+const imageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".svg", ".ico"];
 
 /** 路径看起来是图片时返回 true；仅用于决定是否走图片预览端点。 */
 export function isImagePath(path: string): boolean {
