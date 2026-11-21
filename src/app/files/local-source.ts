@@ -108,6 +108,9 @@ export class LocalFileSource implements ConversationFileSource {
       return { path: normalized, content: "[二进制文件，无法以文本预览]", truncated: false, source: this.kind };
     }
     const bytesCapped = raw.length > MAX_FILE_BYTES;
+    if (range?.full) {
+      return { path: normalized, content: raw.subarray(0, MAX_FILE_BYTES).toString("utf8"), truncated: bytesCapped, source: this.kind };
+    }
     const allLines = raw.subarray(0, MAX_FILE_BYTES).toString("utf8").split("\n");
     const totalLines = allLines.length;
     const start = Math.max(1, range?.startLine ?? 1);

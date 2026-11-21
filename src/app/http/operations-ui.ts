@@ -48,6 +48,8 @@ function contentSecurityPolicy(nonce?: string): string {
     "style-src-attr 'unsafe-inline'",
     "img-src 'self' data:",
     "connect-src 'self'",
+    // Monaco 的代码高亮在 Web Worker 中跑，构建产物同源，dev 下可能是 blob URL。
+    "worker-src 'self' blob:",
     "object-src 'none'",
     "form-action 'none'",
     "frame-src 'none'",

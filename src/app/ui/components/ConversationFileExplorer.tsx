@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Input, Spin, Tree, Typography } from "antd";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Input, Spin, Tree, Typography } from "antd";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import type { TreeDataNode } from "antd";
@@ -13,7 +13,9 @@ import type { FileTreeNode } from "../fileTree.js";
 import { FileIcon } from "./icons.js";
 import { ImagePreview } from "./ImagePreview.js";
 import { renderFileIcon } from "../fileIcons.js";
-import { highlightCode } from "../codeHighlight.js";
+
+// Monaco 体积较大，只有真正打开文本文件时才加载。
+const CodeViewer = lazy(() => import("./CodeViewer.js").then((module) => ({ default: module.CodeViewer })));
 
 interface Props {
   conversationId: string;
@@ -107,13 +109,14 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     };
   }, [loadDirectory, conversationId]);
 
-  const loadContent = useCallback(async (path: string, startLine?: number) => {
+  const loadContent = useCallback(async (path: string, startLine?: number, full = false) => {
     setContents((current) => ({
       ...current,
       [path]: { path, content: "", truncated: false, loading: true, error: "", startLine: startLine ?? 1 },
     }));
     const params = new URLSearchParams({ path });
-    if (startLine && startLine > 1) params.set("startLine", String(startLine));
+    if (full) params.set("full", "1");
+    else if (startLine && startLine > 1) params.set("startLine", String(startLine));
     try {
       const response = await fetchJson<FileContentResult>(
         `/api/ops/conversations/${encodeURIComponent(conversationId)}/files/content?${params}`,
@@ -135,7 +138,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const openFile = useCallback((path: string) => {
     setOpenFiles((current) => (current.includes(path) ? current : [...current, path]));
     setActiveFile(path);
-    if (!isImagePath(path) && !contents[path]) void loadContent(path);
+    if (!isImagePath(path) && !contents[path]) void loadContent(path, 1, true);
   }, [contents, loadContent]);
 
   const closeFile = useCallback((path: string) => {
@@ -176,7 +179,6 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const renderedTree: TreeDataNode[] = withIcons(filteredTree);
 
   const active = activeFile ? contents[activeFile] : undefined;
-  const lineCount = active?.content ? active.content.split("\n").length : 0;
   const imageSrc = useMemo(() => activeFile && isImagePath(activeFile)
     ? `/api/ops/conversations/${encodeURIComponent(conversationId)}/files/image?${new URLSearchParams({ path: activeFile })}`
     : "", [activeFile, conversationId]);
@@ -261,33 +263,15 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
                 ))}
               </div>
               <div className="conversation-file-breadcrumb">{pathSegments(activeFile).join(" / ")}</div>
-              <div className="conversation-file-content">
+              <div className={`conversation-file-content${active && !imageSrc && !active.loading && !active.error ? " is-code" : ""}`}>
                 {active?.loading ? <Spin size="small" /> : active?.error ? (
                   <Typography.Text type="danger">{active.error}</Typography.Text>
                 ) : imageSrc ? (
                   <ImagePreview src={imageSrc} alt={activeFile} copy={copy} />
                 ) : active ? (
-                  <>
-                    <div className="conversation-file-code">
-                      <div className="conversation-file-gutter" aria-hidden="true">
-                        {Array.from({ length: lineCount }, (_, index) => (
-                          <div key={index}>{(active.startLine ?? 1) + index}</div>
-                        ))}
-                      </div>
-                      <pre className="conversation-file-code-pre">
-                        <code dangerouslySetInnerHTML={{ __html: highlightCode(active.content, activeFile) }} />
-                      </pre>
-                    </div>
-                    {active.truncated ? (
-                      <Button
-                        size="small"
-                        type="link"
-                        onClick={() => void loadContent(activeFile, (active.startLine ?? 1) + Math.max(1, lineCount - 1))}
-                      >
-                        {copy.filePanelLoadMore}
-                      </Button>
-                    ) : null}
-                  </>
+                  <Suspense fallback={<Spin size="small" />}>
+                    <CodeViewer path={activeFile} value={active.content} />
+                  </Suspense>
                 ) : null}
               </div>
             </>

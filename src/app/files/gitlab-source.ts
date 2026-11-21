@@ -48,6 +48,9 @@ export class GitLabFileSource implements ConversationFileSource {
     }
     const bytesCapped = raw.length > MAX_FILE_BYTES;
     const text = raw.subarray(0, MAX_FILE_BYTES).toString("utf8");
+    if (range?.full) {
+      return { path: relative, content: text, truncated: bytesCapped, source: this.kind };
+    }
     const allLines = text.split("\n");
     const totalLines = allLines.length;
     const start = Math.max(1, range?.startLine ?? 1);

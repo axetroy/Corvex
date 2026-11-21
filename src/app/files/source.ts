@@ -26,6 +26,8 @@ export interface FileListResult {
 export interface FileRange {
   startLine?: number;
   maxLines?: number;
+  /** 代码查看器需要一次拿到整文件（仍受字节上限约束），跳过按行切片。 */
+  full?: boolean;
 }
 
 export interface FileContentResult {

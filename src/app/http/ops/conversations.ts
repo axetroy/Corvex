@@ -239,6 +239,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       return;
     }
     const path = queryParam(request.query, "path") ?? "";
+    const full = queryParam(request.query, "full") === "1";
     const startLine = optionalInteger(queryParam(request.query, "startLine"), 1, 1_000_000);
     const maxLines = optionalInteger(queryParam(request.query, "maxLines"), 1, 2_000);
     if (!path || startLine === false || maxLines === false) {
@@ -249,6 +250,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 200, await source.readFile(path, {
         ...(startLine === undefined ? {} : { startLine }),
         ...(maxLines === undefined ? {} : { maxLines }),
+        ...(full ? { full: true } : {}),
       }));
     } catch (error) {
       sendGitLabReadError(reply, error);
