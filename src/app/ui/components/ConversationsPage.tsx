@@ -926,6 +926,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         />
                       ) : <Welcome className="conversation-welcome conversation-welcome-empty" variant="borderless" title={copy.conversationPlaceholder} />}
                     </div>
+                    <div className="conversation-composer-area">
                     {!showCreate && currentConversation && bubbleItems.length ? (
                       <div className="conversation-quick-prompts">
                         <span className="conversation-quick-prompts-label">{copy.conversationQuickPrompts}</span>
@@ -939,7 +940,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               title={prompt.label}
                               onClick={() => setDraftMessage(prompt.label.slice(0, 20_000))}
                             >
-                              {prompt.label}
+                              {prompt.label.split(/\s+/)[0]}
                             </button>
                           ))}
                         </div>
@@ -961,6 +962,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     ) : null}
                     <Sender
                       className="conversation-composer"
+                      style={{ width: "100%" }}
                       aria-label={copy.initialMessage}
                       value={draftMessage}
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
@@ -973,6 +975,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
                       )}
                     />
+                    </div>
                   </div>
                 ),
               },
