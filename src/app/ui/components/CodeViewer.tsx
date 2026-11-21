@@ -5,6 +5,7 @@ import HtmlWorker from "monaco-editor/language/html/html.worker?worker";
 import JsonWorker from "monaco-editor/language/json/json.worker?worker";
 import TsWorker from "monaco-editor/language/typescript/ts.worker?worker";
 import * as monaco from "monaco-editor";
+import { languageIdForPath } from "../language.js";
 
 // 内置语言特性（TS/JSON/CSS/HTML）会请求各自的 worker，不能统一用 editor worker。
 type MonacoEnvironmentHost = {
@@ -70,8 +71,10 @@ function defineThemes(): void {
 
 defineThemes();
 
-/** 按文件扩展名从 Monaco 已注册的语言里找出最合适的 language id。 */
+/** 先用显式映射（含 Monaco 未注册的 .mjs/.zsh/Dockerfile 等），再回退到 Monaco 自己的扩展名表。 */
 function languageForPath(path: string): string {
+  const explicit = languageIdForPath(path);
+  if (explicit) return explicit;
   const dot = path.lastIndexOf(".");
   if (dot < 0) return "plaintext";
   const extension = path.slice(dot).toLowerCase();
