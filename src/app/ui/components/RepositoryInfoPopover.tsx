@@ -120,7 +120,12 @@ export function RepositoryInfoPopover({
       title={copy.conversationRepositoryInfo}
       content={content}
       classNames={{ root: "repository-info-popover" }}
-      styles={{ root: { maxWidth: 340 } }}
+      // 气泡 portal 到 body：直接绑定全局主题变量，浅色/深色都与控制台面板一致。
+      styles={{
+        root: { maxWidth: 340 },
+        container: { background: "var(--bg-panel)", color: "var(--text)" },
+        title: { color: "var(--text)" },
+      }}
     >
       {children}
     </Popover>
