@@ -13,20 +13,6 @@
   border-radius: 8px;
 }
 
-.admin-user-avatar {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 50%;
-  object-fit: cover;
-  background: #1769aa;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .admin-user-name {
   display: flex;
   min-width: 0;

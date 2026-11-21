@@ -5,6 +5,7 @@ import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import { Panel } from "./common.js";
 import { UserAvatar } from "./UserAvatar.js";
+import "./AdminPanel.css";
 
 interface ManagedUser {
   id: string;
@@ -56,7 +57,7 @@ export function AdminPanel({ copy }: Props) {
         {users.map((user) => (
           <div className="admin-user" key={user.id}>
             <UserAvatar
-              className="admin-user-avatar"
+              className="user-avatar"
               name={user.name}
               username={user.username}
               avatarUrl={user.avatarUrl}

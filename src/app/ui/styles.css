@@ -170,21 +170,19 @@ a:hover {
   border-top: 1px solid var(--conversation-border, #e1e6eb);
 }
 
-.sidebar-account-avatar {
+/* 用户头像：管理后台用户列表与侧栏账号区共用同一个组件和同一套样式。 */
+.user-avatar {
+  display: grid;
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
+  place-items: center;
   border-radius: 50%;
   object-fit: cover;
-}
-
-.sidebar-account-avatar-fallback {
-  display: grid;
-  place-items: center;
+  background: #1769aa;
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  background: #1769aa;
 }
 
 .sidebar-account-text {

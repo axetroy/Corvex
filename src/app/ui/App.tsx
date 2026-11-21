@@ -291,8 +291,7 @@ export function App() {
           {account ? (
             <div className="sidebar-account-panel">
               <UserAvatar
-                className="sidebar-account-avatar"
-                fallbackClassName="sidebar-account-avatar-fallback"
+                className="user-avatar"
                 name={account.name}
                 username={account.username}
                 avatarUrl={account.avatarUrl}
