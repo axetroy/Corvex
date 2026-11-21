@@ -31,8 +31,25 @@ export interface FileContentResult {
   totalLines?: number;
 }
 
+/** 图片预览的原始字节；MIME 由适配器按文件头校验，不接受扩展名冒充。 */
+export interface FileImageResult {
+  path: RepoPath;
+  mimeType: string;
+  data: Buffer;
+  size: number;
+}
+
+/** 预览失败的业务错误，携带直接返回给控制台的 HTTP 状态码。 */
+export class FilePreviewError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "FilePreviewError";
+  }
+}
+
 export interface ConversationFileSource {
   readonly kind: "gitlab";
   listDirectory(path: RepoPath, signal?: AbortSignal): Promise<FileListResult>;
   readFile(path: RepoPath, range?: FileRange, signal?: AbortSignal): Promise<FileContentResult>;
+  readImage(path: RepoPath, signal?: AbortSignal): Promise<FileImageResult>;
 }

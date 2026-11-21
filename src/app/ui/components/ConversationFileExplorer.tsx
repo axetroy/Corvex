@@ -7,6 +7,7 @@ import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import type { FileContentResult, FileListResult } from "../../files/source.js";
+import { isImagePath } from "../../files/image.js";
 import { entriesToTreeNodes, mergeTreeChildren, pathSegments } from "../fileTree.js";
 import type { FileTreeNode } from "../fileTree.js";
 import { FileIcon } from "./icons.js";
@@ -48,7 +49,38 @@ function saveFileSplitLayout(layout: Layout): void {
   }
 }
 
-/** 类 VSCode 文件浏览：左侧可展开目录树，右侧多标签文本预览。 */
+/** 图片预览：直接走带会话鉴权的图片端点，失败时给出可读提示。 */
+function ImagePreview({ src, alt, copy }: { src: string; alt: string; copy: Copy }) {
+  const [failed, setFailed] = useState(false);
+  const [dimensions, setDimensions] = useState("");
+
+  useEffect(() => {
+    setFailed(false);
+    setDimensions("");
+  }, [src]);
+
+  if (failed) {
+    return <Typography.Text type="danger" className="conversation-file-image-error">{copy.filePanelImageError}</Typography.Text>;
+  }
+  return (
+    <div className="conversation-file-image-stage">
+      <div className="conversation-file-image-frame">
+        <img
+          src={src}
+          alt={alt}
+          onLoad={(event) => setDimensions(`${event.currentTarget.naturalWidth} × ${event.currentTarget.naturalHeight}`)}
+          onError={() => setFailed(true)}
+        />
+      </div>
+      <div className="conversation-file-image-meta">
+        {dimensions ? <span>{dimensions}</span> : null}
+        <a href={src} target="_blank" rel="noopener noreferrer">{copy.filePanelImageOpen}</a>
+      </div>
+    </div>
+  );
+}
+
+/** 类 VSCode 文件浏览：左侧可展开目录树，右侧多标签文本与图片预览。 */
 export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const [savedSplit] = useState(readFileSplitLayout);
   const [treeData, setTreeData] = useState<FileTreeNode[]>([]);
@@ -129,7 +161,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const openFile = useCallback((path: string) => {
     setOpenFiles((current) => (current.includes(path) ? current : [...current, path]));
     setActiveFile(path);
-    if (!contents[path]) void loadContent(path);
+    if (!isImagePath(path) && !contents[path]) void loadContent(path);
   }, [contents, loadContent]);
 
   const closeFile = useCallback((path: string) => {
@@ -171,6 +203,9 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
 
   const active = activeFile ? contents[activeFile] : undefined;
   const lineCount = active?.content ? active.content.split("\n").length : 0;
+  const imageSrc = useMemo(() => activeFile && isImagePath(activeFile)
+    ? `/api/ops/conversations/${encodeURIComponent(conversationId)}/files/image?${new URLSearchParams({ path: activeFile })}`
+    : "", [activeFile, conversationId]);
 
   return (
     <div className="conversation-file-explorer">
@@ -246,6 +281,8 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
               <div className="conversation-file-content">
                 {active?.loading ? <Spin size="small" /> : active?.error ? (
                   <Typography.Text type="danger">{active.error}</Typography.Text>
+                ) : imageSrc ? (
+                  <ImagePreview src={imageSrc} alt={activeFile} copy={copy} />
                 ) : active ? (
                   <>
                     <div className="conversation-file-code">

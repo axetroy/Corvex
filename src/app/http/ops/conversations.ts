@@ -5,9 +5,11 @@ import { requireUser } from "../../auth/context.js";
 import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
+import { FilePreviewError } from "../../files/source.js";
 import type { OpsContext } from "../context.js";
 import {
   idParam,
+  sendBinary,
   optionalInteger,
   positiveInteger,
   queryParam,
@@ -241,6 +243,36 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         ...(maxLines === undefined ? {} : { maxLines }),
       }));
     } catch (error) {
+      sendGitLabReadError(reply, error);
+    }
+  });
+
+  app.get("/api/ops/conversations/:id/files/image", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const source = fileSource(request, conversation);
+    if (!source) {
+      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
+      return;
+    }
+    const path = queryParam(request.query, "path") ?? "";
+    if (!path) {
+      sendJson(reply, 400, { error: "invalid file path" });
+      return;
+    }
+    try {
+      const image = await source.readImage(path);
+      sendBinary(reply, image.data, image.mimeType);
+    } catch (error) {
+      if (error instanceof FilePreviewError) {
+        sendJson(reply, error.status, { error: error.message });
+        return;
+      }
       sendGitLabReadError(reply, error);
     }
   });

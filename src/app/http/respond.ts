@@ -39,6 +39,19 @@ export function sendJson(reply: FastifyReply, status: number, value: unknown): v
     .send(JSON.stringify(value));
 }
 
+/** 二进制响应：禁止 MIME 嗅探，并用隔离 CSP 兜底直接打开的场景。 */
+export function sendBinary(reply: FastifyReply, body: Buffer, contentType: string): void {
+  void reply
+    .code(200)
+    .header("content-type", contentType)
+    .header("content-length", String(body.byteLength))
+    .header("cache-control", "private, max-age=300")
+    .header("x-content-type-options", "nosniff")
+    .header("content-security-policy", "default-src 'none'; sandbox")
+    .header("referrer-policy", "no-referrer")
+    .send(body);
+}
+
 /** Webhook 响应同时记录日志，方便按状态追踪 GitLab 回调结果。 */
 export function sendWebhook(
   reply: FastifyReply,
