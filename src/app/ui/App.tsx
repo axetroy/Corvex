@@ -13,7 +13,6 @@ import {
   EventsIcon,
   LanguageIcon,
   LogoutIcon,
-  OverviewIcon,
   SidebarCollapseIcon,
   SettingsIcon,
   SidebarExpandIcon,
@@ -26,7 +25,6 @@ import { eventQueueFromParams, eventsBackHash, eventsHash, navigateTo, normalize
 import type { EventQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
-const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((module) => ({ default: module.OverviewPage })));
 const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
 const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
@@ -149,10 +147,11 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 未知路由与非法事件 ID 统一回到对话页，避免停留在空白页。
+  // 旧的总览入口迁移到管理后台；未知路由与非法事件 ID 回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") navigateTo("conversations");
-  }, [page.kind]);
+    if (page.kind === "overview") navigateTo("#/admin/overview");
+    else if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") navigateTo("conversations");
+  }, [page.kind, route]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
   const logout = useCallback(async () => {
@@ -210,7 +209,14 @@ export function App() {
   if (route.startsWith("admin")) {
     return (
       <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
-        <AdminConsole copy={copy} locale={locale} route={route} />
+        <AdminConsole
+          copy={copy}
+          locale={locale}
+          route={route}
+          refreshToken={refreshToken}
+          onUpdated={handleUpdated}
+          onRefresh={refresh}
+        />
       </ConfigProvider>
     );
   }
@@ -276,7 +282,7 @@ export function App() {
             className="sidebar-nav"
             mode="inline"
             inlineCollapsed={navigationCollapsed}
-            selectedKeys={[page.kind === "settings" ? "settings" : page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
+            selectedKeys={[page.kind === "settings" ? "settings" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
               window.location.hash = key === "events"
                 ? eventsHash(queue)
@@ -287,7 +293,6 @@ export function App() {
             items={[
               { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
               { key: "events", icon: <EventsIcon />, label: copy.navEvents },
-              { key: "overview", icon: <OverviewIcon />, label: copy.navOverview },
               { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
@@ -324,15 +329,6 @@ export function App() {
         <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
           <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>
-            {page.kind === "overview" ? (
-              <OverviewPage
-                copy={copy}
-                locale={locale}
-                refreshToken={refreshToken}
-                onUpdated={handleUpdated}
-                onRefresh={refresh}
-              />
-            ) : null}
             {page.kind === "events" ? (
               <EventsPage
                 copy={copy}

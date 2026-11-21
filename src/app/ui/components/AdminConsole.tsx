@@ -3,6 +3,7 @@ import { fetchJson } from "../api.js";
 import { navigateTo } from "../routing.js";
 import type { Copy, Locale } from "../i18n.js";
 import { AdminPanel } from "./AdminPanel.js";
+import { OverviewPage } from "./OverviewPage.js";
 import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
 import "./AdminConsole.css";
@@ -12,6 +13,9 @@ interface Props {
   locale: Locale;
   /** 当前 hash 路由，不含开头的 `#`。 */
   route: string;
+  refreshToken: number;
+  onUpdated: (value: string) => void;
+  onRefresh: () => void;
 }
 
 const sections: { key: SettingsSection; labelKey: "settingsTabBasic" | "settingsTabModel" | "settingsTabGitLab" | "settingsTabWorkflow" | "settingsTabStorage" | "settingsTabAdvanced" }[] = [
@@ -24,9 +28,10 @@ const sections: { key: SettingsSection; labelKey: "settingsTabBasic" | "settings
 ];
 
 /** 独立管理页：左侧菜单就是设置分组与用户管理，右侧显示对应页面。 */
-export function AdminConsole({ copy, locale, route }: Props) {
+export function AdminConsole({ copy, locale, route, refreshToken, onUpdated, onRefresh }: Props) {
   const [allowed, setAllowed] = useState<boolean>();
   const [updated, setUpdated] = useState<string>();
+  const overviewActive = route === "admin/overview";
   const usersActive = route === "admin/users";
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
 
@@ -52,6 +57,16 @@ export function AdminConsole({ copy, locale, route }: Props) {
         </div>
         <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">
+          <a
+            className={overviewActive ? "active" : ""}
+            href="#/admin/overview"
+            onClick={(event) => {
+              event.preventDefault();
+              navigateTo("#/admin/overview");
+            }}
+          >
+            {copy.navOverview}
+          </a>
           <a
             className={usersActive ? "active" : ""}
             href="#/admin/users"
@@ -79,7 +94,15 @@ export function AdminConsole({ copy, locale, route }: Props) {
         </nav>
       </aside>
       <main className="admin-console-main">
-        {usersActive ? (
+        {overviewActive ? (
+          <OverviewPage
+            copy={copy}
+            locale={locale}
+            refreshToken={refreshToken}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        ) : usersActive ? (
           <>
             <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />
