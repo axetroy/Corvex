@@ -25,6 +25,7 @@ import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
+import { createRepoWriteExtension } from "./repo-write.js";
 import { createGitLabConversationExtension } from "./gitlab-conversation.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
@@ -113,6 +114,8 @@ export interface ModelRequest {
   conversationMode?: ConversationMode;
   /** 只发文本、不注册任何工具；用于标题等不应读取仓库的模型调用。 */
   noTools?: boolean;
+  /** 对话的本地文件写入能力；由 Runner 限定到当前 worktree 后传入。 */
+  writeFile?: (path: string, content: string) => Promise<{ path: string; bytes: number }>;
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
@@ -618,6 +621,9 @@ export class PiAgent {
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
         ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
           ? [createPlanExtension()]
+          : []),
+        ...(request.taskType === "conversation" && request.writeFile
+          ? [createRepoWriteExtension({ writeFile: request.writeFile })]
           : []),
         ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
           ? [createGitLabConversationExtension({

@@ -6,7 +6,7 @@ import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-d
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
 import "./ConversationsPage.css";
-import { fetchJson } from "../api.js";
+import { fetchJson, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
@@ -278,6 +278,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   // 当前正在运行的轮次：订阅它的 SSE 正文，等它落库后由详情接管。
   const activeTurnId = currentConversation?.messages.find((message) =>
     message.role === "assistant" && message.status === "running" && message.turnId)?.turnId ?? undefined;
+
+  const [changePaths, setChangePaths] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    if (!selectedConversationId) {
+      setChangePaths([]);
+      return () => { active = false; };
+    }
+    fetchJson<{ paths: string[] }>(
+      `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/changes`, copy,
+    ).then((result) => {
+      if (active) setChangePaths(result.paths ?? []);
+    }).catch(() => {
+      if (active) setChangePaths([]);
+    });
+    return () => { active = false; };
+  }, [copy, selectedConversationId, refreshToken, pollToken]);
 
   useEffect(() => {
     if (!hasActiveTurn && !pendingReplyConversations.has(selectedConversationId)) return;
@@ -861,6 +878,33 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
                       </Typography.Text>
                       {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
+                      {changePaths.length ? (
+                        <>
+                          <Tag className="conversation-changes-tag" title={changePaths.join("\n")}>
+                            {copy.conversationChangesTemplate.replace("{count}", String(changePaths.length))}
+                          </Tag>
+                          <Button
+                            className="conversation-discard-changes"
+                            type="link"
+                            size="small"
+                            disabled={hasActiveTurn}
+                            onClick={() => void (async () => {
+                              try {
+                                await sendJson(
+                                  `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/changes`,
+                                  {}, copy, "DELETE",
+                                );
+                                setChangePaths([]);
+                                setPollToken((value) => value + 1);
+                              } catch (cause) {
+                                setError(errorMessage(cause));
+                              }
+                            })()}
+                          >
+                            {copy.conversationDiscardChanges}
+                          </Button>
+                        </>
+                      ) : null}
                     </>
                   ) : (
                     <Typography.Text strong className="conversation-workspace-project">{copy.conversationsTitle}</Typography.Text>

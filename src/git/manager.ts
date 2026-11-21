@@ -24,6 +24,15 @@ const eventIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const conversationWorkspacePrefix = "conversation-";
 /** 对话工作区目录名格式，长度与 `eventIdPattern` 对齐，确保清理时能被识别。 */
 const conversationWorkspacePattern = /^conversation-[0-9a-fA-F](?:[0-9a-fA-F-]{0,113}[0-9a-fA-F])?$/;
+/** 对话本地改动 ref 名：只允许安全字符，避免注入进 git 参数。 */
+const conversationRefPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+
+function conversationChangesRef(conversationId: string): string {
+  if (!conversationRefPattern.test(conversationId)) {
+    throw new Error("conversation ID contains invalid path characters");
+  }
+  return `refs/conversations/${conversationId}`;
+}
 
 interface GitResult {
   stdout: Buffer;
@@ -416,6 +425,22 @@ export class GitManager {
       const mirror = join(this.mirrorRoot, `${projectId}.git`);
       await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal);
 
+      // 若该会话有持久化的本地改动，优先检出它（其父提交必须是 pinned SHA），
+      // 于是 worktree 被清理后仍能恢复用户/模型编辑过的文件。
+      let targetSha = expectedSha;
+      const changes = await this.getConversationChanges(projectId, conversationId, signal);
+      if (changes) {
+        const ancestor = await this.run(
+          mirror,
+          ["--git-dir", mirror, "merge-base", "--is-ancestor", expectedSha, changes.sha],
+          undefined,
+          maxErrorOutput,
+          signal,
+          { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+        );
+        if (ancestor.exitCode === 0) targetSha = changes.sha;
+      }
+
       const projectRoot = join(this.workspaceRoot, String(projectId));
       await mkdir(projectRoot, { recursive: true, mode: 0o750 });
       const rootInfo = await lstat(projectRoot);
@@ -423,10 +448,10 @@ export class GitManager {
         throw new Error("project workspace path is not a regular directory");
       }
       const workspacePath = join(projectRoot, eventId);
-      if (!(await this.pathExists(workspacePath)) || !(await this.alignConversationWorkspace(workspacePath, expectedSha, signal))) {
+      if (!(await this.pathExists(workspacePath)) || !(await this.alignConversationWorkspace(workspacePath, targetSha, signal))) {
         await this.removeWorktree(mirror, workspacePath);
         try {
-          await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
+          await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, targetSha], undefined, maxErrorOutput, signal);
         } catch (error) {
           // checkout 失败可能留下半成品目录，清掉后下次才能重新创建。
           await this.removeWorktree(mirror, workspacePath);
@@ -434,9 +459,9 @@ export class GitManager {
         }
       }
       const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
-      if (actual.toLowerCase() !== expectedSha.toLowerCase()) {
+      if (actual.toLowerCase() !== targetSha.toLowerCase()) {
         await this.removeWorktree(mirror, workspacePath);
-        throw new Error(`conversation workspace HEAD mismatch: got ${actual}, expected ${expectedSha}`);
+        throw new Error(`conversation workspace HEAD mismatch: got ${actual}, expected ${targetSha}`);
       }
       await this.touch(workspacePath);
       return { projectId, eventId, path: workspacePath, headSha: expectedSha };
@@ -480,6 +505,109 @@ export class GitManager {
       if (!(await this.pathExists(workspacePath))) return;
       const mirror = join(this.mirrorRoot, `${projectId}.git`);
       await this.removeWorktree(mirror, workspacePath, signal);
+    });
+  }
+
+  /** 对话本地改动 ref 是否存在，及其包含的文件路径。 */
+  async getConversationChanges(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; paths: string[] } | undefined> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) return undefined;
+    const head = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "rev-parse", "--verify", "--quiet", ref],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [1] },
+    );
+    if (head.exitCode !== 0) return undefined;
+    const sha = head.stdout.toString().trim();
+    if (!shaPattern.test(sha)) throw new Error("Git returned an invalid conversation changes commit");
+    const changed = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha],
+      undefined,
+      64 << 10,
+      signal,
+      { timeoutMs: 10_000 },
+    );
+    if (changed.truncated) throw new Error("conversation changes file list exceeds the output limit");
+    return { sha, paths: changed.stdout.toString().split("\0").filter(Boolean) };
+  }
+
+  /**
+   * 把 worktree 的本地改动提交到镜像里的对话 ref。ref 的父提交是 pinned SHA，
+   * 因此 worktree 被淘汰、重启或清理后都能按同一基线恢复，且不进入数据库。
+   */
+  async saveConversationChanges(
+    workspace: Workspace,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; paths: string[] } | undefined> {
+    this.validateWorkspace(workspace);
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (status.clean) return undefined;
+    await this.run(workspace.path, ["add", "-A", "--"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const treeResult = await this.run(workspace.path, ["write-tree"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const tree = treeResult.stdout.toString().trim();
+    if (!shaPattern.test(tree)) throw new Error("git write-tree returned an invalid object id");
+    const commitResult = await this.run(
+      workspace.path,
+      [
+        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
+        "commit-tree", tree, "-p", workspace.headSha, "-m", `Corvex conversation changes ${conversationId}`,
+      ],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 30_000 },
+    );
+    const sha = commitResult.stdout.toString().trim();
+    if (!shaPattern.test(sha)) throw new Error("git commit-tree returned an invalid object id");
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+    await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "update-ref", ref, sha],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000 },
+    );
+    // 工作区文件保留实际改动，暂存区回到 pinned 快照，避免后续状态重复上报。
+    await this.run(workspace.path, ["reset", "--mixed", "HEAD"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    return { sha, paths: status.files.map((file) => file.path) };
+  }
+
+  /** 放弃对话的本地改动：删除 ref 并清理对应 worktree。 */
+  async discardConversationChanges(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    const workspacePath = join(this.workspaceRoot, String(projectId), conversationWorkspaceName(conversationId));
+    await this.withProjectLock(projectId, async () => {
+      // 测试或尚未克隆的部署可能没有镜像；此时只需要清理可能存在的 worktree。
+      if (await this.pathExists(mirror)) {
+        await this.run(
+          this.mirrorRoot,
+          ["--git-dir", mirror, "update-ref", "-d", ref],
+          undefined,
+          maxErrorOutput,
+          signal,
+          { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+        );
+      }
+      if (await this.pathExists(workspacePath)) await this.removeWorktree(mirror, workspacePath, signal);
     });
   }
 

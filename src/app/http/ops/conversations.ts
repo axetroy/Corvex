@@ -161,7 +161,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 409, { error: "a turn is still running for this conversation" });
       return;
     }
-    await ctx.conversations.removeConversationWorkspace(conversationId, conversation.projectId);
+    await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
     ctx.store.deleteConversation(conversationId);
     sendJson(reply, 200, { deleted: true });
   });
@@ -243,6 +243,31 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     } catch (error) {
       sendGitLabReadError(reply, error);
     }
+  });
+
+  // 本地改动保存在项目 mirror 的 ref 中，SQLite 不存文件内容。
+  app.get("/api/ops/conversations/:id/changes", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const changes = await ctx.conversations.getConversationChanges(conversationId, conversation.projectId);
+    sendJson(reply, 200, changes ?? { sha: "", paths: [] });
+  });
+
+  app.delete("/api/ops/conversations/:id/changes", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
+    sendJson(reply, 200, { deleted: true });
   });
 
   // 整段对话轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，

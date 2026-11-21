@@ -527,6 +527,53 @@ describe("Git workflows", () => {
     });
   });
 
+  it("persists conversation file edits in a mirror ref across worktree deletion", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-conversation-changes-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "project.git");
+    const source = join(directory, "source");
+    await mkdir(source);
+    await git(source, "init", "--initial-branch=main");
+    await git(source, "config", "user.name", "Corvex Test");
+    await git(source, "config", "user.email", "corvex@example.test");
+    await writeFile(join(source, "a.txt"), "original\n");
+    await git(source, "add", "a.txt");
+    await git(source, "commit", "-m", "base");
+    const baseSha = await git(source, "rev-parse", "HEAD");
+    await execFile("git", ["init", "--bare", bare]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "origin", "main"]);
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "--mirror", bare, mirror]);
+    await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
+
+    const manager = new GitManager(root, "http://127.0.0.1:1", "read-token");
+    await manager.initialize();
+    const conversationId = "1f2e3d4c-5b6a-7980-8a9b-0c1d2e3f4a5b";
+    const repositoryUrl = "http://127.0.0.1:1/project.git";
+    const workspace = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+
+    await writeFile(join(workspace.path, "a.txt"), "edited\n");
+    await writeFile(join(workspace.path, "new.txt"), "new file\n");
+    const saved = await manager.saveConversationChanges(workspace, conversationId);
+    expect(saved?.paths.sort()).toEqual(["a.txt", "new.txt"]);
+    expect(await manager.getConversationChanges(7, conversationId)).toMatchObject({
+      paths: expect.arrayContaining(["a.txt", "new.txt"]),
+    });
+
+    await manager.removeConversationWorkspace(workspace);
+    const restored = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+    expect(await readFile(join(restored.path, "a.txt"), "utf8")).toBe("edited\n");
+    expect(await readFile(join(restored.path, "new.txt"), "utf8")).toBe("new file\n");
+
+    await manager.discardConversationChanges(7, conversationId);
+    expect(await manager.getConversationChanges(7, conversationId)).toBeUndefined();
+    const fresh = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+    expect(await readFile(join(fresh.path, "a.txt"), "utf8")).toBe("original\n");
+    await expect(lstat(join(fresh.path, "new.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("skips protected conversation workspaces during storage cleanup", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-conversation-"));
     const root = join(directory, "storage");

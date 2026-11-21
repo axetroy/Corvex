@@ -381,6 +381,22 @@
   font-size: 12px;
 }
 
+.conversation-changes-tag.ant-tag {
+  flex: 0 0 auto;
+  margin: 0;
+  border-color: #ffd591;
+  background: #fff7e6;
+  color: #ad4e00;
+  font-size: 11px;
+}
+
+.conversation-discard-changes.ant-btn {
+  flex: 0 0 auto;
+  height: auto;
+  padding: 0 2px;
+  font-size: 11px;
+}
+
 .conversation-pinned {
   flex: 0 1 auto;
   min-width: 0;

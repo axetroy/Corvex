@@ -1,3 +1,5 @@
+import { mkdir, realpath, writeFile as writeFileFs } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
@@ -9,6 +11,7 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
+import { maxWriteBytes } from "../agent/repo-write.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { parseConversationCommand } from "./conversation-command.js";
@@ -151,6 +154,43 @@ export class ConversationRunner {
     this.workspaces.delete(conversationId);
     await this.repo.removeConversationWorkspaceById(projectId, conversationId);
     return true;
+  }
+
+  /** 把模型写入限定在该会话 worktree：拒绝绝对路径、上层遍历与 .git。 */
+  private async writeWorkspaceFile(workspacePath: string, requested: string, content: string) {
+    if (!requested || [...requested].length > 4096 || requested.includes("\0")) {
+      throw new Error("invalid file path");
+    }
+    if (isAbsolute(requested) || /^[a-zA-Z]:/.test(requested)) {
+      throw new Error("absolute paths are not allowed; use a repository-relative path");
+    }
+    const bytes = Buffer.byteLength(content);
+    if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
+    const parts = requested.replace(/\\/g, "/").replace(/^\/+/, "").split("/");
+    if (parts.some((part) => !part || part === "." || part === "..")) {
+      throw new Error("invalid repository-relative path");
+    }
+    if (parts[0] === ".git") throw new Error("writing .git is not allowed");
+    const root = await realpath(workspacePath);
+    const target = resolve(root, ...parts);
+    const parent = await realpath(dirname(target)).catch(() => dirname(target));
+    const inside = relative(root, parent);
+    if (inside.startsWith("..") || isAbsolute(inside)) {
+      throw new Error("file path escapes the conversation worktree");
+    }
+    await mkdir(parent, { recursive: true });
+    await writeFileFs(target, content, "utf8");
+    return { path: parts.join("/"), bytes };
+  }
+
+  /** 查询/放弃会话的本地改动；放弃时同时清掉 worktree。 */
+  getConversationChanges(conversationId: string, projectId: number) {
+    return this.repo.getConversationChanges(projectId, conversationId);
+  }
+
+  async discardConversationChanges(conversationId: string, projectId: number): Promise<void> {
+    this.workspaces.delete(conversationId);
+    await this.repo.discardConversationChanges(projectId, conversationId);
   }
 
   /** 请求取消正在执行的轮次；轮次不在运行时忽略。 */
@@ -529,6 +569,7 @@ export class ConversationRunner {
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
+              writeFile: (path, content) => this.writeWorkspaceFile(workspace.path, path, content),
             },
             workspace.path,
             signal,
@@ -541,6 +582,14 @@ export class ConversationRunner {
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
+      try {
+        await this.repo.saveConversationChanges(workspace, turn.conversationId, signal);
+      } catch (error) {
+        console.warn("save conversation workspace changes failed", {
+          conversationId: turn.conversationId,
+          error: errorMessage(error),
+        });
+      }
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。
