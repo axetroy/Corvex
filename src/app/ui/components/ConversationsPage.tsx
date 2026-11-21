@@ -40,6 +40,28 @@ type ConversationDetailTab = "chat" | "records" | "trace" | "stats";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
+/** localStorage 中保存对话分组收起状态的键名。 */
+const collapsedGroupsKey = "corvex-ops-conversation-collapsed-groups";
+
+/** 读取已收起的仓库分组；localStorage 不可用时回退为空集合。 */
+function readCollapsedGroups(): Set<string> {
+  try {
+    const saved = window.localStorage.getItem(collapsedGroupsKey);
+    if (saved) return new Set(JSON.parse(saved) as string[]);
+  } catch (error) {
+    window.console.warn("read conversation group preference failed", error);
+  }
+  return new Set();
+}
+
+/** 保存收起的仓库分组；隐私模式等场景下写入失败只记录告警。 */
+function saveCollapsedGroups(collapsed: Set<string>): void {
+  try {
+    window.localStorage.setItem(collapsedGroupsKey, JSON.stringify([...collapsed]));
+  } catch (error) {
+    window.console.warn("save conversation group preference failed", error);
+  }
+}
 
 /** 消息处理状态对应的界面文案；完成状态不展示徽标。 */
 function messageStatus(message: ConversationMessage, copy: Copy): string {
@@ -137,6 +159,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -555,6 +578,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       ),
     };
   });
+  // 新仓库分组默认展开：只把用户明确收起的分组从展开列表里剔除，并按当前列表收敛旧记录。
+  const groupKeys = [...new Set(conversationItems.map((item) => item.group!))];
+  const expandedGroups = groupKeys.filter((group) => !collapsedGroups.has(group));
   const transcriptMessages = (currentConversation?.messages ?? []).map((message) =>
     message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId
       ? { ...message, content: streamedReply.text }
@@ -690,7 +716,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       <span className="conversation-group-name">{projectNames.get(String(group)) ?? String(group)}</span>
                     </span>
                   ),
-                  collapsible: false,
+                  collapsible: true,
+                  expandedKeys: expandedGroups,
+                  onExpand: (keys) => {
+                    const collapsed = new Set(groupKeys.filter((group) => !keys.includes(group)));
+                    setCollapsedGroups(collapsed);
+                    saveCollapsedGroups(collapsed);
+                  },
                 }}
               />
             ) : <Empty>{copy.noConversations}</Empty>}

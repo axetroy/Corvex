@@ -167,6 +167,25 @@
   overflow: hidden;
 }
 
+/* 分组可收起时，标题占满剩余宽度，让右侧箭头始终可见且不挤压仓库名。 */
+.conversation-sidebar-list .ant-conversations-group-title-collapsible .conversation-group-label {
+  flex: 1;
+}
+
+.conversation-sidebar-list .ant-conversations-group-collapse-trigger {
+  flex: 0 0 auto;
+  margin-inline-start: 8px;
+  color: var(--conversation-muted);
+  font-size: 10px;
+}
+
+/* 减少动态效果时跳过 Ant 的高度动画，直接隐藏已收起分组的内容。 */
+@media (prefers-reduced-motion: reduce) {
+  .conversation-sidebar-list .ant-conversations-group-title:has(.ant-conversations-group-collapse-trigger-close) + * {
+    display: none;
+  }
+}
+
 .conversation-group-name {
   min-width: 0;
   overflow: hidden;
