@@ -157,7 +157,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     return filter(treeData);
   }, [treeData, search]);
 
-  const renderedTree: TreeDataNode[] = filteredTree.map((node) => ({
+  const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => ({
     ...node,
     title: (
       <span className="conversation-file-title">
@@ -165,7 +165,9 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
         <span>{node.title}</span>
       </span>
     ),
+    ...(node.children ? { children: withIcons(node.children as FileTreeNode[]) } : {}),
   }));
+  const renderedTree: TreeDataNode[] = withIcons(filteredTree);
 
   const active = activeFile ? contents[activeFile] : undefined;
   const lineCount = active?.content ? active.content.split("\n").length : 0;
