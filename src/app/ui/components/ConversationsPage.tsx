@@ -21,7 +21,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
-import { BookIcon, RocketIcon, SearchIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -42,6 +42,8 @@ type ConversationDetailTab = "chat" | "records" | "trace" | "stats";
 const conversationPageSize = 50;
 /** localStorage 中保存对话分组收起状态的键名。 */
 const collapsedGroupsKey = "corvex-ops-conversation-collapsed-groups";
+/** localStorage 中保存整个对话列表收起状态的键名。 */
+const conversationListCollapsedKey = "corvex-ops-conversation-list-collapsed";
 
 /** 读取已收起的仓库分组；localStorage 不可用时回退为空集合。 */
 function readCollapsedGroups(): Set<string> {
@@ -60,6 +62,25 @@ function saveCollapsedGroups(collapsed: Set<string>): void {
     window.localStorage.setItem(collapsedGroupsKey, JSON.stringify([...collapsed]));
   } catch (error) {
     window.console.warn("save conversation group preference failed", error);
+  }
+}
+
+/** 读取整个对话列表的收起状态；未保存时默认展开。 */
+function readConversationListCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(conversationListCollapsedKey) === "true";
+  } catch (error) {
+    window.console.warn("read conversation list preference failed", error);
+    return false;
+  }
+}
+
+/** 保存整个对话列表的收起状态；写入失败只记录告警。 */
+function saveConversationListCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(conversationListCollapsedKey, String(collapsed));
+  } catch (error) {
+    window.console.warn("save conversation list preference failed", error);
   }
 }
 
@@ -160,6 +181,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
+  const [listCollapsed, setListCollapsed] = useState(readConversationListCollapsed);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -676,8 +698,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     <>
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
-      <section className="conversations-layout" aria-label={copy.conversationsDescription}>
-        <aside className="conversation-sidebar" aria-label={copy.conversationList}>
+      <section className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}`} aria-label={copy.conversationsDescription}>
+        <aside className={`conversation-sidebar${listCollapsed ? " conversation-sidebar-collapsed" : ""}`} aria-label={copy.conversationList}>
           <div className="conversation-sidebar-heading">
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
               <span aria-hidden="true">+</span>
@@ -695,8 +717,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             >
               {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
             </Button>
+            <Button
+              className="conversation-list-toggle"
+              type="text"
+              size="small"
+              aria-label={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
+              aria-expanded={!listCollapsed}
+              title={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
+              onClick={() => {
+                const next = !listCollapsed;
+                setListCollapsed(next);
+                saveConversationListCollapsed(next);
+              }}
+            >
+              {listCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
+            </Button>
           </div>
-          <div className="conversation-sidebar-list">
+          {listCollapsed ? null : <div className="conversation-sidebar-list">
             {conversationItems.length ? (
               <Conversations
                 items={conversationItems}
@@ -731,7 +768,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 {copy.loadMore}
               </Button>
             ) : null}
-          </div>
+          </div>}
         </aside>
         <section className="conversation-workspace">
           <Tabs

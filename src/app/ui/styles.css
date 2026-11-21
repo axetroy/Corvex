@@ -200,13 +200,11 @@ a:hover {
   padding: 10px 0;
 }
 
-.sidebar-collapsed .sidebar-account-text {
-  display: none;
-}
-
+/* 导航收起时，账号区只保留头像；用户名、管理员入口与登出按钮都隐藏。 */
+.sidebar-collapsed .sidebar-account-text,
+.sidebar-collapsed .sidebar-admin,
 .sidebar-collapsed .sidebar-logout {
-  width: 24px;
-  height: 24px;
+  display: none;
 }
 
 .sidebar-account-name,
