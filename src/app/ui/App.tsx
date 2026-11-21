@@ -302,7 +302,7 @@ export function App() {
               </span>
               {account.isAdmin ? (
                 <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
-                  [admin]
+                  {copy.adminTag}
                 </a>
               ) : null}
               <button
