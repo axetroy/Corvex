@@ -8,6 +8,7 @@ interface Particle {
   vy: number;
   alpha: number;
   hue: number;
+  phase: number;
 }
 
 /** 首页背景粒子层：缓慢漂浮的发光粒子与邻近连线，纯装饰且不影响交互。 */
@@ -21,11 +22,11 @@ export function LandingParticles() {
     if (!context) return;
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // 即使系统开启了减少动画，也保留缓慢的粒子漂浮，只降低速度与闪烁幅度。
+    const speed = reduced ? 0.35 : 1;
     let particles: Particle[] = [];
     let width = 0;
     let height = 0;
-    let frame = 0;
-    let running = true;
 
     const resize = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -45,16 +46,17 @@ export function LandingParticles() {
         vy: -0.18 - Math.random() * 0.5,
         alpha: 0.35 + Math.random() * 0.55,
         hue: Math.random() > 0.45 ? 212 : 268,
+        phase: Math.random() * Math.PI * 2,
       }));
-      // resize 会清空画布，立即补画一帧，静态模式下也不会出现空白。
+      // resize 会清空画布，立即补画一帧，避免首屏出现空白。
       draw();
     };
 
-    const draw = () => {
+    const draw = (now = performance.now()) => {
       context.clearRect(0, 0, width, height);
       for (const particle of particles) {
-        particle.x += particle.vx;
-        particle.y += particle.vy;
+        particle.x += (particle.vx + Math.sin(now / 2400 + particle.phase) * 0.18) * speed;
+        particle.y += particle.vy * speed;
         if (particle.y < -10) {
           particle.y = height + 10;
           particle.x = Math.random() * width;
@@ -83,9 +85,10 @@ export function LandingParticles() {
       }
 
       for (const particle of particles) {
+        const pulse = 0.78 + 0.22 * Math.sin(now / 900 + particle.phase);
         context.beginPath();
         context.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-        context.fillStyle = `hsla(${particle.hue}, 100%, 76%, ${particle.alpha})`;
+        context.fillStyle = `hsla(${particle.hue}, 100%, 76%, ${particle.alpha * pulse})`;
         context.shadowColor = `hsla(${particle.hue}, 100%, 70%, 1)`;
         context.shadowBlur = 16;
         context.fill();
@@ -93,32 +96,18 @@ export function LandingParticles() {
       context.shadowBlur = 0;
     };
 
-    const tick = () => {
-      if (!running || document.hidden) return;
+    // 用定时器驱动而不是 requestAnimationFrame：未获得焦点的标签页里 rAF 会被浏览器
+    // 严重节流，看起来就像粒子静止不动。
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
       draw();
-      frame = window.requestAnimationFrame(tick);
-    };
-
-    const onVisibility = () => {
-      if (document.hidden) {
-        running = false;
-        window.cancelAnimationFrame(frame);
-      } else if (!reduced) {
-        running = true;
-        tick();
-      }
-    };
+    }, 40);
 
     resize();
-    if (reduced) draw();
-    else tick();
     window.addEventListener("resize", resize);
-    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      running = false;
-      window.cancelAnimationFrame(frame);
+      window.clearInterval(timer);
       window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
