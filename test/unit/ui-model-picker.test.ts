@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeModelSelection,
   findModelSelection,
+  formatContextWindowK,
   modelOptionValue,
   modelSelections,
   modelSelectGroups,
@@ -21,12 +22,13 @@ function model(id: string, name: string, active = false): ProviderModel {
   };
 }
 
-function provider(id: string, name: string, models: ProviderModel[]): ModelProviderDetails {
+function provider(id: string, name: string, models: ProviderModel[], ownerUserId = ""): ModelProviderDetails {
   return {
     id,
     name,
     baseUrl: "https://example.com/v1",
     apiKey: "••••••",
+    ownerUserId,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     models,
@@ -36,7 +38,7 @@ function provider(id: string, name: string, models: ProviderModel[]): ModelProvi
 const catalog: ModelProviderDetails[] = [
   provider("openai", "OpenAI", [model("gpt-4.1", "gpt-4.1", true), model("gpt-4o", "gpt-4o")]),
   provider("empty", "Empty", []),
-  provider("local", "Local", [model("qwen3", "qwen3")]),
+  provider("local", "Local", [model("qwen3", "qwen3")], "user-1"),
 ];
 
 describe("operations UI model picker", () => {
@@ -68,12 +70,24 @@ describe("operations UI model picker", () => {
     expect(modelSelectGroups(catalog)).toEqual([
       {
         label: "OpenAI",
+        system: true,
         options: [
-          { label: "gpt-4.1", value: "openai/gpt-4.1" },
-          { label: "gpt-4o", value: "openai/gpt-4o" },
+          { label: "gpt-4.1", value: "openai/gpt-4.1", context: "128K" },
+          { label: "gpt-4o", value: "openai/gpt-4o", context: "128K" },
         ],
       },
-      { label: "Local", options: [{ label: "qwen3", value: "local/qwen3" }] },
+      {
+        label: "Local",
+        system: false,
+        options: [{ label: "qwen3", value: "local/qwen3", context: "128K" }],
+      },
     ]);
+  });
+
+  it("formats context windows in K units", () => {
+    expect(formatContextWindowK(131_072)).toBe("128K");
+    expect(formatContextWindowK(200_000)).toBe("195.3K");
+    expect(formatContextWindowK(512)).toBe("512");
+    expect(formatContextWindowK(0)).toBe("-");
   });
 });

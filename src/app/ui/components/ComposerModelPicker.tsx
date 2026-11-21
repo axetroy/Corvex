@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Select, Tooltip, Typography } from "antd";
+import type { ReactNode } from "react";
+import { Select, Tag, Tooltip, Typography } from "antd";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -7,6 +8,7 @@ import type { ModelProviderDetails } from "../types.js";
 import {
   activeModelSelection,
   findModelSelection,
+  formatContextWindowK,
   modelOptionValue,
   modelSelectGroups,
 } from "../modelPicker.js";
@@ -53,8 +55,36 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
   const groups = useMemo(() => modelSelectGroups(providers), [providers]);
   const active = useMemo(() => activeModelSelection(providers), [providers]);
   const activeValue = active ? modelOptionValue(active.provider.id, active.model.id) : undefined;
-  const activeLabel = active ? `${active.provider.name} / ${active.model.name}` : copy.composerModelEmpty;
   const hasModels = groups.length > 0;
+
+  // 分组标题标出系统级供应商；选项同时展示上下文窗口（K）。
+  const selectGroups: Array<{ label: ReactNode; options: Array<{ label: ReactNode; value: string }> }> = groups.map((group) => ({
+    label: (
+      <span className="composer-model-group">
+        <span>{group.label}</span>
+        {group.system ? <Tag className="composer-model-system">{copy.systemProviderBadge}</Tag> : null}
+      </span>
+    ),
+    options: group.options.map((option) => ({
+      value: option.value,
+      label: (
+        <span className="composer-model-option">
+          <span className="composer-model-option-name">{option.label}</span>
+          <span className="composer-model-option-context">{option.context}</span>
+        </span>
+      ),
+    })),
+  }));
+
+  const activeLabel: ReactNode = active ? (
+    <span className="conversation-composer-model-value">
+      {active.provider.name} / {active.model.name}
+      <span className="composer-model-option-context">{formatContextWindowK(active.model.contextWindow)}</span>
+      {active.provider.ownerUserId === "" ? (
+        <Tag className="composer-model-system">{copy.systemProviderBadge}</Tag>
+      ) : null}
+    </span>
+  ) : copy.composerModelEmpty;
 
   async function switchModel(value: string) {
     const target = findModelSelection(providers, value);
@@ -95,10 +125,10 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
         popupMatchSelectWidth={false}
         value={hasModels ? activeValue : undefined}
         placeholder={copy.composerModelEmpty}
-        options={groups}
+        options={selectGroups}
         loading={loading || switching}
         disabled={disabled || switching || !hasModels}
-        labelRender={() => <span className="conversation-composer-model-value">{activeLabel}</span>}
+        labelRender={() => activeLabel}
         onChange={(value) => void switchModel(value)}
       />
       {error ? (

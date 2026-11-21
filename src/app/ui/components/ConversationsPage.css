@@ -1264,6 +1264,46 @@
   font-size: 12px;
 }
 
+/* 模型选择器：选项展示上下文窗口，分组标出系统级供应商。 */
+.composer-model-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-model-system.ant-tag {
+  margin-inline-end: 0;
+  padding-inline: 4px;
+  border-color: #91caff;
+  color: #0958d9;
+  background: #e6f4ff;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.composer-model-option {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer-model-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model-option-context {
+  flex: 0 0 auto;
+  margin-inline-start: 6px;
+  color: var(--conversation-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
 @media (max-width: 640px) {
   .conversations-layout .conversation-prompts > .ant-prompts-list {
     grid-template-columns: minmax(0, 1fr);

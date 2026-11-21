@@ -11,6 +11,14 @@ export interface ModelSelection {
   model: ProviderModel;
 }
 
+/** 把上下文窗口格式化为 K 单位（1K = 1024 tokens）。 */
+export function formatContextWindowK(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "-";
+  if (tokens < 1024) return `${tokens}`;
+  const k = tokens / 1024;
+  return `${Number.isInteger(k) ? k : Math.round(k * 10) / 10}K`;
+}
+
 /** 摊平供应商目录；全局只有一个模型处于使用中。 */
 export function modelSelections(providers: readonly ModelProviderDetails[]): ModelSelection[] {
   return providers.flatMap((provider) => provider.models.map((model) => ({ provider, model })));
@@ -34,7 +42,9 @@ export function findModelSelection(
 /** 下拉框分组：每个供应商一组，没有模型的供应商不展示。 */
 export interface ModelSelectGroup {
   label: string;
-  options: Array<{ label: string; value: string }>;
+  /** 系统级供应商：共享且对所有用户可读。 */
+  system: boolean;
+  options: Array<{ label: string; value: string; context: string }>;
 }
 
 /** 把供应商目录转换成下拉框分组，供应商顺序即服务端返回顺序。 */
@@ -43,9 +53,11 @@ export function modelSelectGroups(providers: readonly ModelProviderDetails[]): M
     .filter((provider) => provider.models.length > 0)
     .map((provider) => ({
       label: provider.name,
+      system: provider.ownerUserId === "",
       options: provider.models.map((model) => ({
         label: model.name,
         value: modelOptionValue(provider.id, model.id),
+        context: formatContextWindowK(model.contextWindow),
       })),
     }));
 }
