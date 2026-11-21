@@ -49,8 +49,8 @@
     padding: 0;
   }
 
-  & .conversation-new-button,
-  & .conversation-archived-toggle {
+  & .conversation-sidebar-heading .conversation-new-button.ant-btn,
+  & .conversation-sidebar-heading .conversation-archived-toggle.ant-btn {
     display: none;
   }
 }

@@ -117,26 +117,6 @@ export function SidebarExpandIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 展开对话列表图标：双右箭头，收起状态下用于提示点击后会展开。 */
-export function ListExpandIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg {...iconProps(props)}>
-      <path d="M4.5 3.8 8 8l-3.5 4.2" />
-      <path d="M9 3.8 12.5 8 9 12.2" />
-    </svg>
-  );
-}
-
-/** 收起对话列表图标：双左箭头，展开状态下用于提示点击后会收起。 */
-export function ListCollapseIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg {...iconProps(props)}>
-      <path d="M11.5 3.8 8 8l3.5 4.2" />
-      <path d="M7 3.8 3.5 8 7 12.2" />
-    </svg>
-  );
-}
-
 /** 语言图标：地球，用于侧边栏收起时的语言切换入口。 */
 export function LanguageIcon(props: SVGProps<SVGSVGElement>) {
   return (
