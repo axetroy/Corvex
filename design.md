@@ -8,7 +8,7 @@
 Corvex 是一个可自行部署的 GitLab 合并请求（MR）审查与修复建议助手。用户在
 GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`fix`、
 `status` 或 `cancel` 命令。运维控制台还提供绑定到 GitLab 项目与分支固定 SHA 的
-持久可读可写对话。系统会验证请求身份和权限，将请求持久化，针对确切的目标版本进行分析，
+持久对话。系统会验证请求身份和权限，将请求持久化，针对确切的目标版本进行分析，
 并按对应工作流校验或保存结果。
 
 ## 目标与非目标
@@ -141,12 +141,12 @@ SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助�
 - 轨迹是任务级的只读可观测数据，不构成授权依据；每轮对话的轨迹与记录随任务终态固定
   下来，不因后续轮次或对话状态变化而改变。
 - 对话的仓库能力由显式模式决定，而不是散落的硬编码假设：`gitlab` 模式可发布到
-  GitLab，但不写入 worktree。轨迹内容在 `src/jobs/store.ts`
-  统一脱敏并限长，不得绕过该路径。
-- 一个对话常驻一个只读 worktree 并跨轮次复用（目录名由对话 ID 推导，位于
+  GitLab，文件改动通过受限的 fs-write 工具写入 worktree 并保存到会话 ref，永不 commit/push。
+  轨迹内容在 `src/events/store.ts` 统一脱敏并限长，不得绕过该路径。
+- 一个对话常驻一个 worktree 并跨轮次复用（目录名由对话 ID 推导，位于
   `workspaces/<projectId>/conversation-<conversationId>`）。同一对话的轮次串行执行，
-  因此复用在并发上安全；复用在授权上也安全，因为当前模式不写入 worktree 且每次执行仍重新校验分支
-  快照。命中同一快照时只做一次 `rev-parse` 校验；快照前进时在同一目录内
+  因此复用在并发上安全；文件改动仅通过受限的 fs-write 工具写入并保存到项目镜像的会话 ref，
+  每次执行仍重新校验分支快照。命中同一快照时只做一次 `rev-parse` 校验；快照前进时在同一目录内
   `checkout --detach`，不重建目录。常驻工作区按空闲 TTL 与数量上限淘汰，Server
   关闭时统一删除，`storage cleanup` 也会跳过仍有在途轮次的对话。
 
@@ -223,7 +223,7 @@ GitLab 令牌。示例配置和日志中不得包含密钥。
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
 Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
 只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
-对话统一为可读可写：不修改 worktree，但可在用户明确要求时发布 GitLab 评论。
+对话可以读取仓库并在用户明确要求时发布 GitLab 评论；也能通过 fs-write 工具在固定快照的 worktree 中增删改文件，改动持久化到项目镜像里的会话 ref，永不 commit/push。
 React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、
 `react-icons`（Simple Icons 文件类型图标）、`highlight.js`（代码高亮，含 github 主题）与
 `react-resizable-panels`（会话列表/工作台/文件面板三栏的尺寸与折叠）

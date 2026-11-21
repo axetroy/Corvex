@@ -1,4 +1,4 @@
-import { copyFile as copyFileFs, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
+import { copyFile as copyFileFs, lstat, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
@@ -33,9 +33,9 @@ interface RunningTurn {
  * 分支快照，过期即以 `stale` 结束。后续如需隔离执行环境，可把这里的模型调用
  * 替换为容器调用，其余流程不变。
  *
- * 每个对话常驻一个只读 worktree 并跨轮次复用：同一快照的追问只做一次
- * `rev-parse` 校验，不再重复 checkout 整棵工作树再删除。对话从不写入 worktree，
- * 且同一对话的轮次串行执行，因此复用在授权与并发上都安全。
+ * 每个对话常驻一个 worktree 并跨轮次复用：同一快照的追问只做一次
+ * `rev-parse` 校验，不再重复 checkout 整棵工作树再删除。文件改动仅通过受限的
+ * fs-write 工具写入并持久化到会话 ref，且同一对话的轮次串行执行，因此复用安全。
  */
 export class ConversationRunner {
   private readonly repo: GitManager;
@@ -183,15 +183,24 @@ export class ConversationRunner {
     const resolvePair = async (from: string, to: string, overwrite: boolean) => {
       const source = await resolveWorktreePath(workspacePath, from);
       const destination = await resolveWorktreePath(workspacePath, to);
-      if (!overwrite) {
-        const exists = await readFileFs(destination.target, "utf8").then(() => true).catch(() => false);
-        if (exists) throw new Error(`destination already exists: ${destination.path}`);
+      // 用 lstat 判存在而不读文件内容：大文件/二进制不会浪费内存，
+      // 也不会把权限错误误判为「不存在」。
+      let existing;
+      try {
+        existing = await lstat(destination.target);
+      } catch {
+        existing = undefined;
       }
-      return { source, destination };
+      if (existing && !overwrite) throw new Error(`destination already exists: ${destination.path}`);
+      // 这些工具只操作文件；不允许把目标指向目录，避免覆盖时递归删掉整棵子树。
+      if (existing?.isDirectory()) throw new Error(`destination is a directory: ${destination.path}`);
+      return { source, destination, existing };
     };
     const moveFile = async (from: string, to: string, overwrite: boolean) => {
-      const { source, destination } = await resolvePair(from, to, overwrite);
+      const { source, destination, existing } = await resolvePair(from, to, overwrite);
       await mkdir(dirname(destination.target), { recursive: true });
+      // Windows 上 rename 到已存在的文件会失败，覆盖时先显式删除目标。
+      if (existing) await rm(destination.target, { recursive: true, force: true });
       await rename(source.target, destination.target);
       return { path: destination.path, bytes: 0 };
     };

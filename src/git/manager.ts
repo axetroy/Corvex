@@ -403,7 +403,7 @@ export class GitManager {
   }
 
   /**
-   * 获取一个对话的常驻只读 worktree：同一个对话跨轮次复用同一目录，避免每轮
+   * 获取一个对话的常驻 worktree：同一个对话跨轮次复用同一目录，避免每轮
    * 重新 checkout 再整棵删除。固定快照不可变，因此 HEAD 命中时只做一次
    * `rev-parse` 校验；快照变化时在同一目录内 `checkout --detach`，比重建 worktree 便宜。
    * 传入的 `signal` 只约束本次获取，不会在轮次取消时删掉可复用的目录。

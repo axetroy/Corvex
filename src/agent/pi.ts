@@ -155,8 +155,9 @@ export function getAgentToolAccess(
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
     gitHistory: taskType === "chat" || taskType === "conversation",
-    // 对话统一可读可写（GitLab 写入）；仓库写入当前仍由模式能力决定且保持关闭，
-    // 因为对话绑定分支而非 MR，写入工具所需的 MR 上下文尚不存在。
+    // 这里的 gitWrite 指 git commit/push 扩展，需要 MR 的源分支/远端上下文；
+    // 对话绑定的是分支而非 MR，所以不走这条路径，文件改动改由 fs-write 工具集
+    // 写入 worktree 并持久化到会话 ref，永远不会 commit/push。
     gitWrite: taskType === "chat" || (taskType === "conversation" && conversationCapabilities(conversationMode).repositoryWrite),
   };
 }
