@@ -4,6 +4,7 @@ import type { Conversation, ConversationStreamEvent } from "../../../events/mode
 import { requireUser } from "../../auth/context.js";
 import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
+import { createConversationFileSource } from "../../files/factory.js";
 import type { OpsContext } from "../context.js";
 import {
   idParam,
@@ -179,6 +180,69 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       ...conversation,
       systemPrompt: getConversationSystemPrompt(ctx.config.agent.responseLanguage, conversation.mode),
     });
+  });
+
+  // 文件浏览走适配器：目前用 GitLab API 读取，未来可替换为磁盘读取，
+  // 路由与界面都不需要改动。所有读取都绑定对话项目和最近一轮固定 SHA。
+  const fileSource = (request: FastifyRequest, conversation: Conversation) => {
+    const sha = ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "";
+    if (!sha) return undefined;
+    return createConversationFileSource({
+      kind: "gitlab",
+      gitlab: ctx.gitlabForRequest(request),
+      projectId: conversation.projectId,
+      sha,
+    });
+  };
+
+  app.get("/api/ops/conversations/:id/files/tree", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const source = fileSource(request, conversation);
+    if (!source) {
+      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
+      return;
+    }
+    try {
+      sendJson(reply, 200, await source.listDirectory(queryParam(request.query, "path") ?? ""));
+    } catch (error) {
+      sendGitLabReadError(reply, error);
+    }
+  });
+
+  app.get("/api/ops/conversations/:id/files/content", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const source = fileSource(request, conversation);
+    if (!source) {
+      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
+      return;
+    }
+    const path = queryParam(request.query, "path") ?? "";
+    const startLine = optionalInteger(queryParam(request.query, "startLine"), 1, 1_000_000);
+    const maxLines = optionalInteger(queryParam(request.query, "maxLines"), 1, 2_000);
+    if (!path || startLine === false || maxLines === false) {
+      sendJson(reply, 400, { error: "invalid file path or range" });
+      return;
+    }
+    try {
+      sendJson(reply, 200, await source.readFile(path, {
+        ...(startLine === undefined ? {} : { startLine }),
+        ...(maxLines === undefined ? {} : { maxLines }),
+      }));
+    } catch (error) {
+      sendGitLabReadError(reply, error);
+    }
   });
 
   // 整段对话轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，

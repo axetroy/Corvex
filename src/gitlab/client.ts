@@ -57,6 +57,17 @@ export function gitlabEndpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+/** 统一仓库相对路径：去掉首尾斜杠与重复斜杠，拒绝绝对路径和 `..`。 */
+export function normalizeRepoPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+  if (!normalized) return "";
+  const parts = normalized.split("/");
+  if (parts.some((part) => !part || part === "." || part === ".." || part.includes("\0"))) {
+    throw new Error("invalid repository-relative path");
+  }
+  return parts.join("/");
+}
+
 /** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
 export interface GitLabBranchCommit {
   id: string;
@@ -144,6 +155,26 @@ export interface MergeRequestChanges {
 
 export type GitLabListState = "opened" | "closed" | "all";
 
+/** 仓库树条目；GitLab 的 tree 类型映射到统一的 directory/file/other。 */
+export interface RepositoryTreeEntry {
+  name: string;
+  path: string;
+  type: "directory" | "file" | "symlink" | "other";
+}
+
+export interface RepositoryTreeResult {
+  entries: RepositoryTreeEntry[];
+  truncated: boolean;
+}
+
+/** 文件内容原始响应；解码与截断交给上层适配器。 */
+export interface RepositoryFile {
+  path: string;
+  size: number;
+  encoding: string;
+  content: string;
+}
+
 export interface MergeRequestMetadataUpdate {
   title?: string;
   description?: string;
@@ -207,6 +238,7 @@ const MAX_MR_COMMIT_TITLE_CHARACTERS = 300;
 const MAX_LIST_PER_PAGE = 20;
 const MAX_MR_CHANGES = 50;
 const MAX_MR_CHANGE_PATCH_BYTES = 256 << 10;
+const MAX_REPOSITORY_TREE_ENTRIES = 200;
 /** MR 标题和描述工具的输入上限。 */
 const MAX_MR_TITLE_CHARACTERS = 255;
 const MAX_MR_DESCRIPTION_CHARACTERS = 100_000;
@@ -487,6 +519,72 @@ export class GitLabClient {
       bytes += patchBytes;
     }
     return { changes, truncated };
+  }
+
+  /**
+   * 读取某个固定提交下的一层仓库树。按条目数截断，避免大目录把上下文撑爆；
+   * 调用方负责继续翻页或提示用户缩小范围。
+   */
+  async listRepositoryTree(
+    projectId: number,
+    options: { path?: string; ref?: string; page?: number; perPage?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<RepositoryTreeResult> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const page = options.page ?? 1;
+    const perPage = options.perPage ?? MAX_REPOSITORY_TREE_ENTRIES;
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("repository tree page must be between 1 and 10000");
+    }
+    if (!Number.isSafeInteger(perPage) || perPage < 1 || perPage > MAX_REPOSITORY_TREE_ENTRIES) {
+      throw new Error(`repository tree page size must be between 1 and ${MAX_REPOSITORY_TREE_ENTRIES}`);
+    }
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
+    const ref = (options.ref ?? "").trim();
+    if (ref) query.set("ref", ref);
+    const path = normalizeRepoPath(options.path ?? "");
+    if (path) query.set("path", path);
+    const result = await this.getJson(`/projects/${projectId}/repository/tree?${query}`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab repository tree is not an array");
+    const entries: RepositoryTreeEntry[] = result.map((value) => {
+      if (!isRecord(value) || typeof value.name !== "string" || typeof value.path !== "string" || typeof value.type !== "string") {
+        throw new Error("GitLab returned an incomplete repository tree entry");
+      }
+      const type = value.type === "tree" ? "directory" : value.type === "blob" ? "file" : value.type === "commit" ? "other" : "other";
+      return { name: value.name, path: normalizeRepoPath(value.path), type };
+    });
+    return { entries, truncated: entries.length >= perPage };
+  }
+
+  /** 读取固定提交下的文件内容（原始编码）；解码、按行截断由适配器处理。 */
+  async getRepositoryFile(
+    projectId: number,
+    path: string,
+    ref: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryFile> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const normalized = normalizeRepoPath(path);
+    if (!normalized) throw new Error("repository file path is required");
+    if (!ref.trim()) throw new Error("repository file ref is required");
+    const query = new URLSearchParams({ ref });
+    const result = await this.getJson(
+      `/projects/${projectId}/repository/files/${encodeURIComponent(normalized)}?${query}`,
+      signal,
+    );
+    if (
+      !isRecord(result) ||
+      typeof result.content !== "string" ||
+      (typeof result.size !== "number" && typeof result.size !== "undefined")
+    ) {
+      throw new Error("GitLab returned an incomplete repository file");
+    }
+    return {
+      path: normalized,
+      size: typeof result.size === "number" ? result.size : 0,
+      encoding: typeof result.encoding === "string" ? result.encoding : "base64",
+      content: result.content,
+    };
   }
 
   async getProject(projectId: number, signal?: AbortSignal): Promise<Project> {

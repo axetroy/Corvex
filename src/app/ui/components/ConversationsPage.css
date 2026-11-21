@@ -49,6 +49,29 @@
   }
 }
 
+/* 文件面板在工作区右侧：展开时挤压工作台空间。 */
+.conversations-layout.conversation-files-open {
+  grid-template-columns: 288px minmax(0, 1fr) 340px;
+}
+
+.conversations-layout.conversations-list-collapsed.conversation-files-open {
+  grid-template-columns: 0 minmax(0, 1fr) 340px;
+}
+
+.conversation-file-toggle.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding-inline: 6px;
+  color: var(--conversation-muted);
+
+  &.is-active {
+    color: var(--conversation-brand);
+    background: var(--conversation-brand-soft);
+  }
+}
+
 .conversation-list-toggle.ant-btn {
   display: inline-flex;
   align-items: center;
@@ -1315,6 +1338,14 @@
     grid-template-columns: 224px minmax(0, 1fr);
   }
 
+  .conversations-layout.conversation-files-open {
+    grid-template-columns: 224px minmax(0, 1fr) 300px;
+  }
+
+  .conversations-layout.conversations-list-collapsed.conversation-files-open {
+    grid-template-columns: 0 minmax(0, 1fr) 300px;
+  }
+
   .conversation-workspace-project.ant-typography {
     max-width: 140px;
   }
@@ -1331,6 +1362,11 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     height: 100%;
+  }
+
+  .conversations-layout.conversation-files-open {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) minmax(180px, 40%);
   }
 
   .conversation-sidebar {
@@ -1412,4 +1448,189 @@
   .conversation-trace-pane .trace-event-list {
     max-height: 260px;
   }
+}
+
+/* 会话文件面板：与工作区同级的可收起 Tab 容器。 */
+.conversation-file-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--conversation-border);
+  background: #fff;
+}
+
+.conversation-file-panel-tabs,
+.conversation-file-panel-tabs > .ant-tabs-content-holder,
+.conversation-file-panel-tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.conversation-file-panel-tabs .ant-tabs-tabpane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.conversation-file-panel-tabs > .ant-tabs-nav {
+  flex: 0 0 auto;
+  margin: 0;
+  padding-inline: 10px;
+}
+
+.conversation-file-panel-close.ant-btn {
+  color: var(--conversation-muted);
+}
+
+.conversation-file-explorer {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.conversation-file-toolbar {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--conversation-border);
+}
+
+.conversation-file-error {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.conversation-file-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 42%) minmax(0, 1fr);
+}
+
+.conversation-file-tree,
+.conversation-file-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.conversation-file-tree {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--conversation-border);
+  background: #fafbfc;
+}
+
+.conversation-file-tree .ant-tree {
+  background: transparent;
+  font-size: 12px;
+}
+
+.conversation-file-tree .ant-tree-node-content-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conversation-file-editor {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.conversation-file-tabs {
+  display: flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: stretch;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--conversation-border);
+  background: #f6f8fa;
+}
+
+.conversation-file-tab {
+  display: inline-flex;
+  max-width: 180px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--conversation-border);
+  background: transparent;
+  color: var(--conversation-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.conversation-file-tab.is-active {
+  background: #fff;
+  color: var(--conversation-ink);
+  box-shadow: inset 0 2px 0 var(--conversation-brand);
+}
+
+.conversation-file-tab > span:not(.conversation-file-tab-close) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-file-tab-close {
+  flex: 0 0 auto;
+  padding-inline: 2px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.conversation-file-breadcrumb {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--conversation-border);
+  color: var(--conversation-muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.conversation-file-content {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.conversation-file-content pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.conversation-file-line {
+  display: flex;
+  min-height: 18px;
+}
+
+.conversation-file-line:hover {
+  background: #f5f8fc;
+}
+
+.conversation-file-line-no {
+  width: 42px;
+  flex: 0 0 42px;
+  padding-inline-end: 8px;
+  color: #9aa6b2;
+  text-align: right;
+  user-select: none;
+}
+
+.conversation-file-line-text {
+  white-space: pre;
+  padding-inline-end: 12px;
+}
+
+.conversation-file-empty {
+  display: block;
+  padding: 14px 10px;
+  font-size: 11px;
 }

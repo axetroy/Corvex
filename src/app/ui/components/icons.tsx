@@ -117,6 +117,36 @@ export function SidebarExpandIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 文件面板图标：两页叠放的文档，作为侧栏文件浏览入口。 */
+export function FilesIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M5.5 2.5h3.6l2.4 2.5v7.5H5.5z" />
+      <path d="M9.1 2.5v2.5h2.4" />
+      <path d="M7.5 5.5h4.8l2.2 2.3v5.7H7.5z" />
+    </svg>
+  );
+}
+
+/** 目录图标：文件夹轮廓。 */
+export function FolderIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M2.2 4.6h4l1.3 1.6h6.3v7.2H2.2z" />
+    </svg>
+  );
+}
+
+/** 文件图标：单页文档。 */
+export function FileIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M4 2.5h5l3 3v8H4z" />
+      <path d="M9 2.5v3h3" />
+    </svg>
+  );
+}
+
 /** 语言图标：地球，用于侧边栏收起时的语言切换入口。 */
 export function LanguageIcon(props: SVGProps<SVGSVGElement>) {
   return (

@@ -21,7 +21,8 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
-import { BookIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
+import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -44,6 +45,8 @@ const conversationPageSize = 50;
 const collapsedGroupsKey = "corvex-ops-conversation-collapsed-groups";
 /** localStorage 中保存整个对话列表收起状态的键名。 */
 const conversationListCollapsedKey = "corvex-ops-conversation-list-collapsed";
+/** localStorage 中保存文件面板展开状态的键名。 */
+const filePanelOpenKey = "corvex-ops-conversation-file-panel-open";
 
 /** 读取已收起的仓库分组；localStorage 不可用时回退为空集合。 */
 function readCollapsedGroups(): Set<string> {
@@ -81,6 +84,25 @@ function saveConversationListCollapsed(collapsed: boolean): void {
     window.localStorage.setItem(conversationListCollapsedKey, String(collapsed));
   } catch (error) {
     window.console.warn("save conversation list preference failed", error);
+  }
+}
+
+/** 读取文件面板展开状态；未保存时默认收起。 */
+function readFilePanelOpen(): boolean {
+  try {
+    return window.localStorage.getItem(filePanelOpenKey) === "true";
+  } catch (error) {
+    window.console.warn("read file panel preference failed", error);
+    return false;
+  }
+}
+
+/** 保存文件面板展开状态；写入失败只记录告警。 */
+function saveFilePanelOpen(open: boolean): void {
+  try {
+    window.localStorage.setItem(filePanelOpenKey, String(open));
+  } catch (error) {
+    window.console.warn("save file panel preference failed", error);
   }
 }
 
@@ -182,6 +204,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [showArchived, setShowArchived] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
   const [listCollapsed, setListCollapsed] = useState(readConversationListCollapsed);
+  const [filePanelOpen, setFilePanelOpen] = useState(readFilePanelOpen);
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -698,7 +721,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     <>
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
-      <section className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}`} aria-label={copy.conversationsDescription}>
+      <section className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}${filePanelOpen ? " conversation-files-open" : ""}`} aria-label={copy.conversationsDescription}>
         <aside className="conversation-sidebar" aria-label={copy.conversationList}>
           <div className="conversation-sidebar-heading">
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
@@ -807,6 +830,21 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                   ) : (
                     <Typography.Text strong className="conversation-workspace-project">{copy.conversationsTitle}</Typography.Text>
                   )}
+                  <Button
+                    className={`conversation-file-toggle${filePanelOpen ? " is-active" : ""}`}
+                    type="text"
+                    size="small"
+                    aria-label={filePanelOpen ? copy.filePanelClose : copy.filePanelOpen}
+                    aria-pressed={filePanelOpen}
+                    title={filePanelOpen ? copy.filePanelClose : copy.filePanelOpen}
+                    onClick={() => {
+                      const next = !filePanelOpen;
+                      setFilePanelOpen(next);
+                      saveFilePanelOpen(next);
+                    }}
+                  >
+                    <FilesIcon />
+                  </Button>
                 </div>
               ),
             }}
@@ -923,6 +961,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             ]}
           />
         </section>
+        {filePanelOpen ? (
+          <ConversationFilePanel
+            conversationId={selectedConversationId}
+            copy={copy}
+            onClose={() => {
+              setFilePanelOpen(false);
+              saveFilePanelOpen(false);
+            }}
+          />
+        ) : null}
       </section>
       <RepositoryInfoDrawer
         open={repoInfoOpen}

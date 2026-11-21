@@ -750,3 +750,54 @@ describe("GitLab discovery and MR changes", () => {
     await expect(client.getMergeRequestChanges(0, 3)).rejects.toThrow("must be positive");
   });
 });
+
+describe("GitLab repository tree and file reads", () => {
+  it("reads one bounded tree level at a pinned ref", async () => {
+    let url = "";
+    const server = createServer((request, response) => {
+      url = request.url ?? "";
+      response.end(JSON.stringify([
+        { name: "src", path: "src", type: "tree" },
+        { name: "README.md", path: "README.md", type: "blob" },
+      ]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const result = await client.listRepositoryTree(7, { path: "", ref: "a".repeat(40), perPage: 20 });
+      expect(url).toContain(`/api/v4/projects/7/repository/tree?`);
+      expect(url).toContain(`ref=${"a".repeat(40)}`);
+      expect(result.entries).toEqual([
+        { name: "src", path: "src", type: "directory" },
+        { name: "README.md", path: "README.md", type: "file" },
+      ]);
+      expect(result.truncated).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("reads a file at a pinned ref with an encoded path", async () => {
+    let url = "";
+    const server = createServer((request, response) => {
+      url = request.url ?? "";
+      response.end(JSON.stringify({ path: "src/a.ts", size: 6, encoding: "base64", content: "aGVsbG8=" }));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const file = await client.getRepositoryFile(7, "src/a.ts", "b".repeat(40));
+      expect(url).toContain("/api/v4/projects/7/repository/files/src%2Fa.ts?");
+      expect(url).toContain(`ref=${"b".repeat(40)}`);
+      expect(file).toMatchObject({ path: "src/a.ts", encoding: "base64", content: "aGVsbG8=" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("rejects unsafe repository paths", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    await expect(client.getRepositoryFile(7, "../secret", "a".repeat(40))).rejects.toThrow("invalid repository-relative path");
+    await expect(client.getRepositoryFile(7, "", "a".repeat(40))).rejects.toThrow("path is required");
+  });
+});
