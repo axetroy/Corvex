@@ -223,8 +223,11 @@ GitLab 令牌。示例配置和日志中不得包含密钥。
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
 Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
 只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
-Agent 不得修改 worktree 或发布 GitLab 评论。React、React DOM、Vite、antd、`@ant-design/x`
-与 `@ant-design/x-markdown` 均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。
+对话统一为可读可写：不修改 worktree，但可在用户明确要求时发布 GitLab 评论。
+React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown` 与 `react-router-dom`
+均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。控制台路由选择 `react-router-dom`
+的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化
+集中在 `src/app/ui/routing.ts` 的纯函数中，`App` 用 `Routes`/`useNavigate`，管理后台用 `Link`。
 
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。

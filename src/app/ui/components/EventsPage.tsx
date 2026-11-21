@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Button, Input, Select } from "antd";
+import { Link } from "react-router-dom";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatDuration, formatEventTarget } from "../format.js";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import { clampPageOffset, pageRange } from "../pagination.js";
-import { eventHash } from "../routing.js";
+import { eventPath } from "../routing.js";
 import { calculateEventDurationSeconds } from "../time.js";
 import { eventTypes, pageSize, statuses } from "../types.js";
 import type { EventPageResponse, EventQueue } from "../types.js";
@@ -147,7 +148,7 @@ export function EventsPage({ copy, locale, queue, refreshToken, onQueueChange, o
                 <td><StatusBadge status={event.status} label={translate(copy.statuses, event.status)} /></td>
                 <td>{translate(copy.types, event.type)}</td>
                 <td>{formatEventTarget(event, copy)}</td>
-                <td><a href={eventHash(event.id, queue)}>{event.id}</a></td>
+                <td><Link to={eventPath(event.id, queue)}>{event.id}</Link></td>
                 <td>{formatDate(event.createdAt, copy, locale)}</td>
                 <td>{formatDuration(calculateEventDurationSeconds(event), copy)}</td>
                 <td>{event.attemptCount}</td>

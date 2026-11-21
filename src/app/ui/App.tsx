@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentProps } from "react";
 import { ConfigProvider, Dropdown, Menu } from "antd";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
@@ -21,7 +23,7 @@ import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { eventQueueFromParams, eventsBackHash, eventsHash, navigateTo, normalizeHashRoute, parseHash, conversationsHash } from "./routing.js";
+import { eventQueueFromParams, eventsBackPath, eventsPath, conversationsPath } from "./routing.js";
 import type { EventQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
@@ -82,15 +84,27 @@ function saveNavigationCollapsed(collapsed: boolean): void {
   }
 }
 
-/** 当前地址栏 hash 对应的原始路由文本，默认回到对话页。 */
-function useHashRoute(): string {
-  const [route, setRoute] = useState(() => normalizeHashRoute(window.location.hash));
-  useEffect(() => {
-    const onChange = () => setRoute(normalizeHashRoute(window.location.hash));
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
-  }, []);
-  return route;
+/** 页面种类，供侧栏选中态与主区域布局使用。 */
+type PageKind = "conversations" | "events" | "event" | "settings" | "unknown";
+
+function pageKindOf(pathname: string): PageKind {
+  const path = pathname.replace(/^\/+/, "");
+  if (path === "" || path === "conversations" || path.startsWith("conversations/")) return "conversations";
+  if (path === "events") return "events";
+  if (path.startsWith("events/")) return "event";
+  if (path === "settings") return "settings";
+  return "unknown";
+}
+
+/** 把 react-router 的路径参数交给仍以 props 接收 ID 的页面。 */
+function EventRoute(props: Omit<ComponentProps<typeof EventDetailPage>, "eventId">) {
+  const { id } = useParams();
+  return <EventDetailPage {...props} eventId={id ?? ""} />;
+}
+
+function ConversationRoute(props: Omit<ComponentProps<typeof ConversationsPage>, "conversationId">) {
+  const { id } = useParams();
+  return <ConversationsPage {...props} conversationId={id ?? ""} />;
 }
 
 /** Agent 控制台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
@@ -98,30 +112,34 @@ export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
   const copy = locale === "zh-CN" ? zhCN : en;
   const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
-  const route = useHashRoute();
-  // 页面与筛选条件都来自 hash，刷新或分享链接后视图保持不变。
-  // 首次安装时把控制台重定向到 #/setup；服务端只让 API 返回 setupRequired。
+  const location = useLocation();
+  const navigate = useNavigate();
+  const route = location.pathname.replace(/^\/+/, "");
+  const pageKind = pageKindOf(location.pathname);
+  // 页面与筛选条件都来自地址栏，刷新或分享链接后视图保持不变。
+  // 首次安装时把控制台重定向到 /setup；服务端只让 API 返回 setupRequired。
   useEffect(() => {
     if (!window.location.pathname.startsWith("/ops")) return;
     let active = true;
     fetch("/api/setup/status")
       .then((response) => response.json() as Promise<{ configured: boolean }>)
       .then((status) => {
-        if (active && !status.configured && normalizeHashRoute(window.location.hash) !== "setup") {
-          navigateTo("setup");
+        if (active && !status.configured && location.pathname !== "/setup") {
+          navigate("/setup");
         }
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
-  }, []);
+  }, [location.pathname, navigate]);
 
-  const { page, params } = useMemo(() => parseHash(route), [route]);
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const queue = useMemo(
-    () => eventQueueFromParams(page.kind === "events" || page.kind === "event" ? params : emptyParams),
-    [page.kind, params],
+    () => eventQueueFromParams(pageKind === "events" || pageKind === "event" ? params : emptyParams),
+    [pageKind, params],
   );
+  const routeId = route.includes("/") ? decodeURIComponent(route.slice(route.indexOf("/") + 1)) : "";
   const [updated, setUpdated] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [account, setAccount] = useState<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>();
@@ -147,11 +165,10 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 旧的总览入口迁移到管理后台；未知路由与非法事件 ID 回到对话页，避免停留在空白页。
+  // 未知路由与非法事件 ID 回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "overview") navigateTo("#/admin/overview");
-    else if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") navigateTo("conversations");
-  }, [page.kind, route]);
+    if (pageKind === "unknown" && !route.startsWith("admin") && route !== "setup") navigate("/conversations", { replace: true });
+  }, [pageKind, route, navigate]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
   const logout = useCallback(async () => {
@@ -160,18 +177,18 @@ export function App() {
   }, []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
   const updateQueue = useCallback((next: EventQueue) => {
-    const target = eventsHash(next);
-    // 条件未变化时 hash 不会触发 hashchange，改为直接刷新一次。
-    if (window.location.hash === target) {
+    const target = eventsPath(next);
+    // 条件未变化时地址不变，改为直接刷新一次。
+    if (location.pathname + location.search === target) {
       setRefreshToken((value) => value + 1);
       return;
     }
-    window.location.hash = target;
-  }, []);
+    navigate(target);
+  }, [location.pathname, location.search, navigate]);
   const updateConversationRoute = useCallback((conversationId: string) => {
-    const target = conversationsHash(conversationId);
-    if (window.location.hash !== target) window.location.hash = target;
-  }, []);
+    const target = conversationsPath(conversationId);
+    if (location.pathname !== target) navigate(target);
+  }, [location.pathname, navigate]);
 
   const toggleNavigation = useCallback(() => {
     setNavigationCollapsed((value) => {
@@ -190,7 +207,7 @@ export function App() {
   const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
   const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
 
-  const onEvents = page.kind === "events" || page.kind === "event";
+  const onEvents = pageKind === "events" || pageKind === "event";
   const theme = {
     token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
     components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
@@ -282,13 +299,11 @@ export function App() {
             className="sidebar-nav"
             mode="inline"
             inlineCollapsed={navigationCollapsed}
-            selectedKeys={[page.kind === "settings" ? "settings" : onEvents ? "events" : "conversations"]}
+            selectedKeys={[pageKind === "settings" ? "settings" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
-              window.location.hash = key === "events"
-                ? eventsHash(queue)
-                : key === "conversations" && page.kind === "conversations"
-                  ? conversationsHash(page.id)
-                  : key;
+              if (key === "events") navigate(eventsPath(queue));
+              else if (key === "conversations" && pageKind === "conversations") navigate(conversationsPath(routeId));
+              else navigate(key.startsWith("/") ? key : `/${key}`);
             }}
             items={[
               { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
@@ -326,45 +341,67 @@ export function App() {
           ) : null}
         </aside>
         {updatedText ? <span id="updated" className="updated">{updatedText}</span> : null}
-        <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
-          <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
+        <main id="app" className={`content${pageKind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
+          <ErrorBoundary key={pageKind === "conversations" ? "conversations" : route} copy={copy}>
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>
-            {page.kind === "events" ? (
-              <EventsPage
-                copy={copy}
-                locale={locale}
-                queue={queue}
-                refreshToken={refreshToken}
-                onQueueChange={updateQueue}
-                onUpdated={handleUpdated}
-                onRefresh={refresh}
-              />
-            ) : null}
-            {page.kind === "event" ? (
-              <EventDetailPage
-                eventId={page.id}
-                backHash={eventsBackHash(params)}
-                copy={copy}
-                locale={locale}
-                refreshToken={refreshToken}
-                onUpdated={handleUpdated}
-                onRefresh={refresh}
-              />
-            ) : null}
-            {page.kind === "settings" ? (
-              <UserSettingsPage copy={copy} onChanged={refresh} />
-            ) : null}
-            {page.kind === "conversations" ? (
-              <ConversationsPage
-                conversationId={page.id ?? ""}
-                copy={copy}
-                locale={locale}
-                refreshToken={refreshToken}
-                onUpdated={handleUpdated}
-                onRefresh={refresh}
-                onConversationChange={updateConversationRoute}
-              />
-            ) : null}
+              <Routes>
+                <Route
+                  path="/events"
+                  element={
+                    <EventsPage
+                      copy={copy}
+                      locale={locale}
+                      queue={queue}
+                      refreshToken={refreshToken}
+                      onQueueChange={updateQueue}
+                      onUpdated={handleUpdated}
+                      onRefresh={refresh}
+                    />
+                  }
+                />
+                <Route
+                  path="/events/:id"
+                  element={
+                    <EventRoute
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      backHash={eventsBackPath(params)}
+                      onUpdated={handleUpdated}
+                      onRefresh={refresh}
+                    />
+                  }
+                />
+                <Route path="/settings" element={<UserSettingsPage copy={copy} onChanged={refresh} />} />
+                <Route
+                  path="/conversations"
+                  element={
+                    <ConversationsPage
+                      conversationId=""
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={handleUpdated}
+                      onRefresh={refresh}
+                      onConversationChange={updateConversationRoute}
+                    />
+                  }
+                />
+                <Route
+                  path="/conversations/:id"
+                  element={
+                    <ConversationRoute
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={handleUpdated}
+                      onRefresh={refresh}
+                      onConversationChange={updateConversationRoute}
+                    />
+                  }
+                />
+                <Route path="*" element={<Navigate to="/conversations" replace />} />
+              </Routes>
             </Suspense>
           </ErrorBoundary>
         </main>

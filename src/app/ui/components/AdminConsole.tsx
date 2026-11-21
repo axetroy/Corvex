@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchJson } from "../api.js";
-import { navigateTo } from "../routing.js";
+import { adminPath } from "../routing.js";
 import type { Copy, Locale } from "../i18n.js";
 import { AdminPanel } from "./AdminPanel.js";
 import { OverviewPage } from "./OverviewPage.js";
@@ -57,38 +58,20 @@ export function AdminConsole({ copy, locale, route, refreshToken, onUpdated, onR
         </div>
         <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">
-          <a
-            className={overviewActive ? "active" : ""}
-            href="#/admin/overview"
-            onClick={(event) => {
-              event.preventDefault();
-              navigateTo("#/admin/overview");
-            }}
-          >
+          <Link className={overviewActive ? "active" : ""} to={adminPath("overview")}>
             {copy.navOverview}
-          </a>
-          <a
-            className={usersActive ? "active" : ""}
-            href="#/admin/users"
-            onClick={(event) => {
-              event.preventDefault();
-              navigateTo("#/admin/users");
-            }}
-          >
+          </Link>
+          <Link className={usersActive ? "active" : ""} to={adminPath("users")}>
             {copy.adminUsersTitle}
-          </a>
+          </Link>
           {sections.map((item) => (
-            <a
+            <Link
               key={item.key}
               className={!usersActive && section === item.key ? "active" : ""}
-              href={`#/admin/settings/${item.key}`}
-              onClick={(event) => {
-                event.preventDefault();
-                navigateTo(`#/admin/settings/${item.key}`);
-              }}
+              to={adminPath(`settings/${item.key}`)}
             >
               {copy[item.labelKey]}
-            </a>
+            </Link>
           ))}
           <a className="admin-console-back" href="/ops">{copy.adminBackToConsole}</a>
         </nav>

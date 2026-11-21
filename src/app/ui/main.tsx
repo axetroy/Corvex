@@ -1,6 +1,7 @@
 import "./csp.js";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { HashRouter } from "react-router-dom";
 import "antd/dist/reset.css";
 import { App } from "./App.js";
 import "./styles.css";
@@ -10,6 +11,8 @@ const container = document.querySelector<HTMLDivElement>("#root");
 if (!container) throw new Error("agent console root element is missing");
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <HashRouter>
+      <App />
+    </HashRouter>
   </StrictMode>,
 );

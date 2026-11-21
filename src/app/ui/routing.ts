@@ -1,62 +1,10 @@
 import { eventTypes, statuses } from "./types.js";
 import type { EventQueue } from "./types.js";
 
-/** Agent 控制台页面路由，由地址栏 hash 解析得到。 */
-export type Route =
-  | { kind: "overview" }
-  | { kind: "events" }
-  | { kind: "conversations"; id?: string }
-  | { kind: "event"; id: string }
-  | { kind: "settings" }
-  | { kind: "unknown" };
-
-/** 解析结果：页面路由与查询参数（事件列表筛选条件）。 */
-export interface ParsedHash {
-  page: Route;
-  params: URLSearchParams;
-}
-
-/** 解码路由中的事件 ID；非法转义返回 undefined。 */
-export function decodeEventId(value: string): string | undefined {
-  if (!value) return undefined;
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return undefined;
-  }
-}
-
-/** 解析 hash 的路径部分；无法识别的路径与缺失/非法事件 ID 返回 `unknown`。 */
-function parsePath(route: string): Route {
-  if (route === "" || route === "conversations") return { kind: "conversations" };
-  if (route === "overview") return { kind: "overview" };
-  if (route === "events") return { kind: "events" };
-  if (route === "settings") return { kind: "settings" };
-  if (route.startsWith("conversations/")) {
-    const id = decodeEventId(route.slice("conversations/".length));
-    return id ? { kind: "conversations", id } : { kind: "unknown" };
-  }
-  if (route.startsWith("events/")) {
-    const id = decodeEventId(route.slice("events/".length));
-    return id ? { kind: "event", id } : { kind: "unknown" };
-  }
-  return { kind: "unknown" };
-}
-
-/** 归一化 hash 路由：忽略前导 `#` 与 `/`，空值回到对话页。 */
-export function normalizeHashRoute(hash: string): string {
-  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  return raw.replace(/^\/+/, "") || "conversations";
-}
-
-/** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为对话页。 */
-export function parseHash(hash: string): ParsedHash {
-  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  const queryIndex = raw.indexOf("?");
-  const path = (queryIndex === -1 ? raw : raw.slice(0, queryIndex)).replace(/^\/+/, "");
-  const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
-  return { page: parsePath(path), params: new URLSearchParams(query) };
-}
+/**
+ * 路由地址（不含 `#`）：应用由 react-router 的 HashRouter 驱动，
+ * 这里只保留把页面状态序列化为路径/查询串的纯函数，避免各处手写 URL。
+ */
 
 /** 从查询参数还原筛选条件；非法状态、类型与偏移回退为默认值。 */
 export function eventQueueFromParams(params: URLSearchParams): EventQueue {
@@ -72,41 +20,41 @@ export function eventQueueFromParams(params: URLSearchParams): EventQueue {
   };
 }
 
-/** 把筛选条件序列化为 hash 查询串；空条件不写入，保持默认 URL 简洁。 */
+/** 把筛选条件序列化为查询串（不含 `?`），不写默认值，保持 URL 简洁。 */
 export function eventQueueQuery(queue: EventQueue): string {
   const params = new URLSearchParams();
   if (queue.status) params.set("status", queue.status);
   if (queue.type) params.set("type", queue.type);
   if (queue.search) params.set("search", queue.search);
   if (queue.offset > 0) params.set("offset", String(queue.offset));
-  const query = params.toString();
-  return query ? `?${query}` : "";
+  return params.toString();
 }
 
-/** 前端路由跳转：直接改 hash，由 hashchange 驱动 React 重渲染。 */
-export function navigateTo(route: string): void {
-  const target = route.startsWith("#") ? route : `#${route}`;
-  if (window.location.hash === target) return;
-  window.location.hash = target;
+function withQuery(path: string, query: string): string {
+  return query ? `${path}?${query}` : path;
 }
 
-/** 事件列表的 hash，导航与筛选更新共用。 */
-export function eventsHash(queue: EventQueue): string {
-  return `#events${eventQueueQuery(queue)}`;
+/** 事件列表地址。 */
+export function eventsPath(queue: EventQueue): string {
+  return withQuery("/events", eventQueueQuery(queue));
 }
 
-/** 对话页 hash；有 ID 时指向该对话，无 ID 时进入新建视图。 */
-export function conversationsHash(id = ""): string {
-  return id ? `#conversations/${encodeURIComponent(id)}` : "#conversations";
+/** 对话地址；有 ID 时聚焦该对话，否则进入新建/欢迎态。 */
+export function conversationsPath(id = ""): string {
+  return id ? `/conversations/${encodeURIComponent(id)}` : "/conversations";
 }
 
-/** 事件详情 hash，携带列表筛选条件以便返回时恢复。 */
-export function eventHash(id: string, queue: EventQueue): string {
-  return `#events/${encodeURIComponent(id)}${eventQueueQuery(queue)}`;
+/** 事件详情地址，携带列表筛选条件以便返回时还原。 */
+export function eventPath(id: string, queue: EventQueue): string {
+  return withQuery(`/events/${encodeURIComponent(id)}`, eventQueueQuery(queue));
 }
 
-/** 详情页返回列表的 hash。 */
-export function eventsBackHash(params: URLSearchParams): string {
-  const query = params.toString();
-  return `#events${query ? `?${query}` : ""}`;
+/** 事件列表的返回地址，沿用详情 URL 上的查询串。 */
+export function eventsBackPath(params: URLSearchParams): string {
+  return withQuery("/events", params.toString());
+}
+
+/** 管理后台子页面地址。 */
+export function adminPath(section: string): string {
+  return `/admin/${section}`;
 }
