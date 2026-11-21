@@ -175,6 +175,8 @@ describe("CorvexServer", () => {
     hooks.serverBeforeListen.tap("test", async () => { tapped.push("beforeListen"); });
     hooks.serverAfterListen.tap("test", async () => { tapped.push("afterListen"); });
     hooks.serverBeforeClose.tap("test", async () => { tapped.push("beforeClose"); });
+    const cleanupHook = vi.fn();
+    hooks.storageCleanup.tap({ name: "test-cleanup", stage: 80 }, cleanupHook);
     const application = new CorvexServer(
       config,
       store,
@@ -194,6 +196,11 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       expect(tapped).toEqual(["beforeListen", "afterListen"]);
+      for (let attempt = 0; attempt < 20 && cleanupHook.mock.calls.length === 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(cleanupHook).toHaveBeenCalled();
+      expect(cleanupHook.mock.calls[0]?.[0]).toMatchObject({ source: "startup", pruneHistory: false });
       const base = `http://127.0.0.1:${address.port}`;
       expect((await fetch(`${base}/healthz`)).status).toBe(200);
       const landing = await fetch(`${base}/`);

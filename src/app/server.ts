@@ -14,7 +14,7 @@ import { MAX_WEBHOOK_BODY_BYTES } from "../gitlab/webhook.js";
 import { ConversationRunner } from "./conversation-runner.js";
 import { EventRunner } from "./event-runner.js";
 import { attachOperationsAuth, readCookie, sessionCookieName } from "./http/auth.js";
-import { callAsyncHook, createCorvexHooks, type CorvexHooks } from "./hooks.js";
+import { callAsyncHook, createCorvexHooks, type CorvexHooks, type StorageCleanupContext } from "./hooks.js";
 import type { OpsContext } from "./http/context.js";
 import { sendJson, sendText } from "./http/respond.js";
 import { registerRoutes } from "./http/routes.js";
@@ -86,40 +86,75 @@ export class CorvexServer {
       // 事件执行器持有构造期读取的参数，设置变更后立即重建，无需等下一轮循环。
       this.events.refreshRuntimeSettings();
     });
+    // 默认清理步骤全部通过钩子接入，插件可在任意 stage 追加自己的清理。
+    // 每个步骤自行捕获错误写入 context.errors，避免一个失败阻断后续步骤。
+    this.hooks.storageCleanup.tapPromise({ name: "prune-history", stage: 100 }, async (context) => {
+      if (!context.pruneHistory) return;
+      try {
+        this.store.pruneHistory(context.historyBefore, context.auditBefore);
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.storageCleanup.tapPromise({ name: "prune-change-refs", stage: 200 }, async (context) => {
+      try {
+        context.removedRefs = await this.conversations.pruneConversationChanges(new Set(this.store.listConversationIds()));
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.storageCleanup.tapPromise({ name: "gc-mirrors", stage: 300 }, async (context) => {
+      try {
+        context.gcCount = await this.conversations.gcMirrors(context.retentionDays);
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.storageCleanup.tapPromise({ name: "release-idle", stage: 400 }, async (context) => {
+      if (context.source !== "retention") return;
+      try {
+        await this.conversations.releaseIdleWorkspaces();
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.storageCleanup.tapPromise({ name: "record", stage: 900 }, async (context) => {
+      this.store.recordStorageCleanup({
+        startedAt: context.startedAt,
+        finishedAt: new Date().toISOString(),
+        source: context.source,
+        applied: true,
+        olderThanDays: context.source === "startup" ? 0 : context.retentionDays,
+        removedWorkspaces: context.removedWorkspaces,
+        removedMirrors: 0,
+        error: context.errors.join("; "),
+      });
+    });
+
     this.hooks.serverAfterListen.tapPromise("startup", async () => {
       const interruptedTurns = this.store.recoverInterruptedConversationTurns();
       if (interruptedTurns > 0) {
         console.warn("recovered interrupted conversation turns", { count: interruptedTurns });
       }
-      // 重启后没有在途轮次，清掉上次进程留下的对话 worktree。
-      const sweepStarted = new Date().toISOString();
+      // 重启后没有在途轮次，清掉上次进程留下的对话 worktree 并执行统一清理钩子。
+      const context: StorageCleanupContext = {
+        source: "startup",
+        startedAt: new Date().toISOString(),
+        retentionDays: this.config.storage.retentionDays,
+        pruneHistory: false,
+        historyBefore: new Date(0),
+        auditBefore: new Date(0),
+        removedWorkspaces: 0,
+        removedRefs: 0,
+        gcCount: 0,
+        errors: [],
+      };
       try {
-        const removed = await this.conversations.cleanupStaleWorkspaces();
-        // 清理已删除会话遗留的改动 ref，并回收被覆盖的旧对象。
-        await this.conversations.pruneConversationChanges(new Set(this.store.listConversationIds()));
-        await this.conversations.gcMirrors(this.config.storage.retentionDays);
-        this.store.recordStorageCleanup({
-          startedAt: sweepStarted,
-          finishedAt: new Date().toISOString(),
-          source: "startup",
-          applied: true,
-          olderThanDays: 0,
-          removedWorkspaces: removed,
-          removedMirrors: 0,
-          error: "",
-        });
+        context.removedWorkspaces = await this.conversations.cleanupStaleWorkspaces();
+        await callAsyncHook(this.hooks.storageCleanup, context);
       } catch (error) {
+        context.errors.push(errorMessage(error));
         console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
-        this.store.recordStorageCleanup({
-          startedAt: sweepStarted,
-          finishedAt: new Date().toISOString(),
-          source: "startup",
-          applied: true,
-          olderThanDays: 0,
-          removedWorkspaces: 0,
-          removedMirrors: 0,
-          error: errorMessage(error),
-        });
       }
     });
     // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
@@ -280,37 +315,24 @@ export class CorvexServer {
       historyBefore.setUTCDate(historyBefore.getUTCDate() - this.config.storage.retentionDays);
       const auditBefore = new Date(now);
       auditBefore.setUTCDate(auditBefore.getUTCDate() - this.config.storage.auditRetentionDays);
-      const retentionStarted = new Date().toISOString();
-      let retentionError = "";
-      try {
-        this.store.pruneHistory(historyBefore, auditBefore);
-        // 历史裁剪会直接删除会话记录，镜像里的改动 ref 必须按剩余会话清理，
-        // 否则会无限累积；同时对镜像做 gc 回收被覆盖的旧 commit/blob。
-        const removedRefs = await this.conversations.pruneConversationChanges(
-          new Set(this.store.listConversationIds()),
-        );
-        const gcCount = await this.conversations.gcMirrors(this.config.storage.retentionDays);
-        if (removedRefs > 0 || gcCount > 0) {
-          console.info("pruned conversation change refs and mirrors", { removedRefs, gcCount });
-        }
-      } catch (error) {
-        retentionError = errorMessage(error);
-        console.error("prune persisted history failed", { error: retentionError });
-      }
-      this.store.recordStorageCleanup({
-        startedAt: retentionStarted,
-        finishedAt: new Date().toISOString(),
+      const context: StorageCleanupContext = {
         source: "retention",
-        applied: true,
-        olderThanDays: this.config.storage.retentionDays,
+        startedAt: new Date().toISOString(),
+        retentionDays: this.config.storage.retentionDays,
+        pruneHistory: true,
+        historyBefore,
+        auditBefore,
         removedWorkspaces: 0,
-        removedMirrors: 0,
-        error: retentionError,
-      });
+        removedRefs: 0,
+        gcCount: 0,
+        errors: [],
+        signal,
+      };
       try {
-        await this.conversations.releaseIdleWorkspaces();
+        await callAsyncHook(this.hooks.storageCleanup, context);
       } catch (error) {
-        console.error("evict idle conversation workspaces failed", { error: errorMessage(error) });
+        context.errors.push(errorMessage(error));
+        console.error("storage cleanup hook failed", { error: errorMessage(error) });
       }
       try {
         await sleep(24 * 60 * 60_000, undefined, { signal });

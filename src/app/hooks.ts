@@ -41,6 +41,22 @@ export interface ToolResultHookContext extends ToolHookContext {
   durationMs: number;
 }
 
+/** 存储清理上下文：各清理步骤把结果写回这里，最后统一落一条清理记录。 */
+export interface StorageCleanupContext {
+  source: "startup" | "retention";
+  startedAt: string;
+  retentionDays: number;
+  /** 启动时只清扫遗留资源，不按保留策略删除历史。 */
+  pruneHistory: boolean;
+  historyBefore: Date;
+  auditBefore: Date;
+  removedWorkspaces: number;
+  removedRefs: number;
+  gcCount: number;
+  errors: string[];
+  signal?: AbortSignal;
+}
+
 /**
  * 应用级扩展点。默认行为也通过 tap 注册，插件/后续功能可以在同一节点追加逻辑，
  * 不需要修改 Server、 Runner 或路由的主流程。
@@ -53,6 +69,8 @@ export interface CorvexHooks {
   /** 返回用户即完成认证；第一个返回值的 tap 生效。 */
   authResolveUser: AsyncSeriesBailHook<[FastifyRequest], AuthUser | undefined>;
   settingsApplied: SyncHook<[CorvexConfig]>;
+  /** 启动与每日保留任务的统一清理入口；默认步骤按 stage 顺序注册。 */
+  storageCleanup: AsyncSeriesHook<[StorageCleanupContext]>;
   eventBeforeProcess: AsyncSeriesHook<[Event]>;
   eventAfterProcess: AsyncSeriesHook<[Event]>;
   conversationBeforeTurn: AsyncSeriesHook<[ConversationTurnContext]>;
@@ -95,6 +113,7 @@ export function createCorvexHooks(): CorvexHooks {
     serverAfterClose: new AsyncSeriesHook([]),
     authResolveUser: new AsyncSeriesBailHook(["request"]),
     settingsApplied: new SyncHook(["config"]),
+    storageCleanup: new AsyncSeriesHook(["context"]),
     eventBeforeProcess: new AsyncSeriesHook(["event"]),
     eventAfterProcess: new AsyncSeriesHook(["event"]),
     conversationBeforeTurn: new AsyncSeriesHook(["turn"]),
