@@ -8,16 +8,40 @@
   --conversation-brand: #1769aa;
   --conversation-brand-soft: #eaf2fa;
 
-  display: grid;
-  grid-template-columns: 288px minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
   flex: 1;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--conversation-surface);
-  /* 与主导航侧边栏一致：收起/展开时宽度平滑过渡。 */
-  transition: grid-template-columns 0.18s ease;
+}
+
+/* 面板尺寸、折叠与键盘操作都由 react-resizable-panels 负责。 */
+.conversation-panel-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-list-panel,
+.conversation-workspace-panel,
+.conversation-files-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-separator {
+  width: 4px;
+  flex: 0 0 4px;
+  background: var(--conversation-border);
+  cursor: col-resize;
+
+  &:hover,
+  &[data-separator-active] {
+    background: var(--conversation-brand);
+  }
 }
 
 .conversation-sidebar {
@@ -38,24 +62,6 @@
   gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--conversation-border);
-}
-
-/* 整个对话列表收起：侧栏宽度归零，工作区占满。 */
-.conversations-list-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr);
-
-  & .conversation-sidebar {
-    border-right: 0;
-  }
-}
-
-/* 文件面板在工作区右侧：展开时挤压工作台空间。 */
-.conversations-layout.conversation-files-open {
-  grid-template-columns: 288px minmax(0, 1fr) var(--file-panel-width, 340px);
-}
-
-.conversations-layout.conversations-list-collapsed.conversation-files-open {
-  grid-template-columns: 0 minmax(0, 1fr) var(--file-panel-width, 340px);
 }
 
 .conversation-file-toggle.ant-btn {
@@ -1334,18 +1340,6 @@
 }
 
 @media (max-width: 900px) {
-  .conversations-layout:not(.conversations-list-collapsed) {
-    grid-template-columns: 224px minmax(0, 1fr);
-  }
-
-  .conversations-layout.conversation-files-open {
-    grid-template-columns: 224px minmax(0, 1fr) min(var(--file-panel-width, 340px), 44vw);
-  }
-
-  .conversations-layout.conversations-list-collapsed.conversation-files-open {
-    grid-template-columns: 0 minmax(0, 1fr) min(var(--file-panel-width, 340px), 44vw);
-  }
-
   .conversation-workspace-project.ant-typography {
     max-width: 140px;
   }
@@ -1357,32 +1351,6 @@
 }
 
 @media (max-width: 640px) {
-  .conversations-layout,
-  .conversations-list-collapsed {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    height: 100%;
-  }
-
-  .conversations-layout.conversation-files-open {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) minmax(180px, 40%);
-  }
-
-  .conversation-file-resizer {
-    display: none;
-  }
-
-  .conversation-sidebar {
-    min-height: 0;
-    border-right: 0;
-    border-bottom: 1px solid var(--conversation-border);
-  }
-
-  .conversations-list-collapsed .conversation-sidebar {
-    display: none;
-  }
-
   .conversation-sidebar-heading {
     padding: 0 14px;
   }
@@ -1452,21 +1420,6 @@
   .conversation-trace-pane .trace-event-list {
     max-height: 260px;
   }
-}
-
-/* 文件面板左缘的拖拽手柄，像 VSCode 的面板分割线。 */
-.conversation-file-resizer {
-  width: 4px;
-  min-width: 4px;
-  cursor: col-resize;
-  background: var(--conversation-border);
-  transition: background 0.15s;
-  touch-action: none;
-}
-
-.conversation-file-resizer:hover,
-.conversation-file-resizer:active {
-  background: var(--conversation-brand);
 }
 
 /* 会话文件面板：与工作区同级的可收起 Tab 容器。 */

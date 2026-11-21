@@ -225,8 +225,9 @@ Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含
 只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
 对话统一为可读可写：不修改 worktree，但可在用户明确要求时发布 GitLab 评论。
 React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、
-`react-icons`（Simple Icons 文件类型图标）与 `highlight.js`（代码高亮，含 github 主题）
-均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。文件面板宽度可拖动调整并持久化。控制台路由选择 `react-router-dom`
+`react-icons`（Simple Icons 文件类型图标）、`highlight.js`（代码高亮，含 github 主题）与
+`react-resizable-panels`（会话列表/工作台/文件面板三栏的尺寸与折叠）
+均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。控制台路由选择 `react-router-dom`
 的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化
 集中在 `src/app/ui/routing.ts` 的纯函数中，`App` 用 `Routes`/`useNavigate`，管理后台用 `Link`。
 
