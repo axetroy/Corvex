@@ -592,6 +592,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     ? []
     : conversationCommands.filter((command) => command.startsWith(commandQuery));
   const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
+  // 输入框在任何时候都可编辑（繁忙时除外），只有发送按钮要求仓库/分支与内容齐备。
+  const canSend = !busy && (showCreate
+    ? Boolean(project && selectedBranch && draftMessage.trim())
+    : Boolean(canReply && draftMessage.trim()));
 
   // 面板的展开/收起交给 react-resizable-panels，自带键盘操作与尺寸约束。
   function toggleListPanel() {
@@ -1012,13 +1016,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       aria-label={copy.initialMessage}
                       value={draftMessage}
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
-                      disabled={busy || (showCreate ? !project : !canReply)}
+                      disabled={busy}
                       autoSize={{ minRows: 3, maxRows: 10 }}
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}
                       footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (
-                        <SendButton aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage} />
+                        <SendButton
+                          aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage}
+                          disabled={!canSend}
+                        />
                       )}
                     />
                     </div>
