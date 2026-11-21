@@ -40,20 +40,12 @@
   border-bottom: 1px solid var(--conversation-border);
 }
 
-/* 整个对话列表收起：侧栏缩成窄条，只留展开按钮。 */
+/* 整个对话列表收起：侧栏宽度归零，工作区占满。 */
 .conversations-list-collapsed {
-  grid-template-columns: 44px minmax(0, 1fr);
-}
+  grid-template-columns: 0 minmax(0, 1fr);
 
-.conversation-sidebar-collapsed {
-  & .conversation-sidebar-heading {
-    justify-content: center;
-    padding: 0;
-  }
-
-  & .conversation-sidebar-heading .conversation-new-button.ant-btn,
-  & .conversation-sidebar-heading .conversation-archived-toggle.ant-btn {
-    display: none;
+  & .conversation-sidebar {
+    border-right: 0;
   }
 }
 
@@ -61,6 +53,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  margin-inline-end: 8px;
   color: var(--conversation-muted);
 }
 
@@ -1271,7 +1264,7 @@
 }
 
 @media (max-width: 900px) {
-  .conversations-layout {
+  .conversations-layout:not(.conversations-list-collapsed) {
     grid-template-columns: 224px minmax(0, 1fr);
   }
 
@@ -1297,6 +1290,10 @@
     min-height: 0;
     border-right: 0;
     border-bottom: 1px solid var(--conversation-border);
+  }
+
+  .conversations-list-collapsed .conversation-sidebar {
+    display: none;
   }
 
   .conversation-sidebar-heading {

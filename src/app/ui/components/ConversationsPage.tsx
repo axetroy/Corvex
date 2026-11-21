@@ -699,7 +699,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
       <section className={`conversations-layout${listCollapsed ? " conversations-list-collapsed" : ""}`} aria-label={copy.conversationsDescription}>
-        <aside className={`conversation-sidebar${listCollapsed ? " conversation-sidebar-collapsed" : ""}`} aria-label={copy.conversationList}>
+        <aside className="conversation-sidebar" aria-label={copy.conversationList}>
           <div className="conversation-sidebar-heading">
             <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
               <span aria-hidden="true">+</span>
@@ -716,21 +716,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
               }}
             >
               {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
-            </Button>
-            <Button
-              className="conversation-list-toggle"
-              type="text"
-              size="small"
-              aria-label={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
-              aria-expanded={!listCollapsed}
-              title={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
-              onClick={() => {
-                const next = !listCollapsed;
-                setListCollapsed(next);
-                saveConversationListCollapsed(next);
-              }}
-            >
-              {listCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
             </Button>
           </div>
           {listCollapsed ? null : <div className="conversation-sidebar-list">
@@ -777,6 +762,24 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             onChange={(key) => setDetailTab(key as ConversationDetailTab)}
             destroyOnHidden
             tabBarExtraContent={{
+              // 展开/收起按钮放在「对话」标签之前；收起后列表完全隐藏。
+              left: (
+                <Button
+                  className="conversation-list-toggle"
+                  type="text"
+                  size="small"
+                  aria-label={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
+                  aria-expanded={!listCollapsed}
+                  title={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
+                  onClick={() => {
+                    const next = !listCollapsed;
+                    setListCollapsed(next);
+                    saveConversationListCollapsed(next);
+                  }}
+                >
+                  {listCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
+                </Button>
+              ),
               // 仓库信息与标签页同处一行，减少纵向占用。
               right: (
                 <div className="conversation-workspace-meta">
