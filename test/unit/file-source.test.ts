@@ -18,6 +18,7 @@ describe("GitLab file source adapter", () => {
     expect(result.content).toBe("two\nthree");
     expect(result.truncated).toBe(true);
     expect(result.totalLines).toBe(5);
+    expect(result.source).toBe("gitlab");
   });
 
   it("returns a placeholder for binary files", async () => {
@@ -53,6 +54,7 @@ describe("file image preview", () => {
     expect(result.mimeType).toBe("image/png");
     expect(result.path).toBe("assets/logo.png");
     expect(result.data.equals(png)).toBe(true);
+    expect(result.source).toBe("gitlab");
   });
 
   it("accepts SVG with an XML declaration", async () => {

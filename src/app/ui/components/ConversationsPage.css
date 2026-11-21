@@ -1493,6 +1493,31 @@
   border-bottom: 1px solid var(--conversation-border);
 }
 
+.conversation-file-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.conversation-file-source-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.conversation-file-source-dot.is-local {
+  background: var(--success);
+}
+
+.conversation-file-source-dot.is-gitlab {
+  background: var(--primary);
+}
+
 .conversation-file-error {
   padding: 6px 10px;
   font-size: 11px;

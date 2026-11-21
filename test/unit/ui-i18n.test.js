@@ -41,6 +41,8 @@ describe("operations UI locale", () => {
     expect(zhCN.themeDark).toBe("深色");
     expect(en.filePanelImageOpen).toBe("Open original");
     expect(zhCN.filePanelImageError).toBe("图片无法预览（格式不支持或文件过大）。");
+    expect(en.filePanelSourceTemplate).toBe("Source: {value}");
+    expect(zhCN.filePanelSourceLocal).toBe("本地工作区");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zhCN.statuses).sort()).toEqual(Object.keys(en.statuses).sort());
     expect(Object.keys(zhCN.types).sort()).toEqual(Object.keys(en.types).sort());

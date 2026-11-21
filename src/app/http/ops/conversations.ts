@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { conversationWorkspaceName } from "../../../git/manager.js";
 import { isConversationMode } from "../../../events/model.js";
 import type { Conversation, ConversationStreamEvent } from "../../../events/model.js";
 import { requireUser } from "../../auth/context.js";
@@ -184,16 +186,22 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     });
   });
 
-  // 文件浏览走适配器：目前用 GitLab API 读取，未来可替换为磁盘读取，
-  // 路由与界面都不需要改动。所有读取都绑定对话项目和最近一轮固定 SHA。
+  // 文件浏览默认读取本地 worktree（含会话本地改动）；worktree 被淘汰或首轮尚未
+  // 准备时自动回退到 GitLab API。路由与界面都不依赖具体实现。
   const fileSource = (request: FastifyRequest, conversation: Conversation) => {
     const sha = ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "";
     if (!sha) return undefined;
     return createConversationFileSource({
-      kind: "gitlab",
-      gitlab: ctx.gitlabForRequest(request),
       projectId: conversation.projectId,
       sha,
+      workspacePath: join(
+        ctx.config.storage.root,
+        "workspaces",
+        String(conversation.projectId),
+        conversationWorkspaceName(conversation.id),
+      ),
+      gitlab: ctx.gitlabForRequest(request),
+      fallbackToGitLab: true,
     });
   };
 
@@ -267,7 +275,9 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     try {
       const image = await source.readImage(path);
-      sendBinary(reply, image.data, image.mimeType);
+      sendBinary(reply, image.data, image.mimeType, image.source
+        ? { "x-corvex-file-source": image.source }
+        : {});
     } catch (error) {
       if (error instanceof FilePreviewError) {
         sendJson(reply, error.status, { error: error.message });

@@ -14,9 +14,13 @@ export interface FileEntry {
   type: "directory" | "file" | "symlink" | "other";
 }
 
+export type FileSourceKind = "local" | "gitlab";
+
 export interface FileListResult {
   entries: FileEntry[];
   truncated: boolean;
+  /** 真正提供这次读取的适配器；回退时反映实际来源，失败占位时为空。 */
+  source?: FileSourceKind;
 }
 
 export interface FileRange {
@@ -29,6 +33,7 @@ export interface FileContentResult {
   content: string;
   truncated: boolean;
   totalLines?: number;
+  source?: FileSourceKind;
 }
 
 /** 图片预览的原始字节；MIME 由适配器按文件头校验，不接受扩展名冒充。 */
@@ -37,6 +42,7 @@ export interface FileImageResult {
   mimeType: string;
   data: Buffer;
   size: number;
+  source?: FileSourceKind;
 }
 
 /** 预览失败的业务错误，携带直接返回给控制台的 HTTP 状态码。 */
@@ -48,7 +54,7 @@ export class FilePreviewError extends Error {
 }
 
 export interface ConversationFileSource {
-  readonly kind: "gitlab";
+  readonly kind: FileSourceKind;
   listDirectory(path: RepoPath, signal?: AbortSignal): Promise<FileListResult>;
   readFile(path: RepoPath, range?: FileRange, signal?: AbortSignal): Promise<FileContentResult>;
   readImage(path: RepoPath, signal?: AbortSignal): Promise<FileImageResult>;
