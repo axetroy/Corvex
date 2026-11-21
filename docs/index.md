@@ -19,5 +19,5 @@ features:
   - title: Keep control of changes
     details: Fix proposals are posted for manual application; Issue implementation opens a Draft MR and never auto-merges.
   - title: Run it yourself
-    details: Deploy the server and optional worker with Docker Compose, backed by SQLite.
+    details: Deploy the single Server service with Docker Compose, backed by SQLite.
 ---

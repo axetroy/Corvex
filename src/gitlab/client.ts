@@ -20,13 +20,54 @@ export interface Project {
   id: number;
   name?: string;
   path_with_namespace?: string;
+  /** 项目描述；GitLab 允许为空字符串。Agent 控制台用它作为选择器的第二行。 */
+  description?: string;
   http_url_to_repo: string;
+  /** GitLab 生成的仓库页面地址，供控制台跳转；旧实例可能仍指向内网地址。 */
+  web_url?: string;
   default_branch?: string;
+}
+
+/**
+ * 用配置的 `gitlab.base_url` 和 GitLab 项目路径派生仓库地址，不信任 GitLab
+ * 返回的 `http_url_to_repo` / `web_url`：它们由实例的 external_url 生成，
+ * 可能仍指向无法从 Corvex 访问的内网或旧域名。
+ */
+function projectRepositoryPath(project: Pick<Project, "path_with_namespace">): string {
+  const path = (project.path_with_namespace ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (
+    !path ||
+    path.split("/").some((part) => !part || part === "." || part === ".." || /[\\?#@]/.test(part))
+  ) {
+    throw new Error("GitLab project path_with_namespace is missing or invalid");
+  }
+  return path;
+}
+
+export function repositoryCloneUrl(baseUrl: string, project: Pick<Project, "path_with_namespace">): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${projectRepositoryPath(project)}.git`;
+}
+
+export function repositoryWebUrl(baseUrl: string, project: Pick<Project, "path_with_namespace">): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${projectRepositoryPath(project)}`;
+}
+
+/** 拼接 GitLab 端点时保留实例子路径，不能把 `/api/v4` 挂到域名根。 */
+export function gitlabEndpoint(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+/** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
+export interface GitLabBranchCommit {
+  id: string;
+  short_id?: string;
+  title?: string;
+  committed_date?: string;
 }
 
 export interface GitLabBranch {
   name: string;
-  commit: { id: string };
+  commit: GitLabBranchCommit;
 }
 
 export interface GitLabIssue {
@@ -34,16 +75,6 @@ export interface GitLabIssue {
   title: string;
   description: string;
   state: string;
-  web_url?: string;
-}
-
-export interface GitLabMergeRequestSummary {
-  iid: number;
-  title: string;
-  description: string;
-  state: string;
-  source_branch: string;
-  target_branch: string;
   web_url?: string;
 }
 
@@ -64,9 +95,35 @@ export interface MergeRequestComment {
 
 export type IssueComment = MergeRequestComment;
 
+/** 合并请求提交记录：只保留展示所需的小字段，避免整段 commit message 撑爆上下文。 */
+export interface MergeRequestCommit {
+  id: string;
+  title: string;
+  author: string;
+  createdAt: string;
+}
+
+/** 一页 MR 提交记录与分页游标。 */
+export interface MergeRequestCommitPage {
+  commits: MergeRequestCommit[];
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  nextPage: number | null;
+}
+
 export interface MergeRequestMetadataUpdate {
   title?: string;
   description?: string;
+  /** 关闭或重新打开合并请求。 */
+  stateEvent?: "close" | "reopen";
+}
+
+/** Issue 可更新字段；与 MR 一样只允许显式传入的字段。 */
+export interface IssueUpdate {
+  title?: string;
+  description?: string;
+  stateEvent?: "close" | "reopen";
 }
 
 export interface DiscussionPosition {
@@ -112,6 +169,8 @@ const MAX_COMMENT_CHARACTERS = 4_000;
 const ISSUE_COMMENT_CONTEXT_BUDGET_BYTES = 24 << 10;
 /** 历史评论最多扫描的 Notes API 页数。 */
 const MAX_COMMENT_PAGES = 10;
+const MAX_MR_COMMITS_PER_PAGE = 20;
+const MAX_MR_COMMIT_TITLE_CHARACTERS = 300;
 /** MR 标题和描述工具的输入上限。 */
 const MAX_MR_TITLE_CHARACTERS = 255;
 const MAX_MR_DESCRIPTION_CHARACTERS = 100_000;
@@ -173,6 +232,18 @@ function fullSha(value: string): boolean {
   return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value);
 }
 
+/**
+ * 从 GitLab 对象里取出可选文本字段：非字符串、空白或超长时返回 undefined，
+ * 避免把异常数据透传到 Agent 控制台。
+ */
+function optionalString(source: Record<string, unknown>, key: string, maxLength: number): string | undefined {
+  const value = source[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) return undefined;
+  return trimmed;
+}
+
 function validDiscussionPath(value: string): boolean {
   return (
     value !== "" &&
@@ -183,14 +254,36 @@ function validDiscussionPath(value: string): boolean {
 }
 
 export class GitLabClient {
-  private readonly baseUrl: string;
+  private baseUrl: string;
+  private readToken: string;
+  private writeToken: string;
+  /** OAuth access token 必须用 Bearer；个人访问令牌沿用 PRIVATE-TOKEN。 */
+  private tokenKind: "private" | "bearer" = "private";
 
   constructor(
     baseUrl: string,
-    private readonly readToken: string,
-    private readonly writeToken: string,
+    readToken: string,
+    writeToken: string,
     private readonly requestTimeoutMs = 10_000,
+    tokenKind: "private" | "bearer" = "private",
   ) {
+    if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
+    this.baseUrl = "";
+    this.readToken = "";
+    this.writeToken = "";
+    this.configure(baseUrl, readToken, writeToken, tokenKind);
+  }
+
+  /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
+  configure(baseUrl: string, readToken: string, writeToken: string, tokenKind: "private" | "bearer" = "private"): void {
+    this.tokenKind = tokenKind;
+    if (!baseUrl.trim()) {
+      // 地址可以在运维台设置：启动时尚未配置时保留空值，调用 API 会给出明确错误。
+      this.baseUrl = "";
+      this.readToken = readToken;
+      this.writeToken = writeToken;
+      return;
+    }
     let parsed: URL;
     try {
       parsed = new URL(baseUrl);
@@ -206,9 +299,15 @@ export class GitLabClient {
     ) {
       throw new Error(`invalid GitLab base URL "${baseUrl}"`);
     }
-    if (!writeToken) throw new Error("GitLab write API token is required");
-    if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.readToken = readToken;
+    this.writeToken = writeToken;
+  }
+
+  /** 所有 GitLab 请求都要求先配置根地址。 */
+  private requireBaseUrl(): string {
+    if (!this.baseUrl) throw new Error("GitLab base URL is not configured");
+    return this.baseUrl;
   }
 
   async getMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<MergeRequest> {
@@ -257,7 +356,6 @@ export class GitLabClient {
       throw new Error("GitLab project page must be between 1 and 10000");
     }
     const query = new URLSearchParams({
-      simple: "true",
       per_page: "50",
       page: String(page),
       order_by: "name",
@@ -316,50 +414,20 @@ export class GitLabClient {
         !isRecord(value) || typeof value.name !== "string" || !isRecord(value.commit) ||
         typeof value.commit.id !== "string" || !fullSha(value.commit.id)
       ) throw new Error("GitLab returned an invalid branch list entry");
-      return value as unknown as GitLabBranch;
+      // 只保留 Agent 控制台需要的提交元数据；非字符串、空白或超长的值一律丢弃。
+      const shortId = optionalString(value.commit, "short_id", 64);
+      const title = optionalString(value.commit, "title", 4096);
+      const committedDate = optionalString(value.commit, "committed_date", 64);
+      return {
+        name: value.name,
+        commit: {
+          id: value.commit.id,
+          ...(shortId ? { short_id: shortId } : {}),
+          ...(title ? { title } : {}),
+          ...(committedDate ? { committed_date: committedDate } : {}),
+        },
+      };
     });
-  }
-
-  async listIssues(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabIssue[]> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.targetListQuery(search, page, { scope: "all" });
-    const result = await this.getJson(`/projects/${projectId}/issues?${query}`, signal);
-    if (!Array.isArray(result)) throw new Error("GitLab Issue list is not an array");
-    return result.map((value) => {
-      if (
-        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
-        typeof value.description !== "string" || typeof value.state !== "string"
-      ) throw new Error("GitLab returned an incomplete Issue list entry");
-      return value as unknown as GitLabIssue;
-    });
-  }
-
-  async listMergeRequests(
-    projectId: number,
-    search: string,
-    page: number,
-    signal?: AbortSignal,
-  ): Promise<GitLabMergeRequestSummary[]> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.targetListQuery(search, page, { state: "all" });
-    const result = await this.getJson(`/projects/${projectId}/merge_requests?${query}`, signal);
-    if (!Array.isArray(result)) throw new Error("GitLab merge request list is not an array");
-    return result.map((value) => {
-      if (
-        !isRecord(value) || !Number.isSafeInteger(value.iid) || typeof value.title !== "string" ||
-        typeof value.description !== "string" || typeof value.state !== "string" ||
-        typeof value.source_branch !== "string" || typeof value.target_branch !== "string"
-      ) throw new Error("GitLab returned an incomplete merge request list entry");
-      return value as unknown as GitLabMergeRequestSummary;
-    });
-  }
-
-  private targetListQuery(search: string, page: number, extra: Record<string, string> = {}): URLSearchParams {
-    const query = this.pagedSearchQuery(search, page);
-    query.set("order_by", "updated_at");
-    query.set("sort", "desc");
-    for (const [key, value] of Object.entries(extra)) query.set(key, value);
-    return query;
   }
 
   private pagedSearchQuery(search: string, page: number): URLSearchParams {
@@ -439,6 +507,68 @@ export class GitLabClient {
       }
     }
     throw new Error("merge request comments exceed the 10-page safety limit");
+  }
+
+  /**
+   * 分页读取 MR 提交记录。调用方必须按页获取，永远不一次性拼接全部历史；
+   * 标题被截断，单页最多 20 条，避免小窗口模型被提交历史淹没。
+   */
+  async getMergeRequestCommits(
+    projectId: number,
+    mrIid: number,
+    page = 1,
+    perPage = 10,
+    signal?: AbortSignal,
+  ): Promise<MergeRequestCommitPage> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    if (!Number.isSafeInteger(page) || page < 1) throw new Error("commit page must be a positive integer");
+    if (!Number.isSafeInteger(perPage) || perPage < 1 || perPage > MAX_MR_COMMITS_PER_PAGE) {
+      throw new Error(`commit page size must be between 1 and ${MAX_MR_COMMITS_PER_PAGE}`);
+    }
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
+    const response = await this.request(
+      `/projects/${projectId}/merge_requests/${mrIid}/commits?${query}`,
+      this.readToken,
+      "GET",
+      signal,
+    );
+    const body = await this.successBody(response);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(body));
+    } catch (error) {
+      throw new Error(`decode GitLab API response: ${String(error)}`, { cause: error });
+    }
+    if (!Array.isArray(parsed)) throw new Error("GitLab merge request commits response is not an array");
+    const commits: MergeRequestCommit[] = parsed.map((entry) => {
+      if (!isRecord(entry)) throw new Error("GitLab returned an invalid merge request commit");
+      const id = typeof entry.id === "string" ? entry.id : "";
+      const title = typeof entry.title === "string" ? entry.title : "";
+      if (!id || !title) throw new Error("GitLab returned an incomplete merge request commit");
+      const author = isRecord(entry.author) && typeof entry.author.name === "string"
+        ? entry.author.name
+        : typeof entry.author_name === "string" ? entry.author_name : "";
+      const createdAt = typeof entry.created_at === "string" ? entry.created_at : "";
+      const characters = [...title];
+      return {
+        id: id.slice(0, 40),
+        title: characters.slice(0, MAX_MR_COMMIT_TITLE_CHARACTERS).join(""),
+        author: author.slice(0, 128),
+        createdAt: createdAt.slice(0, 64),
+      };
+    });
+    const nextHeader = response.headers.get("x-next-page") ?? "";
+    const next = nextHeader ? Number(nextHeader) : Number.NaN;
+    if (nextHeader && (!Number.isSafeInteger(next) || next !== page + 1)) {
+      throw new Error("GitLab returned an invalid commits pagination cursor");
+    }
+    return {
+      commits,
+      page,
+      perPage,
+      hasMore: Boolean(nextHeader),
+      nextPage: nextHeader ? next : null,
+    };
   }
 
   async getIssueComments(
@@ -608,7 +738,7 @@ export class GitLabClient {
     if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(mrIid) || mrIid <= 0) {
       throw new Error("project ID and MR IID must be positive safe integers");
     }
-    if (update.title === undefined && update.description === undefined) {
+    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
       throw new Error("at least one merge request field must be provided");
     }
     if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
@@ -632,7 +762,34 @@ export class GitLabClient {
       form.set("title", title);
     }
     if (update.description !== undefined) form.set("description", update.description);
+    if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, form, signal, "PUT");
+  }
+
+  /** 更新 Issue 的标题、详情或状态；只提交显式传入的字段。 */
+  async updateIssue(
+    projectId: number,
+    issueIid: number,
+    update: IssueUpdate,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(issueIid) || issueIid <= 0) {
+      throw new Error("project ID and issue IID must be positive safe integers");
+    }
+    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
+      throw new Error("at least one issue field must be provided");
+    }
+    if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
+      throw new Error(`issue title must contain 1-${MAX_MR_TITLE_CHARACTERS} characters`);
+    }
+    if (update.description !== undefined && [...update.description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
+      throw new Error(`issue description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
+    }
+    const form = new URLSearchParams();
+    if (update.title !== undefined) form.set("title", update.title);
+    if (update.description !== undefined) form.set("description", update.description);
+    if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
+    return this.write(`/projects/${projectId}/issues/${issueIid}`, form, signal, "PUT");
   }
 
   async postDiscussion(
@@ -710,6 +867,7 @@ export class GitLabClient {
     form?: URLSearchParams,
   ): Promise<Response> {
     if (!token) throw new Error("GitLab API token is required for this request");
+    const baseUrl = this.requireBaseUrl();
     const maxAttempts = method === "GET" ? MAX_READ_ATTEMPTS : 1;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const requestSignal = signal
@@ -717,10 +875,12 @@ export class GitLabClient {
         : AbortSignal.timeout(this.requestTimeoutMs);
       let response: Response;
       try {
-        response = await fetch(`${this.baseUrl}/api/v4${path}`, {
+        response = await fetch(`${baseUrl}/api/v4${path}`, {
           method,
           headers: {
-            "PRIVATE-TOKEN": token,
+            ...(this.tokenKind === "bearer"
+              ? { authorization: `Bearer ${token}` }
+              : { "PRIVATE-TOKEN": token }),
             ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
           },
           body: form,

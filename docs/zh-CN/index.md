@@ -19,5 +19,5 @@ features:
   - title: 保留变更控制权
     details: 修复提案供人工应用；Issue 实现会创建 Draft MR，绝不自动合并。
   - title: 自行部署
-    details: 使用 Docker Compose 部署服务端和可选 Worker，并由 SQLite 提供持久化存储。
+    details: 使用 Docker Compose 部署单一 Server 服务，并由 SQLite 提供持久化存储。
 ---

@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { GitLabApiError, GitLabClient, GitLabWriteError } from "../../src/gitlab/client.js";
+import { GitLabApiError, GitLabClient, GitLabWriteError, gitlabEndpoint, repositoryCloneUrl, repositoryWebUrl } from "../../src/gitlab/client.js";
 
 async function listen(server: ReturnType<typeof createServer>): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -12,6 +12,46 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
   return address.port;
 }
 
+describe("GitLab base URL", () => {
+  it("can be configured after startup through the console", async () => {
+    const client = new GitLabClient("", "read", "write");
+    await expect(client.listProjects("", 1)).rejects.toThrow("GitLab base URL is not configured");
+    expect(() => client.configure("https://gitlab.example.com", "read", "write")).not.toThrow();
+    expect(() => new GitLabClient("", "", "")).not.toThrow();
+  });
+});
+
+describe("GitLab endpoint URLs", () => {
+  it("preserves the instance subpath", () => {
+    expect(gitlabEndpoint("https://gitlab.example.com/", "api/v4/projects"))
+      .toBe("https://gitlab.example.com/api/v4/projects");
+    expect(gitlabEndpoint("https://example.com/gitlab", "/oauth/token"))
+      .toBe("https://example.com/gitlab/oauth/token");
+  });
+});
+
+describe("GitLab authentication modes", () => {
+  it("sends OAuth access tokens as Bearer instead of PRIVATE-TOKEN", async () => {
+    let authorization = "";
+    let privateToken = "";
+    const server = createServer((request, response) => {
+      authorization = String(request.headers.authorization ?? "");
+      privateToken = String(request.headers["private-token"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "oauth-token", "oauth-token", 10_000, "bearer");
+      await expect(client.listProjects("", 1)).resolves.toEqual([]);
+      expect(authorization).toBe("Bearer oauth-token");
+      expect(privateToken).toBe("");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+});
+
 describe("GitLab write receipts", () => {
   it("lists accessible projects with a bounded page and optional search", async () => {
     let requestUrl = "";
@@ -22,6 +62,7 @@ describe("GitLab write receipts", () => {
         id: 5,
         name: "Corvex",
         path_with_namespace: "axetroy/Corvex",
+        description: "GitLab code review and repair agent",
         http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
         default_branch: "main",
       }]));
@@ -33,10 +74,11 @@ describe("GitLab write receipts", () => {
         id: 5,
         name: "Corvex",
         path_with_namespace: "axetroy/Corvex",
+        description: "GitLab code review and repair agent",
         http_url_to_repo: "https://gitlab.example.com/axetroy/Corvex.git",
         default_branch: "main",
       }]);
-      expect(requestUrl).toBe("/api/v4/projects?simple=true&per_page=50&page=2&order_by=name&sort=asc&search=Corvex");
+      expect(requestUrl).toBe("/api/v4/projects?per_page=50&page=2&order_by=name&sort=asc&search=Corvex");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
@@ -65,32 +107,42 @@ describe("GitLab write receipts", () => {
     }
   });
 
-  it("lists branches, Issues, and merge requests with bounded search queries", async () => {
+  it("lists branches with bounded search queries", async () => {
     const requests: string[] = [];
     const server = createServer((request, response) => {
       requests.push(request.url ?? "");
       response.writeHead(200, { "content-type": "application/json" });
-      const path = new URL(request.url ?? "", "http://localhost").pathname;
-      response.end(JSON.stringify(path.endsWith("/branches")
-        ? [{ name: "main", commit: { id: "b".repeat(40) } }]
-        : [{ iid: 9, title: "Improve routing", description: "Details", state: "opened", source_branch: "feature", target_branch: "main" }]));
+      response.end(JSON.stringify([{
+        name: "main",
+        commit: {
+          id: "b".repeat(40),
+          short_id: "bbbbbbbb",
+          title: "Tighten branch search",
+          committed_date: "2026-11-01T08:00:00.000Z",
+        },
+      }, {
+        name: "legacy",
+        commit: { id: "c".repeat(40), title: "   " },
+      }]));
     });
     const port = await listen(server);
     try {
       const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      // 提交元数据按类型收窄后透传；空白标题等无效值被丢弃。
       await expect(client.listBranches(5, "ma", 2)).resolves.toEqual([
-        { name: "main", commit: { id: "b".repeat(40) } },
-      ]);
-      await expect(client.listIssues(5, "routing", 2)).resolves.toMatchObject([
-        { iid: 9, title: "Improve routing", state: "opened" },
-      ]);
-      await expect(client.listMergeRequests(5, "routing", 2)).resolves.toMatchObject([
-        { iid: 9, title: "Improve routing", state: "opened", source_branch: "feature", target_branch: "main" },
+        {
+          name: "main",
+          commit: {
+            id: "b".repeat(40),
+            short_id: "bbbbbbbb",
+            title: "Tighten branch search",
+            committed_date: "2026-11-01T08:00:00.000Z",
+          },
+        },
+        { name: "legacy", commit: { id: "c".repeat(40) } },
       ]);
       expect(requests.map((url) => new URL(url, "http://localhost").pathname)).toEqual([
         "/api/v4/projects/5/repository/branches",
-        "/api/v4/projects/5/issues",
-        "/api/v4/projects/5/merge_requests",
       ]);
       const branchQuery = new URL(requests[0]!, "http://localhost").searchParams;
       expect(branchQuery.get("search")).toBe("ma");
@@ -174,7 +226,7 @@ describe("GitLab write receipts", () => {
         response.end(JSON.stringify({
           iid: 12,
           web_url: "https://gitlab.example.com/group/project/-/merge_requests/12",
-          source_branch: "corvex/issue-9-job1",
+          source_branch: "corvex/issue-9-event1",
           target_branch: "main",
         }));
       });
@@ -187,12 +239,12 @@ describe("GitLab write receipts", () => {
       await expect(client.createDraftMergeRequest(5, {
         title: "Implement issue #9",
         description: "Implementation summary",
-        sourceBranch: "corvex/issue-9-job1",
+        sourceBranch: "corvex/issue-9-event1",
         targetBranch: "main",
       })).resolves.toEqual({
         iid: 12,
         webUrl: "https://gitlab.example.com/group/project/-/merge_requests/12",
-        sourceBranch: "corvex/issue-9-job1",
+        sourceBranch: "corvex/issue-9-event1",
         targetBranch: "main",
       });
       expect(requests).toEqual([
@@ -203,7 +255,7 @@ describe("GitLab write receipts", () => {
       expect([...submittedFields.entries()]).toEqual([
         ["title", "Draft: Implement issue #9"],
         ["description", "Implementation summary"],
-        ["source_branch", "corvex/issue-9-job1"],
+        ["source_branch", "corvex/issue-9-event1"],
         ["target_branch", "main"],
       ]);
     } finally {
@@ -505,5 +557,114 @@ describe("GitLab read retries", () => {
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+});
+
+describe("repository URLs from configured base URL", () => {
+  const project = {
+    id: 254,
+    path_with_namespace: "digimaple/cloudoc_sync_drive",
+    // GitLab 自己报告的地址故意放旧地址，派生函数必须忽略它。
+    http_url_to_repo: "http://192.168.0.69:8092/digimaple/cloudoc_sync_drive.git",
+  };
+
+  it("derives clone and web URLs from gitlab.base_url", () => {
+    expect(repositoryCloneUrl("https://xafg.qdzk3000.com:8092", project))
+      .toBe("https://xafg.qdzk3000.com:8092/digimaple/cloudoc_sync_drive.git");
+    expect(repositoryWebUrl("https://xafg.qdzk3000.com:8092/", project))
+      .toBe("https://xafg.qdzk3000.com:8092/digimaple/cloudoc_sync_drive");
+  });
+
+  it("rejects missing or unsafe project paths", () => {
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "" })).toThrow();
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "../secret" })).toThrow();
+    expect(() => repositoryCloneUrl("https://gitlab.example.com", { ...project, path_with_namespace: "group/repo?x=1" })).toThrow();
+  });
+});
+describe("GitLabClient runtime reconfiguration", () => {
+  it("uses the configured base URL and token on the next request", async () => {
+    let authorization = "";
+    const server = createServer((request, response) => {
+      authorization = String(request.headers["private-token"] ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("[]");
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+      client.configure(`http://127.0.0.1:${port}`, "new-read", "new-write");
+      await expect(client.listProjects("anything", 1)).resolves.toEqual([]);
+      expect(authorization).toBe("new-read");
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("GitLab issue and MR state updates", () => {
+  it("sends state_event when closing an issue or MR and only submitted issue fields", async () => {
+    const calls: { url: string; method: string; body: string }[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        calls.push({
+          url: request.url ?? "",
+          method: request.method ?? "",
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: 1 }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await client.updateMergeRequest(7, 3, { stateEvent: "close" });
+      await client.updateIssue(7, 9, { title: "New title", stateEvent: "close" });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({ method: "PUT", url: "/api/v4/projects/7/merge_requests/3" });
+      expect(calls[0].body).toContain("state_event=close");
+      expect(calls[1].url).toBe("/api/v4/projects/7/issues/9");
+      expect(calls[1].body).toContain("title=New+title");
+      expect(calls[1].body).toContain("state_event=close");
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("GitLab MR commit pagination", () => {
+  it("returns one bounded page with a next-page cursor", async () => {
+    let url = "";
+    const server = createServer((request, response) => {
+      url = request.url ?? "";
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "x-next-page": "2",
+      });
+      response.end(JSON.stringify([
+        { id: "a".repeat(40), title: "Fix parser", author: { name: "Dev" }, created_at: "2026-11-20T01:00:00Z" },
+        { id: "b".repeat(40), title: "x".repeat(500), author_name: "Other", created_at: "2026-11-19T01:00:00Z" },
+      ]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const page = await client.getMergeRequestCommits(7, 3, 1, 2);
+      expect(url).toContain("/api/v4/projects/7/merge_requests/3/commits");
+      expect(url).toContain("per_page=2");
+      expect(page).toMatchObject({ page: 1, perPage: 2, hasMore: true, nextPage: 2 });
+      expect(page.commits).toHaveLength(2);
+      expect(page.commits[0]).toMatchObject({ id: "a".repeat(40), title: "Fix parser", author: "Dev" });
+      expect(page.commits[1].title).toHaveLength(300);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("rejects an oversized page size before calling GitLab", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    await expect(client.getMergeRequestCommits(7, 3, 1, 21)).rejects.toThrow("page size must be between 1 and 20");
   });
 });

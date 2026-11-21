@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PiAgent } from "../src/agent/pi.js";
 import { loadConfig } from "../src/config/config.js";
-import { JobStore } from "../src/jobs/store.js";
+import { EventStore } from "../src/events/store.js";
 import {
   reviewBenchmarkCases,
   scoreReviewBenchmark,
@@ -33,9 +33,8 @@ function parseArgs(args: string[]): { configPath: string; minimumF1: number } {
 
 async function run(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const config = await loadConfig(options.configPath, "worker");
-  if (!config.agent.enabled) throw new Error("review benchmark requires agent.enabled=true");
-  const store = await JobStore.open(config.storage.database);
+  const config = await loadConfig(options.configPath, "benchmark");
+  const store = await EventStore.open(config.storage.database);
   const workspace = await mkdtemp(join(tmpdir(), "corvex-review-benchmark-"));
   try {
     const benchmarkConfig = {

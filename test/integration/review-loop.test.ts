@@ -6,11 +6,11 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
-import { Worker } from "../../src/app/worker.js";
 import type { CorvexConfig } from "../../src/config/config.js";
-import { GitManager } from "../../src/git/manager.js";
-import { JobStore } from "../../src/jobs/store.js";
+import { GitManager, conversationWorkspaceName } from "../../src/git/manager.js";
+import { EventStore } from "../../src/events/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
+import { createTokenCipher } from "../../src/tokens.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,7 +42,7 @@ async function waitFor(check: () => boolean, timeoutMs = 25_000): Promise<void> 
     if (check()) return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   }
-  throw new Error("timed out waiting for the review job to complete");
+  throw new Error("timed out waiting for the review event to complete");
 }
 
 describe("review task loop", () => {
@@ -51,18 +51,15 @@ describe("review task loop", () => {
   let modelServer: Server | undefined;
   let application: CorvexServer | undefined;
   let applicationRun: Promise<void> | undefined;
-  let workerRun: Promise<void> | undefined;
   let controller: AbortController | undefined;
-  let serverStore: JobStore | undefined;
-  let workerStore: JobStore | undefined;
+  let serverStore: EventStore | undefined;
 
   afterEach(async () => {
     controller?.abort();
-    await Promise.allSettled([applicationRun, workerRun].filter((value): value is Promise<void> => value !== undefined));
+    await Promise.allSettled([applicationRun].filter((value): value is Promise<void> => value !== undefined));
     if (apiServer) await close(apiServer);
     if (modelServer) await close(modelServer);
     serverStore?.close();
-    workerStore?.close();
     if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -129,7 +126,20 @@ describe("review task loop", () => {
       }
       if (url.pathname === "/api/v4/projects/1" && request.method === "GET") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ id: 1, http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`, default_branch: "main" }));
+        response.end(JSON.stringify({
+          id: 1,
+          path_with_namespace: "project",
+          http_url_to_repo: `http://127.0.0.1:${apiPort}/project.git`,
+          default_branch: "main",
+        }));
+        return;
+      }
+      const branchMatch = /^\/api\/v4\/projects\/1\/repository\/branches\/(.+)$/.exec(url.pathname);
+      if (branchMatch && request.method === "GET") {
+        const name = decodeURIComponent(branchMatch[1]!);
+        const branchHead = name === "feature" ? headSha : baseSha;
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ name, commit: { id: branchHead } }));
         return;
       }
       if (url.pathname === "/api/v4/projects/1/merge_requests" && request.method === "POST") {
@@ -215,6 +225,12 @@ describe("review task loop", () => {
       delayMs?: number;
       onStarted?: () => void;
       beforeResponse?: () => void;
+      /** 提供后先返回一次工具调用，由模型循环执行工具再发起下一轮请求。 */
+      toolCall?: { name: string; args: string };
+      /** 提供后把正文拆成多个 SSE 内容块，模拟逐字输出；省略时一次给出全文。 */
+      chunks?: string[];
+      /** 与 `chunks` 对齐的思考内容块，模拟模型的 reasoning 输出。 */
+      reasoningChunks?: string[];
     };
     const reviewContent = JSON.stringify({
       summary: "Unchecked input is used without validation.",
@@ -243,22 +259,52 @@ describe("review task loop", () => {
           action.beforeResponse?.();
           if (response.destroyed) return;
           response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-          response.write(`data: ${JSON.stringify({
-            id: "chatcmpl-review",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "test-model",
-            choices: [{ index: 0, delta: { role: "assistant", content: action.content }, finish_reason: null }],
-          })}\n\n`);
-          response.write(`data: ${JSON.stringify({
-            id: "chatcmpl-review",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "test-model",
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
-          })}\n\n`);
-          response.end("data: [DONE]\n\n");
+          const writeDelta = (delta: Record<string, unknown>) => {
+            if (response.destroyed) return;
+            response.write(`data: ${JSON.stringify({
+              id: "chatcmpl-review",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "test-model",
+              choices: [{ index: 0, delta, finish_reason: null }],
+            })}\n\n`);
+          };
+          const finish = () => {
+            if (response.destroyed) return;
+            response.write(`data: ${JSON.stringify({
+              id: "chatcmpl-review",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "test-model",
+              choices: [{ index: 0, delta: {}, finish_reason: action.toolCall ? "tool_calls" : "stop" }],
+              usage: { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 },
+            })}\n\n`);
+            response.end("data: [DONE]\n\n");
+          };
+          if (action.toolCall) {
+            writeDelta({
+              role: "assistant",
+              tool_calls: [{
+                index: 0,
+                id: "call-conversation",
+                type: "function",
+                function: { name: action.toolCall.name, arguments: action.toolCall.args },
+              }],
+            });
+            finish();
+            return;
+          }
+          const chunks = action.chunks?.length ? action.chunks : [action.content];
+          for (const [index, content] of chunks.entries()) {
+            const delta: Record<string, unknown> = { content };
+            if (action.reasoningChunks?.[index]) delta.reasoning_content = action.reasoningChunks[index];
+            if (index === 0) {
+              writeDelta({ role: "assistant", ...delta });
+            } else {
+              setTimeout(() => writeDelta(delta), index * 40);
+            }
+          }
+          setTimeout(finish, chunks.length * 40);
         };
         const timer = action.delayMs ? setTimeout(sendResponse, action.delayMs) : undefined;
         response.once("close", () => {
@@ -271,7 +317,7 @@ describe("review task loop", () => {
 
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
-      operations: { username: "", password: "" },
+      operations: { username: "operator", password: "a secure password with 16 chars" },
       gitlab: {
         baseUrl: `http://127.0.0.1:${apiPort}`,
         readToken: "read-token",
@@ -288,7 +334,6 @@ describe("review task loop", () => {
       },
       agent: {
         responseLanguage: "en",
-        enabled: true,
         baseUrl: `http://127.0.0.1:${modelPort}/v1`,
         model: "test-model",
         apiKey: "test-api-key",
@@ -300,15 +345,21 @@ describe("review task loop", () => {
         webEnabled: false,
         webBlockedHosts: [],
         skillPaths: [],
+        contextWindow: 131_072,
+        maxInputTokens: 0,
+        historyTokenBudget: 24_000,
+        turnToolResultBytes: 256 << 10,
+        compactionReserveTokens: 16_384,
+        compactionKeepRecentTokens: 20_000,
+        summaryEnabled: true,
       },
       review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
       chat: { historyComments: 20 },
-      worker: { pollInterval: 20, jobTimeout: 15_000 },
+      events: { pollInterval: 20, eventTimeout: 15_000 },
       fix: { enabled: true, maxPatchBytes: 128 << 10 },
       issue: { implementEnabled: false, historyComments: 20 },
     };
-    serverStore = await JobStore.open(config.storage.database);
-    workerStore = await JobStore.open(config.storage.database);
+    serverStore = await EventStore.open(config.storage.database);
     application = new CorvexServer(config, serverStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
     controller = new AbortController();
     applicationRun = application.run(controller.signal);
@@ -346,14 +397,13 @@ describe("review task loop", () => {
     );
     const webhookResponse = await sendNote(99, 3, "@corvex-bot /review");
     expect(webhookResponse.status).toBe(202);
-    const queued = serverStore.listJobs("queued", 10)[0];
-    if (!queued) throw new Error("webhook did not enqueue a review job");
+    // 事件由 Server 内联执行，可能在响应返回前就已被领取，因此不限定 queued 状态。
+    const queued = serverStore.listEvents(undefined, 10)[0];
+    if (!queued) throw new Error("webhook did not enqueue a review event");
 
-    const worker = new Worker(config, workerStore, new GitLabClient(config.gitlab.baseUrl, "read-token", "write-token"));
-    workerRun = worker.run(controller.signal);
-    await waitFor(() => serverStore!.listJobs("completed", 10).some((job) => job.id === queued.id));
+    await waitFor(() => serverStore!.listEvents("completed", 10).some((event) => event.id === queued.id));
 
-    const details = serverStore.getJobDetails(queued.id);
+    const details = serverStore.getEventDetails(queued.id);
     expect(mergeRequestReads.get(3)).toBe(5);
     expect(details?.attempts).toMatchObject([
       { attempt: 1, error: expect.stringContaining("GitLab API returned 503") },
@@ -373,38 +423,38 @@ describe("review task loop", () => {
     expect(details?.trajectory.some((entry) => entry.kind === "llm" && entry.status === "succeeded")).toBe(true);
 
     const enqueue = async (noteId: number, mrIid: number, note: string) => {
-      const existingIds = new Set(serverStore!.listJobs(undefined, 200).map((job) => job.id));
+      const existingIds = new Set(serverStore!.listEvents(undefined, 200).map((event) => event.id));
       const response = await sendNote(noteId, mrIid, note);
       expect(response.status).toBe(202);
-      await waitFor(() => serverStore!.listJobs(undefined, 200).some((job) => !existingIds.has(job.id)));
-      const job = serverStore.listJobs(undefined, 200).find((candidate) => !existingIds.has(candidate.id));
-      if (!job) throw new Error("webhook did not create a task");
-      return job;
+      await waitFor(() => serverStore!.listEvents(undefined, 200).some((event) => !existingIds.has(event.id)));
+      const event = serverStore.listEvents(undefined, 200).find((candidate) => !existingIds.has(candidate.id));
+      if (!event) throw new Error("webhook did not create a task");
+      return event;
     };
-    const waitForStatus = (jobId: string, status: string) => waitFor(() =>
-      serverStore!.listJobs(undefined, 200).some((job) => job.id === jobId && job.status === status),
+    const waitForStatus = (eventId: string, status: string) => waitFor(() =>
+      serverStore!.listEvents(undefined, 200).some((event) => event.id === eventId && event.status === status),
     );
 
     modelActions.push({ content: "The file assigns an unchecked value to `value`." });
-    const explainJob = await enqueue(100, 4, "@corvex-bot /explain input.ts");
-    await waitForStatus(explainJob.id, "completed");
+    const explainEvent = await enqueue(100, 4, "@corvex-bot /explain input.ts");
+    await waitForStatus(explainEvent.id, "completed");
     expect(postedNotes.some((body) => body.includes("The file assigns an unchecked value"))).toBe(true);
-    expect(serverStore.getJobDetails(explainJob.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
+    expect(serverStore.getEventDetails(explainEvent.id)?.events.map(({ step }) => step)).toContain("gitlab.post_note");
 
     const chatRequest = "Summarize this PR\n\nSuggest a concise title";
     modelActions.push({ content: "This PR introduces an unchecked value.\n\nSuggested title: Validate input values" });
-    const chatJob = await enqueue(106, 7, `@corvex-bot ${chatRequest}`);
-    expect(chatJob.type).toBe("chat");
-    expect(chatJob.request).toBe(chatRequest);
-    await waitForStatus(chatJob.id, "completed");
+    const chatEvent = await enqueue(106, 7, `@corvex-bot ${chatRequest}`);
+    expect(chatEvent.type).toBe("chat");
+    expect(chatEvent.request).toBe(chatRequest);
+    await waitForStatus(chatEvent.id, "completed");
     expect(postedNotes.some((body) => body.includes("Suggested title: Validate input values"))).toBe(true);
     expect(modelRequests.some((body) => body.includes("Please validate the new input."))).toBe(true);
-    expect(serverStore.getJobDetails(chatJob.id)?.events.map(({ step }) => step)).toEqual(
+    expect(serverStore.getEventDetails(chatEvent.id)?.events.map(({ step }) => step)).toEqual(
       expect.arrayContaining([
         "git.create_diff",
         "gitlab.get_merge_request_comments",
         "workflow.chat",
-        "worker.verify_snapshot",
+        "event.verify_snapshot",
         "gitlab.post_note",
       ]),
     );
@@ -419,9 +469,9 @@ describe("review task loop", () => {
       "",
     ].join("\n");
     modelActions.push({ content: JSON.stringify({ summary: "Replace the unsafe value.", patch: fixPatch }) });
-    const fixJob = await enqueue(101, 5, "@corvex-bot /fix Validate this value");
-    await waitForStatus(fixJob.id, "completed");
-    const fixDetails = serverStore.getJobDetails(fixJob.id);
+    const fixEvent = await enqueue(101, 5, "@corvex-bot /fix Validate this value");
+    await waitForStatus(fixEvent.id, "completed");
+    const fixDetails = serverStore.getEventDetails(fixEvent.id);
     expect(fixDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["fixing", "verifying", "publishing", "completed"]));
     expect(fixDetails?.events.map(({ step }) => step)).toContain("gitlab.post_fix_proposal");
     expect(postedNotes.some((body) => body.includes("Replace the unsafe value"))).toBe(true);
@@ -461,10 +511,10 @@ describe("review task loop", () => {
       }),
     });
     expect(enabledIssueResponse.status).toBe(202);
-    const issueJob = serverStore.listJobs(undefined, 50).find((candidate) => candidate.type === "implement");
-    if (!issueJob) throw new Error("Issue webhook did not enqueue an implementation job");
-    await waitForStatus(issueJob.id, "completed");
-    const issueDetails = serverStore.getJobDetails(issueJob.id);
+    const issueEvent = serverStore.listEvents(undefined, 50).find((candidate) => candidate.type === "implement");
+    if (!issueEvent) throw new Error("Issue webhook did not enqueue an implementation event");
+    await waitForStatus(issueEvent.id, "completed");
+    const issueDetails = serverStore.getEventDetails(issueEvent.id);
     expect(issueDetails?.timeline.map(({ to }) => to)).toEqual(expect.arrayContaining(["analyzing", "fixing", "verifying", "publishing", "completed"]));
     expect(issueDetails?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
       "gitlab.get_issue",
@@ -485,8 +535,8 @@ describe("review task loop", () => {
 
     rejectDiscussionFor = 6;
     modelActions.push({ content: reviewContent });
-    const fallbackJob = await enqueue(102, 6, "@corvex-bot /review");
-    await waitForStatus(fallbackJob.id, "completed");
+    const fallbackEvent = await enqueue(102, 6, "@corvex-bot /review");
+    await waitForStatus(fallbackEvent.id, "completed");
     const fallbackNote = postedNotes.find((body) => body.includes("1 validated finding(s); 0 posted inline."));
     expect(fallbackNote).toContain("<details>");
     expect(fallbackNote).toContain("<summary>Finding 1: HIGH - Validate the input before use</summary>");
@@ -498,22 +548,147 @@ describe("review task loop", () => {
 
     const staleSha = "c".repeat(40);
     modelActions.push({ content: reviewContent, beforeResponse: () => currentHeads.set(7, staleSha) });
-    const staleJob = await enqueue(103, 7, "@corvex-bot /review");
+    const staleEvent = await enqueue(103, 7, "@corvex-bot /review");
     const discussionsBeforeStale = discussionAttempts;
-    await waitForStatus(staleJob.id, "stale");
+    await waitForStatus(staleEvent.id, "stale");
     expect(discussionAttempts).toBe(discussionsBeforeStale);
-    expect(serverStore.getJobDetails(staleJob.id)?.events.map(({ step }) => step)).toContain("worker.verify_snapshot");
+    expect(serverStore.getEventDetails(staleEvent.id)?.events.map(({ step }) => step)).toContain("event.verify_snapshot");
+
+    // 对话轮次由 Server 内联执行：不进入事件队列，并逐条暴露工具调用。
+    modelActions.push({ content: "", toolCall: { name: "read_file", args: JSON.stringify({ path: "input.ts" }) } });
+    const streamedAnswer = "`input.ts` assigns a value without validating it.";
+    const streamedThinking = "先读取文件，再确认赋值附近没有校验。";
+    modelActions.push({
+      content: streamedAnswer,
+      chunks: ["`input.ts` assigns ", "a value without ", "validating it."],
+      reasoningChunks: ["先读取文件，", "再确认赋值附近", "没有校验。"],
+      // 稍作延迟，确保 SSE 已建连后再开始输出正文，断言才不依赖调度顺序。
+      delayMs: 100,
+    });
+    // 正文落库后、done 之前生成标题，使用模型的独立动作。
+    modelActions.push({ content: "Value assignment in input.ts" });
+    const cipher = createTokenCipher(serverStore.getOrCreateSessionSecret());
+    const user = serverStore.upsertUser({
+      gitlabUserId: 2,
+      username: "developer",
+      name: "Developer",
+      avatarUrl: "",
+      accessToken: "read-token",
+      refreshToken: "",
+      expiresAt: Date.now() + 3_600_000,
+    }, cipher);
+    const session = serverStore.createUserSession(user.id, Date.now() + 3_600_000);
+    const authHeaders = { cookie: `corvex_session=${session}` };
+    const conversationResponse = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders },
+      body: JSON.stringify({ projectId: 1, targetBranch: "main", message: "Where is the value assigned?" }),
+    });
+    expect(conversationResponse.status).toBe(202);
+    const createdConversation = await conversationResponse.json() as { conversationId: string; turnId: string };
+    expect(serverStore.listEvents(undefined, 200).some((event) => event.type === "conversation")).toBe(false);
+    // 控制台在轮次执行期间订阅 SSE：正文应分多次到达，最后以 done 收尾。
+    const streamResponse = await fetch(
+      `http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/turns/${createdConversation.turnId}/stream`,
+      { headers: authHeaders },
+    );
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+    let streamBody = "";
+    const streamReader = streamResponse.body!.getReader();
+    const streamDecoder = new TextDecoder();
+    for (;;) {
+      const { value, done } = await streamReader.read();
+      if (done) break;
+      streamBody += streamDecoder.decode(value, { stream: true });
+    }
+    const streamEvents = [...streamBody.matchAll(/^data: (.+)$/gm)]
+      .map((match) => JSON.parse(match[1]!) as {
+        type: string;
+        text?: string;
+        reset?: boolean;
+        status?: string;
+        tool?: { id: string; name: string; status: string; durationMs?: number | null };
+      });
+    const streamedTexts = streamEvents
+      .filter((event) => event.type === "text" && event.reset === false && event.text)
+      .map((event) => event.text);
+    expect(streamedTexts.length).toBeGreaterThan(1);
+    expect(streamedTexts[0]).toBe("`input.ts` assigns ");
+    expect(streamedTexts.at(-1)).toBe(streamedAnswer);
+    // 思考过程与正文分别推送，按累计值逐段增长，且不混入落库的回答正文。
+    const streamedThinkingTexts = streamEvents
+      .filter((event) => event.type === "thinking" && event.reset === false && event.text)
+      .map((event) => event.text);
+    expect(streamedThinkingTexts.length).toBeGreaterThan(1);
+    expect(streamedThinkingTexts.at(-1)).toBe(streamedThinking);
+    expect(streamEvents.findIndex((event) => event.type === "thinking" && event.text))
+      .toBeLessThan(streamEvents.findIndex((event) => event.type === "text" && event.text));
+    // 工具调用在两次思考之间单独推送，先 running 后 succeeded，不混进回答正文。
+    const streamedTools = streamEvents.filter((event) => event.type === "tool").map((event) => event.tool!);
+    expect(streamedTools.map((tool) => tool.status)).toEqual(["running", "succeeded"]);
+    expect(streamedTools[0]?.name).toBe("read_file");
+    expect(streamedTools[0]?.id).toBeTruthy();
+    expect(streamEvents.findIndex((event) => event.type === "tool" && event.tool?.status === "succeeded"))
+      .toBeLessThan(streamEvents.findIndex((event) => event.type === "thinking" && event.text));
+    expect(streamEvents.at(-1)).toMatchObject({ type: "done", status: "completed" });
+    await waitFor(() => serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId)?.status === "completed");
+    const conversationDetail = serverStore.getConversation(createdConversation.conversationId);
+    expect(conversationDetail?.mode).toBe("read_only");
+    // 首轮完成后由模型总结标题；失败不影响轮次，因此这里等待列表标题出现。
+    await waitFor(() => Boolean(serverStore.getConversation(createdConversation.conversationId)?.title));
+    expect(serverStore.getConversation(createdConversation.conversationId)?.title).toBe("Value assignment in input.ts");
+    expect(conversationDetail?.messages[1]).toMatchObject({
+      role: "assistant",
+      status: "completed",
+      content: "`input.ts` assigns a value without validating it.",
+      toolCalls: [{ name: "read_file", status: "succeeded" }],
+    });
+    const conversationTurn = serverStore.getConversationTurn(createdConversation.conversationId, createdConversation.turnId);
+    // 思考与工具调用落库后仍可从对话详情读取：刷新页面也能还原过程块。
+    const process = conversationTurn?.process ?? [];
+    expect(process.map((entry) => entry.kind)).toEqual(["tool", "thinking"]);
+    expect(process[0]).toMatchObject({ kind: "tool", name: "read_file", status: "succeeded" });
+    expect(process[1]).toMatchObject({ kind: "thinking", text: streamedThinking });
+    expect(process.some((entry) => entry.kind === "text" && entry.text === streamedAnswer)).toBe(false);
+    expect(conversationDetail?.messages[1]?.process).toEqual(process);
+    expect(conversationTurn?.trajectory.some((entry) => entry.kind === "tool" && entry.name === "read_file")).toBe(true);
+    expect(conversationTurn?.events.map(({ step }) => step)).toEqual(expect.arrayContaining([
+      "workflow.read_only_conversation",
+      "git.prepare_conversation_workspace",
+    ]));
+    // 对话工作区跨轮次复用：第二轮不应再重建目录，也不应再出现清理步骤。
+    const conversationWorkspace = join(
+      config.storage.root,
+      "workspaces",
+      "1",
+      conversationWorkspaceName(createdConversation.conversationId),
+    );
+    await writeFile(join(conversationWorkspace, "reuse-marker.txt"), "keep\n");
+    modelActions.push({ content: "The value is assigned at the top of `input.ts`." });
+    const followUp = await fetch(`http://127.0.0.1:${applicationAddress.port}/api/ops/conversations/${createdConversation.conversationId}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders },
+      body: JSON.stringify({ message: "Where exactly is it assigned?" }),
+    });
+    expect(followUp.status).toBe(202);
+    const followUpTurn = await followUp.json() as { conversationId: string; turnId: string };
+    await waitFor(() => serverStore.getConversationTurn(followUpTurn.conversationId, followUpTurn.turnId)?.status === "completed");
+    await expect(readFile(join(conversationWorkspace, "reuse-marker.txt"), "utf8")).resolves.toBe("keep\n");
+    const followUpDetail = serverStore.getConversationTurn(followUpTurn.conversationId, followUpTurn.turnId);
+    expect(followUpDetail?.events.map(({ step }) => step)).toContain("git.prepare_conversation_workspace");
+    expect(followUpDetail?.events.map(({ step }) => step)).not.toContain("git.cleanup_conversation_workspace");
 
     let cancelModelStarted!: () => void;
     const cancelModelStartedPromise = new Promise<void>((resolvePromise) => {
       cancelModelStarted = resolvePromise;
     });
     modelActions.push({ content: reviewContent, delayMs: 15_000, onStarted: cancelModelStarted });
-    const cancelJob = await enqueue(104, 8, "@corvex-bot /review");
+    const cancelEvent = await enqueue(104, 8, "@corvex-bot /review");
     await cancelModelStartedPromise;
     const cancelResponse = await sendNote(105, 8, "@corvex-bot /cancel");
     expect(cancelResponse.status).toBe(202);
-    await waitForStatus(cancelJob.id, "cancelled");
-    expect(serverStore.getJobDetails(cancelJob.id)?.timeline.map(({ to }) => to)).toContain("cancelled");
+    await waitForStatus(cancelEvent.id, "cancelled");
+    expect(serverStore.getEventDetails(cancelEvent.id)?.timeline.map(({ to }) => to)).toContain("cancelled");
   }, 35_000);
 });

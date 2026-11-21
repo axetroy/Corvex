@@ -7,17 +7,28 @@ import {
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { AssistantMessageEvent, StreamOptions } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
+import { applyActiveModel } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
-import type { JobTraceEntry, JobType } from "../jobs/model.js";
-import type { JobStore } from "../jobs/store.js";
-import { traceExecutionStep } from "../jobs/execution.js";
+import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
+import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, EventTraceEntry, EventTraceKind, ModelTaskType, TraceScope } from "../events/model.js";
+import type { EventStore } from "../events/store.js";
+import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
+import { stepContextFor, traceExecutionStep } from "../events/execution.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
+import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
+import { contextNoticeText } from "./context-notice.js";
+import { createPlanExtension } from "./plan.js";
+import { createGitLabConversationExtension } from "./gitlab-conversation.js";
+import type { GitLabClient } from "../gitlab/client.js";
+import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
+import type { ContextSnapshot } from "./context-snapshot.js";
 import {
   GitLabWriteError,
   type GitLabWriteReceipt,
@@ -25,34 +36,123 @@ import {
   type MergeRequestMetadataUpdate,
 } from "../gitlab/client.js";
 import { createReadOnlyFileExtension } from "./repo-read.js";
+import { getToolBudgetWarningPrompt } from "./prompts.js";
+import {
+  createToolResultBudgetExtension,
+  resolveCompactionKeepRecentTokens,
+  resolveCompactionReserveTokens,
+  resolveTurnToolResultBytes,
+} from "./tool-budget.js";
 import { createGitHistoryExtension } from "./git-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createMergeRequestMetadataExtension } from "./mr-update.js";
 import { createGitWriteExtension } from "./git-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
-/** 128K-token model window minus output and system/tool safety reserves. */
+/** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
 export const maxAgentPromptBytes = 96 << 10;
+/** 工具输出预算软阈值：达到后先让模型记录进展再继续，把整轮留在一个会话内完成。 */
+const toolBudgetWarningRatio = 0.75;
 /** Keep initial workflow payload below the total prompt cap to reserve system prompt space. */
 export const maxAgentUserPromptBytes = 80 << 10;
+/** 估算用的固定开销：system 提示、工具定义与消息框架。 */
+const framingOverheadTokens = 2_000;
+
+/**
+ * 单次请求的输入字节上限：由上下文窗口推导，而不是固定 96 KiB。
+ *
+ * 长任务的历史与工具输出会持续增长；固定上限会让合法请求在出站前就被拒。这里按窗口
+ * 推导字节预算（chars/4 估算），窗口越大允许的提示词越多，真正超限时仍由 SDK 压缩与
+ * 服务端超限重试兜底。
+ */
+export function resolveMaxPromptBytes(
+  config: Pick<CorvexConfig["agent"], "contextWindow" | "maxOutputTokens">,
+): number {
+  const inputTokens = config.contextWindow - config.maxOutputTokens - framingOverheadTokens;
+  if (!Number.isFinite(inputTokens)) return maxAgentPromptBytes;
+  return Math.max(maxAgentPromptBytes, Math.max(1_024, inputTokens) * 4);
+}
+
+/** 把配置的历史消息转换为 SDK 的会话条目，用于在 prompt 之前注入上下文。 */
+function seedHistoryMessages(
+  history: readonly { role: "user" | "assistant"; content: string }[],
+  providerId: string,
+  model: string,
+): (UserMessage | AssistantMessage)[] {
+  return history.map((message) => message.role === "user"
+    ? {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: message.content }],
+        timestamp: Date.now(),
+      }
+    : {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: message.content }],
+        api: "openai-completions" as const,
+        provider: providerId,
+        model,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop" as const,
+        timestamp: Date.now(),
+      });
+}
 
 export interface ModelRequest {
-  taskType: JobType;
+  taskType: ModelTaskType;
   systemPrompt: string;
   userPrompt: string;
+  /**
+   * 对话历史，按时间升序。提供时按独立消息注入会话，让模型与 SDK 的压缩逻辑
+   * 都能识别轮次边界；不提供时只发送 `userPrompt`。
+   */
+  history?: { role: "user" | "assistant"; content: string }[];
+  /**
+   * 对话轮次的模式；仅 `taskType === "conversation"` 时使用，用于派生工具能力。
+   * 省略时按 `defaultConversationMode`（只读）处理，保持既有只读行为。
+   */
+  conversationMode?: ConversationMode;
+  /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
+  gitlab?: GitLabClient;
+  /**
+   * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
+   * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
+   * 其余任务省略即可。
+   */
+  onTextDelta?: (update: { reset: boolean; text: string }) => void;
+  /**
+   * 助手思考过程的流式回调，语义与 `onTextDelta` 相同：每轮开始先 `reset: true`，
+   * 之后是该轮累计的思考文本。思考内容只用于展示，不落库、不参与输出校验；
+   * 被服务端安全策略遮蔽的思考块不会推送。
+   */
+  onThinkingDelta?: (update: { reset: boolean; text: string }) => void;
+  /**
+   * 工具开始/结束的流式回调，用于把每次工具调用按发生顺序穿插在思考过程之间。
+   * 参数沿用轨迹的脱敏与限长结果；与正文、思考一样只用于展示，不影响执行。
+   */
+  onToolDelta?: (tool: ConversationStreamTool) => void;
+  /**
+   * 上下文压缩/裁剪通知，用于对话控制台把变化以消息形式展示。
+   * 同一 id 的后续事件替换前面的提示（例如「正在压缩」→「已压缩」）。
+   */
+  onContextDelta?: (context: ConversationStreamContext) => void;
+  /** GitLab 协作模式下当前对话绑定的项目 ID；所有 GitLab 工具都固定到该项目。 */
+  conversationProjectId?: number;
 }
 
 export function getAgentToolAccess(
-  taskType: JobType,
+  taskType: ModelTaskType,
   config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
+  conversationMode: ConversationMode = defaultConversationMode,
 ): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
   return {
-    webFetch: ["review", "explain", "chat", "session"].includes(taskType) && config.webEnabled,
+    webFetch: ["review", "explain", "chat", "conversation"].includes(taskType) && config.webEnabled,
     mcp: taskType === "review" && config.mcpEnabled,
     mrComments: taskType === "chat",
     mrMetadata: taskType === "chat",
-    gitHistory: taskType === "chat" || taskType === "session",
-    gitWrite: taskType === "chat",
+    gitHistory: taskType === "chat" || taskType === "conversation",
+    // 对话是否可写由模式决定：当前只有只读模式，`repositoryWrite` 恒为 false。
+    // 新增可写模式时此处即生效，但仍需在 Runner 中接线写入工具所需的上下文。
+    gitWrite: taskType === "chat" || (taskType === "conversation" && conversationCapabilities(conversationMode).repositoryWrite),
   };
 }
 
@@ -68,10 +168,10 @@ export interface ModelResponse {
   usage: ModelUsage;
 }
 
-export interface JobTraceContext {
-  jobId: string;
+export interface EventTraceContext {
+  scope: TraceScope;
   attempt: number;
-  taskType: JobType;
+  taskType: ModelTaskType;
   workspace?: Workspace;
   mergeRequest?: {
     projectId: number;
@@ -91,6 +191,25 @@ export interface JobTraceContext {
     repositoryUrl?: string;
     expectedTargetSha?: string;
   };
+}
+
+/**
+ * 取助手消息中已累计的正文。思考块与工具调用参数不算正文：控制台只把用户可见的
+ * 回答逐字展示，工具调用另有「调用记录」呈现。
+ */
+function assistantText(message: AssistantMessage): string {
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+/** 取助手消息中的思考文本；被安全过滤遮蔽的内容没有可读正文，直接跳过。 */
+function assistantThinking(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is ThinkingContent => part.type === "thinking" && !part.redacted)
+    .map((part) => part.thinking)
+    .join("");
 }
 
 function hasGeneratedOutput(event: AssistantMessageEvent): boolean {
@@ -124,7 +243,7 @@ export type UpdateMergeRequestMetadata = (
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store?: JobStore,
+    private readonly store?: EventStore,
     private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit" | "getWorkspaceDiff">,
     private readonly readMergeRequestComments?: ReadMergeRequestComments,
     private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
@@ -132,25 +251,29 @@ export class PiAgent {
       GitManager,
       "writeEnabled" | "getWorkspaceStatus" | "applyWorkspacePatch" | "commitWorkspace" | "pushWorkspace" | "revertWorkspaceCommit"
     >,
+    private readonly gitlab?: GitLabClient,
+    private readonly hooks?: CorvexHooks,
   ) {}
 
-  getTraceEntries(jobId: string, attempt: number): JobTraceEntry[] {
-    return this.store?.getJobTraceEntries(jobId, attempt) ?? [];
+  getTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
+    return this.store?.getEventTraceEntries(scope, attempt) ?? [];
   }
 
   async generate(
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<ModelResponse> {
-    if (!this.config.agent.enabled) throw new Error("Pi agent is disabled");
+    if (this.hooks) await callAsyncHook(this.hooks.agentBeforeModel, request);
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
       throw new Error("system and user prompts are required");
     }
-    const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt);
-    if (promptBytes > maxAgentPromptBytes) {
-      throw new Error(`agent prompt exceeds the conservative ${maxAgentPromptBytes}-byte request budget`);
+    const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt) +
+      (request.history ?? []).reduce((sum, message) => sum + Buffer.byteLength(message.content), 0);
+    const promptByteLimit = resolveMaxPromptBytes(this.config.agent);
+    if (promptBytes > promptByteLimit) {
+      throw new Error(`agent prompt exceeds the ${promptByteLimit}-byte request budget`);
     }
     // 以提示词字节数加最大输出量预留预算，避免并发请求突破每日上限。
     const reservedTokens = promptBytes + this.config.agent.maxOutputTokens;
@@ -167,7 +290,54 @@ export class PiAgent {
       const sessionSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.sessionTimeout)])
         : AbortSignal.timeout(this.config.agent.sessionTimeout);
-      response = await this.runSession(request, workingDirectory, sessionSignal, trace);
+      try {
+        response = await this.runSession(request, workingDirectory, sessionSignal, trace);
+      } catch (error) {
+        // 本地预算估算总有误差（不同分词器差异很大）。服务端仍报超限时收缩一次
+        // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
+        if (signal?.aborted || !isContextOverflowError(errorMessage(error))) throw error;
+        // 自动调优：按服务端实际可用的上下文下调模型设置，再重试。只降不升，并写审计。
+        const nextWindow = nextOverflowRetryContextWindow(this.config.agent.contextWindow);
+        const active = this.config.agent.autoContextTune === false ? undefined : this.store?.getActiveModel();
+        try {
+          request.onContextDelta?.({ id: `context-trim-${Date.now()}`, text: contextNoticeText(this.config.agent.responseLanguage, "trim") });
+        } catch (error) {
+          console.warn("context stream callback failed", { error: errorMessage(error) });
+        }
+        if (trace) {
+          const trimBefore = buildContextSnapshot(request.history ?? [], undefined);
+          const trimTrace = this.startTrace(trace, "context", "context.trim", "", null, {
+            input: JSON.stringify({ reason: "overflow", nextWindow, before: trimBefore }),
+          });
+          if (trimTrace !== undefined) {
+            this.finishTrace(trimTrace, "succeeded", 0, undefined, undefined, undefined,
+              JSON.stringify({ nextWindow, after: { tokens: null, messages: [], summary: "" } }));
+          }
+        }
+        if (active && nextWindow < active.model.contextWindow) {
+          const reduced = this.store!.reduceProviderModelContextWindow(
+            active.model,
+            nextWindow,
+            "context overflow retry",
+          );
+          if (reduced) {
+            applyActiveModel(this.config, { provider: active.provider, model: reduced });
+            console.warn("model context window reduced after overflow", {
+              model: reduced.name,
+              from: active.model.contextWindow,
+              to: reduced.contextWindow,
+            });
+          }
+        }
+        const retry: ModelRequest = request.history?.length
+          ? { ...request, history: [] }
+          : request;
+        console.warn("model request exceeded the context window; retrying without history", {
+          taskType: request.taskType,
+          historyMessages: request.history?.length ?? 0,
+        });
+        response = await this.runSession(retry, workingDirectory, sessionSignal, trace);
+      }
     } catch (error) {
       if (budgetDay) {
         try {
@@ -196,6 +366,7 @@ export class PiAgent {
         throw new Error(`settle daily model token budget: ${String(error)}`, { cause: error });
       }
     }
+    if (this.hooks) await callAsyncHook(this.hooks.agentAfterModel, request, response);
     return response;
   }
 
@@ -203,7 +374,7 @@ export class PiAgent {
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<ModelResponse> {
     const agentDir = resolve(join(this.config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
@@ -211,6 +382,8 @@ export class PiAgent {
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
+    // 内部 Provider ID 只用于注册 SDK Provider；展示给用户的名称来自控制台的供应商设置。
+    const providerLabel = this.config.agent.providerName || providerId;
     const completionsApi = openAICompletionsApi();
     const requestTimeout = this.config.agent.requestTimeout;
     let activeModelCall: {
@@ -274,7 +447,7 @@ export class PiAgent {
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           reasoning: false,
-          contextWindow: 128_000,
+          contextWindow: this.config.agent.contextWindow,
           maxTokens: this.config.agent.maxOutputTokens,
         },
       ],
@@ -289,10 +462,40 @@ export class PiAgent {
     }));
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
-    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
+    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent, request.conversationMode);
+    const gitlab = request.gitlab ?? this.gitlab;
     const workspace = trace?.workspace;
     const mergeRequest = trace?.mergeRequest;
+    // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
+    // 预留必须覆盖这段最坏增量加上输出预留，否则估算偏低的请求仍会超窗。
+    const compactionReserveTokens = resolveCompactionReserveTokens(
+      this.config.agent.contextWindow,
+      this.config.agent.maxOutputTokens,
+      this.config.agent.compactionReserveTokens,
+    );
+    const compactionKeepRecentTokens = resolveCompactionKeepRecentTokens(
+      this.config.agent.contextWindow,
+      this.config.agent.compactionKeepRecentTokens,
+      compactionReserveTokens,
+    );
 
+    const emitContextStream = (context: ConversationStreamContext) => {
+      if (!request.onContextDelta) return;
+      try {
+        request.onContextDelta(context);
+      } catch (error) {
+        console.warn("context stream callback failed", { error: errorMessage(error) });
+      }
+    };
+    let contextEventCount = 0;
+    let contextEventId = "";
+    let activeCompactionTrigger: {
+      reason?: string;
+      tokens?: number;
+      window: number;
+      threshold: number;
+    } | undefined;
+    const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
       agentDir,
@@ -301,6 +504,9 @@ export class PiAgent {
       noPromptTemplates: true,
       additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
+        // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
+        // 在 SDK 下一次压缩检查之前把窗口顶爆。
+        createToolResultBudgetExtension(this.config.agent.contextWindow),
         createReadOnlyFileExtension(
           allowedRoots,
           workspace && this.git
@@ -342,7 +548,7 @@ export class PiAgent {
                   if (!this.store) return operation();
                   return traceExecutionStep(
                     this.store,
-                    { jobId: trace.jobId, attempt: trace.attempt },
+                    stepContextFor(trace.scope, trace.attempt),
                     "gitlab.update_merge_request_metadata",
                     {
                       projectId: trace.mergeRequest!.projectId,
@@ -408,6 +614,48 @@ export class PiAgent {
             })]
           : []),
         ...(toolAccess.mcp ? [createMcpExtension()] : []),
+        ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
+          ? [createPlanExtension()]
+          : []),
+        ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
+          ? [createGitLabConversationExtension({
+              projectId: request.conversationProjectId,
+              getProject: () => gitlab!.getProject(request.conversationProjectId!),
+              getIssue: (issueIid) => gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
+              getMergeRequest: (mrIid) => gitlab!.getMergeRequest(request.conversationProjectId!, mrIid, signal),
+              getIssueComments: (issueIid, limit) => gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
+              getMergeRequestComments: (mrIid, limit) => gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
+              getMergeRequestCommits: (mrIid, page, perPage) => gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),
+              postIssueNote: (issueIid, noteBody) => gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
+              postMergeRequestNote: (mrIid, noteBody) => gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
+              updateMergeRequest: (mrIid, update) => gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
+              updateIssue: (issueIid, update) => gitlab!.updateIssue(request.conversationProjectId!, issueIid, update, signal),
+            })]
+          : []),
+        createContextObserveExtension(contextObservation, {
+          onBeforeCompact: (_snapshot, trigger) => {
+            if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
+            const window = this.config.agent.contextWindow;
+            const info = {
+              reason: trigger.reason,
+              tokens: trigger.tokens,
+              window,
+              threshold: window - compactionReserveTokens,
+            };
+            activeCompactionTrigger = info;
+            emitContextStream({
+              id: contextEventId,
+              text: contextNoticeText(this.config.agent.responseLanguage, "start", info.tokens, undefined, info),
+            });
+          },
+          onFailed: () => {
+            if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
+            emitContextStream({
+              id: contextEventId,
+              text: contextNoticeText(this.config.agent.responseLanguage, "failed"),
+            });
+          },
+        }),
       ],
       systemPrompt: request.systemPrompt,
     });
@@ -419,15 +667,184 @@ export class PiAgent {
       modelRuntime: runtime,
       model,
       resourceLoader,
+      // 压缩阈值与配置的上下文窗口绑定：SDK 默认值按 200K 窗口调过，直接沿用
+      // 会让 128K 窗口在压缩前就已超限。这里用内存设置管理器覆盖，不落盘。
+      settingsManager: SettingsManager.inMemory({
+        compaction: {
+          enabled: true,
+          reserveTokens: compactionReserveTokens,
+          keepRecentTokens: compactionKeepRecentTokens,
+        },
+      }),
       sessionManager: SessionManager.inMemory(),
       noTools: "builtin",
     });
+    // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
+    // SDK 的压缩切点也才能在正确的轮次边界上工作。
+    for (const message of seedHistoryMessages(request.history ?? [], providerId, this.config.agent.model)) {
+      session.sessionManager.appendMessage(message);
+    }
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
     let currentRound = 0;
+    // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。阈值收敛到
+    // 「四个单轮工具预算」，让提醒在压缩发生前就能到达模型。
+    const toolResultByteLimit = resolveTurnToolResultBytes(
+      this.config.agent.contextWindow,
+      this.config.agent.turnToolResultBytes,
+    );
+    let toolResultBytes = 0;
+    let toolBudgetWarningSent = false;
     const recordedContextEntryIds = new Set<string>();
     let hasRecordedContext = false;
+    // 最终助手消息的错误原因：`session.prompt()` 在服务端报错（如上下文超限）时仍会正常
+    // 返回，若不记录就会把上一条历史回复当成本轮成功结果，超限重试也就永远不会触发。
+    let lastAssistantError: string | undefined;
+    // 流式正文、思考与工具调用只做展示，不参与判定；回调异常不能影响模型执行。
+    let streamedAssistantText = "";
+    let streamedAssistantThinking = "";
+    const streamToolInputs = new Map<string, string | null>();
+    const emitStream = (
+      callback: ((update: { reset: boolean; text: string }) => void) | undefined,
+      label: string,
+      reset: boolean,
+      text: string,
+    ) => {
+      if (!callback) return;
+      try {
+        callback({ reset, text });
+      } catch (error) {
+        console.warn(`${label} stream callback failed`, { error: errorMessage(error) });
+      }
+    };
+    const emitToolStream = (tool: ConversationStreamTool) => {
+      if (!request.onToolDelta) return;
+      try {
+        request.onToolDelta(tool);
+      } catch (error) {
+        console.warn("tool stream callback failed", { error: errorMessage(error) });
+      }
+    };
+    let activeCompaction: {
+      streamId: string;
+      traceId?: number;
+      reason: string;
+      startedAt: number;
+      before?: ContextSnapshot;
+    } | undefined;
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "compaction_start") {
+        const streamId = contextEventId || `context-${++contextEventCount}`;
+        contextEventId = streamId;
+        if (!activeCompactionTrigger) {
+          emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
+        }
+        activeCompaction = {
+          streamId,
+          reason: event.reason,
+          startedAt: performance.now(),
+          before: contextObservation.before,
+          traceId: trace
+            ? this.startTrace(trace, "context", "context.compact", "", null, {
+                input: JSON.stringify({
+                  phase: "start",
+                  reason: event.reason,
+                  id: streamId,
+                  trigger: activeCompactionTrigger ?? null,
+                  before: contextObservation.before ?? null,
+                }),
+              })
+            : undefined,
+        };
+        return;
+      }
+      if (event.type === "compaction_end") {
+        const active = activeCompaction;
+        activeCompaction = undefined;
+        contextEventId = "";
+        activeCompactionTrigger = undefined;
+        const before = active?.before ?? contextObservation.before ?? null;
+        contextObservation.before = undefined;
+        const result = event.result;
+        const language = this.config.agent.responseLanguage;
+        const failed = event.aborted || !result;
+        emitContextStream({
+          id: active?.streamId ?? `context-${++contextEventCount}`,
+          text: failed
+            ? contextNoticeText(language, "failed")
+            : contextNoticeText(language, "end", result.tokensBefore, result.estimatedTokensAfter),
+        });
+        const details = JSON.stringify({
+          phase: "end",
+          reason: active?.reason ?? event.reason,
+          aborted: event.aborted,
+          willRetry: event.willRetry,
+          trigger: active?.reason ? { reason: active.reason } : null,
+          before,
+          after: result
+            ? {
+                tokens: result.estimatedTokensAfter ?? null,
+                summary: result.summary,
+                firstKeptEntryId: result.firstKeptEntryId,
+              }
+            : null,
+          ...(event.errorMessage ? { error: event.errorMessage } : {}),
+        });
+        const duration = active ? performance.now() - active.startedAt : 0;
+        if (active?.traceId !== undefined) {
+          this.finishTrace(active.traceId, failed ? "failed" : "succeeded", duration, undefined, undefined,
+            failed ? event.errorMessage ?? "context compaction aborted" : undefined, details);
+        } else if (trace) {
+          const traceId = this.startTrace(trace, "context", "context.compact", "", null, { input: details });
+          if (traceId !== undefined) this.finishTrace(traceId, failed ? "failed" : "succeeded", duration);
+        }
+        return;
+      }
+      if (event.type === "message_start" && event.message.role === "assistant") {
+        streamedAssistantText = "";
+        streamedAssistantThinking = "";
+        emitStream(request.onTextDelta, "assistant text", true, "");
+        emitStream(request.onThinkingDelta, "assistant thinking", true, "");
+      } else if (event.type === "message_update" && event.message.role === "assistant") {
+        // 同一条增量里同时带思考与正文时先推思考，保持流里「先思考、后回答」的顺序。
+        const thinking = assistantThinking(event.message);
+        if (thinking !== streamedAssistantThinking) {
+          streamedAssistantThinking = thinking;
+          emitStream(request.onThinkingDelta, "assistant thinking", false, thinking);
+        }
+        const text = assistantText(event.message);
+        if (text !== streamedAssistantText) {
+          streamedAssistantText = text;
+          emitStream(request.onTextDelta, "assistant text", false, text);
+        }
+      }
+      // 工具事件发生在两轮模型输出之间，先于轨迹落库推送，界面才能按
+      // 「思考 → 工具 → 下一轮思考」的真实顺序逐条渲染。
+      if (event.type === "tool_execution_start") {
+        const input = JSON.stringify(event.args) ?? null;
+        streamToolInputs.set(event.toolCallId, input);
+        emitToolStream({
+          id: event.toolCallId,
+          name: event.toolName,
+          input,
+          status: "running",
+          durationMs: null,
+        });
+      } else if (event.type === "tool_execution_end") {
+        emitToolStream({
+          id: event.toolCallId,
+          name: event.toolName,
+          input: streamToolInputs.get(event.toolCallId) ?? null,
+          status: event.isError ? "failed" : "succeeded",
+          durationMs: event.durationMs ?? null,
+        });
+        streamToolInputs.delete(event.toolCallId);
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        lastAssistantError = event.message.stopReason === "error" || event.message.stopReason === "aborted"
+          ? event.message.errorMessage ?? `model request ${event.message.stopReason}`
+          : undefined;
+      }
       if (!trace) return;
       if (event.type === "message_start" && event.message.role === "assistant") {
         const round = ++currentRound;
@@ -443,7 +860,7 @@ export class PiAgent {
           trace,
           "llm",
           trace.taskType,
-          `${event.message.provider}/${event.message.responseModel ?? event.message.model}`,
+          `${providerLabel}/${event.message.responseModel ?? event.message.model}`,
           modelCallCount === 0 ? JSON.stringify(request) : null,
           {
             round,
@@ -507,9 +924,30 @@ export class PiAgent {
         if (traceId !== undefined) {
           activeTools.set(event.toolCallId, { traceId, startedAt: performance.now() });
         }
+        if (this.hooks) {
+          void callAsyncHook(this.hooks.toolBefore, {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            input: event.args,
+            scope: trace?.scope,
+            attempt: trace?.attempt,
+          }).catch((error: unknown) => console.warn("tool before hook failed", { error: errorMessage(error) }));
+        }
       } else if (event.type === "tool_execution_end") {
         const active = activeTools.get(event.toolCallId);
         if (!active) return;
+        if (this.hooks) {
+          void callAsyncHook(this.hooks.toolAfter, {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
+            input: streamToolInputs.get(event.toolCallId) ?? null,
+            output: event.result,
+            status: event.isError ? "failed" : "succeeded",
+            durationMs: event.durationMs ?? performance.now() - active.startedAt,
+            scope: trace?.scope,
+            attempt: trace?.attempt,
+          }).catch((error: unknown) => console.warn("tool after hook failed", { error: errorMessage(error) }));
+        }
         this.finishTrace(
           active.traceId,
           event.isError ? "failed" : "succeeded",
@@ -520,6 +958,21 @@ export class PiAgent {
           JSON.stringify(event.result),
         );
         activeTools.delete(event.toolCallId);
+        if (toolResultByteLimit > 0) {
+          toolResultBytes += Buffer.byteLength(JSON.stringify(event.result) ?? "");
+          // 只做软提醒：达到阈值后提示模型优先收尾，但不中止本轮。真正的上下文增长
+          // 由 SDK 压缩与服务端超限重试处理，长任务因此能在同一会话内完成。
+          if (!toolBudgetWarningSent && toolResultBytes >= toolResultByteLimit * toolBudgetWarningRatio) {
+            toolBudgetWarningSent = true;
+            void session.steer(getToolBudgetWarningPrompt(
+              this.config.agent.responseLanguage,
+              toolResultBytes,
+              toolResultByteLimit,
+            )).catch((error) => {
+              console.warn("tool budget warning could not be delivered", { error: errorMessage(error) });
+            });
+          }
+        }
       }
     });
     const abort = () => {
@@ -530,13 +983,17 @@ export class PiAgent {
       await session.bindExtensions({});
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
       await session.prompt(request.userPrompt);
+      // 外部取消优先：中止后的半截文本不能当作完成结果。
       if (signal?.aborted) throw new Error("Pi agent run was aborted");
+      // 服务端报错（含上下文超限）时 `prompt()` 不抛出，必须显式上抛，否则会返回历史回复
+      // 并让上层的「去掉历史重试一次」失效。
+      if (lastAssistantError) throw new Error(lastAssistantError);
       const content = session.getLastAssistantText()?.trim();
       if (!content) throw new Error("Pi returned an empty completion");
       const usage = session.getSessionStats().tokens;
       return {
         content,
-        model: `${model.provider}/${model.id}`,
+        model: `${providerLabel}/${model.id}`,
         usage: {
           inputTokens: usage.input,
           outputTokens: usage.output,
@@ -597,7 +1054,7 @@ export class PiAgent {
   }
 
   private runGitWrite<T>(
-    trace: JobTraceContext,
+    trace: EventTraceContext,
     step: string,
     input: unknown,
     operation: () => Promise<T>,
@@ -607,7 +1064,7 @@ export class PiAgent {
     if (!this.store) return operation();
     return traceExecutionStep(
       this.store,
-      { jobId: trace.jobId, attempt: trace.attempt },
+      stepContextFor(trace.scope, trace.attempt),
       step,
       input,
       operation,
@@ -617,8 +1074,8 @@ export class PiAgent {
   }
 
   private startTrace(
-    trace: JobTraceContext,
-    kind: "tool" | "llm",
+    trace: EventTraceContext,
+    kind: EventTraceKind,
     name: string,
     model = "",
     rawContent: string | null = null,
@@ -626,8 +1083,8 @@ export class PiAgent {
   ): number | undefined {
     if (!this.store) return undefined;
     try {
-      return this.store.startJobTrace(
-        trace.jobId,
+      return this.store.startEventTrace(
+        trace.scope,
         trace.attempt,
         kind,
         name.slice(0, 128),
@@ -636,8 +1093,8 @@ export class PiAgent {
         details,
       );
     } catch (error) {
-      console.warn("record job trajectory start failed", {
-        jobId: trace.jobId,
+      console.warn("record event trajectory start failed", {
+        scope: trace.scope,
         kind,
         name: name.slice(0, 128),
         error: errorMessage(error),
@@ -661,7 +1118,7 @@ export class PiAgent {
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishJobTrace(
+      this.store.finishEventTrace(
         traceId,
         status,
         durationMs,
@@ -675,7 +1132,7 @@ export class PiAgent {
         responseHeadersMs,
       );
     } catch (error) {
-      console.warn("record job trajectory completion failed", {
+      console.warn("record event trajectory completion failed", {
         traceId,
         status,
         error: errorMessage(error),

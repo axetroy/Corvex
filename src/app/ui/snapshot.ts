@@ -1,11 +1,11 @@
-import type { JobStatus } from "./types.js";
+import type { EventStatus } from "./types.js";
 
-/** 进入终态后任务轨迹不再变化，可安全跳过等价的轮询结果。 */
-const terminalStatuses: ReadonlySet<JobStatus> = new Set<JobStatus>(["completed", "failed", "stale", "cancelled"]);
+/** 进入终态后事件轨迹不再变化，可安全跳过等价的轮询结果。 */
+const terminalStatuses: ReadonlySet<EventStatus> = new Set<EventStatus>(["completed", "failed", "stale", "cancelled"]);
 
 /** 详情轮询比较所需的最小字段集合。 */
-export interface JobSnapshot {
-  status: JobStatus;
+export interface EventSnapshot {
+  status: EventStatus;
   updatedAt: string;
   attemptCount: number;
   lastError: string;
@@ -16,10 +16,10 @@ export interface JobSnapshot {
 }
 
 /**
- * 判断两次详情快照是否等价。仅对终态任务返回 true：执行中的任务即使长度不变，
+ * 判断两次详情快照是否等价。仅对终态事件返回 true：执行中的事件即使长度不变，
  * 轨迹条目的耗时与状态也可能在两次轮询之间变化，必须继续渲染。
  */
-export function isSameTerminalJobSnapshot(previous: JobSnapshot, next: JobSnapshot): boolean {
+export function isSameTerminalEventSnapshot(previous: EventSnapshot, next: EventSnapshot): boolean {
   if (!terminalStatuses.has(next.status) || previous.status !== next.status) return false;
   return previous.updatedAt === next.updatedAt
     && previous.attemptCount === next.attemptCount

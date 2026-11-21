@@ -1,10 +1,69 @@
-import type { ExecutionEvent, JobDetails, JobOperationsSummary, JobStatus, JobTraceEntry, JobTraceKind, JobType, ModelCallMetric, OperationsOverview } from "../../jobs/model.js";
+import type {
+  Conversation,
+  ConversationDetail,
+  ConversationMessage,
+  ConversationPage,
+  ConversationProcessEntry,
+  ConversationStats,
+  ConversationStreamContext,
+  ConversationStreamEvent,
+  ConversationStreamTool,
+  ConversationSummary,
+  ConversationToolCall,
+  ConversationTurn,
+  ConversationTurnSegment,
+  ConversationTurnStats,
+  ConversationTurns,
+  ExecutionStep,
+  EventDetails,
+  EventOperationsSummary,
+  EventStatus,
+  EventTraceEntry,
+  EventTraceKind,
+  EventTraceStatus,
+  EventType,
+  ModelCallMetric,
+  ModelProviderDetails,
+  ProviderModel,
+  OperationsOverview,
+  RepositoryDetails,
+  StorageCleanupRecord,
+} from "../../events/model.js";
 
 /**
- * 运维台依赖的接口数据结构。字段形状与 `src/jobs/model.ts` 一致，
+ * Agent 控制台依赖的接口数据结构。字段形状与 `src/events/model.ts` 一致，
  * 这里只做 HTTP 边界的重新导出，避免前端重复声明。
  */
-export type { ExecutionEvent, JobDetails, JobOperationsSummary, JobStatus, JobTraceEntry, JobTraceKind, JobType, ModelCallMetric };
+export type {
+  Conversation,
+  ConversationDetail,
+  ConversationMessage,
+  ConversationPage,
+  ConversationProcessEntry,
+  ConversationStats,
+  ConversationStreamContext,
+  ConversationStreamEvent,
+  ConversationStreamTool,
+  ConversationSummary,
+  ConversationToolCall,
+  ConversationTurn,
+  ConversationTurnSegment,
+  ConversationTurnStats,
+  ConversationTurns,
+  ExecutionStep,
+  EventDetails,
+  EventOperationsSummary,
+  EventStatus,
+  EventTraceEntry,
+  EventTraceKind,
+  EventTraceStatus,
+  EventType,
+  ModelCallMetric,
+  ModelProviderDetails,
+  ProviderModel,
+  RepositoryDetails,
+  StorageCleanupRecord,
+};
 
 /** `GET /api/ops/overview` 的响应体。 */
 export interface OverviewResponse extends OperationsOverview {
@@ -13,14 +72,14 @@ export interface OverviewResponse extends OperationsOverview {
   modelCalls: ModelCallMetric[];
 }
 
-/** `GET /api/ops/jobs` 的响应体。 */
-export interface JobPageResponse {
-  items: JobOperationsSummary[];
+/** `GET /api/ops/events` 的响应体。 */
+export interface EventPageResponse {
+  items: EventOperationsSummary[];
   total: number;
 }
 
-/** 运维台展示的任务生命周期状态，与服务端 `jobStatuses` 保持同一顺序。 */
-export const statuses: readonly JobStatus[] = [
+/** Agent 控制台展示的事件生命周期状态，与服务端 `eventStatuses` 保持同一顺序。 */
+export const statuses: readonly EventStatus[] = [
   "queued",
   "preparing",
   "analyzing",
@@ -33,16 +92,190 @@ export const statuses: readonly JobStatus[] = [
   "cancelled",
 ];
 
-/** 任务列表筛选使用的任务类型，与服务端 `jobTypes` 保持一致。 */
-export const jobTypes: readonly JobType[] = ["review", "fix", "explain", "chat", "implement"];
+/** 事件列表筛选使用的事件类型，与服务端 `eventTypes` 保持一致。 */
+export const eventTypes: readonly EventType[] = ["review", "fix", "explain", "chat", "implement"];
 
-/** 任务列表筛选条件和分页位置。 */
-export interface JobQueue {
+/** 事件列表筛选条件和分页位置。 */
+export interface EventQueue {
   status: string;
   type: string;
   search: string;
   offset: number;
 }
 
-/** 任务列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
+/** 事件列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
 export const pageSize = 25;
+
+/** 运行时设置值：列表项以字符串数组回显，数字项以秒或毫秒为单位。 */
+export type SettingValue = number | boolean | string | string[];
+
+/** `GET/PUT /api/ops/settings` 的响应体：当前值、生效值、覆盖项与是否可写。 */
+export interface SettingsResponse {
+  settings: Record<string, SettingValue>;
+  /** 自动推导后的实际生效值；与 `settings` 不同时以这里为准。 */
+  effective: Record<string, SettingValue>;
+  /** 被运行时自动调整的键，界面据此提示「已自动调整」。 */
+  adjusted: string[];
+  /** 由窗口与工具预算推导出的只读指标。 */
+  derived: DerivedContextMetrics;
+  /** 仅包含被运行时覆盖的键，值以字符串形式存储。 */
+  overrides: Record<string, string>;
+  /** 每个覆盖项的修改时间与操作者。 */
+  overrideMeta: Record<string, { updatedAt: string; updatedBy: string }>;
+  editable: boolean;
+  configPath: string | null;
+}
+
+/** 服务端推导出的上下文指标；字段与 `src/config/settings.ts` 保持一致。 */
+export interface DerivedContextMetrics {
+  maxInputTokens: number;
+  toolCallBytes: number;
+  toolRoundBytes: number;
+  compactionTriggerTokens: number;
+  compactionKeepRecentTokens: number;
+  turnToolResultBytes: number;
+}
+
+/** 设置项的输入类型；列表项渲染为可增删的标签输入框。 */
+export type SettingKind = "number" | "boolean" | "string" | "list";
+
+/** Agent 控制台展示的上下文设置元数据，键名与 `src/config/settings.ts` 一致。 */
+export interface SettingField {
+  key: string;
+  kind: SettingKind;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** 字符串项的枚举候选；提供时渲染为下拉选择。 */
+  values?: readonly string[];
+  /** 字符串项的最大长度。 */
+  maxLength?: number;
+  /** 列表项的元素类型：用户 ID 为整数，其余按文本处理。 */
+  item?: "integer" | "hostname" | "path";
+  /** 密钥字段用密码框展示，允许留空表示沿用已保存值。 */
+  secret?: boolean;
+  /** 字符串字段允许留空（例如可选的用户名）。 */
+  allowEmpty?: boolean;
+  /** 输入单位提示，例如 token。 */
+  unit?: string;
+  /** 文案键：字段标签与说明。 */
+  labelKey: string;
+  hintKey: string;
+}
+
+/**
+ * 可编辑的设置清单。常用项平铺，改动会立即作用于对话与工件的参数；
+ * 窗口推导类参数放在最后的折叠「高级」分组，避免把部署事实当成日常调优项。
+ * 键必须与 `runtimeSettingDefinitions` 对应，否则写入会被服务端拒绝。
+ */
+export interface SettingGroup {
+  titleKey: string;
+  hintKey: string;
+  /** 折叠显示；用于推导量或部署事实。 */
+  advanced?: boolean;
+  fields: readonly SettingField[];
+}
+
+export const settingGroups: readonly SettingGroup[] = [
+  {
+    titleKey: "settingsGroupModel",
+    hintKey: "settingsGroupModelHint",
+    fields: [
+      { key: "response_language", kind: "string", values: ["en", "zh-CN"], labelKey: "settingsResponseLanguage", hintKey: "settingsResponseLanguageHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupBudget",
+    hintKey: "settingsGroupBudgetHint",
+    fields: [
+      { key: "history_token_budget", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsHistoryTokenBudget", hintKey: "settingsHistoryTokenBudgetHint" },
+      { key: "turn_tool_result_bytes", kind: "number", min: 0, max: 64 << 20, step: 1024, unit: "byte", labelKey: "settingsTurnToolResultBytes", hintKey: "settingsTurnToolResultBytesHint" },
+      { key: "summary_enabled", kind: "boolean", labelKey: "settingsSummaryEnabled", hintKey: "settingsSummaryEnabledHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupQuota",
+    hintKey: "settingsGroupQuotaHint",
+    fields: [
+      { key: "daily_token_budget", kind: "number", min: 0, max: 1_000_000_000, step: 100_000, unit: "token", labelKey: "settingsDailyTokenBudget", hintKey: "settingsDailyTokenBudgetHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupTools",
+    hintKey: "settingsGroupToolsHint",
+    fields: [
+      { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
+      { key: "mcp_enabled", kind: "boolean", labelKey: "settingsMcpEnabled", hintKey: "settingsMcpEnabledHint" },
+      { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
+      { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupRuntime",
+    hintKey: "settingsGroupRuntimeHint",
+    advanced: true,
+    fields: [
+      { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
+      { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
+      { key: "events_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsEventsPollInterval", hintKey: "settingsEventsPollIntervalHint" },
+      { key: "events_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsEventsTimeout", hintKey: "settingsEventsTimeoutHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupGitLab",
+    hintKey: "settingsGroupGitLabHint",
+    fields: [
+      { key: "gitlab_base_url", kind: "string", maxLength: 500, labelKey: "settingsGitLabBaseUrl", hintKey: "settingsGitLabBaseUrlHint" },
+      { key: "gitlab_read_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabReadToken", hintKey: "settingsGitLabReadTokenHint" },
+      { key: "gitlab_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabToken", hintKey: "settingsGitLabTokenHint" },
+      { key: "gitlab_webhook_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabWebhookSecret", hintKey: "settingsGitLabWebhookSecretHint" },
+      { key: "gitlab_bot_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
+      { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
+      { key: "gitlab_oauth_client_id", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthClientId", hintKey: "settingsOAuthClientIdHint" },
+      { key: "gitlab_oauth_client_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOAuthClientSecret", hintKey: "settingsOAuthClientSecretHint" },
+      { key: "gitlab_oauth_redirect_uri", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthRedirectUri", hintKey: "settingsOAuthRedirectUriHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupStorage",
+    hintKey: "settingsGroupStorageHint",
+    fields: [
+      { key: "conversation_workspace_ttl_minutes", kind: "number", min: 1, max: 14_400, step: 10, labelKey: "settingsWorkspaceTtl", hintKey: "settingsWorkspaceTtlHint" },
+      { key: "conversation_workspace_max", kind: "number", min: 1, max: 200, step: 1, labelKey: "settingsWorkspaceMax", hintKey: "settingsWorkspaceMaxHint" },
+      { key: "storage_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsRetentionDays", hintKey: "settingsRetentionDaysHint" },
+      { key: "storage_audit_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsAuditRetentionDays", hintKey: "settingsAuditRetentionDaysHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupReview",
+    hintKey: "settingsGroupReviewHint",
+    fields: [
+      { key: "review_max_files", kind: "number", min: 1, max: 1000, step: 10, labelKey: "settingsReviewMaxFiles", hintKey: "settingsReviewMaxFilesHint" },
+      { key: "review_max_findings", kind: "number", min: 1, max: 100, step: 5, labelKey: "settingsReviewMaxFindings", hintKey: "settingsReviewMaxFindingsHint" },
+      { key: "review_max_context_bytes", kind: "number", min: 1, max: 8 << 20, step: 4096, unit: "byte", labelKey: "settingsReviewMaxContextBytes", hintKey: "settingsReviewMaxContextBytesHint" },
+      { key: "review_batch_concurrency", kind: "number", min: 1, max: 4, step: 1, labelKey: "settingsReviewBatchConcurrency", hintKey: "settingsReviewBatchConcurrencyHint" },
+      { key: "chat_history_comments", kind: "number", min: 0, max: 50, step: 5, labelKey: "settingsChatHistoryComments", hintKey: "settingsChatHistoryCommentsHint" },
+      { key: "issue_history_comments", kind: "number", min: 0, max: 50, step: 5, labelKey: "settingsIssueHistoryComments", hintKey: "settingsIssueHistoryCommentsHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupWorkflow",
+    hintKey: "settingsGroupWorkflowHint",
+    fields: [
+      { key: "fix_enabled", kind: "boolean", labelKey: "settingsFixEnabled", hintKey: "settingsFixEnabledHint" },
+      { key: "fix_max_patch_bytes", kind: "number", min: 1, max: 256 << 10, step: 1024, unit: "byte", labelKey: "settingsFixMaxPatchBytes", hintKey: "settingsFixMaxPatchBytesHint" },
+      { key: "issue_implement_enabled", kind: "boolean", labelKey: "settingsIssueImplementEnabled", hintKey: "settingsIssueImplementEnabledHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupAdvanced",
+    hintKey: "settingsGroupAdvancedHint",
+    advanced: true,
+    fields: [
+      { key: "max_input_tokens", kind: "number", min: 0, max: 10_000_000, step: 1024, unit: "token", labelKey: "settingsMaxInputTokens", hintKey: "settingsMaxInputTokensHint" },
+      { key: "auto_context_tune", kind: "boolean", labelKey: "settingsAutoContextTune", hintKey: "settingsAutoContextTuneHint" },
+      { key: "compaction_reserve_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionReserveTokens", hintKey: "settingsCompactionReserveTokensHint" },
+      { key: "compaction_keep_recent_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionKeepRecentTokens", hintKey: "settingsCompactionKeepRecentTokensHint" },
+    ],
+  },
+];

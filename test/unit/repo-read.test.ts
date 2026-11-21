@@ -7,6 +7,7 @@ import {
   createReadOnlyFileExtension,
   readAllowedDirectory,
   readAllowedFile,
+  requireRelativeRepoPath,
   searchAllowedFiles,
   statAllowedPath,
 } from "../../src/agent/repo-read.js";
@@ -48,6 +49,15 @@ describe("readAllowedFile", () => {
     );
     await expect(readAllowedFile("../missing.txt", [root, skills])).rejects.toThrow(
       "use a repository-relative path without '..' segments",
+    );
+  });
+
+  it("rejects absolute paths inside the repository with a relative-path hint", async () => {
+    await expect(requireRelativeRepoPath(join(root, "README.md"), [root, skills])).rejects.toThrow(
+      "use a repository-relative path",
+    );
+    await expect(requireRelativeRepoPath(join(skills, "SKILL.md"), [root, skills])).resolves.toBe(
+      join(skills, "SKILL.md"),
     );
   });
 
@@ -251,6 +261,36 @@ describe("readAllowedFile", () => {
     expect(result).toContain("line 5\nline 6\nline 7");
     expect(result).not.toContain("line 4");
     expect(result).not.toContain("line 8");
+  });
+
+  it("truncates an oversized line instead of failing a minified file read", async () => {
+    const hugeLine = "x".repeat(64 << 10);
+    await writeFile(join(root, "minified.js"), `${hugeLine}\nconst answer = 42;\n`);
+
+    const result = await readAllowedFile("minified.js", [root], undefined, { startLine: 1, maxLines: 2 });
+
+    expect(result).toContain("[Lines 1-2]");
+    expect(result).toContain("[line truncated, 61440 bytes omitted]");
+    expect(result).toContain("const answer = 42;");
+    expect(result.length).toBeLessThan(8 << 10);
+  });
+
+  it("stops at the output budget and reports where to continue", async () => {
+    const lines = Array.from(
+      { length: 400 },
+      (_, index) => `${String(index + 1).padStart(3, "0")}:${"y".repeat(1000)}`,
+    );
+    await writeFile(join(root, "wide.txt"), lines.join("\n"));
+
+    const first = await readAllowedFile("wide.txt", [root], undefined, { startLine: 1, maxLines: 400 });
+    const nextLine = Number(/more lines available from (\d+)/.exec(first)?.[1]);
+    expect(nextLine).toBeGreaterThan(1);
+    expect(nextLine).toBeLessThan(401);
+    expect(Buffer.byteLength(first)).toBeLessThanOrEqual(256 << 10);
+
+    const second = await readAllowedFile("wide.txt", [root], undefined, { startLine: nextLine, maxLines: 2 });
+    expect(second).toContain(`[Lines ${nextLine}-${nextLine + 1}`);
+    expect(second).toContain(lines[nextLine - 1]!.slice(0, 8));
   });
 
   it("reports the exact line count when a file ends with a newline", async () => {

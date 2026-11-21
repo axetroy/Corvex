@@ -12,7 +12,7 @@ describe("operations UI pagination", () => {
     expect(clampPageOffset(1, 100)).toBe(0);
   });
 
-  it("clears the offset when no job remains", () => {
+  it("clears the offset when no event remains", () => {
     expect(clampPageOffset(0, 75)).toBe(0);
   });
 

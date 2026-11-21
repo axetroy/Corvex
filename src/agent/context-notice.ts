@@ -1,0 +1,61 @@
+import type { ResponseLanguage } from "../config/config.js";
+
+/** 一次上下文变化的阶段；`trim` 是 Corvex 自己裁掉历史后的重试。 */
+export type ContextChangePhase = "start" | "end" | "failed" | "trim";
+
+/** 触发压缩的原因和窗口信息，用来向用户解释「为什么现在压缩」。 */
+export interface ContextTriggerInfo {
+  reason?: string;
+  tokens?: number | null;
+  window?: number;
+  threshold?: number;
+}
+
+function formatTokens(value: number | undefined | null): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "?";
+}
+
+function percent(tokens: number | undefined | null, window: number | undefined): number | null {
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || !window || window <= 0) return null;
+  return Math.round(tokens * 100 / window);
+}
+
+function reasonLabel(language: ResponseLanguage, reason: string | undefined): string {
+  if (reason === "overflow") return language === "zh-CN" ? "上下文已超出窗口" : "context exceeded the window";
+  if (reason === "manual") return language === "zh-CN" ? "手动触发压缩" : "manual compaction requested";
+  return language === "zh-CN" ? "达到压缩阈值" : "reached the compaction threshold";
+}
+
+/** 把 SDK 的压缩事件或本地裁剪转成用户可见的中文/英文提示。 */
+export function contextNoticeText(
+  language: ResponseLanguage,
+  phase: ContextChangePhase,
+  tokensBefore?: number,
+  tokensAfter?: number,
+  info?: ContextTriggerInfo,
+): string {
+  const before = formatTokens(tokensBefore);
+  const after = formatTokens(tokensAfter);
+  if (phase === "start" && info && typeof info.tokens === "number" && info.window) {
+    const ratio = percent(info.tokens, info.window);
+    const share = language === "zh-CN"
+      ? `${formatTokens(info.tokens)}/${formatTokens(info.window)} token${ratio === null ? "" : `（${ratio}%）`}`
+      : `${formatTokens(info.tokens)}/${formatTokens(info.window)} tokens${ratio === null ? "" : ` (${ratio}%)`}`;
+    const trigger = typeof info.threshold === "number" && info.reason === "threshold"
+      ? `${language === "zh-CN" ? "达到压缩阈值" : "reached the compaction threshold"} ${formatTokens(info.threshold)}`
+      : reasonLabel(language, info.reason);
+    return language === "zh-CN"
+      ? `上下文已达 ${share}，${trigger}，正在压缩…`
+      : `Context is at ${share}, ${trigger}; compacting...`;
+  }
+  if (language === "zh-CN") {
+    if (phase === "start") return "正在压缩上下文…";
+    if (phase === "failed") return "上下文压缩失败，继续尝试。";
+    if (phase === "trim") return "历史上下文过长，已裁剪后重试。";
+    return `上下文已压缩：${before} → ${after} token`;
+  }
+  if (phase === "start") return "Compacting context...";
+  if (phase === "failed") return "Context compaction failed; continuing.";
+  if (phase === "trim") return "History was too long; retried with trimmed context.";
+  return `Context compacted: ${before} → ${after} tokens`;
+}

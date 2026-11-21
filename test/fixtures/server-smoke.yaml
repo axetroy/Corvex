@@ -1,0 +1,9 @@
+# Docker smoke 只验证单进程启动；可调项均走运维台设置或默认值。
+server:
+  listen: "0.0.0.0:8080"
+  read_timeout: 5s
+  shutdown_timeout: 30s
+
+storage:
+  root: "/data/corvex"
+  database: "/data/corvex/state/corvex.db"

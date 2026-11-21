@@ -1,50 +1,12 @@
+# 仅填写启动必需项：监听地址、存储路径、Webhook 密钥与控制台凭据。
+# 模型供应商与模型、上下文预算、工具开关、审查/修复上限、超时、保留策略、屏蔽主机
+# 与用户等都在运维台「设置」页维护，保存在 SQLite，首次保存后即为唯一来源。
+
 server:
   listen: "0.0.0.0:8080"
   read_timeout: 5s
   shutdown_timeout: 30s
 
-gitlab:
-  base_url: "https://gitlab.example.com"
-  blocked_user_ids: []
-  bot_username: "corvex-bot"
-
 storage:
   root: "./data/corvex"
   database: "./data/state/corvex.db"
-  retention_days: 90
-  audit_retention_days: 365
-
-agent:
-  enabled: false
-  response_language: "en" # en or zh-CN
-  base_url: "https://api.openai.com/v1"
-  model: "your-model-name"
-  request_timeout: 10m
-  session_timeout: 120m
-  max_output_tokens: 8192
-  daily_token_budget: 0
-  mcp_enabled: false
-  web_enabled: true
-  web_blocked_hosts: []
-  skill_paths: []
-
-review:
-  max_files: 100
-  max_findings: 30
-  max_context_bytes: 2097152
-  batch_concurrency: 2
-
-chat:
-  history_comments: 20
-
-worker:
-  poll_interval: 2s
-  job_timeout: 130m
-
-fix:
-  enabled: false
-  max_patch_bytes: 131072
-
-issue:
-  implement_enabled: false
-  history_comments: 20

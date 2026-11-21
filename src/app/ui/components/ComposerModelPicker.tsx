@@ -1,0 +1,111 @@
+import { useEffect, useMemo, useState } from "react";
+import { Select, Tooltip, Typography } from "antd";
+import { fetchJson, sendJson } from "../api.js";
+import { errorMessage } from "../../../errors.js";
+import type { Copy } from "../i18n.js";
+import type { ModelProviderDetails } from "../types.js";
+import {
+  activeModelSelection,
+  findModelSelection,
+  modelOptionValue,
+  modelSelectGroups,
+} from "../modelPicker.js";
+
+interface Props {
+  copy: Copy;
+  /** 有轮次正在执行时禁止切换，避免改变本轮后续请求使用的模型。 */
+  disabled?: boolean;
+}
+
+/**
+ * 输入框内的模型切换器：读取全局模型目录，选中后立即把该模型设为使用中。
+ *
+ * 模型只保存在服务端（一份全局配置），所以这里调用 `activate` 接口而不是本地状态；
+ * 切换成功后同步更新本地列表，失败时重新读取目录以还原真实状态。
+ */
+export function ComposerModelPicker({ copy, disabled }: Props) {
+  const [providers, setProviders] = useState<ModelProviderDetails[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
+  const [error, setError] = useState("");
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetchJson<{ items: ModelProviderDetails[] }>("/api/ops/model-providers", copy)
+      .then((response) => {
+        if (!active) return;
+        setProviders(response.items);
+        setError("");
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [copy, reloadToken]);
+
+  const groups = useMemo(() => modelSelectGroups(providers), [providers]);
+  const active = useMemo(() => activeModelSelection(providers), [providers]);
+  const activeValue = active ? modelOptionValue(active.provider.id, active.model.id) : undefined;
+  const activeLabel = active ? `${active.provider.name} / ${active.model.name}` : copy.composerModelEmpty;
+  const hasModels = groups.length > 0;
+
+  async function switchModel(value: string) {
+    const target = findModelSelection(providers, value);
+    if (!target || target.model.active) return;
+    setSwitching(true);
+    setError("");
+    try {
+      const path = `/api/ops/model-providers/${encodeURIComponent(target.provider.id)}/models/${encodeURIComponent(target.model.id)}/activate`;
+      await sendJson(path, {}, copy, "POST");
+      setProviders((current) =>
+        current.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({
+            ...model,
+            active: provider.id === target.provider.id && model.id === target.model.id,
+          })),
+        })),
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+      // 失败后重新读取，避免本地列表与服务端的实际使用项不一致。
+      setReloadToken((token) => token + 1);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  return (
+    <div className="conversation-composer-model">
+      <Tooltip title={copy.composerModelHint}>
+        <span className="conversation-composer-model-label">{copy.composerModel}</span>
+      </Tooltip>
+      <Select<string>
+        className="conversation-composer-model-select"
+        aria-label={copy.composerModel}
+        variant="borderless"
+        size="small"
+        popupMatchSelectWidth={false}
+        value={hasModels ? activeValue : undefined}
+        placeholder={copy.composerModelEmpty}
+        options={groups}
+        loading={loading || switching}
+        disabled={disabled || switching || !hasModels}
+        labelRender={() => <span className="conversation-composer-model-value">{activeLabel}</span>}
+        onChange={(value) => void switchModel(value)}
+      />
+      {error ? (
+        <Typography.Text type="danger" ellipsis className="conversation-composer-model-error" title={error}>
+          {error}
+        </Typography.Text>
+      ) : null}
+    </div>
+  );
+}

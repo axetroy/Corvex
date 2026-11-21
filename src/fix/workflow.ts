@@ -1,5 +1,5 @@
 import { getPromptTemplates } from "../agent/prompts.js";
-import { maxAgentUserPromptBytes, PiAgent, type JobTraceContext, type ModelUsage } from "../agent/pi.js";
+import { maxAgentUserPromptBytes, PiAgent, type EventTraceContext, type ModelUsage } from "../agent/pi.js";
 import type { ResponseLanguage } from "../config/config.js";
 import { isRecord } from "../guards.js";
 import type { DiffResult } from "../git/types.js";
@@ -66,7 +66,7 @@ export class FixWorkflow {
     diff: DiffResult,
     cwd: string,
     signal?: AbortSignal,
-    trace?: JobTraceContext,
+    trace?: EventTraceContext,
   ): Promise<FixOutcome> {
     if (
       context.projectId <= 0 ||

@@ -1,4 +1,4 @@
-.PHONY: build test lint typecheck run init config-check deploy deploy-worker
+.PHONY: build test lint typecheck run init config-check deploy
 
 build:
 	pnpm run build
@@ -24,7 +24,3 @@ config-check: build
 deploy:
 	docker compose --env-file .env -f deploy/compose.yaml pull corvex
 	docker compose --env-file .env -f deploy/compose.yaml up -d
-
-deploy-worker:
-	docker compose --env-file .env -f deploy/compose.yaml --profile worker pull
-	docker compose --env-file .env -f deploy/compose.yaml --profile worker up -d

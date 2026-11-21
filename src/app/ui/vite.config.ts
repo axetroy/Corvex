@@ -1,14 +1,17 @@
 import react from "@vitejs/plugin-react";
+import nesting from "postcss-nesting";
 import { defineConfig } from "vite";
 
 /**
- * 运维台构建配置：源码在本目录，产物写入 dist/app/ui，
+ * Agent 控制台构建配置：源码在本目录，产物写入 dist/app/ui，
  * 由 Server 以 `/ops/` 前缀提供；`base` 必须与静态路由一致。
  */
 export default defineConfig({
   root: "src/app/ui",
   base: "/ops/",
   plugins: [react()],
+  // Vite 的 root 在 src/app/ui，显式指定 PostCSS 插件，避免配置查找路径歧义。
+  css: { postcss: { plugins: [nesting()] } },
   build: {
     outDir: "../../../dist/app/ui",
     emptyOutDir: true,

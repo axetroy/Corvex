@@ -9,6 +9,8 @@ const maxReadBytes = 256 << 10;
 const defaultMaxLines = 200;
 /** read_file 单次请求允许的最大行数。 */
 const maxLinesPerRead = 1000;
+/** read_file 单行输出的 UTF-8 字节上限；压缩/混淆文件的单行可能远大于整次读取预算。 */
+const maxLineBytes = 4 << 10;
 /** read_dir 单次最多返回的直接子项数量。 */
 const maxDirectoryEntries = 200;
 /** search_text 查询字符串允许的最大字符数。 */
@@ -46,6 +48,24 @@ function toForwardSlashPath(path: string): string {
 interface ResolvedAllowedPath {
   path: string;
   root: string;
+}
+
+/**
+ * 工具入口的仓库路径校验：worktree 内必须使用相对路径，绝对路径仅允许指向可信 Skill 根目录。
+ * 放在工具边界而不是 `resolveAllowedPath`，避免破坏内部以绝对路径递归搜索的实现。
+ */
+export async function requireRelativeRepoPath(requestedPath: string, roots: string[]): Promise<string> {
+  if (!isAbsolute(requestedPath) || roots.length === 0) return requestedPath;
+  const candidate = resolve(requestedPath);
+  const worktree = await realpath(roots[0]!);
+  const worktreeRaw = resolve(roots[0]!);
+  if (isWithin(worktree, candidate) || isWithin(worktreeRaw, candidate)) {
+    const relativePath = relative(worktree, candidate);
+    throw new Error(
+      `use a repository-relative path ("${relativePath}") instead of an absolute path for repository files`,
+    );
+  }
+  return requestedPath;
 }
 
 async function resolveAllowedPath(requestedPath: string, allowedRoots: string[]): Promise<ResolvedAllowedPath> {
@@ -307,6 +327,12 @@ async function readLineRange(
   let hasMore = false;
   let readOffset = startOffset;
   let nextOffset = startOffset;
+  let lineStartOffset = startOffset;
+  let lineBuffers: Buffer[] = [];
+  let lineBufferedBytes = 0;
+  let lineSeenBytes = 0;
+  let lineTruncated = false;
+  let stoppedForBudget = false;
 
   const append = (value: Buffer): void => {
     if (value.includes(0)) throw new Error("binary files are not supported");
@@ -317,7 +343,74 @@ async function readLineRange(
     output.push(Buffer.from(value));
   };
 
-  while (true) {
+  const resetLine = (): void => {
+    lineBuffers = [];
+    lineBufferedBytes = 0;
+    lineSeenBytes = 0;
+    lineTruncated = false;
+    currentLineHasBytes = false;
+  };
+
+  // 按行缓冲：正常行完整输出；超长行只保留前 maxLineBytes 字节并标记省略的字节数，
+  // 避免压缩/混淆文件里的单个超长行把整次读取撑爆。
+  const bufferLineSegment = (segment: Buffer): void => {
+    if (segment.byteLength === 0) return;
+    currentLineHasBytes = true;
+    if (lineNumber < startLine) return;
+    lineSeenBytes += segment.byteLength;
+    const remaining = maxLineBytes - lineBufferedBytes;
+    if (remaining <= 0) {
+      lineTruncated = true;
+      return;
+    }
+    if (segment.byteLength <= remaining) {
+      lineBuffers.push(Buffer.from(segment));
+      lineBufferedBytes += segment.byteLength;
+      return;
+    }
+    lineBuffers.push(Buffer.from(segment.subarray(0, remaining)));
+    lineBufferedBytes += remaining;
+    lineTruncated = true;
+  };
+
+  const rangeHeaderBytes = (lastLine: number): number =>
+    Buffer.byteLength(
+      `[Lines ${startLine}-${lastLine}; more lines available from ${lastLine + 1}]\n`,
+    );
+
+  // 返回 true 表示当前行放不进本次输出预算，已在行边界停止，交由调用方从该行继续。
+  const flushLine = (withNewline: boolean): boolean => {
+    if (lineNumber < startLine) {
+      resetLine();
+      return false;
+    }
+    if (!currentLineHasBytes && !withNewline) return false;
+    const parts = lineTruncated
+      ? [
+          Buffer.from(new TextDecoder("utf-8").decode(Buffer.concat(lineBuffers, lineBufferedBytes))),
+          Buffer.from(` … [line truncated, ${lineSeenBytes - lineBufferedBytes} bytes omitted]`),
+        ]
+      : [Buffer.concat(lineBuffers, lineBufferedBytes)];
+    const lineBytes = parts.reduce((total, part) => total + part.byteLength, 0) + (withNewline ? 1 : 0);
+    // 预留范围头（按其可能的最长形式），避免内容刚好占满预算后头信息把它撑爆。
+    const projectedHeaderBytes = rangeHeaderBytes(startLine + completedLines);
+    if (outputBytes + lineBytes + projectedHeaderBytes > maxBytes) {
+      if (completedLines === 0) {
+        throw new Error(`selected lines exceed the ${maxBytes}-byte read limit`);
+      }
+      hasMore = true;
+      nextOffset = lineStartOffset;
+      stoppedForBudget = true;
+      return true;
+    }
+    for (const part of parts) append(part);
+    if (withNewline) append(Buffer.from("\n"));
+    completedLines++;
+    resetLine();
+    return false;
+  };
+
+  while (!stoppedForBudget) {
     const chunkStart = readOffset;
     const { bytesRead } = await file.read(chunk, 0, chunk.byteLength, readOffset);
     if (bytesRead === 0) break;
@@ -332,14 +425,10 @@ async function readLineRange(
     let segmentStart = 0;
     for (let index = 0; index < bytesRead; index++) {
       if (chunk[index] !== 0x0a) continue;
-      const segment = chunk.subarray(segmentStart, index);
-      if (lineNumber >= startLine) {
-        append(segment);
-        append(Buffer.from("\n"));
-        completedLines++;
-      }
+      bufferLineSegment(chunk.subarray(segmentStart, index));
+      if (flushLine(true)) break;
       lineNumber++;
-      currentLineHasBytes = false;
+      lineStartOffset = chunkStart + index + 1;
       segmentStart = index + 1;
       if (lineNumber >= endExclusive) {
         hasMore = segmentStart < bytesRead;
@@ -348,21 +437,16 @@ async function readLineRange(
       }
     }
 
+    if (stoppedForBudget) break;
     if (lineNumber >= endExclusive) {
       if (hasMore) break;
       continue;
     }
-    const segment = chunk.subarray(segmentStart, bytesRead);
-    if (segment.byteLength > 0) {
-      currentLineHasBytes = true;
-      if (lineNumber >= startLine) {
-        append(segment);
-      }
-    }
+    bufferLineSegment(chunk.subarray(segmentStart, bytesRead));
   }
 
-  if (lineNumber >= startLine && lineNumber < endExclusive && currentLineHasBytes) {
-    completedLines++;
+  if (!stoppedForBudget && lineNumber >= startLine && lineNumber < endExclusive && currentLineHasBytes) {
+    flushLine(false);
   }
   const totalLines = lineNumber - 1 + (currentLineHasBytes ? 1 : 0);
   if (startOffset === 0 && startLine > totalLines) {
@@ -464,7 +548,7 @@ async function readAllowedFileChunk(
     }
     if (fileInfo.size > maxBytes) {
       throw new Error(
-        `file exceeds the ${maxBytes}-byte read limit; retry with startLine: 1 and maxLines up to ${maxLinesPerRead}, then continue at the next line reported in the range header`,
+        `file exceeds the ${maxBytes}-byte read limit; retry with startLine: 1 and maxLines up to ${maxLinesPerRead} (long lines are truncated automatically), then continue at the next line reported in the range header`,
       );
     }
     // 多读一个字节，捕捉 stat 之后文件变大导致的限额绕过。
@@ -520,7 +604,7 @@ export function createReadOnlyFileExtension(
       name: "read_file",
       label: "Read file",
       executionMode: "parallel",
-      description: `Read a UTF-8 text file without modifying it. Relative paths resolve from ${roots[0]}. Absolute paths are allowed only within these roots: ${roots.join(", ")}. Files are limited to ${maxReadBytes} output bytes per call. For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
+      description: `Read a UTF-8 text file without modifying it. Use repository-relative paths for repository files; absolute paths are rejected for the worktree and are only accepted for trusted skill roots: ${roots.slice(1).join(", ") || "(none)"}. Files are limited to ${maxReadBytes} output bytes per call and each line is capped at ${maxLineBytes} bytes (longer lines are truncated with a marker, which is normal for minified bundles). For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
       promptSnippet: "read_file: Read a UTF-8 text file from the fixed repository worktree or trusted skill roots. Use startLine and maxLines to read large files in bounded ranges.",
       parameters: Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
@@ -528,22 +612,23 @@ export function createReadOnlyFileExtension(
         maxLines: Type.Optional(Type.Integer({ minimum: 1, maximum: maxLinesPerRead })),
       }),
       execute: async (_toolCallId, params) => {
+        const path = await requireRelativeRepoPath(params.path, roots);
         const range = {
           startLine: params.startLine,
           maxLines: params.maxLines,
         };
         const hasRange = range.startLine !== undefined || range.maxLines !== undefined;
-        const cached = hasRange ? fileCursors.get(params.path) : undefined;
-        const result = await readAllowedFileChunk(params.path, roots, maxReadBytes, range, cached);
+        const cached = hasRange ? fileCursors.get(path) : undefined;
+        const result = await readAllowedFileChunk(path, roots, maxReadBytes, range, cached);
         if (hasRange && result.hasMore) {
-          fileCursors.set(params.path, {
+          fileCursors.set(path, {
             nextLine: result.nextLine,
             nextOffset: result.nextOffset,
             size: result.size,
             modifiedAt: result.modifiedAt,
           });
         } else {
-          fileCursors.delete(params.path);
+          fileCursors.delete(path);
         }
         return {
           content: [{ type: "text", text: result.text }],
@@ -561,7 +646,7 @@ export function createReadOnlyFileExtension(
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
       execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(params.path, roots)) }],
+        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(await requireRelativeRepoPath(params.path, roots), roots)) }],
         details: {},
       }),
     });
@@ -575,7 +660,7 @@ export function createReadOnlyFileExtension(
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
       execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(params.path, roots)) }],
+        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(await requireRelativeRepoPath(params.path, roots), roots)) }],
         details: {},
       }),
     });
@@ -593,7 +678,7 @@ export function createReadOnlyFileExtension(
       execute: async (_toolCallId, params) => ({
         content: [{
           type: "text",
-          text: JSON.stringify(await searchAllowedFiles(params.query, params.path ?? ".", roots, params.caseSensitive)),
+          text: JSON.stringify(await searchAllowedFiles(params.query, await requireRelativeRepoPath(params.path ?? ".", roots), roots, params.caseSensitive)),
         }],
         details: {},
       }),

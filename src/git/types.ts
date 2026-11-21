@@ -16,7 +16,7 @@ export interface DiffResult {
 
 export interface Workspace {
   projectId: number;
-  jobId: string;
+  eventId: string;
   path: string;
   headSha: string;
 }

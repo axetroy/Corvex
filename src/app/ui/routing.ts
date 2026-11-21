@@ -1,22 +1,23 @@
-import { jobTypes, statuses } from "./types.js";
-import type { JobQueue } from "./types.js";
+import { eventTypes, statuses } from "./types.js";
+import type { EventQueue } from "./types.js";
 
-/** 运维台页面路由，由地址栏 hash 解析得到。 */
+/** Agent 控制台页面路由，由地址栏 hash 解析得到。 */
 export type Route =
   | { kind: "overview" }
-  | { kind: "jobs" }
-  | { kind: "sessions"; id?: string }
-  | { kind: "job"; id: string }
+  | { kind: "events" }
+  | { kind: "conversations"; id?: string }
+  | { kind: "event"; id: string }
+  | { kind: "settings" }
   | { kind: "unknown" };
 
-/** 解析结果：页面路由与查询参数（任务列表筛选条件）。 */
+/** 解析结果：页面路由与查询参数（事件列表筛选条件）。 */
 export interface ParsedHash {
   page: Route;
   params: URLSearchParams;
 }
 
-/** 解码路由中的任务 ID；非法转义返回 undefined。 */
-export function decodeJobId(value: string): string | undefined {
+/** 解码路由中的事件 ID；非法转义返回 undefined。 */
+export function decodeEventId(value: string): string | undefined {
   if (!value) return undefined;
   try {
     return decodeURIComponent(value);
@@ -25,47 +26,54 @@ export function decodeJobId(value: string): string | undefined {
   }
 }
 
-/** 解析 hash 的路径部分；无法识别的路径与缺失/非法任务 ID 返回 `unknown`。 */
+/** 解析 hash 的路径部分；无法识别的路径与缺失/非法事件 ID 返回 `unknown`。 */
 function parsePath(route: string): Route {
-  if (route === "" || route === "overview") return { kind: "overview" };
-  if (route === "jobs") return { kind: "jobs" };
-  if (route === "sessions") return { kind: "sessions" };
-  if (route.startsWith("sessions/")) {
-    const id = decodeJobId(route.slice("sessions/".length));
-    return id ? { kind: "sessions", id } : { kind: "unknown" };
+  if (route === "" || route === "conversations") return { kind: "conversations" };
+  if (route === "overview") return { kind: "overview" };
+  if (route === "events") return { kind: "events" };
+  if (route === "settings") return { kind: "settings" };
+  if (route.startsWith("conversations/")) {
+    const id = decodeEventId(route.slice("conversations/".length));
+    return id ? { kind: "conversations", id } : { kind: "unknown" };
   }
-  if (route.startsWith("jobs/")) {
-    const id = decodeJobId(route.slice("jobs/".length));
-    return id ? { kind: "job", id } : { kind: "unknown" };
+  if (route.startsWith("events/")) {
+    const id = decodeEventId(route.slice("events/".length));
+    return id ? { kind: "event", id } : { kind: "unknown" };
   }
   return { kind: "unknown" };
 }
 
-/** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为概览。 */
+/** 归一化 hash 路由：忽略前导 `#` 与 `/`，空值回到对话页。 */
+export function normalizeHashRoute(hash: string): string {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  return raw.replace(/^\/+/, "") || "conversations";
+}
+
+/** 把地址栏 hash 解析为页面路由与查询参数；空 hash 视为对话页。 */
 export function parseHash(hash: string): ParsedHash {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const queryIndex = raw.indexOf("?");
-  const path = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+  const path = (queryIndex === -1 ? raw : raw.slice(0, queryIndex)).replace(/^\/+/, "");
   const query = queryIndex === -1 ? "" : raw.slice(queryIndex + 1);
   return { page: parsePath(path), params: new URLSearchParams(query) };
 }
 
 /** 从查询参数还原筛选条件；非法状态、类型与偏移回退为默认值。 */
-export function jobQueueFromParams(params: URLSearchParams): JobQueue {
+export function eventQueueFromParams(params: URLSearchParams): EventQueue {
   const status = params.get("status") ?? "";
   const type = params.get("type") ?? "";
   const search = (params.get("search") ?? "").slice(0, 100);
   const offsetValue = Number(params.get("offset") ?? "0");
   return {
     status: (statuses as readonly string[]).includes(status) ? status : "",
-    type: (jobTypes as readonly string[]).includes(type) ? type : "",
+    type: (eventTypes as readonly string[]).includes(type) ? type : "",
     search,
     offset: Number.isSafeInteger(offsetValue) && offsetValue > 0 ? offsetValue : 0,
   };
 }
 
 /** 把筛选条件序列化为 hash 查询串；空条件不写入，保持默认 URL 简洁。 */
-export function jobQueueQuery(queue: JobQueue): string {
+export function eventQueueQuery(queue: EventQueue): string {
   const params = new URLSearchParams();
   if (queue.status) params.set("status", queue.status);
   if (queue.type) params.set("type", queue.type);
@@ -75,23 +83,30 @@ export function jobQueueQuery(queue: JobQueue): string {
   return query ? `?${query}` : "";
 }
 
-/** 任务列表的 hash，导航与筛选更新共用。 */
-export function jobsHash(queue: JobQueue): string {
-  return `#jobs${jobQueueQuery(queue)}`;
+/** 前端路由跳转：直接改 hash，由 hashchange 驱动 React 重渲染。 */
+export function navigateTo(route: string): void {
+  const target = route.startsWith("#") ? route : `#${route}`;
+  if (window.location.hash === target) return;
+  window.location.hash = target;
 }
 
-/** 会话页 hash；有 ID 时指向该会话，无 ID 时进入新会话视图。 */
-export function sessionsHash(id = ""): string {
-  return id ? `#sessions/${encodeURIComponent(id)}` : "#sessions";
+/** 事件列表的 hash，导航与筛选更新共用。 */
+export function eventsHash(queue: EventQueue): string {
+  return `#events${eventQueueQuery(queue)}`;
 }
 
-/** 任务详情 hash，携带列表筛选条件以便返回时恢复。 */
-export function jobHash(id: string, queue: JobQueue): string {
-  return `#jobs/${encodeURIComponent(id)}${jobQueueQuery(queue)}`;
+/** 对话页 hash；有 ID 时指向该对话，无 ID 时进入新建视图。 */
+export function conversationsHash(id = ""): string {
+  return id ? `#conversations/${encodeURIComponent(id)}` : "#conversations";
+}
+
+/** 事件详情 hash，携带列表筛选条件以便返回时恢复。 */
+export function eventHash(id: string, queue: EventQueue): string {
+  return `#events/${encodeURIComponent(id)}${eventQueueQuery(queue)}`;
 }
 
 /** 详情页返回列表的 hash。 */
-export function jobsBackHash(params: URLSearchParams): string {
+export function eventsBackHash(params: URLSearchParams): string {
   const query = params.toString();
-  return `#jobs${query ? `?${query}` : ""}`;
+  return `#events${query ? `?${query}` : ""}`;
 }

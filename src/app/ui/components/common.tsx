@@ -8,7 +8,7 @@ interface TableRow {
   cells: ReactNode[];
 }
 
-/** 运维台的通用面板容器，标题与内容使用既有样式类。 */
+/** Agent 控制台的通用面板容器，标题与内容使用既有样式类。 */
 export function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <Card className="panel" title={title} size="small">{children}</Card>;
 }
@@ -17,11 +17,11 @@ export function Panel({ title, children }: { title: string; children: ReactNode 
 export function PageHeading({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="page-heading">
-      <div>
+      <div className="page-heading-text">
         <Typography.Title level={1}>{title}</Typography.Title>
         {description ? <Typography.Paragraph type="secondary">{description}</Typography.Paragraph> : null}
       </div>
-      {actions}
+      {actions ? <div className="page-heading-actions">{actions}</div> : null}
     </div>
   );
 }
@@ -51,7 +51,7 @@ export function DataTable({ headers, children }: { headers: readonly string[]; c
   return <Table<TableRow> className="data-table" columns={columns} dataSource={rows} pagination={false} rowKey="key" scroll={{ x: "max-content" }} size="small" />;
 }
 
-/** 任务状态徽标，颜色由状态名对应的样式类决定。 */
+/** 事件状态徽标，颜色由状态名对应的样式类决定。 */
 export function StatusBadge({ status, label }: { status: string; label: string }) {
   const color = status === "completed" ? "success"
     : status === "failed" ? "error"

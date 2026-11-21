@@ -1,28 +1,43 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ConfigProvider, Menu, Select } from "antd";
+import { ConfigProvider, Dropdown, Menu } from "antd";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
+import { LandingPage } from "./components/LandingPage.js";
+import { AdminConsole } from "./components/AdminConsole.js";
+import { SetupPage } from "./components/SetupPage.js";
+import {
+  ConversationsIcon,
+  EventsIcon,
+  LanguageIcon,
+  LogoutIcon,
+  OverviewIcon,
+  SidebarCollapseIcon,
+  SidebarExpandIcon,
+} from "./components/icons.js";
+import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, zhCN } from "./i18n.js";
 import type { Locale } from "./i18n.js";
-import { jobQueueFromParams, jobsBackHash, jobsHash, parseHash, sessionsHash } from "./routing.js";
-import type { JobQueue } from "./types.js";
+import { eventQueueFromParams, eventsBackHash, eventsHash, navigateTo, normalizeHashRoute, parseHash, conversationsHash } from "./routing.js";
+import type { EventQueue } from "./types.js";
 
 // 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
 const OverviewPage = lazy(() => import("./components/OverviewPage.js").then((module) => ({ default: module.OverviewPage })));
-const JobsPage = lazy(() => import("./components/JobsPage.js").then((module) => ({ default: module.JobsPage })));
-const JobDetailPage = lazy(() => import("./components/JobDetailPage.js").then((module) => ({ default: module.JobDetailPage })));
-const SessionsPage = lazy(() => import("./components/SessionsPage.js").then((module) => ({ default: module.SessionsPage })));
+const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
+const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
+const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 
-/** localStorage 中保存运维台手动选择语言的键名。 */
+/** localStorage 中保存 Agent 控制台手动选择语言的键名。 */
 const localePreferenceKey = "corvex-ops-locale";
+/** localStorage 中保存侧边栏展开状态的键名。 */
+const navigationPreferenceKey = "corvex-ops-navigation-collapsed";
 /** 浏览器按偏好顺序提供的语言候选，用于首次访问时选择界面语言。 */
 const browserLanguages = [...(window.navigator.languages ?? []), window.navigator.language ?? ""];
-/** 运维台自动刷新间隔（毫秒）。 */
+/** Agent 控制台自动刷新间隔（毫秒）。 */
 const refreshIntervalMs = 15_000;
-/** 非任务列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
+/** 非事件列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
 const emptyParams = new URLSearchParams();
 /** Server 为当前 HTML 响应生成的 CSP nonce，供 Ant Design 样式标签使用。 */
 const cspNonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce;
@@ -32,7 +47,7 @@ function readSavedLocale(): string {
   try {
     return window.localStorage.getItem(localePreferenceKey) ?? "";
   } catch (error) {
-    window.console.warn("read operations UI language preference failed", error);
+    window.console.warn("read agent console language preference failed", error);
     return "";
   }
 }
@@ -42,35 +57,84 @@ function saveLocale(locale: Locale): void {
   try {
     window.localStorage.setItem(localePreferenceKey, locale);
   } catch (error) {
-    window.console.warn("save operations UI language preference failed", error);
+    window.console.warn("save agent console language preference failed", error);
   }
 }
 
-/** 当前地址栏 hash 对应的原始路由文本，默认回到概览。 */
+/** 读取已保存的侧边栏收起状态；未保存时在窄视口下默认收起。 */
+function readNavigationCollapsed(): boolean {
+  try {
+    const saved = window.localStorage.getItem(navigationPreferenceKey);
+    if (saved !== null) return saved === "true";
+  } catch (error) {
+    window.console.warn("read agent console navigation preference failed", error);
+  }
+  return window.innerWidth < 700;
+}
+
+/** 保存侧边栏收起状态；写入失败只记录告警。 */
+function saveNavigationCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(navigationPreferenceKey, String(collapsed));
+  } catch (error) {
+    window.console.warn("save agent console navigation preference failed", error);
+  }
+}
+
+/** 当前地址栏 hash 对应的原始路由文本，默认回到对话页。 */
 function useHashRoute(): string {
-  const [route, setRoute] = useState(() => window.location.hash.slice(1) || "overview");
+  const [route, setRoute] = useState(() => normalizeHashRoute(window.location.hash));
   useEffect(() => {
-    const onChange = () => setRoute(window.location.hash.slice(1) || "overview");
+    const onChange = () => setRoute(normalizeHashRoute(window.location.hash));
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
   return route;
 }
 
-/** 运维台根组件：顶栏、语言切换、自动刷新与路由分发。 */
+/** Agent 控制台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale(readSavedLocale(), browserLanguages));
   const copy = locale === "zh-CN" ? zhCN : en;
+  const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
   const route = useHashRoute();
   // 页面与筛选条件都来自 hash，刷新或分享链接后视图保持不变。
+  // 首次安装时把控制台重定向到 #/setup；服务端只让 API 返回 setupRequired。
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/ops")) return;
+    let active = true;
+    fetch("/api/setup/status")
+      .then((response) => response.json() as Promise<{ configured: boolean }>)
+      .then((status) => {
+        if (active && !status.configured && normalizeHashRoute(window.location.hash) !== "setup") {
+          navigateTo("setup");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const { page, params } = useMemo(() => parseHash(route), [route]);
   const queue = useMemo(
-    () => jobQueueFromParams(page.kind === "jobs" || page.kind === "job" ? params : emptyParams),
+    () => eventQueueFromParams(page.kind === "events" || page.kind === "event" ? params : emptyParams),
     [page.kind, params],
   );
   const [updated, setUpdated] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [account, setAccount] = useState<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>();
   const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchJson<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>("/api/auth/me", copy)
+      .then((user) => active && setAccount(user))
+      .catch(() => active && setAccount(undefined));
+    return () => {
+      active = false;
+    };
+  }, [copy]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -82,15 +146,19 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 未知路由与非法任务 ID 统一回到概览，避免停留在空白页。
+  // 未知路由与非法事件 ID 统一回到对话页，避免停留在空白页。
   useEffect(() => {
-    if (page.kind === "unknown") window.location.hash = "overview";
+    if (page.kind === "unknown" && !route.startsWith("admin") && route !== "setup") navigateTo("conversations");
   }, [page.kind]);
 
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
+  const logout = useCallback(async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    window.location.href = "/";
+  }, []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
-  const updateQueue = useCallback((next: JobQueue) => {
-    const target = jobsHash(next);
+  const updateQueue = useCallback((next: EventQueue) => {
+    const target = eventsHash(next);
     // 条件未变化时 hash 不会触发 hashchange，改为直接刷新一次。
     if (window.location.hash === target) {
       setRefreshToken((value) => value + 1);
@@ -98,122 +166,207 @@ export function App() {
     }
     window.location.hash = target;
   }, []);
-  const updateSessionRoute = useCallback((sessionId: string) => {
-    const target = sessionsHash(sessionId);
+  const updateConversationRoute = useCallback((conversationId: string) => {
+    const target = conversationsHash(conversationId);
     if (window.location.hash !== target) window.location.hash = target;
   }, []);
 
-  const onJobs = page.kind === "jobs" || page.kind === "job";
+  const toggleNavigation = useCallback(() => {
+    setNavigationCollapsed((value) => {
+      saveNavigationCollapsed(!value);
+      return !value;
+    });
+  }, []);
+
+  const changeLocale = useCallback((value: string) => {
+    const next = resolveLocale(value, browserLanguages);
+    saveLocale(next);
+    setLocale(next);
+  }, []);
+
+  const languageOptions = [{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }];
+  const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
+  const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
+
+  const onEvents = page.kind === "events" || page.kind === "event";
+  const theme = {
+    token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" },
+    components: { Menu: { collapsedWidth: 60, itemHeight: 40 } },
+  };
+
+  // 公开首页是唯一的 pathname 路由；其余界面都在 /ops 下用 hash 路由。
+  if (window.location.pathname === "/") {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <LandingPage copy={copy} locale={locale} onLocaleChange={changeLocale} />
+      </ConfigProvider>
+    );
+  }
+
+  // 管理页与安装向导都是 hash 路由，切换时不刷新页面。
+  if (route.startsWith("admin")) {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <AdminConsole copy={copy} locale={locale} route={route} />
+      </ConfigProvider>
+    );
+  }
+
+  if (route === "setup") {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <SetupPage copy={copy} />
+      </ConfigProvider>
+    );
+  }
 
   return (
     <ConfigProvider
       locale={locale === "zh-CN" ? zhCNLocale : enUSLocale}
       csp={cspNonce ? { nonce: cspNonce } : undefined}
-      theme={{ token: { colorPrimary: "#1769aa", borderRadius: 6, fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif" } }}
+      theme={theme}
     >
-      <>
-      <a
-        className="skip-link"
-        href="#app"
-        onClick={(event) => {
-          event.preventDefault();
-          mainRef.current?.focus();
-        }}
-      >
-        {copy.skipToContent}
-      </a>
-      <header className="topbar">
-        <a className="brand" href="#overview" aria-label={copy.brandLabel}>
-          <span className="brand-mark">C</span>
-          <span>
-            Corvex <small>OPERATIONS</small>
-          </span>
+      <div className="app-shell">
+        <a
+          className="skip-link"
+          href="#app"
+          onClick={(event) => {
+            event.preventDefault();
+            mainRef.current?.focus();
+          }}
+        >
+          {copy.skipToContent}
         </a>
-        <nav aria-label={copy.navLabel}>
+        <aside className={`sidebar${navigationCollapsed ? " sidebar-collapsed" : ""}`} aria-label={copy.navLabel}>
+          <div className="sidebar-head">
+            <a className="brand" href="#conversations" aria-label={copy.brandLabel}>
+              <span className="brand-mark">C</span>
+              <span className="brand-name">
+                Corvex <small>GITLAB AGENT</small>
+              </span>
+            </a>
+            <Dropdown
+              placement="bottomRight"
+              trigger={["click"]}
+              menu={{
+                selectedKeys: [locale],
+                items: languageMenuItems,
+                onClick: ({ key }) => changeLocale(key),
+              }}
+            >
+              <button type="button" className="sidebar-language" aria-label={copy.languageLabel} title={copy.languageLabel}>
+                <LanguageIcon />
+              </button>
+            </Dropdown>
+            <button
+              type="button"
+              className="sidebar-toggle"
+              onClick={toggleNavigation}
+              aria-label={copy.toggleNavigation}
+              aria-expanded={!navigationCollapsed}
+              title={copy.toggleNavigation}
+            >
+              {navigationCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
+            </button>
+          </div>
           <Menu
-            className="primary-nav"
-            mode="horizontal"
-            selectedKeys={[page.kind === "overview" ? "overview" : onJobs ? "jobs" : "sessions"]}
+            className="sidebar-nav"
+            mode="inline"
+            inlineCollapsed={navigationCollapsed}
+            selectedKeys={[page.kind === "overview" ? "overview" : onEvents ? "events" : "conversations"]}
             onClick={({ key }) => {
-              window.location.hash = key === "jobs"
-                ? jobsHash(queue)
-                : key === "sessions" && page.kind === "sessions"
-                  ? sessionsHash(page.id)
+              window.location.hash = key === "events"
+                ? eventsHash(queue)
+                : key === "conversations" && page.kind === "conversations"
+                  ? conversationsHash(page.id)
                   : key;
             }}
             items={[
-              { key: "overview", label: copy.navOverview },
-              { key: "jobs", label: copy.navJobs },
-              { key: "sessions", label: copy.navSessions },
+              { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
+              { key: "events", icon: <EventsIcon />, label: copy.navEvents },
+              { key: "overview", icon: <OverviewIcon />, label: copy.navOverview },
             ]}
           />
-        </nav>
-        <Select
-          id="language"
-          className="language-select"
-          aria-label={copy.languageLabel}
-          value={locale}
-          options={[{ value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]}
-          onChange={(value) => {
-            const next = resolveLocale(value, browserLanguages);
-            saveLocale(next);
-            setLocale(next);
-          }}
-        />
-        <span id="updated" className="updated">
-          {updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : ""}
-        </span>
-      </header>
-      <main id="app" className="content" ref={mainRef} tabIndex={-1}>
-        <ErrorBoundary key={page.kind === "sessions" ? "sessions" : route} copy={copy}>
-          <Suspense fallback={<Loading>{copy.loading}</Loading>}>
-          {page.kind === "overview" ? (
-            <OverviewPage
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
+          {account ? (
+            <div className="sidebar-account-panel">
+              {account.avatarUrl ? (
+                <img className="sidebar-account-avatar" src={account.avatarUrl} alt="" />
+              ) : (
+                <span className="sidebar-account-avatar sidebar-account-avatar-fallback" aria-hidden="true">
+                  {[...account.username][0]?.toUpperCase() ?? "?"}
+                </span>
+              )}
+              <span className="sidebar-account-text">
+                <span className="sidebar-account-name">{account.name || account.username}</span>
+                <span className="sidebar-account-username">@{account.username}</span>
+              </span>
+              {account.isAdmin ? (
+                <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
+                  [admin]
+                </a>
+              ) : null}
+              <button
+                type="button"
+                className="sidebar-logout"
+                onClick={() => void logout()}
+                aria-label={copy.logout}
+                title={copy.logout}
+              >
+                <LogoutIcon />
+              </button>
+            </div>
           ) : null}
-          {page.kind === "jobs" ? (
-            <JobsPage
-              copy={copy}
-              locale={locale}
-              queue={queue}
-              refreshToken={refreshToken}
-              onQueueChange={updateQueue}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
-          ) : null}
-          {page.kind === "job" ? (
-            <JobDetailPage
-              jobId={page.id}
-              backHash={jobsBackHash(params)}
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-            />
-          ) : null}
-          {page.kind === "sessions" ? (
-            <SessionsPage
-              sessionId={page.id ?? ""}
-              copy={copy}
-              locale={locale}
-              refreshToken={refreshToken}
-              onUpdated={handleUpdated}
-              onRefresh={refresh}
-              onSessionChange={updateSessionRoute}
-            />
-          ) : null}
-          </Suspense>
-        </ErrorBoundary>
-      </main>
-      <footer>{copy.footer}</footer>
-      </>
+        </aside>
+        {updatedText ? <span id="updated" className="updated">{updatedText}</span> : null}
+        <main id="app" className={`content${page.kind === "conversations" ? " content-full" : ""}`} ref={mainRef} tabIndex={-1}>
+          <ErrorBoundary key={page.kind === "conversations" ? "conversations" : route} copy={copy}>
+            <Suspense fallback={<Loading>{copy.loading}</Loading>}>
+            {page.kind === "overview" ? (
+              <OverviewPage
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "events" ? (
+              <EventsPage
+                copy={copy}
+                locale={locale}
+                queue={queue}
+                refreshToken={refreshToken}
+                onQueueChange={updateQueue}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "event" ? (
+              <EventDetailPage
+                eventId={page.id}
+                backHash={eventsBackHash(params)}
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+              />
+            ) : null}
+            {page.kind === "conversations" ? (
+              <ConversationsPage
+                conversationId={page.id ?? ""}
+                copy={copy}
+                locale={locale}
+                refreshToken={refreshToken}
+                onUpdated={handleUpdated}
+                onRefresh={refresh}
+                onConversationChange={updateConversationRoute}
+              />
+            ) : null}
+            </Suspense>
+          </ErrorBoundary>
+        </main>
+      </div>
     </ConfigProvider>
   );
 }

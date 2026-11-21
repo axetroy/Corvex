@@ -20,11 +20,13 @@ function validConfig(): CorvexConfig {
       webhookSecret: "secret",
       blockedUserIds: [],
       botUsername: "corvex",
+      oauthClientId: "",
+      oauthClientSecret: "",
+      oauthRedirectUri: "",
     },
     storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
     agent: {
       responseLanguage: "en",
-      enabled: false,
       baseUrl: "https://api.openai.com/v1",
       model: "",
       apiKey: "",
@@ -39,22 +41,30 @@ function validConfig(): CorvexConfig {
     },
     review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
     chat: { historyComments: 20 },
-    worker: { pollInterval: 2000, jobTimeout: 30 * 60_000 },
+    events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
     fix: { enabled: false, maxPatchBytes: 128 << 10 },
     issue: { implementEnabled: false, historyComments: 20 },
   };
 }
 
 describe("validateConfig", () => {
-  it("keeps issue implementation disabled by default and requires the Agent when enabled", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-issue-config-"));
+  it("defaults the per-turn tool result budget to 256 KiB", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-tool-budget-"));
     const configPath = join(root, "config.yaml");
     try {
-      await writeFile(configPath, "issue:\n  implement_enabled: true\n", "utf8");
-      await expect(loadConfig(configPath)).rejects.toThrow("agent.enabled must be true when issue.implement_enabled is true");
+      await writeFile(configPath, JSON.stringify({
+        gitlab: { base_url: "https://gitlab.example.com" },
+        storage: { root, database: join(root, "state.db") },
+      }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        agent: { turnToolResultBytes: 256 << 10 },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("keeps issue implementation disabled by default", async () => {
     expect(validConfig().issue.implementEnabled).toBe(false);
   });
 
@@ -86,8 +96,10 @@ describe("validateConfig", () => {
       await initializeConfig(configPath);
       const contents = await (await import("node:fs/promises")).readFile(configPath, "utf8");
       expect(contents).not.toContain("allowed_project_ids");
-      expect(contents).toContain("blocked_user_ids");
-      expect(contents).toMatch(/session_timeout: \d+m/u);
+      // 模板只保留启动必需项；可调项（含 GitLab 地址）改由控制台写入 SQLite。
+      expect(contents).not.toContain("base_url");
+      expect(contents).not.toContain("session_timeout");
+      expect(contents).not.toContain("retention_days");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -203,13 +215,16 @@ describe("validateConfig", () => {
     }
   });
 
-  it("requires complete operations dashboard credentials and accepts passwords of any length", () => {
+  it("requires operations credentials to be set together and validates them when present", () => {
     const config = validConfig();
     config.operations.username = "operator";
-    expect(() => validateConfig(config)).toThrow("both CORVEX_OPS_USERNAME and CORVEX_OPS_PASSWORD");
+    expect(() => validateConfig(config)).toThrow("both operations username and password must be set together");
 
     config.operations.password = "short";
     expect(() => validateConfig(config)).not.toThrow();
+
+    config.operations.username = "bad:name";
+    expect(() => validateConfig(config)).toThrow("operations console credentials contain invalid characters");
   });
 
   it("accepts all projects while permitting an empty user blocklist", () => {
@@ -217,21 +232,51 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("requires a GitLab read token when the operations console is enabled", () => {
-    const config = validConfig();
-    config.operations.username = "operator";
-    config.operations.password = "password";
-    config.gitlab.readToken = "";
-    expect(() => validateConfig(config, "server")).toThrow("CORVEX_GITLAB_READ_TOKEN is required");
+  it("reads the legacy worker YAML section as event settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-config-events-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(configPath, JSON.stringify({
+        gitlab: { base_url: "https://gitlab.example.com", blocked_user_ids: [] },
+        storage: { root, database: join(root, "state.db") },
+        worker: { poll_interval: "3s", event_timeout: "2m" },
+      }));
+      const config = await loadConfig(configPath, "storage");
+      expect(config.events).toEqual({ pollInterval: 3_000, eventTimeout: 120_000 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
-    config.operations.username = "";
-    config.operations.password = "";
+  it("requires all GitLab OAuth settings together when configured", () => {
+    const config = validConfig();
+    config.gitlab.oauthClientId = "client";
+    expect(() => validateConfig(config)).toThrow("GitLab OAuth requires client ID");
+
+    config.gitlab.oauthClientSecret = "secret";
+    config.gitlab.oauthRedirectUri = "https://corvex.example.com/auth/gitlab/callback";
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("defers the GitLab base URL to the console settings", () => {
+    const config = validConfig();
+    config.gitlab.baseUrl = "";
+    expect(() => validateConfig(config, "server")).not.toThrow();
+
+    config.gitlab.baseUrl = "not-a-url";
+    expect(() => validateConfig(config, "server")).toThrow("gitlab.base_url must be a valid HTTP(S) URL");
+  });
+
+  it("allows GitLab credentials to be configured later in the console", () => {
+    const config = validConfig();
+    config.gitlab.readToken = "";
+    config.gitlab.writeToken = "";
+    config.gitlab.webhookSecret = "";
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
-  it("rejects credential-bearing model URLs when the agent is enabled", () => {
+  it("rejects credential-bearing model URLs", () => {
     const config = validConfig();
-    config.agent.enabled = true;
     config.agent.baseUrl = "https://user:pass@example.com/v1";
     config.agent.model = "model";
     config.agent.apiKey = "key";
@@ -259,8 +304,6 @@ describe("validateConfig", () => {
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
       "CORVEX_WEBHOOK_SECRET",
-      "CORVEX_OPS_USERNAME",
-      "CORVEX_OPS_PASSWORD",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -269,8 +312,6 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "secret";
-      process.env.CORVEX_OPS_USERNAME = "operator";
-      process.env.CORVEX_OPS_PASSWORD = "a secure password with 16 chars";
       await writeFile(
         configPath,
         JSON.stringify({
@@ -281,7 +322,7 @@ describe("validateConfig", () => {
       const config = await loadConfig(configPath);
       expect(config.server.listen).toBe("127.0.0.1:9090");
       expect(config.gitlab.baseUrl).toBe("https://gitlab.override.example");
-      expect(config.operations.username).toBe("operator");
+      expect(config.operations).toEqual({ username: "", password: "" });
     } finally {
       for (const name of names) {
         const value = original[name];
@@ -292,14 +333,13 @@ describe("validateConfig", () => {
     }
   });
 
-  it("requires only the credentials used by the selected process role", async () => {
+  it("loads optional credential fallbacks from the environment", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-role-"));
     const configPath = join(root, "config.yaml");
     const names = [
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
       "CORVEX_WEBHOOK_SECRET",
-      "CORVEX_MODEL_API_KEY",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -311,23 +351,27 @@ describe("validateConfig", () => {
             blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
-          agent: { enabled: true, model: "test-model" },
+          agent: { model: "test-model" },
         }),
       );
       process.env.CORVEX_GITLAB_READ_TOKEN = "";
       process.env.CORVEX_GITLAB_TOKEN = "write";
       process.env.CORVEX_WEBHOOK_SECRET = "webhook";
-      process.env.CORVEX_MODEL_API_KEY = "";
       await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
         gitlab: { readToken: "", writeToken: "write", webhookSecret: "webhook" },
       });
 
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_WEBHOOK_SECRET = "";
-      process.env.CORVEX_MODEL_API_KEY = "model-key";
-      await expect(loadConfig(configPath, "worker")).resolves.toMatchObject({
+      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
         gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
-        agent: { apiKey: "model-key", webEnabled: true, webBlockedHosts: [] },
+        agent: { webEnabled: true, webBlockedHosts: [] },
+      });
+
+      process.env.CORVEX_GITLAB_READ_TOKEN = "";
+      process.env.CORVEX_GITLAB_TOKEN = "";
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        gitlab: { readToken: "", writeToken: "", webhookSecret: "" },
       });
     } finally {
       for (const name of names) {
