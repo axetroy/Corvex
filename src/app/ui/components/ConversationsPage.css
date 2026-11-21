@@ -965,6 +965,26 @@
   margin-bottom: 0;
 }
 
+/* 聊天代码块：与主题面板一致，横向滚动而不撑破消息气泡。 */
+.conversation-message-markdown .x-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--bg-code);
+}
+
+.conversation-message-markdown .x-markdown pre code.hljs {
+  padding: 0;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
 /* 流式回复末尾的光标：正文仍在增长时提示「还在写」，落库后随状态移除。 */
 .conversation-message-markdown.is-streaming .x-markdown > :last-child::after {
   content: "";

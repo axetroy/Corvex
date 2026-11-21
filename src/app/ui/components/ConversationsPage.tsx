@@ -5,6 +5,7 @@ import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
+import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
@@ -133,7 +134,14 @@ function MessageContent({
       {/* 先按发生顺序展示每次思考与工具调用，再展示最终回答。 */}
       <ConversationTimeline segments={timeline} active={Boolean(streaming)} copy={copy} />
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
-      {message.content ? <XMarkdown content={message.content} escapeRawHtml openLinksInNewTab /> : null}
+      {message.content ? (
+        <XMarkdown
+          content={message.content}
+          escapeRawHtml
+          openLinksInNewTab
+          components={markdownCodeComponents}
+        />
+      ) : null}
       {settled ? (
         <div className="conversation-message-actions">
           <Actions

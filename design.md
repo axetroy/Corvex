@@ -226,11 +226,12 @@ Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含
 对话可以读取仓库并在用户明确要求时发布 GitLab 评论；也能通过 fs-write 工具在固定快照的 worktree 中增删改文件，改动持久化到项目镜像里的会话 ref，永不 commit/push。
 React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、
 `react-icons`（Simple Icons 文件类型图标）、`monaco-editor`（只读代码查看器，按扩展名覆盖绝大多数语言的语法高亮，
-通过动态 import 单独分包，明暗主题分别定义并跟随 `data-theme`）与
+通过动态 import 单独分包，明暗主题分别定义并跟随 `data-theme`）、`highlight.js`（聊天回复中 Markdown 代码块的语法高亮，
+通过 XMarkdown 的 `components.code` 注入，输出先转义再渲染）与
 `react-resizable-panels`（会话列表/工作台/文件面板三栏的尺寸与折叠）
-均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。原来使用的 `highlight.js` 已被 Monaco 取代并移除；
-Monaco 的语法 tokenizer 在主线程运行，只需一个同源 `editor.worker`，CSP 因此额外允许 `worker-src 'self' blob:`，
-动态注入的样式仍由 `csp.ts` 补 nonce。控制台路由选择 `react-router-dom`
+均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。Monaco 和 highlight.js 用于不同用途：前者是文件面板的只读查看器，
+后者用于聊天输出的轻量代码块，二者不互相替代。Monaco 的语法 tokenizer 在主线程运行，只需一个同源 `editor.worker`，
+CSP 因此额外允许 `worker-src 'self' blob:`，动态注入的样式仍由 `csp.ts` 补 nonce。控制台路由选择 `react-router-dom`
 的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化
 集中在 `src/app/ui/routing.ts` 的纯函数中，`App` 用 `Routes`/`useNavigate`，管理后台用 `Link`。
 
