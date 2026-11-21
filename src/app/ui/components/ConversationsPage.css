@@ -1030,6 +1030,13 @@
   padding-left: 16px;
 }
 
+/* 左侧开关只占自身宽度，避免把标签挤到标签栏中间。 */
+.conversation-tabs > .ant-tabs-nav .ant-tabs-extra-content:first-child {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  padding-left: 0;
+}
+
 .conversation-tabs > .ant-tabs-body-holder {
   display: flex;
   flex: 1;
