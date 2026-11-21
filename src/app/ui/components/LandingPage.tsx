@@ -31,47 +31,28 @@ export function LandingPage({ copy, locale, onLocaleChange }: Props) {
     const container = root.current;
     if (!container) return;
     const reveals = [...container.querySelectorAll<HTMLElement>("[data-reveal]")];
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        entry.target.classList.add("visible");
-        observer.unobserve(entry.target);
-      }
-    }, { threshold: 0.12 });
-    reveals.forEach((element) => observer.observe(element));
-
-    const orbs = [...container.querySelectorAll<HTMLElement>("[data-parallax]")];
-    const onScroll = () => {
-      const offset = window.scrollY || 0;
-      for (const orb of orbs) {
-        orb.style.setProperty("--shift", `${offset * Number(orb.dataset.parallax ?? 0)}px`);
+    // 用滚动位置直接切换类名：进入视口入场，离开时移除类名由 CSS 反向播放出场。
+    // 不依赖 IntersectionObserver，避免未聚焦的预览标签页里回调被节流。
+    const updateReveals = () => {
+      const viewportHeight = window.innerHeight || 800;
+      for (const element of reveals) {
+        const rect = element.getBoundingClientRect();
+        const visible = rect.top < viewportHeight * 0.85 && rect.bottom > viewportHeight * 0.1;
+        element.classList.toggle("visible", visible);
       }
     };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
+    window.addEventListener("scroll", updateReveals, { passive: true });
+    window.addEventListener("resize", updateReveals);
+    updateReveals();
 
-    const counters = [...container.querySelectorAll<HTMLElement>("[data-count]")];
-    const countObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const element = entry.target as HTMLElement;
-        const target = Number(element.dataset.count ?? 0);
-        const start = performance.now();
-        const tick = (now: number) => {
-          const progress = Math.min(1, (now - start) / 1100);
-          element.textContent = String(Math.round(target * (1 - (1 - progress) ** 3)));
-          if (progress < 1) requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-        countObserver.unobserve(element);
-      }
-    }, { threshold: 0.5 });
-    counters.forEach((element) => countObserver.observe(element));
+    // 数字直接显示；模块的入场/出场完全由滚动动画负责。
+    for (const element of container.querySelectorAll<HTMLElement>("[data-count]")) {
+      element.textContent = element.dataset.count ?? "0";
+    }
 
     return () => {
-      observer.disconnect();
-      countObserver.disconnect();
-      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", updateReveals);
+      window.removeEventListener("resize", updateReveals);
     };
   }, []);
 
@@ -84,8 +65,8 @@ export function LandingPage({ copy, locale, onLocaleChange }: Props) {
         <div className="landing-scanlines" />
         <LandingParticles />
       </div>
-      <div className="landing-orb landing-orb-a" data-parallax="0.06" aria-hidden="true" />
-      <div className="landing-orb landing-orb-b" data-parallax="-0.04" aria-hidden="true" />
+      <div className="landing-orb landing-orb-a" aria-hidden="true" />
+      <div className="landing-orb landing-orb-b" aria-hidden="true" />
       <nav className="landing-nav landing-wrap">
         <a className="landing-logo" href="/">
           <span className="landing-logo-mark">C</span>
