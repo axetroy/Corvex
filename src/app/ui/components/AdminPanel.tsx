@@ -4,6 +4,7 @@ import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import { Panel } from "./common.js";
+import { UserAvatar } from "./UserAvatar.js";
 
 interface ManagedUser {
   id: string;
@@ -54,11 +55,12 @@ export function AdminPanel({ copy }: Props) {
       <div className="admin-users">
         {users.map((user) => (
           <div className="admin-user" key={user.id}>
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt="" />
-            ) : (
-              <span aria-hidden="true">{[...(user.name || user.username)][0]?.toUpperCase() ?? "?"}</span>
-            )}
+            <UserAvatar
+              className="admin-user-avatar"
+              name={user.name}
+              username={user.username}
+              avatarUrl={user.avatarUrl}
+            />
             <span className="admin-user-name">
               {user.name || user.username} <small>@{user.username}</small>
             </span>

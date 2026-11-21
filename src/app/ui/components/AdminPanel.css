@@ -13,8 +13,7 @@
   border-radius: 8px;
 }
 
-.admin-user > img,
-.admin-user > span:first-child {
+.admin-user-avatar {
   display: grid;
   width: 28px;
   height: 28px;

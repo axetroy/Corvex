@@ -7,6 +7,7 @@ import { Loading } from "./components/common.js";
 import { LandingPage } from "./components/LandingPage.js";
 import { AdminConsole } from "./components/AdminConsole.js";
 import { SetupPage } from "./components/SetupPage.js";
+import { UserAvatar } from "./components/UserAvatar.js";
 import {
   ConversationsIcon,
   EventsIcon,
@@ -289,13 +290,13 @@ export function App() {
           />
           {account ? (
             <div className="sidebar-account-panel">
-              {account.avatarUrl ? (
-                <img className="sidebar-account-avatar" src={account.avatarUrl} alt="" />
-              ) : (
-                <span className="sidebar-account-avatar sidebar-account-avatar-fallback" aria-hidden="true">
-                  {[...(account.name || account.username)][0]?.toUpperCase() ?? "?"}
-                </span>
-              )}
+              <UserAvatar
+                className="sidebar-account-avatar"
+                fallbackClassName="sidebar-account-avatar-fallback"
+                name={account.name}
+                username={account.username}
+                avatarUrl={account.avatarUrl}
+              />
               <span className="sidebar-account-text">
                 <span className="sidebar-account-name">{account.name || account.username}</span>
                 <span className="sidebar-account-username">@{account.username}</span>
