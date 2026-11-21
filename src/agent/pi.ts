@@ -26,7 +26,7 @@ import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget
 import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs-write.js";
-import { createGitLabConversationExtension } from "./gitlab-conversation.js";
+import { createGitLabExtension } from "./gitlab/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
@@ -627,9 +627,8 @@ export class PiAgent {
           ? [createFsWriteExtension(request.fs)]
           : []),
         ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
-          ? [createGitLabConversationExtension({
-              projectId: request.conversationProjectId,
-              getProject: () => gitlab!.getProject(request.conversationProjectId!),
+          ? [createGitLabExtension({
+              getProject: () => gitlab!.getProject(request.conversationProjectId!, signal),
               listIssues: (options) => gitlab!.listIssues(request.conversationProjectId!, options, signal),
               listMergeRequests: (options) => gitlab!.listMergeRequests(request.conversationProjectId!, options, signal),
               getIssue: (issueIid) => gitlab!.getIssue(request.conversationProjectId!, issueIid, signal),
@@ -638,10 +637,23 @@ export class PiAgent {
               getIssueComments: (issueIid, limit) => gitlab!.getIssueComments(request.conversationProjectId!, issueIid, limit, signal),
               getMergeRequestComments: (mrIid, limit) => gitlab!.getMergeRequestComments(request.conversationProjectId!, mrIid, limit, signal),
               getMergeRequestCommits: (mrIid, page, perPage) => gitlab!.getMergeRequestCommits(request.conversationProjectId!, mrIid, page, perPage, signal),
-              postIssueNote: (issueIid, noteBody) => gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
-              postMergeRequestNote: (mrIid, noteBody) => gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
-              updateMergeRequest: (mrIid, update) => gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
+              createIssue: (input) => gitlab!.createIssue(request.conversationProjectId!, input, signal),
               updateIssue: (issueIid, update) => gitlab!.updateIssue(request.conversationProjectId!, issueIid, update, signal),
+              deleteIssue: (issueIid) => gitlab!.deleteIssue(request.conversationProjectId!, issueIid, signal),
+              postIssueNote: (issueIid, noteBody) => gitlab!.postIssueNote(request.conversationProjectId!, issueIid, noteBody, signal),
+              updateIssueNote: (issueIid, noteId, noteBody) => gitlab!.updateIssueNote(request.conversationProjectId!, issueIid, noteId, noteBody, signal),
+              deleteIssueNote: (issueIid, noteId) => gitlab!.deleteIssueNote(request.conversationProjectId!, issueIid, noteId, signal),
+              createMergeRequest: (input) => gitlab!.createMergeRequest(request.conversationProjectId!, input, signal),
+              updateMergeRequest: (mrIid, update) => gitlab!.updateMergeRequest(request.conversationProjectId!, mrIid, update, signal),
+              deleteMergeRequest: (mrIid) => gitlab!.deleteMergeRequest(request.conversationProjectId!, mrIid, signal),
+              mergeMergeRequest: (mrIid, options) => gitlab!.mergeMergeRequest(request.conversationProjectId!, mrIid, options, signal),
+              approveMergeRequest: (mrIid) => gitlab!.approveMergeRequest(request.conversationProjectId!, mrIid, signal),
+              unapproveMergeRequest: (mrIid) => gitlab!.unapproveMergeRequest(request.conversationProjectId!, mrIid, signal),
+              postMergeRequestNote: (mrIid, noteBody) => gitlab!.postNote(request.conversationProjectId!, mrIid, noteBody, signal),
+              updateMergeRequestNote: (mrIid, noteId, noteBody) => gitlab!.updateMergeRequestNote(request.conversationProjectId!, mrIid, noteId, noteBody, signal),
+              deleteMergeRequestNote: (mrIid, noteId) => gitlab!.deleteMergeRequestNote(request.conversationProjectId!, mrIid, noteId, signal),
+              listMergeRequestDiscussions: (mrIid) => gitlab!.listMergeRequestDiscussions(request.conversationProjectId!, mrIid, signal),
+              resolveDiscussion: (mrIid, discussionId, resolve) => gitlab!.resolveDiscussion(request.conversationProjectId!, mrIid, discussionId, resolve, signal),
             })]
           : []),
         createContextObserveExtension(contextObservation, {

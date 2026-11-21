@@ -801,3 +801,100 @@ describe("GitLab repository tree and file reads", () => {
     await expect(client.getRepositoryFile(7, "", "a".repeat(40))).rejects.toThrow("path is required");
   });
 });
+
+describe("GitLab issue and MR lifecycle writes", () => {
+  it("creates issues with bounded metadata and parses the created resource", async () => {
+    let method = "";
+    let url = "";
+    let body = "";
+    const server = createServer((request, response) => {
+      method = request.method ?? "";
+      url = request.url ?? "";
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        body = Buffer.concat(chunks).toString("utf8");
+        response.writeHead(201, { "content-type": "application/json" });
+        response.end(JSON.stringify({ iid: 11, web_url: "http://gitlab.test/issues/11" }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await expect(client.createIssue(7, {
+        title: "Bug", description: "details", labels: ["bug", "p1"], assigneeIds: [5], milestoneId: 9,
+      })).resolves.toEqual({ iid: 11, webUrl: "http://gitlab.test/issues/11" });
+      expect(method).toBe("POST");
+      expect(url).toBe("/api/v4/projects/7/issues");
+      expect(body).toContain("title=Bug");
+      expect(body).toContain("labels=bug%2Cp1");
+      expect(body).toContain("assignee_ids=5");
+      expect(body).toContain("milestone_id=9");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("sends DELETE and merge/approve requests to the right endpoints", async () => {
+    const calls: { method: string; url: string; body: string }[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        calls.push({ method: request.method ?? "", url: request.url ?? "", body: Buffer.concat(chunks).toString("utf8") });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ id: 1 }));
+      });
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await client.deleteIssue(7, 9);
+      await client.deleteMergeRequest(7, 3);
+      await client.mergeMergeRequest(7, 3, { squash: true, shouldRemoveSourceBranch: false });
+      await client.approveMergeRequest(7, 3);
+      await client.unapproveMergeRequest(7, 3);
+      expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+        "DELETE /api/v4/projects/7/issues/9",
+        "DELETE /api/v4/projects/7/merge_requests/3",
+        "PUT /api/v4/projects/7/merge_requests/3/merge",
+        "POST /api/v4/projects/7/merge_requests/3/approve",
+        "POST /api/v4/projects/7/merge_requests/3/unapprove",
+      ]);
+      expect(calls[2].body).toContain("squash=true");
+      expect(calls[2].body).toContain("should_remove_source_branch=false");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("reads and truncates MR discussions", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([
+        { id: "abc", resolved: false, notes: [{ body: "Please fix", author: { username: "reviewer" } }] },
+        { id: "def", resolved: true, notes: [{ body: "Done", author: { username: "dev" } }] },
+      ]));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      await expect(client.listMergeRequestDiscussions(7, 3)).resolves.toEqual({
+        discussions: [
+          { id: "abc", resolved: false, body: "Please fix", author: "reviewer" },
+          { id: "def", resolved: true, body: "Done", author: "dev" },
+        ],
+        truncated: false,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("validates create inputs", async () => {
+    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    await expect(client.createIssue(7, { title: "" })).rejects.toThrow("title");
+    await expect(client.createIssue(7, { title: "ok", labels: ["bad\nlabel"] })).rejects.toThrow("labels");
+    await expect(client.createMergeRequest(7, { title: "ok", sourceBranch: "feat", targetBranch: "main", labels: ["x".repeat(101)] })).rejects.toThrow("labels");
+  });
+});

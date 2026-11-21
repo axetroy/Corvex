@@ -68,6 +68,30 @@ export function normalizeRepoPath(path: string): string {
   return parts.join("/");
 }
 
+/** 校验并填充 Issue/MR 共用的标签、负责人与里程碑字段。 */
+function applyMetadataFields(form: URLSearchParams, fields: GitLabMetadataFields): void {
+  if (fields.labels !== undefined) {
+    if (!Array.isArray(fields.labels) || fields.labels.length > 20 ||
+        fields.labels.some((label) => typeof label !== "string" || !label.trim() || label.length > 100 || /[\r\n]/.test(label))) {
+      throw new Error("labels must be at most 20 non-empty single-line strings of 100 characters");
+    }
+    form.set("labels", fields.labels.join(","));
+  }
+  if (fields.assigneeIds !== undefined) {
+    if (!Array.isArray(fields.assigneeIds) || fields.assigneeIds.length > 10 ||
+        fields.assigneeIds.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+      throw new Error("assignee_ids must contain at most 10 positive integers");
+    }
+    form.set("assignee_ids", fields.assigneeIds.join(","));
+  }
+  if (fields.milestoneId !== undefined) {
+    if (!Number.isSafeInteger(fields.milestoneId) || fields.milestoneId <= 0) {
+      throw new Error("milestone_id must be a positive integer");
+    }
+    form.set("milestone_id", String(fields.milestoneId));
+  }
+}
+
 /** 分支最近一次提交；只有 `id` 是必填，其余字段用于 Agent 控制台展示。 */
 export interface GitLabBranchCommit {
   id: string;
@@ -175,18 +199,67 @@ export interface RepositoryFile {
   content: string;
 }
 
-export interface MergeRequestMetadataUpdate {
+/** 标签/负责人/里程碑等公共字段，Issue 与 MR 更新都复用。 */
+export interface GitLabMetadataFields {
+  labels?: string[];
+  assigneeIds?: number[];
+  milestoneId?: number;
+}
+
+export interface MergeRequestMetadataUpdate extends GitLabMetadataFields {
   title?: string;
   description?: string;
   /** 关闭或重新打开合并请求。 */
   stateEvent?: "close" | "reopen";
+  squash?: boolean;
 }
 
 /** Issue 可更新字段；与 MR 一样只允许显式传入的字段。 */
-export interface IssueUpdate {
+export interface IssueUpdate extends GitLabMetadataFields {
   title?: string;
   description?: string;
   stateEvent?: "close" | "reopen";
+  dueDate?: string;
+  confidential?: boolean;
+}
+
+export interface IssueCreate extends GitLabMetadataFields {
+  title: string;
+  description?: string;
+  dueDate?: string;
+  confidential?: boolean;
+}
+
+export interface CreatedIssue {
+  iid: number;
+  webUrl: string;
+}
+
+export interface MergeRequestCreate extends GitLabMetadataFields {
+  title: string;
+  description?: string;
+  sourceBranch: string;
+  targetBranch: string;
+  draft?: boolean;
+  squash?: boolean;
+}
+
+export interface MergeRequestMergeOptions {
+  squash?: boolean;
+  shouldRemoveSourceBranch?: boolean;
+}
+
+/** MR 讨论摘要：只保留定位与状态，正文由 comments 工具读取。 */
+export interface MergeRequestDiscussion {
+  id: string;
+  resolved: boolean;
+  body: string;
+  author: string;
+}
+
+export interface MergeRequestDiscussionList {
+  discussions: MergeRequestDiscussion[];
+  truncated: boolean;
 }
 
 export interface DiscussionPosition {
@@ -988,7 +1061,11 @@ export class GitLabClient {
     if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(mrIid) || mrIid <= 0) {
       throw new Error("project ID and MR IID must be positive safe integers");
     }
-    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
+    if (
+      update.title === undefined && update.description === undefined && update.stateEvent === undefined &&
+      update.labels === undefined && update.assigneeIds === undefined && update.milestoneId === undefined &&
+      update.squash === undefined
+    ) {
       throw new Error("at least one merge request field must be provided");
     }
     if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
@@ -1013,6 +1090,8 @@ export class GitLabClient {
     }
     if (update.description !== undefined) form.set("description", update.description);
     if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
+    if (update.squash !== undefined) form.set("squash", String(update.squash));
+    applyMetadataFields(form, update);
     return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, form, signal, "PUT");
   }
 
@@ -1026,7 +1105,11 @@ export class GitLabClient {
     if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(issueIid) || issueIid <= 0) {
       throw new Error("project ID and issue IID must be positive safe integers");
     }
-    if (update.title === undefined && update.description === undefined && update.stateEvent === undefined) {
+    if (
+      update.title === undefined && update.description === undefined && update.stateEvent === undefined &&
+      update.labels === undefined && update.assigneeIds === undefined && update.milestoneId === undefined &&
+      update.dueDate === undefined && update.confidential === undefined
+    ) {
       throw new Error("at least one issue field must be provided");
     }
     if (update.title !== undefined && (!update.title.trim() || [...update.title].length > MAX_MR_TITLE_CHARACTERS)) {
@@ -1039,7 +1122,216 @@ export class GitLabClient {
     if (update.title !== undefined) form.set("title", update.title);
     if (update.description !== undefined) form.set("description", update.description);
     if (update.stateEvent !== undefined) form.set("state_event", update.stateEvent);
+    if (update.dueDate !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(update.dueDate)) throw new Error("issue due_date must be YYYY-MM-DD");
+      form.set("due_date", update.dueDate);
+    }
+    if (update.confidential !== undefined) form.set("confidential", String(update.confidential));
+    applyMetadataFields(form, update);
     return this.write(`/projects/${projectId}/issues/${issueIid}`, form, signal, "PUT");
+  }
+
+  /** 创建资源并解析 iid/web_url；写入结果不确定时抛 GitLabWriteError。 */
+  private async createResource(
+    path: string,
+    form: URLSearchParams,
+    signal?: AbortSignal,
+  ): Promise<CreatedIssue> {
+    let response: Response;
+    try {
+      response = await this.request(path, this.writeToken, "POST", signal, form);
+    } catch (error) {
+      throw new GitLabWriteError(`GitLab resource creation outcome is unknown: ${String(error)}`, error);
+    }
+    if (!response.ok) await this.throwResponseError(response);
+    const body = await this.successBody(response);
+    let result: unknown;
+    try {
+      result = JSON.parse(new TextDecoder().decode(body));
+    } catch (error) {
+      throw new Error(`decode created resource response: ${String(error)}`, { cause: error });
+    }
+    if (!isRecord(result) || !Number.isSafeInteger(result.iid) || typeof result.web_url !== "string") {
+      throw new Error("GitLab returned incomplete created resource metadata");
+    }
+    return { iid: result.iid as number, webUrl: result.web_url };
+  }
+
+  private validateCreateInput(title: string, description?: string): void {
+    if (!title.trim() || [...title].length > MAX_MR_TITLE_CHARACTERS) {
+      throw new Error(`title must contain 1-${MAX_MR_TITLE_CHARACTERS} characters`);
+    }
+    if (description !== undefined && [...description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
+      throw new Error(`description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
+    }
+  }
+
+  async createIssue(
+    projectId: number,
+    input: IssueCreate,
+    signal?: AbortSignal,
+  ): Promise<CreatedIssue> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be a positive safe integer");
+    this.validateCreateInput(input.title, input.description);
+    if (input.dueDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) {
+      throw new Error("issue due_date must be YYYY-MM-DD");
+    }
+    const form = new URLSearchParams({ title: input.title.trim() });
+    if (input.description !== undefined) form.set("description", input.description);
+    if (input.dueDate !== undefined) form.set("due_date", input.dueDate);
+    if (input.confidential !== undefined) form.set("confidential", String(input.confidential));
+    applyMetadataFields(form, input);
+    return this.createResource(`/projects/${projectId}/issues`, form, signal);
+  }
+
+  async deleteIssue(projectId: number, issueIid: number, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || issueIid <= 0) throw new Error("project ID and issue IID must be positive");
+    return this.write(`/projects/${projectId}/issues/${issueIid}`, new URLSearchParams(), signal, "DELETE");
+  }
+
+  async updateIssueNote(
+    projectId: number,
+    issueIid: number,
+    noteId: number,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || issueIid <= 0 || noteId <= 0) throw new Error("project ID, issue IID and note ID must be positive");
+    if (!body.trim() || [...body].length > MAX_COMMENT_CHARACTERS) {
+      throw new Error(`comment body must contain 1-${MAX_COMMENT_CHARACTERS} characters`);
+    }
+    return this.write(`/projects/${projectId}/issues/${issueIid}/notes/${noteId}`, new URLSearchParams({ body }), signal, "PUT");
+  }
+
+  async deleteIssueNote(
+    projectId: number,
+    issueIid: number,
+    noteId: number,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || issueIid <= 0 || noteId <= 0) throw new Error("project ID, issue IID and note ID must be positive");
+    return this.write(`/projects/${projectId}/issues/${issueIid}/notes/${noteId}`, new URLSearchParams(), signal, "DELETE");
+  }
+
+  async createMergeRequest(
+    projectId: number,
+    input: MergeRequestCreate,
+    signal?: AbortSignal,
+  ): Promise<CreatedMergeRequest> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be a positive safe integer");
+    const title = input.draft ? `Draft: ${input.title.trim()}` : input.title.trim();
+    this.validateCreateInput(title, input.description);
+    for (const [label, branch] of [["source", input.sourceBranch], ["target", input.targetBranch]] as const) {
+      if (!branch.trim() || branch.length > 255 || branch.startsWith("-") || branch.includes("\0")) {
+        throw new Error(`merge request ${label} branch is invalid`);
+      }
+    }
+    const form = new URLSearchParams({
+      title,
+      source_branch: input.sourceBranch,
+      target_branch: input.targetBranch,
+    });
+    if (input.description !== undefined) form.set("description", input.description);
+    if (input.squash !== undefined) form.set("squash", String(input.squash));
+    applyMetadataFields(form, input);
+    const created = await this.createResource(`/projects/${projectId}/merge_requests`, form, signal);
+    return { ...created, sourceBranch: input.sourceBranch, targetBranch: input.targetBranch };
+  }
+
+  async deleteMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}`, new URLSearchParams(), signal, "DELETE");
+  }
+
+  async mergeMergeRequest(
+    projectId: number,
+    mrIid: number,
+    options: MergeRequestMergeOptions,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    const form = new URLSearchParams();
+    if (options.squash !== undefined) form.set("squash", String(options.squash));
+    if (options.shouldRemoveSourceBranch !== undefined) {
+      form.set("should_remove_source_branch", String(options.shouldRemoveSourceBranch));
+    }
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/merge`, form, signal, "PUT");
+  }
+
+  async approveMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/approve`, new URLSearchParams(), signal);
+  }
+
+  async unapproveMergeRequest(projectId: number, mrIid: number, signal?: AbortSignal): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/unapprove`, new URLSearchParams(), signal);
+  }
+
+  async updateMergeRequestNote(
+    projectId: number,
+    mrIid: number,
+    noteId: number,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0 || noteId <= 0) throw new Error("project ID, MR IID and note ID must be positive");
+    if (!body.trim() || [...body].length > MAX_COMMENT_CHARACTERS) {
+      throw new Error(`comment body must contain 1-${MAX_COMMENT_CHARACTERS} characters`);
+    }
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes/${noteId}`, new URLSearchParams({ body }), signal, "PUT");
+  }
+
+  async deleteMergeRequestNote(
+    projectId: number,
+    mrIid: number,
+    noteId: number,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0 || noteId <= 0) throw new Error("project ID, MR IID and note ID must be positive");
+    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/notes/${noteId}`, new URLSearchParams(), signal, "DELETE");
+  }
+
+  async listMergeRequestDiscussions(
+    projectId: number,
+    mrIid: number,
+    signal?: AbortSignal,
+  ): Promise<MergeRequestDiscussionList> {
+    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
+    const result = await this.getJson(`/projects/${projectId}/merge_requests/${mrIid}/discussions?per_page=50`, signal);
+    if (!Array.isArray(result)) throw new Error("GitLab discussions response is not an array");
+    const discussions: MergeRequestDiscussion[] = [];
+    for (const entry of result.slice(0, 50)) {
+      if (!isRecord(entry) || typeof entry.id !== "string") throw new Error("GitLab returned an invalid discussion");
+      const notes = Array.isArray(entry.notes) ? entry.notes : [];
+      const first = notes[0];
+      discussions.push({
+        id: entry.id,
+        resolved: entry.resolved === true,
+        body: isRecord(first) && typeof first.body === "string" ? first.body : "",
+        author: isRecord(first) && isRecord(first.author) && typeof first.author.username === "string"
+          ? first.author.username : "",
+      });
+    }
+    return { discussions, truncated: result.length > 50 };
+  }
+
+  async resolveDiscussion(
+    projectId: number,
+    mrIid: number,
+    discussionId: string,
+    resolve: boolean,
+    signal?: AbortSignal,
+  ): Promise<GitLabWriteReceipt> {
+    if (projectId <= 0 || mrIid <= 0 || !discussionId.trim()) {
+      throw new Error("project ID, MR IID and discussion ID are required");
+    }
+    const endpoint = resolve ? "resolve" : "unresolve";
+    return this.write(
+      `/projects/${projectId}/merge_requests/${mrIid}/discussions/${encodeURIComponent(discussionId)}/${endpoint}`,
+      new URLSearchParams(),
+      signal,
+    );
   }
 
   async postDiscussion(
@@ -1087,7 +1379,7 @@ export class GitLabClient {
     path: string,
     form: URLSearchParams,
     signal?: AbortSignal,
-    method: "POST" | "PUT" = "POST",
+    method: "POST" | "PUT" | "DELETE" = "POST",
   ): Promise<GitLabWriteReceipt> {
     let response: Response;
     try {
@@ -1112,7 +1404,7 @@ export class GitLabClient {
   private async request(
     path: string,
     token: string,
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     signal?: AbortSignal,
     form?: URLSearchParams,
   ): Promise<Response> {
