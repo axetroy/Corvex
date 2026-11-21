@@ -16,6 +16,8 @@
   min-height: 0;
   overflow: hidden;
   background: var(--conversation-surface);
+  /* 与主导航侧边栏一致：收起/展开时宽度平滑过渡。 */
+  transition: grid-template-columns 0.18s ease;
 }
 
 .conversation-sidebar {
