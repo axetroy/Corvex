@@ -141,7 +141,7 @@
 /* 离开底部一段距离后才出现，悬浮在输入框上方，点击回到最新消息。 */
 .conversation-scroll-bottom {
   position: absolute;
-  bottom: 148px;
+  bottom: 188px;
   left: 50%;
   z-index: 4;
   display: flex;
