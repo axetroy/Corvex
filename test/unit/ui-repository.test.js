@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeRepositoryUrl } from "../../src/app/ui/components/RepositoryInfoDrawer.tsx";
+import { safeRepositoryUrl } from "../../src/app/ui/components/RepositoryInfoPopover.tsx";
 
 describe("repository info link", () => {
   it("keeps http(s) URLs from GitLab", () => {

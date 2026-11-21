@@ -330,22 +330,27 @@
   color: var(--conversation-ink);
 }
 
+/* 气泡被 portal 到 body，取全局主题变量而不是 .conversations-layout 的局部变量。 */
+.repository-info-popover-content {
+  max-width: 340px;
+}
+
 .repository-info-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin: 0 0 24px;
+  gap: 12px;
+  margin: 0 0 14px;
 }
 
 .repository-info-row dt {
   margin-bottom: 4px;
-  color: var(--conversation-muted);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .repository-info-row dd {
   margin: 0;
-  color: var(--conversation-ink);
+  color: var(--text);
   font-size: 13px;
   line-height: 1.6;
   overflow-wrap: anywhere;

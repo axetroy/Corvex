@@ -22,7 +22,7 @@ import { ComposerModelPicker } from "./ComposerModelPicker.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
-import { RepositoryInfoDrawer } from "./RepositoryInfoDrawer.js";
+import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, RocketIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import type { ProjectOption } from "../projectPicker.js";
@@ -856,16 +856,25 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     <Typography.Text strong className="conversation-workspace-project">{copy.newConversation}</Typography.Text>
                   ) : currentConversation ? (
                     <>
-                      <button
-                        type="button"
-                        className="conversation-workspace-repo"
-                        onClick={() => setRepoInfoOpen(true)}
-                        aria-label={copy.conversationRepositoryInfo}
+                      <RepositoryInfoPopover
+                        open={repoInfoOpen}
+                        onOpenChange={setRepoInfoOpen}
+                        projectId={currentConversation.projectId}
+                        copy={copy}
+                        currentBranch={currentConversation.targetBranch}
+                        pinnedSha={currentConversation.messages.at(-1)?.headSha}
                       >
-                        <Typography.Text strong className="conversation-workspace-project" ellipsis>
-                          {currentConversation.projectName}
-                        </Typography.Text>
-                      </button>
+                        <button
+                          type="button"
+                          className="conversation-workspace-repo"
+                          aria-label={copy.conversationRepositoryInfo}
+                          aria-expanded={repoInfoOpen}
+                        >
+                          <Typography.Text strong className="conversation-workspace-project" ellipsis>
+                            {currentConversation.projectName}
+                          </Typography.Text>
+                        </button>
+                      </RepositoryInfoPopover>
                       <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
                       <Typography.Text type="secondary" className="conversation-pinned">
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
@@ -1087,14 +1096,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         </Panel>
         </Group>
       </section>
-      <RepositoryInfoDrawer
-        open={repoInfoOpen}
-        onClose={() => setRepoInfoOpen(false)}
-        projectId={currentConversation?.projectId ?? 0}
-        copy={copy}
-        currentBranch={currentConversation?.targetBranch}
-        pinnedSha={currentConversation?.messages.at(-1)?.headSha}
-      />
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Drawer, Typography } from "antd";
+import { Button, Popover, Typography } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -26,19 +26,21 @@ function InfoRow({ label, children, copy }: { label: string; children: ReactNode
 }
 
 /**
- * 点击右上角仓库名打开的只读信息面板：项目元数据来自 GitLab，
- * 另外带出当前对话绑定的分支与固定提交快照。
+ * 点击仓库名打开的只读信息气泡：项目元数据来自 GitLab，
+ * 另外带出当前对话绑定的分支与固定提交快照。气泡锚在按钮下方，不遮挡工作区。
  */
-export function RepositoryInfoDrawer({
+export function RepositoryInfoPopover({
   open,
-  onClose,
+  onOpenChange,
+  children,
   projectId,
   copy,
   currentBranch,
   pinnedSha,
 }: {
   open: boolean;
-  onClose: () => void;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
   projectId: number;
   copy: Copy;
   currentBranch?: string;
@@ -73,8 +75,8 @@ export function RepositoryInfoDrawer({
   }, [open, projectId, copy]);
 
   const webUrl = safeRepositoryUrl(details?.web_url);
-  return (
-    <Drawer title={copy.conversationRepositoryInfo} open={open} onClose={onClose} width={420}>
+  const content = (
+    <div className="repository-info-popover-content">
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {details ? (
         <>
@@ -105,6 +107,22 @@ export function RepositoryInfoDrawer({
           ) : null}
         </>
       ) : null}
-    </Drawer>
+    </div>
+  );
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={onOpenChange}
+      placement="bottomLeft"
+      trigger="click"
+      arrow={false}
+      title={copy.conversationRepositoryInfo}
+      content={content}
+      classNames={{ root: "repository-info-popover" }}
+      styles={{ root: { maxWidth: 340 } }}
+    >
+      {children}
+    </Popover>
   );
 }
