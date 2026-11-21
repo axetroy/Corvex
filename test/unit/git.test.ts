@@ -572,6 +572,14 @@ describe("Git workflows", () => {
     const fresh = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
     expect(await readFile(join(fresh.path, "a.txt"), "utf8")).toBe("original\n");
     await expect(lstat(join(fresh.path, "new.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    // 已被数据库删除的会话 ref 会被清理；镜像 gc 不报错。
+    await writeFile(join(fresh.path, "a.txt"), "orphan\n");
+    await manager.saveConversationChanges(fresh, conversationId);
+    expect(await manager.listConversationChanges()).toMatchObject(new Map([[conversationId, expect.any(String)]]));
+    expect(await manager.pruneConversationChanges(new Set())).toBe(1);
+    expect(await manager.listConversationChanges()).toMatchObject(new Map());
+    expect(await manager.gcMirrors(7)).toBe(1);
   });
 
   it("skips protected conversation workspaces during storage cleanup", async () => {

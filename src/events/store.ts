@@ -1312,6 +1312,11 @@ export class EventStore {
     });
   }
 
+  /** 全部会话 ID，用于清理镜像里已无对应会话的改动 ref。 */
+  listConversationIds(): string[] {
+    return (this.db.prepare("SELECT id FROM conversations").all() as { id: string }[]).map((row) => row.id);
+  }
+
   listConversations(limit = 50, offset = 0, archived = false, ownerUserId = ""): ConversationPage {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("conversation list limit must be between 1 and 100");

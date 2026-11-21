@@ -193,6 +193,14 @@ export class ConversationRunner {
     await this.repo.discardConversationChanges(projectId, conversationId);
   }
 
+  pruneConversationChanges(validIds: ReadonlySet<string>) {
+    return this.repo.pruneConversationChanges(validIds);
+  }
+
+  gcMirrors(retentionDays: number) {
+    return this.repo.gcMirrors(retentionDays);
+  }
+
   /** 请求取消正在执行的轮次；轮次不在运行时忽略。 */
   cancelTurn(turnId: string): boolean {
     const running = this.running.get(turnId);

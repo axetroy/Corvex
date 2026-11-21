@@ -585,6 +585,72 @@ export class GitManager {
     return { sha, paths: status.files.map((file) => file.path) };
   }
 
+  /** 列出镜像中所有对话改动 ref（ID → commit SHA）。 */
+  async listConversationChanges(signal?: AbortSignal): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const mirrors = await readdir(this.mirrorRoot).catch(() => [] as string[]);
+    for (const name of mirrors) {
+      if (!/^[1-9]\d*\.git$/.test(name)) continue;
+      const mirror = join(this.mirrorRoot, name);
+      const refs = await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "for-each-ref", "--format=%(refname) %(objectname)", "refs/conversations"],
+        undefined,
+        1 << 20,
+        signal,
+        { timeoutMs: 10_000 },
+      );
+      const prefix = "refs/conversations/";
+      for (const line of refs.stdout.toString().split("\n")) {
+        const [ref, sha] = line.trim().split(" ");
+        if (!ref?.startsWith(prefix) || !sha || !shaPattern.test(sha)) continue;
+        result.set(ref.slice(prefix.length), sha);
+      }
+    }
+    return result;
+  }
+
+  /** 删除镜像中已无对应会话的改动 ref，返回删除数量。 */
+  async pruneConversationChanges(validIds: ReadonlySet<string>, signal?: AbortSignal): Promise<number> {
+    const existing = await this.listConversationChanges(signal);
+    let removed = 0;
+    for (const [conversationId] of existing) {
+      if (validIds.has(conversationId)) continue;
+      const projectIds = await readdir(this.mirrorRoot).catch(() => [] as string[]);
+      for (const name of projectIds) {
+        if (!/^[1-9]\d*\.git$/.test(name)) continue;
+        const mirror = join(this.mirrorRoot, name);
+        await this.run(
+          this.mirrorRoot,
+          ["--git-dir", mirror, "update-ref", "-d", conversationChangesRef(conversationId)],
+          undefined,
+          maxErrorOutput,
+          signal,
+          { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+        );
+      }
+      removed += 1;
+    }
+    return removed;
+  }
+
+  /** 回收镜像里的不可达对象；会话 ref 与远端 ref 仍可达，不受影响。 */
+  async gcMirrors(retentionDays: number, signal?: AbortSignal): Promise<number> {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 36_500) {
+      throw new Error("mirror retention days must be between 1 and 36500");
+    }
+    const mirrors = await readdir(this.mirrorRoot).catch(() => [] as string[]);
+    let count = 0;
+    for (const name of mirrors) {
+      if (!/^[1-9]\d*\.git$/.test(name)) continue;
+      const mirror = join(this.mirrorRoot, name);
+      await this.run(this.mirrorRoot, ["--git-dir", mirror, "reflog", "expire", "--expire=now", "--all"], undefined, maxErrorOutput, signal, { timeoutMs: 30_000 });
+      await this.run(this.mirrorRoot, ["--git-dir", mirror, "gc", "--quiet", `--prune=${retentionDays}.days`], undefined, maxErrorOutput, signal, { timeoutMs: 5 * 60_000 });
+      count += 1;
+    }
+    return count;
+  }
+
   /** 放弃对话的本地改动：删除 ref 并清理对应 worktree。 */
   async discardConversationChanges(
     projectId: number,

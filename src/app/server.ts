@@ -95,6 +95,9 @@ export class CorvexServer {
       const sweepStarted = new Date().toISOString();
       try {
         const removed = await this.conversations.cleanupStaleWorkspaces();
+        // 清理已删除会话遗留的改动 ref，并回收被覆盖的旧对象。
+        await this.conversations.pruneConversationChanges(new Set(this.store.listConversationIds()));
+        await this.conversations.gcMirrors(this.config.storage.retentionDays);
         this.store.recordStorageCleanup({
           startedAt: sweepStarted,
           finishedAt: new Date().toISOString(),
@@ -281,6 +284,15 @@ export class CorvexServer {
       let retentionError = "";
       try {
         this.store.pruneHistory(historyBefore, auditBefore);
+        // 历史裁剪会直接删除会话记录，镜像里的改动 ref 必须按剩余会话清理，
+        // 否则会无限累积；同时对镜像做 gc 回收被覆盖的旧 commit/blob。
+        const removedRefs = await this.conversations.pruneConversationChanges(
+          new Set(this.store.listConversationIds()),
+        );
+        const gcCount = await this.conversations.gcMirrors(this.config.storage.retentionDays);
+        if (removedRefs > 0 || gcCount > 0) {
+          console.info("pruned conversation change refs and mirrors", { removedRefs, gcCount });
+        }
       } catch (error) {
         retentionError = errorMessage(error);
         console.error("prune persisted history failed", { error: retentionError });
