@@ -87,17 +87,19 @@ function languageForPath(path: string): string {
 interface Props {
   path: string;
   value: string;
+  /** 当前界面语言下的只读提示，覆盖 Monaco 内置的英文 NLS 文案。 */
+  readOnlyMessage: string;
 }
 
 /**
  * 只读代码查看器：用 Monaco 的 tokenizer 覆盖绝大多数语言，
  * 主题跟随控制台的 data-theme，容器尺寸变化时重新布局。
  */
-export function CodeViewer({ path, value }: Props) {
+export function CodeViewer({ path, value, readOnlyMessage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
-  const initialRef = useRef({ path, value });
+  const initialRef = useRef({ path, value, readOnlyMessage });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -107,6 +109,7 @@ export function CodeViewer({ path, value }: Props) {
       model,
       readOnly: true,
       domReadOnly: true,
+      readOnlyMessage: { value: initialRef.current.readOnlyMessage },
       automaticLayout: false,
       minimap: { enabled: false },
       fontSize: 12,
@@ -151,6 +154,10 @@ export function CodeViewer({ path, value }: Props) {
     const model = modelRef.current;
     if (model) monaco.editor.setModelLanguage(model, languageForPath(path));
   }, [path]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnlyMessage: { value: readOnlyMessage } });
+  }, [readOnlyMessage]);
 
   useEffect(() => {
     const apply = () => monaco.editor.setTheme(document.documentElement.dataset.theme === "dark" ? darkTheme : lightTheme);

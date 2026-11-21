@@ -270,7 +270,11 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
                   <ImagePreview src={imageSrc} alt={activeFile} copy={copy} />
                 ) : active ? (
                   <Suspense fallback={<Spin size="small" />}>
-                    <CodeViewer path={activeFile} value={active.content} />
+                    <CodeViewer
+                      path={activeFile}
+                      value={active.content}
+                      readOnlyMessage={copy.filePanelReadOnlyMessage}
+                    />
                   </Suspense>
                 ) : null}
               </div>
