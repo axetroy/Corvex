@@ -58,7 +58,11 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
     const body = readJsonObject(request, reply);
     if (!body) return;
     const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
-    const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+    const draftKey = typeof body.apiKey === "string" ? body.apiKey : "";
+    const providerId = typeof body.providerId === "string" ? idParam(body.providerId) : undefined;
+    const existing = providerId ? ctx.store.getModelProvider(providerId) : undefined;
+    // 编辑时输入框留空表示沿用已保存的密钥；测试仍使用表单里的 Base URL。
+    const apiKey = draftKey && draftKey !== secretSettingPlaceholder ? draftKey : (existing?.apiKey ?? "");
     sendJson(reply, 200, await testProviderConnection(baseUrl, apiKey));
   });
 

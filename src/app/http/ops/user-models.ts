@@ -77,10 +77,16 @@ export function registerUserModelRoutes(app: FastifyInstance, ctx: OpsContext): 
       });
 
       me.post("/model-providers/test", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
         const body = readJsonObject(request, reply);
         if (!body) return;
         const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
-        const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+        const draftKey = typeof body.apiKey === "string" ? body.apiKey : "";
+        const providerId = typeof body.providerId === "string" ? idParam(body.providerId) : undefined;
+        const existing = providerId ? ctx.store.getModelProvider(providerId, user.id) : undefined;
+        // 编辑时输入框留空表示沿用已保存的密钥；系统级供应商也可能被用户测试。
+        const apiKey = draftKey && draftKey !== secretSettingPlaceholder ? draftKey : (existing?.apiKey ?? "");
         sendJson(reply, 200, await testProviderConnection(baseUrl, apiKey));
       });
 

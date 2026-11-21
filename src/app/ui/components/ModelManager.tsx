@@ -113,7 +113,11 @@ export function ModelManager({
     try {
       const result = await sendJson<TestResult>(
         `${apiBase}/test`,
-        { baseUrl: providerDraft.baseUrl, apiKey: providerDraft.apiKey },
+        {
+          baseUrl: providerDraft.baseUrl,
+          apiKey: providerDraft.apiKey,
+          ...(editingProvider && editingProvider !== "new" ? { providerId: editingProvider.id } : {}),
+        },
         copy,
         "POST",
       );
