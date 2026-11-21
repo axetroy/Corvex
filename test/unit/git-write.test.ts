@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createGitWriteExtension } from "../../src/agent/git-write.js";
+import { createGitWriteExtension } from "../../src/agent/git/chat-write.js";
 
 describe("Git write tools", () => {
   it("registers only bounded operations bound to the current MR workspace", async () => {

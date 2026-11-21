@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { GitCommitLogResult } from "../git/manager.js";
+import type { GitCommitLogResult } from "../../git/manager.js";
 
 export type GitCommitLogReader = (limit: number, path?: string) => Promise<GitCommitLogResult>;
 export type GitCommitReader = (

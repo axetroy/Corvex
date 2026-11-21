@@ -27,6 +27,7 @@ import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs-write.js";
 import { createGitLabExtension } from "./gitlab/index.js";
+import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
@@ -44,10 +45,10 @@ import {
   resolveCompactionReserveTokens,
   resolveTurnToolResultBytes,
 } from "./tool-budget.js";
-import { createGitHistoryExtension } from "./git-history.js";
+import { createGitHistoryExtension } from "./git/chat-history.js";
 import { createMergeRequestCommentsExtension } from "./mr-comments.js";
 import { createMergeRequestMetadataExtension } from "./mr-update.js";
-import { createGitWriteExtension } from "./git-write.js";
+import { createGitWriteExtension } from "./git/chat-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
 /** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
@@ -142,6 +143,8 @@ export interface ModelRequest {
   onContextDelta?: (context: ConversationStreamContext) => void;
   /** GitLab 协作模式下当前对话绑定的项目 ID；所有 GitLab 工具都固定到该项目。 */
   conversationProjectId?: number;
+  /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
+  gitTools?: GitToolAdapter;
 }
 
 export function getAgentToolAccess(
@@ -625,6 +628,9 @@ export class PiAgent {
           : []),
         ...(request.taskType === "conversation" && request.fs
           ? [createFsWriteExtension(request.fs)]
+          : []),
+        ...(request.taskType === "conversation" && request.gitTools
+          ? [createGitExtension(request.gitTools)]
           : []),
         ...(request.conversationMode === "gitlab" && gitlab && request.conversationProjectId
           ? [createGitLabExtension({

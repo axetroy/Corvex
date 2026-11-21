@@ -549,6 +549,7 @@ export class GitManager {
     workspace: Workspace,
     conversationId: string,
     signal?: AbortSignal,
+    message?: string,
   ): Promise<{ sha: string; paths: string[] } | undefined> {
     this.validateWorkspace(workspace);
     const status = await this.getWorkspaceStatus(workspace, signal);
@@ -561,7 +562,7 @@ export class GitManager {
       workspace.path,
       [
         "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
-        "commit-tree", tree, "-p", workspace.headSha, "-m", `Corvex conversation changes ${conversationId}`,
+        "commit-tree", tree, "-p", workspace.headSha, "-m", message?.trim() || `Corvex conversation changes ${conversationId}`,
       ],
       undefined,
       maxErrorOutput,
@@ -784,6 +785,104 @@ export class GitManager {
       { timeoutMs: 10_000, terminateOnOutputLimit: true },
     );
     return { diff: result.stdout.toString("utf8"), truncated: result.truncated };
+  }
+
+  /** 列出 worktree 中的本地分支及当前 HEAD。 */
+  async listBranches(workspace: Workspace, signal?: AbortSignal): Promise<{ branches: string[]; head: string }> {
+    this.validateWorkspace(workspace);
+    const result = await this.run(
+      workspace.path,
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+      undefined,
+      1 << 16,
+      signal,
+      { timeoutMs: 10_000 },
+    );
+    const head = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { branches: result.stdout.toString().split("\n").map((line) => line.trim()).filter(Boolean), head };
+  }
+
+  private validateBranchName(name: string): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(name) || name.includes("..") || name.endsWith("/") || name.endsWith(".")) {
+      throw new Error("invalid branch name");
+    }
+  }
+
+  /** 在 worktree 的当前提交上创建本地分支，不切换 HEAD。 */
+  async createBranch(workspace: Workspace, name: string, signal?: AbortSignal): Promise<{ name: string; sha: string }> {
+    this.validateWorkspace(workspace);
+    this.validateBranchName(name);
+    await this.run(workspace.path, ["branch", name, "HEAD"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const sha = (await this.run(workspace.path, ["rev-parse", name], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { name, sha };
+  }
+
+  /** 切换到 worktree 中已有的本地分支；只读仓库操作，不修改远端。 */
+  async switchBranch(workspace: Workspace, name: string, signal?: AbortSignal): Promise<{ name: string; sha: string }> {
+    this.validateWorkspace(workspace);
+    this.validateBranchName(name);
+    await this.run(workspace.path, ["checkout", name], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const sha = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { name, sha };
+  }
+
+  /** 在 worktree 中用普通 revert commit 撤销一个本地提交，冲突时中止。 */
+  async revertWorktreeCommit(workspace: Workspace, sha: string, signal?: AbortSignal): Promise<{ sha: string; revertedSha: string }> {
+    this.validateWorkspace(workspace);
+    if (!shaPattern.test(sha)) throw new Error("revert requires a full commit SHA");
+    const parents = (await this.run(workspace.path, ["rev-list", "--parents", "-n", "1", sha], undefined, maxErrorOutput, signal))
+      .stdout.toString().trim().split(/\s+/).length - 1;
+    try {
+      await this.run(
+        workspace.path,
+        ["revert", "--no-edit", ...(parents > 1 ? ["-m", "1"] : []), sha],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 30_000 },
+      );
+    } catch (error) {
+      await this.run(workspace.path, ["revert", "--abort"], undefined, maxErrorOutput, signal, {
+        timeoutMs: 10_000,
+        allowExitCodes: [0, 1, 128],
+      }).catch(() => undefined);
+      throw error;
+    }
+    const head = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { sha: head, revertedSha: sha };
+  }
+
+  /** 从已配置的本地镜像抓取对象；worktree 仍固定到当前提交，不自动改变 HEAD。 */
+  async fetchFromMirror(workspace: Workspace, signal?: AbortSignal): Promise<{ sha: string; fetched: boolean }> {
+    this.validateWorkspace(workspace);
+    const before = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    await this.run(workspace.path, ["fetch", "--no-tags", "origin"], undefined, maxErrorOutput, signal, { timeoutMs: 30_000 });
+    return { sha: before, fetched: true };
+  }
+
+  /** 把本地分支或完整 SHA 合并进当前 worktree；冲突时直接中止，不留下半合并状态。 */
+  async mergeRef(workspace: Workspace, ref: string, signal?: AbortSignal): Promise<{ sha: string; ref: string }> {
+    this.validateWorkspace(workspace);
+    if (!shaPattern.test(ref)) this.validateBranchName(ref);
+    try {
+      await this.run(
+        workspace.path,
+        ["merge", "--no-edit", "--no-ff", ref],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 30_000 },
+      );
+    } catch (error) {
+      // 冲突时清掉半合并状态，避免后续工具在 MERGE_HEAD 下继续操作。
+      await this.run(workspace.path, ["merge", "--abort"], undefined, maxErrorOutput, signal, {
+        timeoutMs: 10_000,
+        allowExitCodes: [0, 1, 128],
+      }).catch(() => undefined);
+      throw error;
+    }
+    const sha = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { sha, ref };
   }
 
   async grep(

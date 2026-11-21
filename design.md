@@ -27,8 +27,10 @@ GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`f
   Agent 决定。
 - 通过运维控制台创建持久对话，发现范围由 GitLab 只读 Token 的可见项目决定；对话绑定
   仓库分支，每轮固定到服务端解析的分支头 SHA。对话统一为可读可写（`ConversationMode`
-  当前仅有 `gitlab` 一种模式）：可读取仓库，并在用户明确要求时向 GitLab 发布内容；
-  不提供仓库写入。对话是运维控制台
+  当前仅有 `gitlab` 一种模式）：可读取仓库、在用户明确要求时向 GitLab 发布内容，并通过
+  `src/agent/git/` 的受控 Git 工具集操作当前 worktree（status/log/diff/clone/branch/pull/merge/commit/push/revert）。
+  这些工具固定到本会话的项目与 worktree：不接受任意 URL、任意远端或强制推送；提交与 push
+  都写入项目镜像里的 `refs/conversations/<id>`，不会推送到 GitLab 分支。对话是运维控制台
   的一等对象：每一轮都保留自己的轨迹与执行记录，可在对话内直接查看。
 - 将仓库代码、GitLab 凭证、模型凭证和 Agent 工具限制在已配置的自托管部署边界内。
 
@@ -141,8 +143,9 @@ SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助�
 - 轨迹是任务级的只读可观测数据，不构成授权依据；每轮对话的轨迹与记录随任务终态固定
   下来，不因后续轮次或对话状态变化而改变。
 - 对话的仓库能力由显式模式决定，而不是散落的硬编码假设：`gitlab` 模式可发布到
-  GitLab，文件改动通过受限的 fs-write 工具写入 worktree 并保存到会话 ref，永不 commit/push。
-  轨迹内容在 `src/events/store.ts` 统一脱敏并限长，不得绕过该路径。
+  GitLab，文件改动通过受限的 fs-write 工具写入 worktree；`gitToolset: true` 还开放
+  `src/agent/git/` 的受控 Git 工具（含 commit/push），其中 push 只写入项目镜像的会话 ref，
+  不推送到 GitLab 远端。轨迹内容在 `src/events/store.ts` 统一脱敏并限长，不得绕过该路径。
 - 一个对话常驻一个 worktree 并跨轮次复用（目录名由对话 ID 推导，位于
   `workspaces/<projectId>/conversation-<conversationId>`）。同一对话的轮次串行执行，
   因此复用在并发上安全；文件改动仅通过受限的 fs-write 工具写入并保存到项目镜像的会话 ref，
@@ -223,7 +226,7 @@ GitLab 令牌。示例配置和日志中不得包含密钥。
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
 Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
 只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
-对话可以读取仓库并在用户明确要求时发布 GitLab 评论；也能通过 fs-write 工具在固定快照的 worktree 中增删改文件，改动持久化到项目镜像里的会话 ref，永不 commit/push。
+对话可以读取仓库并在用户明确要求时发布 GitLab 评论；也能通过 fs-write 工具在固定快照的 worktree 中增删改文件，并通过 `src/agent/git/` 的受控 Git 工具查看历史/差异、管理本地分支、抓取镜像、合并本地 ref、提交并把改动持久化到会话 ref；push 仅写本地镜像，不推送 GitLab 分支。
 React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、
 `react-icons`（Simple Icons 文件类型图标）、`monaco-editor`（只读代码查看器，按扩展名覆盖绝大多数语言的语法高亮，
 通过动态 import 单独分包，明暗主题分别定义并跟随 `data-theme`）、`highlight.js`（聊天回复中 Markdown 代码块的语法高亮，

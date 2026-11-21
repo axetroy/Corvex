@@ -64,6 +64,43 @@ describe("Git workflows", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("manages local branches, merges and reverts in a bound worktree", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "event-tools");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "a.txt"), "base\n");
+    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    // 本地 origin 指向自身：抓取完全离线，不会尝试联网。
+    await execFile("git", ["-C", workspacePath, "remote", "add", "origin", workspacePath]);
+    const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const workspace: Workspace = { projectId: 7, eventId: "event-tools", path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+
+    expect(await manager.listBranches(workspace)).toMatchObject({ head: headSha });
+    expect(await manager.createBranch(workspace, "corvex/task")).toMatchObject({ name: "corvex/task", sha: headSha });
+    expect((await manager.listBranches(workspace)).branches).toContain("corvex/task");
+    expect(await manager.switchBranch(workspace, "corvex/task")).toMatchObject({ name: "corvex/task" });
+    expect(await manager.fetchFromMirror(workspace)).toMatchObject({ fetched: true, sha: headSha });
+
+    // 回到默认分支提交第二个提交，再切回任务分支合并它。
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "master"]);
+    await writeFile(join(workspacePath, "b.txt"), "merge\n");
+    await execFile("git", ["-C", workspacePath, "add", "b.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "second"]);
+    const secondSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "corvex/task"]);
+    await expect(manager.mergeRef(workspace, secondSha)).resolves.toMatchObject({ ref: secondSha });
+    const mergedSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    expect(mergedSha).not.toBe(secondSha);
+    expect(await manager.revertWorktreeCommit(workspace, mergedSha)).toMatchObject({ revertedSha: mergedSha });
+    await expect(manager.createBranch(workspace, "bad..name")).rejects.toThrow("invalid branch name");
+  });
+
   it("applies a fix patch only to an authorized tracked file", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
     const root = join(directory, "storage");

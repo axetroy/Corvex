@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createGitHistoryExtension } from "../../src/agent/git-history.js";
+import { createGitHistoryExtension } from "../../src/agent/git/chat-history.js";
 
 describe("Git history tools", () => {
   it("registers bounded log and show tools without allowing repository selection", async () => {

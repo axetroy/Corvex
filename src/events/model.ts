@@ -61,13 +61,15 @@ export interface ConversationCapabilities {
   repositoryWrite: boolean;
   /** 是否允许向 GitLab 发布评论、更新 Issue/MR 与关闭它们。 */
   gitlabWrite: boolean;
+  /** 是否开放绑定当前 worktree 的 Git 工具集（含提交与写入会话 ref）。 */
+  gitToolset: boolean;
 }
 
 /** 由模式派生能力；新增模式时这里会因缺少分支而编译失败，强制补齐声明。 */
 export function conversationCapabilities(mode: ConversationMode): ConversationCapabilities {
   switch (mode) {
     case "gitlab":
-      return { workflowStep: "workflow.gitlab_conversation", repositoryWrite: false, gitlabWrite: true };
+      return { workflowStep: "workflow.gitlab_conversation", repositoryWrite: false, gitlabWrite: true, gitToolset: true };
     default: {
       const exhaustive: never = mode;
       throw new Error(`unhandled conversation mode: ${String(exhaustive)}`);

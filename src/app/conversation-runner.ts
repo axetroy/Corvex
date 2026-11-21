@@ -12,6 +12,7 @@ import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type EventTraceContext } from "../agent/pi.js";
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs-write.js";
+import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { parseConversationCommand } from "./conversation-command.js";
@@ -211,6 +212,29 @@ export class ConversationRunner {
       return { path: destination.path, bytes: 0 };
     };
     return { writeFile, editFile, deleteFile, moveFile, copyFile };
+  }
+
+  /** 把 Git 工具绑定到当前会话的 worktree、项目镜像与固定快照。 */
+  private gitTools(workspace: Workspace, conversationId: string, headSha: string, signal?: AbortSignal): GitToolAdapter {
+    return {
+      status: () => this.repo.getWorkspaceStatus(workspace, signal),
+      log: (limit, path) => this.repo.getCommitLog(workspace, limit, path, signal),
+      show: (sha, path) => this.repo.showCommit(workspace, sha, path, signal),
+      diff: (path) => this.repo.getWorkspaceDiff(workspace, path, signal),
+      // worktree 已由 Runner 准备到固定快照；这里只返回当前位置，不克隆任意 URL。
+      clone: async () => ({ path: workspace.path, headSha }),
+      branches: () => this.repo.listBranches(workspace, signal),
+      createBranch: (name) => this.repo.createBranch(workspace, name, signal),
+      switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
+      pull: () => this.repo.fetchFromMirror(workspace, signal),
+      merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
+      commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message),
+      push: async () => {
+        const result = await this.repo.saveConversationChanges(workspace, conversationId, signal);
+        return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
+      },
+      revert: (sha) => this.repo.revertWorktreeCommit(workspace, sha, signal),
+    };
   }
 
   private async persistChanges(workspace: Workspace, conversationId: string, signal?: AbortSignal): Promise<void> {
@@ -623,6 +647,9 @@ export class ConversationRunner {
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               fs: this.workspaceFs(workspace.path),
+              ...(conversationCapabilities(turn.mode).gitToolset
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.headSha, signal) }
+                : {}),
             },
             workspace.path,
             signal,
