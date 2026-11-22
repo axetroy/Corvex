@@ -166,7 +166,8 @@ describe("PiAgent", () => {
         model: "test-model",
         providerName: "Acme Models",
         apiKey: "test-key",
-        requestTimeout: 2000,
+        // 每项请求的超时需要给 CI 留足余量：下面用注入延迟验证「总耗时超过单项超时」。
+        requestTimeout: 3000,
         sessionTimeout: 10000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
@@ -203,7 +204,7 @@ describe("PiAgent", () => {
       temporaryDirectory,
     )).rejects.toThrow("request budget");
     expect(requestCount).toBe(requestCountBeforeOversizedPrompt);
-    responseDelayMs = 1400;
+    responseDelayMs = 1600;
     const startedAt = Date.now();
     const streamUpdates: { reset: boolean; text: string }[] = [];
     const thinkingUpdates: { reset: boolean; text: string }[] = [];
