@@ -388,6 +388,21 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     });
   }
 
+  app.get("/api/ops/conversations/:id/git/changes", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    try {
+      sendJson(reply, 200, await ctx.conversations.getConversationChangeDetails(conversationId));
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
+    }
+  });
+
   app.get("/api/ops/conversations/:id/git/commit/:sha/patch", async (request, reply) => {
     const params = request.params as { id: string; sha: string };
     const conversationId = idParam(params.id);

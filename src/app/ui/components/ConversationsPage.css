@@ -995,6 +995,70 @@
   padding: 12px 8px 24px;
 }
 
+.conversation-git-view-switch {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+
+.conversation-git-changes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.conversation-git-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.conversation-git-files-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.conversation-git-file {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+}
+
+.conversation-git-file > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.conversation-git-file-status {
+  flex: 0 0 auto;
+  color: var(--warning);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.conversation-git-file-body {
+  padding: 8px 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.conversation-git-file-body pre {
+  overflow: auto;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .conversation-git-toolbar {
   display: flex;
   flex-wrap: wrap;

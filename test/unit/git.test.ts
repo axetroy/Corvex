@@ -515,6 +515,45 @@ describe("Git workflows", () => {
     );
   });
 
+  it("lists conversation file changes from Git objects rather than tool records", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-changes-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "7.git")]);
+
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const mirrorPath = join(root, "mirrors", "7.git");
+    await execFile("git", ["--git-dir", mirrorPath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["--git-dir", mirrorPath, "config", "user.name", "Corvex test"]);
+    const headSha = (await execFile("git", ["--git-dir", mirrorPath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const workspacePath = join(root, "workspaces", "7", `conversation-${conversationId}`);
+    await mkdir(join(root, "workspaces", "7"), { recursive: true });
+    await execFile("git", ["--git-dir", mirrorPath, "worktree", "add", "-q", "--detach", workspacePath, headSha]);
+    await writeFile(join(workspacePath, "a.txt"), "changed\n");
+
+    const manager = new GitManager(root, "https://gitlab.example.com", "read");
+    const saved = await manager.saveConversationChangesById(7, conversationId, headSha);
+    expect(saved).toBeDefined();
+    const details = await manager.getConversationChangeDetails(7, conversationId);
+    expect(details.sha).toBe(saved?.sha);
+    expect(details.files).toHaveLength(1);
+    expect(details.files[0]).toMatchObject({ path: "a.txt", status: "M" });
+    expect(details.files[0]?.patch).toContain("+changed");
+  });
+
   it("validates GitLab branch pushes before touching the network", async () => {
     const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
     const sha = "a".repeat(40);

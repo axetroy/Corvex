@@ -1200,6 +1200,69 @@ export class GitManager {
     return { patch: result.stdout.toString("utf8"), truncated: result.truncated };
   }
 
+  /**
+   * 列出会话 ref 相对其父提交（固定快照）的全部文件变更。
+   * 直接从镜像的 Git 对象计算，不依赖任何工具调用记录：以后即使加入命令行，只要改动
+   * 最终落进 worktree/会话 ref，这里就能检测到。
+   */
+  async getConversationChangeDetails(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; files: Array<{ path: string; status: string; patch: string; truncated: boolean }>; truncated: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    const exists = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "show-ref", "--verify", "--quiet", ref],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    if (exists.exitCode !== 0) return { sha: "", files: [], truncated: false };
+    const resolved = await this.run(
+      this.mirrorRoot, ["--git-dir", mirror, "rev-parse", ref], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    const sha = resolved.stdout.toString().trim();
+    if (!shaPattern.test(sha)) throw new Error("conversation ref contains an invalid commit");
+    const parentResult = await this.run(
+      this.mirrorRoot, ["--git-dir", mirror, "rev-parse", `${sha}^`], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    const base = parentResult.stdout.toString().trim();
+    if (!shaPattern.test(base)) throw new Error("conversation ref has no valid parent commit");
+
+    const status = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "diff", "--name-status", "-z", base, sha],
+      undefined, 1 << 20, signal, { timeoutMs: 30_000 },
+    );
+    const parts = status.stdout.toString().split("\0").filter(Boolean);
+    const files: Array<{ path: string; status: string; patch: string; truncated: boolean }> = [];
+    let truncated = false;
+    let totalBytes = 0;
+    const maxFiles = 200;
+    const maxTotalBytes = 1 << 20;
+    for (let index = 0; index + 1 < parts.length && files.length < maxFiles; index += 2) {
+      const statusCode = parts[index]!;
+      const path = parts[index + 1]!;
+      if (!this.validPatchPath(path)) {
+        truncated = true;
+        continue;
+      }
+      const patchResult = await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", base, sha, "--", `:(literal)${path}`],
+        undefined, 256 << 10, signal, { timeoutMs: 30_000, terminateOnOutputLimit: true },
+      );
+      const patch = patchResult.stdout.toString("utf8");
+      totalBytes += Buffer.byteLength(patch);
+      if (totalBytes > maxTotalBytes || patchResult.truncated) truncated = true;
+      files.push({ path, status: statusCode, patch, truncated: patchResult.truncated });
+    }
+    if (parts.length > maxFiles * 2) truncated = true;
+    return { sha, files, truncated };
+  }
+
   /** 列出镜像中所有提交作者（去重、有界），供控制台的图谱筛选使用。 */
   async listCommitAuthors(projectId: number, signal?: AbortSignal): Promise<string[]> {
     if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");

@@ -320,6 +320,12 @@ export class ConversationRunner {
     return saved ? { sha: saved.sha, saved: true } : { sha: expectedSha, saved: false };
   }
 
+  getConversationChangeDetails(conversationId: string) {
+    const conversation = this.store.getConversation(conversationId);
+    if (!conversation) throw new Error("conversation not found");
+    return this.repo.getConversationChangeDetails(conversation.projectId, conversationId);
+  }
+
   listCommitAuthors(projectId: number) {
     return this.repo.listCommitAuthors(projectId);
   }
