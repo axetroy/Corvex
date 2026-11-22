@@ -14,12 +14,14 @@ const operationsUiContentTypes: Record<string, string> = {
   png: "image/png",
   ico: "image/x-icon",
   woff2: "font/woff2",
+  // Monaco 的 codicon 字体由 Vite 以 .ttf 产物输出，diff 编辑器图标依赖它。
+  ttf: "font/ttf",
   json: "application/json; charset=utf-8",
   map: "application/json; charset=utf-8",
 };
 
 /** 校验 `/ops/assets/<file>` 相对路径，拒绝目录穿越与非白名单扩展名。 */
-function operationsUiAsset(relativePath: string): { file: string; contentType: string } | undefined {
+export function operationsUiAsset(relativePath: string): { file: string; contentType: string } | undefined {
   if (!/^assets\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(relativePath)) return undefined;
   const extension = relativePath.slice(relativePath.lastIndexOf(".") + 1).toLowerCase();
   const contentType = operationsUiContentTypes[extension];
