@@ -17,7 +17,7 @@ Webhook 驱动的合并请求任务事件（review / chat / explain / fix / impl
 - 保留持久化对话与轮次、取消、审计、Token 用量统计和可观测性。
 - 将每一轮固定到服务端解析的分支头 SHA，并在该对话常驻的 detached worktree 中执行。
 - 将权限控制、工具边界和 GitLab 写操作的授权判断保留在可信的 Corvex 代码中，不交由 Agent 决定。
-- 对话统一为可读可写（`ConversationMode` 当前仅有 `gitlab` 一种模式）：可读取仓库与 GitLab、在用户明确要求时写入 GitLab，并通过 `src/agent/git/` 的受控 Git 工具集操作当前 worktree（status/log/diff/show/branches/clone/branch/checkout/pull/merge/commit/push/push_branch/rebase/cherry_pick/revert）。工具固定到本会话的项目、worktree 与本地镜像：不接受任意 URL、任意远端或强制推送；`git_push` 写入项目镜像里的 `refs/conversations/<id>`。用户明确要求发布到 GitLab 分支时，`git_push_branch` 才把镜像中已有的提交快进推到具名分支（仅快进、主机必须与配置一致），以便 MR 出现真实 diff。
+- 对话统一为可读可写（`ConversationMode` 当前仅有 `gitlab` 一种模式）：可读取仓库与 GitLab、在用户明确要求时写入 GitLab，并通过 `src/agent/git/` 的受控 Git 工具集操作当前 worktree（status/log/diff/show/branches/clone/branch/checkout/pull/merge/commit/push/publish/push_branch/rebase/cherry_pick/revert）。工具固定到本会话的项目、worktree 与本地镜像：不接受任意 URL、任意远端或强制推送；`git_push` 写入项目镜像里的 `refs/conversations/<id>`。用户明确要求发布到 GitLab 分支时，`git_publish` 一步保存改动并把提交快进推到具名分支，不需要在工具调用之间传递 SHA；`git_push_branch` 是已有完整 SHA 时的底层变体。两者都仅快进、主机必须与配置一致，以便 MR 出现真实 diff。
 - 将仓库代码、GitLab 凭证、模型凭证和 Agent 工具限制在已配置的自托管部署边界内。
 
 ### 非目标

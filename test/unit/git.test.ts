@@ -490,6 +490,28 @@ describe("Git workflows", () => {
     await expect(manager.cherryPickWorktree(workspace, "short")).rejects.toThrow("full commit SHA");
   });
 
+  it("refuses to publish when there are no changes and no saved conversation commit", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-publish-empty-"));
+    const root = join(directory, "storage");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", join(root, "mirrors", "7.git")]);
+    const workspacePath = join(root, "workspaces", "7", "conversation-00000000-0000-4000-8000-000000000000");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "a.txt"), "base\n");
+    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const conversationId = "00000000-0000-4000-8000-000000000000";
+    const workspace: Workspace = { projectId: 7, workspaceName: `conversation-${conversationId}`, path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com", "read", "write");
+    await expect(manager.publishToGitLabBranch(7, conversationId, workspace, "fix/a", undefined)).rejects.toThrow(
+      "no changes to publish and no saved conversation commit",
+    );
+  });
+
   it("validates GitLab branch pushes before touching the network", async () => {
     const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
     const sha = "a".repeat(40);

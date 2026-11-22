@@ -24,6 +24,8 @@ export interface GitToolAdapter {
   push(): Promise<{ ref: string; sha: string } | undefined>;
   /** 把镜像中已有的提交快进推到 GitLab 具名分支；需要用户明确要求与写令牌。 */
   pushBranch(sha: string, branch: string): Promise<{ branch: string; sha: string }>;
+  /** 一步保存当前改动并快进推送到 GitLab 分支，不需要在工具之间传递 SHA。 */
+  publish(branch: string, message?: string): Promise<{ branch: string; sha: string; committed: boolean }>;
   revert(sha: string): Promise<{ sha: string; revertedSha: string }>;
   /** 变基到指定本地分支/完整提交；只接受已存在的目标，冲突时自动中止。 */
   rebase(onto: string): Promise<{ sha: string; onto: string }>;

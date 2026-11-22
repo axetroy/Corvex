@@ -234,6 +234,9 @@ export class ConversationRunner {
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
       pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal),
+      publish: (branch, message) => this.repo.publishToGitLabBranch(
+        workspace.projectId, conversationId, workspace, branch, message, signal,
+      ),
       rebase: (onto) => this.repo.rebaseWorktree(workspace, onto, signal),
       cherryPick: (sha) => this.repo.cherryPickWorktree(workspace, sha, signal),
       revert: (sha) => this.repo.revertWorktreeCommit(workspace, sha, signal),

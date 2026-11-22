@@ -87,7 +87,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 调用需要鉴权的服务商时，请在控制台的模型配置中保存 API Key。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算；请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
-Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本文件，每次最多返回 256 KiB，单行超过 4 KiB 时会截断标记；`git_grep` 在固定 HEAD 的已跟踪文件中做有界字面量搜索。字面量工具 `search_text` 跳过常见依赖/生成目录，并限制文件数、总字节与匹配数。仓库文件工具拒绝仓库文件的绝对路径，只有可信 Skill 根目录允许绝对路径。GitLab 与 Git 的写工具都绑定到当前对话，`git_rebase` / `git_cherry_pick` 需要干净工作区且冲突会自动中止：Git 写操作只能影响本地 worktree 与镜像，`git_push` 只写 `refs/conversations/<id>`；用户明确要求时，`git_push_branch` 可把该提交快进推到 GitLab 具名分支（仅快进、不强制）；GitLab 写操作固定项目并要求用户明确意图。启用后，`web_fetch` 可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址与黑名单主机，拒绝非 HTML/纯文本响应，并限制单页字节数、文本字符数与每 Session 抓取页数；网页内容是不可信模型输入。当前不提供 MCP 扩展，也没有事件/审查/修复任务专属的工具集。
+Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本文件，每次最多返回 256 KiB，单行超过 4 KiB 时会截断标记；`git_grep` 在固定 HEAD 的已跟踪文件中做有界字面量搜索。字面量工具 `search_text` 跳过常见依赖/生成目录，并限制文件数、总字节与匹配数。仓库文件工具拒绝仓库文件的绝对路径，只有可信 Skill 根目录允许绝对路径。GitLab 与 Git 的写工具都绑定到当前对话，`git_rebase` / `git_cherry_pick` 需要干净工作区且冲突会自动中止：Git 写操作只能影响本地 worktree 与镜像，`git_push` 只写 `refs/conversations/<id>`；用户明确要求时，`git_publish` 会一步保存改动并把提交快进推到 GitLab 具名分支（仅快进、不强制、无需传递 SHA），`git_push_branch` 则是已知完整 SHA 时的底层变体；GitLab 写操作固定项目并要求用户明确意图。启用后，`web_fetch` 可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址与黑名单主机，拒绝非 HTML/纯文本响应，并限制单页字节数、文本字符数与每 Session 抓取页数；网页内容是不可信模型输入。当前不提供 MCP 扩展，也没有事件/审查/修复任务专属的工具集。
 
 ## 运行时设置
 

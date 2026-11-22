@@ -441,6 +441,45 @@ export class GitManager {
   }
 
   /**
+   * 一步完成「保存改动 + 推送到 GitLab 分支」：先用当前工作区改动生成（或复用）会话提交，
+   * 再把该提交快进推到指定分支。Agent 不需要在两次调用之间传递 SHA，避免记错提交。
+   */
+  async publishToGitLabBranch(
+    projectId: number,
+    conversationId: string,
+    workspace: Workspace,
+    branch: string,
+    message?: string,
+    signal?: AbortSignal,
+  ): Promise<{ branch: string; sha: string; committed: boolean }> {
+    const saved = await this.saveConversationChanges(workspace, conversationId, signal, message);
+    let sha: string;
+    if (saved) {
+      sha = saved.sha;
+    } else {
+      const mirror = join(this.mirrorRoot, `${projectId}.git`);
+      const ref = conversationChangesRef(conversationId);
+      const existing = await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "show-ref", "--verify", "--quiet", ref],
+        undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (existing.exitCode !== 0) {
+        throw new Error("no changes to publish and no saved conversation commit");
+      }
+      const resolved = await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "rev-parse", ref],
+        undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+      );
+      sha = resolved.stdout.toString().trim();
+      if (!shaPattern.test(sha)) throw new Error("conversation ref contains an invalid commit");
+    }
+    const pushed = await this.pushBranchToGitLab(projectId, sha, branch, signal);
+    return { ...pushed, committed: Boolean(saved) };
+  }
+
+  /**
    * 把镜像中已有的提交推到该项目的 GitLab 具名分支，让 MR 能读到真实 diff。
    * 只快进、不强制：远端分支前进时 Git 自身会拒绝非快进更新；URL 由镜像 origin 读取并
    * 强制与配置的 GitLab 主机一致，不接受任意远端。需要写令牌且由用户明确要求时调用。

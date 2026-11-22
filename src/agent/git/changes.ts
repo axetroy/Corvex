@@ -35,6 +35,18 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),
     });
     pi.registerTool({
+      name: "git_publish",
+      label: "Publish changes to a GitLab branch",
+      executionMode: "sequential",
+      description: "Save the current worktree changes and fast-forward them to a GitLab branch in one step, so a merge request can show a real diff. Prefer this over git_commit + git_push_branch: it returns the exact commit SHA and never requires you to remember or guess one. Only call this when the user explicitly asks to publish to that branch; no force push is ever performed.",
+      promptSnippet: "git_publish: Commit current changes and push them to a named GitLab branch in one call; use for MR updates.",
+      parameters: Type.Object({
+        branch: branchNameParam,
+        message: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
+      }),
+      execute: async (_id, params) => text(await git.publish(params.branch, params.message)),
+    });
+    pi.registerTool({
       name: "git_rebase",
       label: "Rebase current commits",
       executionMode: "sequential",

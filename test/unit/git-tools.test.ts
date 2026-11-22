@@ -24,6 +24,7 @@ function fakeAdapter(): GitToolAdapter {
     commit: vi.fn(async () => ({ sha: "b".repeat(40), paths: ["a.ts"] })),
     push: vi.fn(async () => ({ ref: "refs/conversations/c1", sha: "b".repeat(40) })),
     pushBranch: vi.fn(async () => ({ branch: "fix/security", sha: "b".repeat(40) })),
+    publish: vi.fn(async () => ({ branch: "fix/security", sha: "b".repeat(40), committed: true })),
     revert: vi.fn(async () => ({ sha: "c".repeat(40), revertedSha: "b".repeat(40) })),
     rebase: vi.fn(async () => ({ sha: "d".repeat(40), onto: "main" })),
     cherryPick: vi.fn(async () => ({ sha: "e".repeat(40), pickedSha: "a".repeat(40) })),
@@ -42,7 +43,7 @@ describe("consolidated Git tools", () => {
     const names = collect(fakeAdapter()).map((tool) => tool.name);
     expect(names.sort()).toEqual([
       "git_branches", "git_checkout", "git_clone", "git_commit", "git_diff", "git_log",
-      "git_merge", "git_pull", "git_push", "git_push_branch", "git_rebase", "git_cherry_pick", "git_revert", "git_show", "git_status", "git_branch",
+      "git_merge", "git_pull", "git_push", "git_push_branch", "git_publish", "git_rebase", "git_cherry_pick", "git_revert", "git_show", "git_status", "git_branch",
     ].sort());
   });
 
@@ -62,6 +63,8 @@ describe("consolidated Git tools", () => {
     expect(adapter.commit).toHaveBeenCalledWith("fix");
     await find("git_push_branch").execute("4b", { sha: "b".repeat(40), branch: "fix/security" });
     expect(adapter.pushBranch).toHaveBeenCalledWith("b".repeat(40), "fix/security");
+    await find("git_publish").execute("4c", { branch: "fix/security", message: "fix" });
+    expect(adapter.publish).toHaveBeenCalledWith("fix/security", "fix");
     await find("git_rebase").execute("5a", { onto: "main" });
     expect(adapter.rebase).toHaveBeenCalledWith("main");
     await find("git_cherry_pick").execute("5b", { sha: "a".repeat(40) });
