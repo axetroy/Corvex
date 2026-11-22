@@ -195,6 +195,25 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     });
   }, [modal, copy, deleteNode]);
 
+  // 受控 Dropdown 没有 trigger，点外部不会自动关闭，这里显式补上。
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".conversation-file-context-menu") || target.closest(".conversation-file-context-anchor")) return;
+      setContextMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
+
   const fileMenuItems = (node: FileTreeNode) => [
     {
       key: "open",
@@ -302,6 +321,9 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
                   treeData={renderedTree}
                   expandedKeys={expandedKeys}
                   onExpand={(keys) => setExpandedKeys(keys.map(String))}
+                  onRightClick={({ event, node }) => {
+                    setContextMenu({ x: event.clientX, y: event.clientY, node: node as unknown as FileTreeNode });
+                  }}
                   loadData={(node) => loadDirectory((node as unknown as FileTreeNode).path)}
                   onSelect={(_keys, info) => {
                     const node = info.node as unknown as FileTreeNode;
