@@ -29,6 +29,8 @@ export interface GitGraphNode {
   author: string;
   authoredAt: string;
   refs: string[];
+  /** 指向该提交的 tag 名称（已解引用 annotated tag）。 */
+  tags: string[];
 }
 
 export interface GitGraphOptions {

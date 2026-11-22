@@ -61,6 +61,8 @@ describe("operations UI locale", () => {
     expect(zhCN.gitGraphFilterAuthor).toBe("按作者筛选");
     expect(en.gitMenuCopyHash).toBe("Copy full hash");
     expect(en.gitMenuDownloadPatch).toBe("Download patch");
+    expect(zhCN.gitGraphTag).toBe("标签");
+    expect(en.gitGraphTags).toBe("Tags");
     expect(zhCN.fileMenuCopyPath).toBe("复制路径");
     expect(en.fileMenuDelete).toBe("Delete");
     expect(zhCN.scrollToBottom).toBe("滚动到最新");

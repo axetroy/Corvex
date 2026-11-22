@@ -1019,6 +1019,7 @@
 .conversation-git-legend .dot.is-pinned { background: var(--primary); }
 .conversation-git-legend .dot.is-local { background: var(--success); }
 .conversation-git-legend .dot.is-branch { background: var(--purple); }
+.conversation-git-legend .dot.is-tag { background: var(--warning); }
 
 .conversation-git-board {
   display: flex;
@@ -1113,6 +1114,16 @@
   color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
+}
+
+.conversation-git-row-tags {
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-git-row-refs {

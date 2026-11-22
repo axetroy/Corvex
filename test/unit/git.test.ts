@@ -106,6 +106,39 @@ describe("Git workflows", () => {
     expect(secondPage.offset).toBe(2);
   });
 
+  it("resolves lightweight and annotated tags to their commits in the graph", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    const first = (await execFile("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    await execFile("git", ["-C", source, "tag", "v-light"]);
+    await writeFile(join(source, "b.txt"), "second\n");
+    await execFile("git", ["-C", source, "add", "b.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "second"]);
+    await execFile("git", ["-C", source, "tag", "-a", "v-annotated", "-m", "release"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--tags"]);
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "5.git")]);
+
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const graph = await manager.getCommitGraph(5, { limit: 10 });
+    expect(graph.nodes.find((item) => item.sha === first)?.tags).toEqual(["v-light"]);
+    const annotated = graph.nodes.find((item) => item.subject === "second");
+    expect(annotated?.tags).toEqual(["v-annotated"]);
+  });
+
   it("exports a patch that git apply can replay onto the parent", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
     const root = join(directory, "storage");

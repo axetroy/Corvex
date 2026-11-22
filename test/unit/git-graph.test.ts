@@ -3,7 +3,7 @@ import { buildGitGraphLayout, graphLaneX, graphNodeY } from "../../src/app/ui/gi
 import type { GitGraphNode } from "../../src/git/types.ts";
 
 function node(sha: string, parents: string[] = [], refs: string[] = []): GitGraphNode {
-  return { sha, parents, refs, subject: sha.slice(0, 8), author: "dev", authoredAt: "2026-01-01T00:00:00Z" };
+  return { sha, parents, refs, tags: [], subject: sha.slice(0, 8), author: "dev", authoredAt: "2026-01-01T00:00:00Z" };
 }
 
 describe("git graph layout", () => {

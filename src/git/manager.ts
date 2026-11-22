@@ -1072,20 +1072,30 @@ export class GitManager {
 
     const refsResult = await this.run(
       this.mirrorRoot,
-      ["--git-dir", mirror, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads", "refs/remotes", "refs/conversations"],
+      [
+        "--git-dir", mirror, "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(*objectname)",
+        "refs/heads", "refs/remotes", "refs/conversations", "refs/tags",
+      ],
       undefined,
       1 << 20,
       signal,
       { timeoutMs: 10_000 },
     );
     const refsBySha = new Map<string, string[]>();
+    const tagsBySha = new Map<string, string[]>();
     for (const line of refsResult.stdout.toString("utf8").split("\n")) {
       if (!line) continue;
-      const [name, sha] = line.split("\0");
-      if (!name || !sha || !shaPattern.test(sha)) continue;
-      const names = refsBySha.get(sha) ?? [];
-      names.push(name);
-      refsBySha.set(sha, names);
+      const [refname, objectSha, dereferencedSha] = line.split("\0");
+      // lightweight tag 的 *objectname 为空，annotated tag 需解引用到目标提交。
+      const sha = dereferencedSha || objectSha;
+      if (!refname || !sha || !shaPattern.test(sha)) continue;
+      const isTag = refname.startsWith("refs/tags/");
+      const shortName = refname.replace(/^refs\/(?:tags|heads|remotes|conversations)\//, "");
+      const target = isTag ? tagsBySha : refsBySha;
+      const names = target.get(sha) ?? [];
+      if (!names.includes(shortName)) names.push(shortName);
+      target.set(sha, names);
     }
 
     const revResult = await this.run(
@@ -1135,6 +1145,7 @@ export class GitManager {
         author: detail.author,
         authoredAt: detail.authoredAt,
         refs: refsBySha.get(sha!) ?? [],
+        tags: tagsBySha.get(sha!) ?? [],
       };
     });
     return { nodes, truncated, offset };

@@ -203,6 +203,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       render: (_value, node) => (
         <span className="conversation-git-cell-title">
           <span>{node.subject || node.sha.slice(0, 12)}</span>
+          {node.tags.length ? <span className="conversation-git-row-tags">{node.tags.join(" · ")}</span> : null}
           {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
         </span>
       ),
@@ -240,6 +241,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
           <span><i className="dot is-pinned" />{copy.gitGraphPinned}</span>
           <span><i className="dot is-local" />{copy.gitGraphLocalRef}</span>
           <span><i className="dot is-branch" />{copy.gitGraphBranch}</span>
+          <span><i className="dot is-tag" />{copy.gitGraphTag}</span>
         </div>
         <Select
           className="conversation-git-author-filter"
@@ -279,7 +281,10 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 );
               })}
               {layout.nodes.map((node, row) => {
-                const color = node.isPinned ? "var(--primary)" : node.hasLocalRef ? "var(--success)" : "var(--text-secondary)";
+                const color = node.isPinned ? "var(--primary)"
+                  : node.hasLocalRef ? "var(--success)"
+                  : node.tags.length ? "var(--warning)"
+                  : "var(--text-secondary)";
                 return (
                   <circle
                     key={node.sha}
@@ -329,6 +334,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                         <>
                           <div className="conversation-git-detail-parents">
                             {copy.gitGraphParents}: {node.parents.map((sha) => sha.slice(0, 8)).join(" · ") || copy.none}
+                            {node.tags.length ? ` · ${copy.gitGraphTags}: ${node.tags.join(" · ")}` : ""}
                             {node.refs.length ? ` · ${copy.gitGraphRefs}: ${node.refs.join(" · ")}` : ""}
                           </div>
                           <pre className="conversation-git-patch" dangerouslySetInnerHTML={{ __html: highlightCode(detail.output, "diff") }} />
