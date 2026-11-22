@@ -456,8 +456,7 @@ describe("CorvexServer", () => {
       );
       info.mockRestore();
     }
-    // 该用例覆盖整条 HTTP 流程；CI 上的 Fake GitLab 与多平台文件系统明显更慢。
-  }, 60_000);
+  }, 20_000);
 
   it("exposes and updates runtime context settings over the operations API", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});

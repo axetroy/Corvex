@@ -149,12 +149,18 @@ export class CorvexServer {
         gcCount: 0,
         errors: [],
       };
+      // 工作区清理失败不能跳过后续清理钩子：各阶段独立记录错误，钩子按约定仍会执行。
       try {
         context.removedWorkspaces = await this.conversations.cleanupStaleWorkspaces();
-        await callAsyncHook(this.hooks.storageCleanup, context);
       } catch (error) {
         context.errors.push(errorMessage(error));
         console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
+      }
+      try {
+        await callAsyncHook(this.hooks.storageCleanup, context);
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+        console.warn("storage cleanup hook failed", { error: errorMessage(error) });
       }
       // 上次进程留下的排队补充消息没有在途轮次触发，启动时主动消费一次。
       void this.conversations.resumeFollowUps().catch((error: unknown) => {
