@@ -843,6 +843,43 @@ export class GitManager {
     return { name, sha };
   }
 
+  /**
+   * 检出分支：本地存在则直接切换；否则从已配置的 origin 的同名跟踪分支创建本地分支并切换。
+   * 不接受任意远端 URL 或强制操作；远程引用必须已存在于本地镜像。
+   */
+  async checkoutBranch(workspace: Workspace, name: string, signal?: AbortSignal): Promise<{ name: string; sha: string; fromRemote: boolean }> {
+    this.validateWorkspace(workspace);
+    this.validateBranchName(name);
+    const local = await this.run(
+      workspace.path,
+      ["show-ref", "--verify", "--quiet", `refs/heads/${name}`],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    let fromRemote = false;
+    if (local.exitCode === 0) {
+      await this.run(workspace.path, ["checkout", name], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    } else {
+      const remoteRef = `refs/remotes/origin/${name}`;
+      const remote = await this.run(
+        workspace.path,
+        ["show-ref", "--verify", "--quiet", remoteRef],
+        undefined, maxErrorOutput, signal,
+        { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (remote.exitCode !== 0) throw new Error(`branch ${name} does not exist locally or on origin`);
+      await this.run(
+        workspace.path,
+        ["checkout", "-b", name, "--track", `origin/${name}`],
+        undefined, maxErrorOutput, signal,
+        { timeoutMs: 10_000 },
+      );
+      fromRemote = true;
+    }
+    const sha = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { name, sha, fromRemote };
+  }
+
   /** 在 worktree 中用普通 revert commit 撤销一个本地提交，冲突时中止。 */
   async revertWorktreeCommit(workspace: Workspace, sha: string, signal?: AbortSignal): Promise<{ sha: string; revertedSha: string }> {
     this.validateWorkspace(workspace);

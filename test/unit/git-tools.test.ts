@@ -18,6 +18,7 @@ function fakeAdapter(): GitToolAdapter {
     branches: vi.fn(async () => ({ branches: ["main"], head: "a".repeat(40) })),
     createBranch: vi.fn(async () => ({ name: "task", sha: "a".repeat(40) })),
     switchBranch: vi.fn(async () => ({ name: "task", sha: "a".repeat(40) })),
+    checkout: vi.fn(async () => ({ name: "task", sha: "a".repeat(40), fromRemote: false })),
     pull: vi.fn(async () => ({ sha: "a".repeat(40), fetched: true })),
     merge: vi.fn(async () => ({ sha: "b".repeat(40), ref: "main" })),
     commit: vi.fn(async () => ({ sha: "b".repeat(40), paths: ["a.ts"] })),
@@ -37,7 +38,7 @@ describe("consolidated Git tools", () => {
   it("registers inspect, workspace and change tools", () => {
     const names = collect(fakeAdapter()).map((tool) => tool.name);
     expect(names.sort()).toEqual([
-      "git_branches", "git_clone", "git_commit", "git_diff", "git_log",
+      "git_branches", "git_checkout", "git_clone", "git_commit", "git_diff", "git_log",
       "git_merge", "git_pull", "git_push", "git_revert", "git_show", "git_status", "git_branch",
     ].sort());
   });
@@ -50,6 +51,8 @@ describe("consolidated Git tools", () => {
     expect(adapter.log).toHaveBeenCalledWith(5, "src/a.ts");
     await find("git_branch").execute("2", { action: "create", name: "corvex/task" });
     expect(adapter.createBranch).toHaveBeenCalledWith("corvex/task");
+    await find("git_checkout").execute("2b", { name: "feature/mr" });
+    expect(adapter.checkout).toHaveBeenCalledWith("feature/mr");
     await find("git_merge").execute("3", { ref: "main" });
     expect(adapter.merge).toHaveBeenCalledWith("main");
     await find("git_commit").execute("4", { message: "fix" });

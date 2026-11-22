@@ -29,6 +29,15 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
         : await git.switchBranch(params.name)),
     });
     pi.registerTool({
+      name: "git_checkout",
+      label: "Checkout branch",
+      executionMode: "sequential",
+      description: "Check out a branch in the bound worktree. Switches to an existing local branch, or creates and tracks a local branch from origin/<name> when it does not exist locally. No arbitrary remote URLs and no force operations. Use this to prepare a branch before creating a merge request.",
+      promptSnippet: "git_checkout: Switch to a local branch or track origin/<name> to prepare for a merge request.",
+      parameters: Type.Object({ name: branchNameParam }),
+      execute: async (_id, params) => text(await git.checkout(params.name)),
+    });
+    pi.registerTool({
       name: "git_pull",
       label: "Fetch from mirror",
       executionMode: "sequential",

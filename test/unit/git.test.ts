@@ -106,6 +106,42 @@ describe("Git workflows", () => {
     expect(secondPage.offset).toBe(2);
   });
 
+  it("checks out local branches and tracks origin branches", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    await execFile("git", ["-C", source, "checkout", "-q", "-b", "feature/mr"]);
+    await execFile("git", ["-C", source, "commit", "-q", "--allow-empty", "-m", "feature"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+
+    const workspacePath = join(root, "workspaces", "7", "event-tools");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["clone", "-q", source, workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const workspace: Workspace = { projectId: 7, eventId: "event-tools", path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+
+    await execFile("git", ["-C", workspacePath, "branch", "local-one", "HEAD"]);
+    expect(await manager.checkoutBranch(workspace, "local-one")).toMatchObject({ name: "local-one", fromRemote: false });
+    const tracked = await manager.checkoutBranch(workspace, "master");
+    expect(tracked.fromRemote).toBe(true);
+    expect(await git(workspacePath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("master");
+    await expect(manager.checkoutBranch(workspace, "missing")).rejects.toThrow("does not exist");
+  });
+
   it("manages local branches, merges and reverts in a bound worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
     const root = join(directory, "storage");

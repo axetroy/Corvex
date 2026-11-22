@@ -15,6 +15,7 @@ export interface GitToolAdapter {
   branches(): Promise<{ branches: string[]; head: string }>;
   createBranch(name: string): Promise<{ name: string; sha: string }>;
   switchBranch(name: string): Promise<{ name: string; sha: string }>;
+  checkout(name: string): Promise<{ name: string; sha: string; fromRemote: boolean }>;
   /** 从已配置的本地镜像抓取对象；不自动改变固定快照。 */
   pull(): Promise<{ sha: string; fetched: boolean }>;
   merge(ref: string): Promise<{ sha: string; ref: string }>;

@@ -226,6 +226,7 @@ export class ConversationRunner {
       branches: () => this.repo.listBranches(workspace, signal),
       createBranch: (name) => this.repo.createBranch(workspace, name, signal),
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
+      checkout: (name) => this.repo.checkoutBranch(workspace, name, signal),
       pull: () => this.repo.fetchFromMirror(workspace, signal),
       merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
       commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message),
