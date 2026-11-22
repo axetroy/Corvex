@@ -110,16 +110,37 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     }
   }, [copy]);
 
+  const fetchPatch = useCallback(async (sha: string) => {
+    return await fetchJson<CommitDetail>(
+      `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}`, copy,
+    );
+  }, [conversationId, copy]);
+
   const copyPatch = useCallback(async (sha: string) => {
     try {
-      const result = await fetchJson<CommitDetail>(
-        `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}`, copy,
-      );
+      const result = await fetchPatch(sha);
       await copyValue(result.output);
     } catch (cause) {
       setError(errorMessage(cause));
     }
-  }, [conversationId, copy, copyValue]);
+  }, [fetchPatch, copyValue]);
+
+  const downloadPatch = useCallback(async (node: GraphLaneNode) => {
+    try {
+      const result = await fetchPatch(node.sha);
+      const blob = new Blob([result.output], { type: "text/x-patch;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${node.sha.slice(0, 8)}.patch`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }, [fetchPatch]);
 
   // 受控 Dropdown 无 trigger，外部点击与 Escape 需自行关闭。
   useEffect(() => {
@@ -147,6 +168,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     { key: "author", label: copy.gitMenuCopyAuthor, onClick: () => void copyValue(node.author) },
     { type: "divider" as const },
     { key: "patch", label: copy.gitMenuCopyPatch, onClick: () => void copyPatch(node.sha) },
+    { key: "download", label: copy.gitMenuDownloadPatch, onClick: () => void downloadPatch(node) },
     { key: "detail", label: copy.gitMenuViewDetail, onClick: () => void toggleRow(node.sha) },
   ];
 
