@@ -160,11 +160,15 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                     onClick={() => void toggleRow(node.sha)}
                     aria-expanded={expanded === node.sha}
                   >
-                    <span className="conversation-git-row-subject">{node.subject || node.sha.slice(0, 12)}</span>
-                    <span className="conversation-git-row-meta">
-                      {`${node.author} · ${node.authoredAt.slice(0, 10)} · ${node.sha.slice(0, 8)}`}
+                    <span className="conversation-git-row-main">
+                      <span className="conversation-git-row-subject">{node.subject || node.sha.slice(0, 12)}</span>
+                      {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
                     </span>
-                    {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
+                    <span className="conversation-git-row-side">
+                      <span>{node.authoredAt.slice(0, 16).replace("T", " ")}</span>
+                      <span>{node.author}</span>
+                      <code>{node.sha.slice(0, 8)}</code>
+                    </span>
                   </button>
                   {expanded === node.sha ? (
                     <div

@@ -1039,10 +1039,10 @@
   height: 34px;
   min-width: 0;
   flex: 0 0 34px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 0 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
   overflow: hidden;
   color: var(--text);
   background: transparent;
@@ -1060,6 +1060,14 @@
   background: var(--primary-soft);
 }
 
+.conversation-git-row-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
 .conversation-git-row-subject {
   overflow: hidden;
   color: var(--text);
@@ -1073,20 +1081,29 @@
   color: var(--primary);
 }
 
-.conversation-git-row-meta {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .conversation-git-row-refs {
+  flex: 0 0 auto;
   overflow: hidden;
   color: var(--purple);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-git-row-side {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.conversation-git-row-side code {
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 
 .conversation-git-detail {
