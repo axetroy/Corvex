@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import { ConversationRunner } from "../../src/app/conversation-runner.js";
-import { EventRunner } from "../../src/app/event-runner.js";
+
 import type { CorvexConfig } from "../../src/config/config.js";
-import { EventStore } from "../../src/events/store.js";
+import { AppStore } from "../../src/store.js";
 import { GitLabClient } from "../../src/gitlab/client.js";
 import { createTokenCipher } from "../../src/tokens.js";
 import { createCorvexHooks } from "../../src/app/hooks.js";
@@ -23,7 +23,7 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 }
 
 /** 测试里的已登录用户：创建本地用户与会话，返回可直接用于 fetch 的 Cookie 头。 */
-function sessionHeaders(store: EventStore): Record<string, string> {
+function sessionHeaders(store: AppStore): Record<string, string> {
   const cipher = createTokenCipher(store.getOrCreateSessionSecret());
   const user = store.upsertUser({
     gitlabUserId: 1,
@@ -41,20 +41,9 @@ function sessionHeaders(store: EventStore): Record<string, string> {
 describe("CorvexServer", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("authenticates and queues a GitLab command idempotently", async () => {
-    // 本用例只验证入队与接口行为，不让对话轮次和事件真正调用模型。
+  it("authenticates ops routes and serves conversations", async () => {
+    // 本用例只验证接口行为，不让对话轮次真正调用模型。
     vi.spyOn(ConversationRunner.prototype, "runTurn").mockResolvedValue(false);
-    vi.spyOn(EventRunner.prototype, "run").mockResolvedValue();
-    let postedNotes = 0;
-    let pausePostNotes = false;
-    let notifyPostStarted!: () => void;
-    let releasePostNote!: () => void;
-    const postStarted = new Promise<void>((resolve) => {
-      notifyPostStarted = resolve;
-    });
-    const postGate = new Promise<void>((resolve) => {
-      releasePostNote = resolve;
-    });
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const fakeGitLab = createServer(async (request, response) => {
       if (request.method === "GET") {
@@ -105,11 +94,6 @@ describe("CorvexServer", () => {
         return;
       }
       if (request.method === "POST" && request.url?.endsWith("/notes")) {
-        postedNotes++;
-        if (pausePostNotes) {
-          notifyPostStarted();
-          await postGate;
-        }
         response.writeHead(201, { "content-type": "application/json" });
         response.end(JSON.stringify({ id: 1 }));
         return;
@@ -118,7 +102,7 @@ describe("CorvexServer", () => {
       response.end();
     });
     const gitlabPort = await listen(fakeGitLab);
-    const store = await EventStore.open(":memory:");
+    const store = await AppStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
     const nonAdminCipher = createTokenCipher(store.getOrCreateSessionSecret());
     const nonAdmin = store.upsertUser({
@@ -139,7 +123,6 @@ describe("CorvexServer", () => {
         baseUrl: `http://127.0.0.1:${gitlabPort}`,
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [3],
         botUsername: "corvex-bot",
       },
@@ -158,16 +141,10 @@ describe("CorvexServer", () => {
         sessionTimeout: 30 * 60_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: true,
         webBlockedHosts: [],
         skillPaths: [],
       },
-      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-      chat: { historyComments: 20 },
-      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
-      fix: { enabled: false, maxPatchBytes: 128 << 10 },
-      issue: { implementEnabled: false, historyComments: 20 },
     };
     const controller = new AbortController();
     const hooks = createCorvexHooks();
@@ -288,7 +265,6 @@ describe("CorvexServer", () => {
       expect(createdConversationResponse.status).toBe(202);
       const createdConversation = await createdConversationResponse.json() as { conversationId: string; turnId: string };
       // 对话轮次不进入事件队列，只排队等待内联执行。
-      expect(store.eventCounts().queued ?? 0).toBe(0);
       const conversationDetailResponse = await fetch(`${base}/api/ops/conversations/${createdConversation.conversationId}`, { headers: authHeaders });
       const conversationDetail = await conversationDetailResponse.json() as { systemPrompt: string };
       expect(conversationDetail).toMatchObject({
@@ -383,7 +359,6 @@ describe("CorvexServer", () => {
       expect(secondConversationResponse.status).toBe(202);
       const secondConversation = await secondConversationResponse.json() as { conversationId: string; turnId: string };
       expect(secondConversation.turnId).toBeTruthy();
-      expect(store.eventCounts().queued ?? 0).toBe(0);
       // 流式正文端点与其它轨迹端点一样先校验轮次归属，未知轮次返回 404。
       expect((await fetch(
         `${base}/api/ops/conversations/${secondConversation.conversationId}/turns/missing-turn/stream`,
@@ -435,7 +410,6 @@ describe("CorvexServer", () => {
       });
       expect(deleteResponse.status).toBe(200);
       expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: authHeaders })).status).toBe(404);
-      const queuedConversations = store.eventCounts().queued ?? 0;
       // 存储清理：预览不删文件，但会留下一条可查询的记录。
       const cleanupPreview = await fetch(`${base}/api/ops/storage/cleanup`, {
         method: "POST",
@@ -456,262 +430,6 @@ describe("CorvexServer", () => {
         ]));
       expect((await fetch(`${base}/ops/assets/missing.js`)).status).toBe(503);
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: authHeaders })).status).toBe(404);
-      expect((await fetch(`${base}/webhooks/gitlab`, { method: "POST" })).status).toBe(401);
-
-      const payload = {
-        object_kind: "note",
-        user: { id: 99, username: "developer" },
-        project: { id: 1 },
-        object_attributes: {
-          id: 99,
-          note: "@corvex-bot /review\n重点检查安全与代码质量\n\n请按示例核对：\n  输入：  user input\n  输出：validated value",
-          noteable_type: "MergeRequest",
-          system: false,
-        },
-        merge_request: { iid: 10, last_commit: { id: "a".repeat(40) } },
-      };
-      const send = () =>
-        fetch(`${base}/webhooks/gitlab`, {
-          method: "POST",
-          headers: {
-            "x-gitlab-token": "secret",
-            "x-gitlab-event": "Note Hook",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-      pausePostNotes = true;
-      const activeDelivery = send();
-      await postStarted;
-      expect((await send()).status).toBe(503);
-      releasePostNote();
-      expect((await activeDelivery).status).toBe(202);
-      pausePostNotes = false;
-      expect((await send()).status).toBe(202);
-      expect(store.eventCounts().queued).toBe(queuedConversations + 1);
-      expect(postedNotes).toBe(1);
-      expect(info).toHaveBeenCalledWith(
-        "GitLab webhook received",
-        expect.objectContaining({ eventType: "Note Hook" }),
-      );
-      expect(info).not.toHaveBeenCalledWith("GitLab webhook body", expect.anything());
-      expect(JSON.stringify(info.mock.calls)).not.toContain("x-gitlab-token");
-      expect(JSON.stringify(info.mock.calls)).not.toContain("@corvex-bot /review");
-      expect(info).toHaveBeenCalledWith(
-        "GitLab Note Hook validated",
-        expect.objectContaining({
-          actorUsername: "developer",
-          system: false,
-        }),
-      );
-      expect(info).toHaveBeenCalledWith(
-        "GitLab task enqueued",
-        expect.objectContaining({
-          webhookEventId: "1:99",
-          projectId: 1,
-          targetType: "merge_request",
-          targetIid: 10,
-          type: "review",
-        }),
-      );
-      const reviewEvent = store.listEvents("queued", 10).find((event) => event.type === "review");
-      if (!reviewEvent) throw new Error("expected a review event");
-      expect(reviewEvent.request).toBe("重点检查安全与代码质量\n\n请按示例核对：\n  输入：  user input\n  输出：validated value");
-      const reviewDetails = store.getEventDetails(reviewEvent.id);
-      expect(reviewDetails?.actorUsername).toBe("developer");
-      expect(reviewDetails?.triggerComment).toContain("@corvex-bot /review");
-      expect(reviewDetails?.triggerComment).not.toBe(reviewEvent.request);
-      const webhookSteps = reviewDetails?.events ?? [];
-      expect(webhookSteps.map((step) => step.step)).toEqual(expect.arrayContaining([
-        "webhook.read_body",
-        "webhook.decode",
-        "webhook.parse_command",
-        "webhook.validate_command",
-        "webhook.process_command",
-        "gitlab.post_note",
-        "webhook.mark_delivered",
-        "webhook.http_response",
-      ]));
-      expect(new Set(webhookSteps.map((step) => step.deliveryId)).size).toBe(3);
-      expect(JSON.stringify(webhookSteps)).not.toContain("secret");
-
-      const ignoredResponse = await fetch(`${base}/webhooks/gitlab`, {
-        method: "POST",
-        headers: {
-          "x-gitlab-token": "secret",
-          "x-gitlab-event": "Note Hook",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          ...payload,
-          object_attributes: {
-            ...payload.object_attributes,
-            id: 101,
-            note: "ordinary comment",
-          },
-        }),
-      });
-      expect(ignoredResponse.status).toBe(202);
-      expect(store.eventCounts().queued).toBe(queuedConversations + 1);
-      expect(info).toHaveBeenCalledWith(
-        "GitLab webhook ignored",
-        expect.objectContaining({ webhookEventId: "1:101", reason: "not_corvex_command" }),
-      );
-
-      const unauthorizedBotResponse = await fetch(`${base}/webhooks/gitlab`, {
-        method: "POST",
-        headers: {
-          "x-gitlab-token": "secret",
-          "x-gitlab-event": "Note Hook",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          ...payload,
-          user: { id: 3, username: "corvex-bot" },
-          object_attributes: {
-            ...payload.object_attributes,
-            id: 102,
-            note: "@corvex-bot /review",
-          },
-        }),
-      });
-      expect(unauthorizedBotResponse.status).toBe(403);
-      expect(store.eventCounts().queued).toBe(queuedConversations + 1);
-
-      config.fix.enabled = true;
-      const fixPayload = {
-        ...payload,
-        user: { id: 99, username: "developer" },
-        object_attributes: {
-          ...payload.object_attributes,
-          id: 100,
-          note: "@corvex-bot /fix handle this error more gracefully",
-        },
-      };
-      const fixResponse = await fetch(`${base}/webhooks/gitlab`, {
-        method: "POST",
-        headers: {
-          "x-gitlab-token": "secret",
-          "x-gitlab-event": "Note Hook",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(fixPayload),
-      });
-      expect(fixResponse.status).toBe(202);
-      expect(store.eventCounts().queued).toBe(queuedConversations + 2);
-      expect(postedNotes).toBe(2);
-
-      const chatRequest = "总结这个 PR\n\n再建议一个标题";
-      const chatResponse = await fetch(`${base}/webhooks/gitlab`, {
-        method: "POST",
-        headers: {
-          "x-gitlab-token": "secret",
-          "x-gitlab-event": "Note Hook",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          ...payload,
-          object_attributes: {
-            ...payload.object_attributes,
-            id: 103,
-            note: `@corvex-bot ${chatRequest}`,
-          },
-        }),
-      });
-      expect(chatResponse.status).toBe(202);
-      expect(store.eventCounts().queued).toBe(queuedConversations + 3);
-      expect(postedNotes).toBe(3);
-      expect(store.listEvents("queued", 10).find((event) => event.type === "chat")?.request).toBe(chatRequest);
-
-      const issuePayload = {
-        object_kind: "note",
-        user: { id: 99, username: "developer" },
-        project: { id: 1 },
-        object_attributes: {
-          id: 104,
-          note: "@corvex-bot Is implementing the requested labels feasible?",
-          noteable_type: "Issue",
-          system: false,
-        },
-        issue: { iid: 17 },
-      };
-      const sendIssue = (noteId: number) => fetch(`${base}/webhooks/gitlab`, {
-        method: "POST",
-        headers: {
-          "x-gitlab-token": "secret",
-          "x-gitlab-event": "Note Hook",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          ...issuePayload,
-          object_attributes: {
-            ...issuePayload.object_attributes,
-            id: noteId,
-            note: noteId === 104
-              ? issuePayload.object_attributes.note
-              : "@corvex-bot /implement Add issue labels",
-          },
-        }),
-      });
-      expect((await sendIssue(104)).status).toBe(202);
-      const assistantEvent = store.listEvents("queued", 10).find((event) => event.type === "implement");
-      expect(assistantEvent?.request).toBe("Is implementing the requested labels feasible?");
-      config.issue.implementEnabled = true;
-      const enabledIssueResponse = await sendIssue(105);
-      expect(enabledIssueResponse.status).toBe(202);
-      const implementationEvent = store.listEvents("queued", 10).find((event) => event.request === "Add issue labels");
-      expect(implementationEvent).toMatchObject({
-        targetType: "issue",
-        targetIid: 17,
-        mrIid: 0,
-        request: "Add issue labels",
-      });
-      expect(postedNotes).toBe(5);
-
-      const eventsResponse = await fetch(`${base}/api/ops/events?status=queued&limit=1`, {
-        headers: authHeaders,
-      });
-      expect(eventsResponse.status).toBe(200);
-      const events = (await eventsResponse.json()) as { items: Array<{ id: string }>; total: number };
-      expect(events.total).toBe(queuedConversations + 5);
-      expect(events.items).toHaveLength(1);
-      store.startEventTrace({ kind: "event", eventId: events.items[0]!.id }, 1, "llm", "review", "test/model", "review prompt");
-      const failedTrace = store.startEventTrace(
-        { kind: "event", eventId: events.items[0]!.id },
-        1,
-        "tool",
-        "read_file",
-        "",
-        '{"path":"missing.vue"}',
-      );
-      store.finishEventTrace(failedTrace, "failed", 5, undefined, undefined, "ENOENT: file not found");
-      const detailResponse = await fetch(`${base}/api/ops/events/${events.items[0]!.id}`, {
-        headers: authHeaders,
-      });
-      expect(detailResponse.status).toBe(200);
-      expect(await detailResponse.json()).toMatchObject({
-        status: "queued",
-        attempts: [],
-        events: expect.arrayContaining([
-          expect.objectContaining({ step: "webhook.decode", deliveryId: expect.any(String), eventId: events.items[0]!.id }),
-          expect.objectContaining({ step: "webhook.http_response", status: "succeeded", eventId: events.items[0]!.id }),
-        ]),
-        trajectory: [
-          expect.objectContaining({ kind: "tool", errorDetail: "ENOENT: file not found" }),
-          expect.objectContaining({ kind: "llm", rawContent: "review prompt" }),
-        ],
-      });
-      expect(
-        (await fetch(`${base}/api/ops/events?status=invalid`, { headers: authHeaders })).status,
-      ).toBe(400);
-      expect(
-        (
-          await fetch(`${base}/api/ops/events?search=${"x".repeat(101)}`, {
-            headers: authHeaders,
-          })
-        ).status,
-      ).toBe(400);
-
       // 首次安装通过 /api/setup/oauth 写入 OAuth 配置，不需要环境变量。
       expect((await (await fetch(`${base}/api/setup/status`)).json()).configured).toBe(false);
       const setup = await fetch(`${base}/api/setup/oauth`, {
@@ -761,7 +479,7 @@ describe("CorvexServer", () => {
     // 模拟运维台已保存的控制台凭据。
     config.operations.username = "operator";
     config.operations.password = "a secure password with 16 chars";
-    const store = await EventStore.open(":memory:");
+    const store = await AppStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
     const controller = new AbortController();
     const application = new CorvexServer(
@@ -842,7 +560,7 @@ describe("CorvexServer", () => {
       expect(keepSecret.status).toBe(200);
       expect(config.agent.apiKey).toBe("super-secret-key");
 
-      // GitLab 令牌与 Webhook 密钥同样只在 Web 保存；留空表示保留已保存值。
+      // GitLab 令牌同样只在 Web 保存；留空表示保留已保存值。
       const credentialsWrite = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { ...authHeaders, "content-type": "application/json" },
@@ -850,28 +568,25 @@ describe("CorvexServer", () => {
           settings: {
             gitlab_read_token: "read-from-console",
             gitlab_token: "write-from-console",
-            gitlab_webhook_secret: "webhook-from-console",
           },
         }),
       });
       expect(credentialsWrite.status).toBe(200);
       const credentialsBody = await credentialsWrite.json() as typeof initialBody;
-      expect(credentialsBody.overrides.gitlab_webhook_secret).toBe("••••••");
+      expect(credentialsBody.overrides.gitlab_read_token).toBe("••••••");
       expect(config.gitlab.readToken).toBe("read-from-console");
       expect(config.gitlab.writeToken).toBe("write-from-console");
-      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
 
       // 显式留空的敏感字段不会覆盖已保存值。
       const blankCredentials = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
-          settings: { gitlab_read_token: "", gitlab_token: "", gitlab_webhook_secret: "" },
+          settings: { gitlab_read_token: "", gitlab_token: "" },
         }),
       });
       expect(blankCredentials.status).toBe(200);
       expect(config.gitlab.readToken).toBe("read-from-console");
-      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
 
       const keepCredentials = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
@@ -880,7 +595,6 @@ describe("CorvexServer", () => {
       });
       expect(keepCredentials.status).toBe(200);
       expect(config.gitlab.readToken).toBe("read-from-console");
-      expect(config.gitlab.webhookSecret).toBe("webhook-from-console");
 
       // 覆盖项是整份替换：显式提交空对象时，未提交的键回退到配置文件的初始值。
       const reset = await fetch(`${base}/api/ops/settings`, {
@@ -896,7 +610,6 @@ describe("CorvexServer", () => {
         "model_api_key",
         "gitlab_read_token",
         "gitlab_token",
-        "gitlab_webhook_secret",
       ].includes(key))).toEqual([]);
       expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
       expect(config.agent.contextWindow).toBe(131_072);
@@ -1012,7 +725,7 @@ describe("CorvexServer", () => {
 
   it("stores runtime settings in SQLite even when the server runs without a config file", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const store = await EventStore.open(":memory:");
+    const store = await AppStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
@@ -1021,7 +734,6 @@ describe("CorvexServer", () => {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [],
         botUsername: "corvex",
       },
@@ -1035,7 +747,6 @@ describe("CorvexServer", () => {
         sessionTimeout: 30 * 60_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: true,
         webBlockedHosts: [],
         skillPaths: [],
@@ -1047,11 +758,6 @@ describe("CorvexServer", () => {
         compactionKeepRecentTokens: 20_000,
         summaryEnabled: true,
       },
-      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-      chat: { historyComments: 20 },
-      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
-      fix: { enabled: false, maxPatchBytes: 128 << 10 },
-      issue: { implementEnabled: false, historyComments: 20 },
     };
     const controller = new AbortController();
     const application = new CorvexServer(config, store, new GitLabClient(config.gitlab.baseUrl, "read", "write"));
@@ -1078,16 +784,16 @@ describe("CorvexServer", () => {
           settings: {
             context_window: 200_000,
             agent_request_timeout: 240,
-            gitlab_blocked_user_ids: [7, 8],
+            web_blocked_hosts: ["example.com"],
           },
         }),
       });
       expect(write.status).toBe(200);
       expect(config.agent.contextWindow).toBe(200_000);
       expect(config.agent.requestTimeout).toBe(240_000);
-      expect(config.gitlab.blockedUserIds).toEqual([7, 8]);
-      expect(store.listRuntimeSettings().find((row) => row.key === "gitlab_blocked_user_ids")?.value)
-        .toBe("[7,8]");
+      expect(config.agent.webBlockedHosts).toEqual(["example.com"]);
+      expect(store.listRuntimeSettings().find((row) => row.key === "web_blocked_hosts")?.value)
+        .toBe('["example.com"]');
     } finally {
       controller.abort();
       await running;

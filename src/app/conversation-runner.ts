@@ -3,14 +3,14 @@ import { dirname } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
-import { conversationCapabilities, normalizeConversationTitle } from "../events/model.js";
-import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../events/model.js";
-import type { EventStore } from "../events/store.js";
-import { traceExecutionStep } from "../events/execution.js";
+import { conversationCapabilities, normalizeConversationTitle } from "../model.js";
+import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../model.js";
+import type { AppStore } from "../store.js";
+import { traceExecutionStep } from "../execution.js";
 import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
-import { PiAgent, type EventTraceContext } from "../agent/pi.js";
+import { PiAgent, type TraceContext } from "../agent/pi.js";
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs-write.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
@@ -53,7 +53,7 @@ export class ConversationRunner {
 
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: EventStore,
+    private readonly store: AppStore,
     private readonly gitlab: GitLabClient,
     private readonly hooks: CorvexHooks,
   ) {
@@ -65,7 +65,7 @@ export class ConversationRunner {
     );
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
-    this.agent = new PiAgent(config, store, this.repo, undefined, undefined, undefined, gitlab, this.hooks);
+    this.agent = new PiAgent(config, store, this.repo, gitlab, this.hooks);
     // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。
     this.hooks.conversationTitleRefine.tapPromise({ name: "llm-summary", stage: 100 }, async (input) => {
       const result = await this.agent.generate(
@@ -107,7 +107,7 @@ export class ConversationRunner {
       if (active) {
         const config = structuredClone(this.config);
         applyActiveModel(config, active);
-        agent = new PiAgent(config, this.store, this.repo, undefined, undefined, undefined, gitlab ?? this.gitlab, this.hooks);
+        agent = new PiAgent(config, this.store, this.repo, gitlab ?? this.gitlab, this.hooks);
       }
       await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language, agent);
       await callAsyncHook(this.hooks.conversationAfterTurn, turn);
@@ -132,7 +132,6 @@ export class ConversationRunner {
   /** 从控制台触发一次 Git 存储清理（可先 dry-run）。 */
   async cleanupStorage(olderThanDays: number, apply: boolean) {
     return this.repo.cleanupStorage(
-      this.store.activeEventIds(),
       this.store.pendingProjectIds(),
       new Date(Date.now() - olderThanDays * 86_400_000),
       apply,
@@ -477,7 +476,7 @@ export class ConversationRunner {
     turn: ConversationTurnContext,
     workspacePath: string,
     signal: AbortSignal,
-    trace: EventTraceContext,
+    trace: TraceContext,
     language: ResponseLanguage,
   ): Promise<void> {
     if (turn.history.length > 0) return;
@@ -605,8 +604,8 @@ export class ConversationRunner {
         (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha }),
       );
       this.workspaces.set(turn.conversationId, { workspace, lastUsedAt: Date.now() });
-      const trace: EventTraceContext = {
-        scope: { kind: "conversation", turnId: turn.turnId },
+      const trace: TraceContext = {
+        scope: { turnId: turn.turnId },
         attempt: turn.attempt,
         taskType: "conversation",
         workspace,

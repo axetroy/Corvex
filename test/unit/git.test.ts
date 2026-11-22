@@ -1,10 +1,9 @@
 import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DiffEngine } from "../../src/git/diff.js";
 import { GitManager, conversationWorkspaceName, gitConfigEntries } from "../../src/git/manager.js";
 import type { Workspace } from "../../src/git/types.js";
 
@@ -34,34 +33,6 @@ describe("Git workflows", () => {
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
     directory = "";
-  });
-
-  it("builds a bounded diff from validated Git output", async () => {
-    const workspace: Workspace = {
-      projectId: 1,
-      eventId: "event-1",
-      path: "unused",
-      headSha: "b".repeat(40),
-    };
-    const calls: string[][] = [];
-    const engine = new DiffEngine(async (_workspace, args) => {
-      calls.push(args);
-      if (args.includes("--name-status")) {
-        return { stdout: Buffer.from("M\0src/app.ts\0"), truncated: false };
-      }
-      if (args.includes("--numstat")) {
-        return { stdout: Buffer.from("1\t0\tsrc/app.ts\0"), truncated: false };
-      }
-      return {
-        stdout: Buffer.from("diff --git a/src/app.ts b/src/app.ts\n@@ -0,0 +1 @@\n+value\n"),
-        truncated: false,
-      };
-    });
-    const result = await engine.diff(workspace, "a".repeat(40), 10, 1024);
-    expect(result.changes).toHaveLength(1);
-    expect(result.changes[0]?.path).toBe("src/app.ts");
-    expect(result.changes[0]?.patch).toContain("+value");
-    expect(calls).toHaveLength(3);
   });
 
   it("reads a bounded commit graph from the project mirror", async () => {
@@ -250,157 +221,6 @@ describe("Git workflows", () => {
     await expect(manager.createBranch(workspace, "bad..name")).rejects.toThrow("invalid branch name");
   });
 
-  it("applies a fix patch only to an authorized tracked file", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
-    const root = join(directory, "storage");
-    const workspacePath = join(root, "workspaces", "7", "event-1");
-    await mkdir(workspacePath, { recursive: true });
-    await execFile("git", ["init", "-q", workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
-    await execFile("git", ["-C", workspacePath, "config", "core.autocrlf", "false"]);
-    await writeFile(join(workspacePath, "a.txt"), "old\n");
-    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
-    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
-    const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-1",
-      path: workspacePath,
-      headSha: stdout.trim(),
-    };
-    const patch = [
-      "diff --git a/a.txt b/a.txt",
-      "--- a/a.txt",
-      "+++ b/a.txt",
-      "@@ -1 +1 @@",
-      "-old",
-      "+new",
-      "",
-    ].join("\n");
-    await expect(manager.applyPatch(workspace, patch, ["other.txt"], 1024)).rejects.toThrow(
-      "unauthorized or unsupported path",
-    );
-    const mismatchedHeaderPatch = patch.replace("--- a/a.txt", "--- a/other.txt").replace("+++ b/a.txt", "+++ b/other.txt");
-    await expect(manager.applyWorkspacePatch(workspace, mismatchedHeaderPatch)).rejects.toThrow(
-      "fix patch must modify existing files",
-    );
-    await expect(manager.applyWorkspacePatch(workspace, patch)).resolves.toMatchObject({
-      changedFiles: ["a.txt"],
-      patch: expect.stringContaining("+new"),
-    });
-    const newFilePatch = [
-      "diff --git a/new.txt b/new.txt",
-      "new file mode 100644",
-      "--- /dev/null",
-      "+++ b/new.txt",
-      "@@ -0,0 +1 @@",
-      "+new",
-      "",
-    ].join("\n");
-    await expect(manager.applyWorkspacePatch(workspace, newFilePatch)).rejects.toThrow("unauthorized or unsupported path");
-  });
-
-  it("applies and commits bounded Issue patches including new and deleted text files", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-issue-patch-"));
-    const root = join(directory, "storage");
-    const workspacePath = join(root, "workspaces", "7", "event-issue");
-    await mkdir(workspacePath, { recursive: true });
-    await execFile("git", ["init", "-q", workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
-    await writeFile(join(workspacePath, "remove.txt"), "remove me\n");
-    await execFile("git", ["-C", workspacePath, "add", "remove.txt"]);
-    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
-    const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-issue",
-      path: workspacePath,
-      headSha: stdout.trim(),
-    };
-    const patch = [
-      "diff --git a/add.txt b/add.txt",
-      "new file mode 100644",
-      "--- /dev/null",
-      "+++ b/add.txt",
-      "@@ -0,0 +1 @@",
-      "+added",
-      "diff --git a/remove.txt b/remove.txt",
-      "deleted file mode 100644",
-      "--- a/remove.txt",
-      "+++ /dev/null",
-      "@@ -1 +0,0 @@",
-      "-remove me",
-      "",
-    ].join("\n");
-    const applied = await manager.applyIssuePatch(workspace, patch, 4096);
-    expect(applied.changedFiles).toEqual(["add.txt", "remove.txt"]);
-    const committed = await manager.commitIssueWorkspace(workspace, "Implement issue #9", applied.changedFiles);
-    expect(committed.changedFiles).toEqual(["add.txt", "remove.txt"]);
-    await expect(execFile("git", ["-C", workspacePath, "show", `${committed.sha}:add.txt`])).resolves.toMatchObject({ stdout: "added\n" });
-    await expect(execFile("git", ["-C", workspacePath, "cat-file", "-e", `${committed.sha}:remove.txt`])).rejects.toBeDefined();
-    expect(await manager.getWorkspaceStatus(workspace)).toMatchObject({ clean: true });
-  });
-
-  it("pushes only a new Issue branch and refuses to overwrite an existing remote branch", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-issue-push-"));
-    const root = join(directory, "storage");
-    const barePath = join(directory, "remote.git");
-    const seedPath = join(directory, "seed");
-    const workspacePath = join(root, "workspaces", "7", "event-push");
-    await mkdir(join(root, "workspaces", "7"), { recursive: true });
-    await execFile("git", ["init", "--bare", "-q", barePath]);
-    await execFile("git", ["init", "--quiet", "--initial-branch=main", seedPath]);
-    await execFile("git", ["-C", seedPath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", seedPath, "config", "user.name", "Corvex test"]);
-    await writeFile(join(seedPath, "base.txt"), "base\n");
-    await execFile("git", ["-C", seedPath, "add", "base.txt"]);
-    await execFile("git", ["-C", seedPath, "commit", "-q", "-m", "base"]);
-    await execFile("git", ["-C", seedPath, "remote", "add", "origin", barePath]);
-    await execFile("git", ["-C", seedPath, "push", "-q", "origin", "main"]);
-    await execFile("git", ["clone", "-q", "--config", "core.autocrlf=false", "--branch", "main", barePath, workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
-    const { stdout: baseOutput } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const { stdout: remoteOutput } = await execFile("git", ["-C", workspacePath, "remote", "get-url", "origin"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token", "write-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-push",
-      path: workspacePath,
-      headSha: baseOutput.trim(),
-    };
-    await execFile("git", ["-C", workspacePath, "switch", "-c", "corvex/issue-9-event1"]);
-    await writeFile(join(workspacePath, "result.txt"), "implemented\n");
-    await expect(manager.getWorkspaceStatus(workspace)).resolves.toMatchObject({
-      clean: false,
-      files: [{ status: "??", path: "result.txt" }],
-    });
-    const committed = await manager.commitIssueWorkspace(workspace, "Implement issue #9", ["result.txt"]);
-    await expect(manager.pushIssueWorkspace(
-      workspace,
-      "corvex/issue-9-event1",
-      "main",
-      remoteOutput.trim(),
-      baseOutput.trim(),
-    )).resolves.toMatchObject({ sha: committed.sha, branch: "corvex/issue-9-event1" });
-    await expect(manager.pushIssueWorkspace(
-      workspace,
-      "corvex/issue-9-event1",
-      "main",
-      remoteOutput.trim(),
-      baseOutput.trim(),
-    )).rejects.toThrow("already exists");
-    const { stdout: remoteSha } = await execFile("git", ["--git-dir", barePath, "rev-parse", "refs/heads/corvex/issue-9-event1"]);
-    expect(remoteSha.trim()).toBe(committed.sha);
-  });
-
   it("returns a bounded worktree diff and supports literal path narrowing", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-worktree-diff-"));
     const root = join(directory, "storage");
@@ -439,110 +259,6 @@ describe("Git workflows", () => {
     const bounded = await manager.getWorkspaceDiff(workspace);
     expect(Buffer.byteLength(bounded.diff)).toBeLessThanOrEqual(32 << 10);
     expect(bounded.truncated).toBe(true);
-  });
-
-  it("commits tracked worktree changes with the Corvex identity", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-git-commit-"));
-    const root = join(directory, "storage");
-    const workspacePath = join(root, "workspaces", "7", "event-1");
-    await mkdir(workspacePath, { recursive: true });
-    await execFile("git", ["init", "-q", workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Local User"]);
-    await writeFile(join(workspacePath, "a.txt"), "old\n");
-    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
-    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
-    const { stdout: baseSha } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token", "write-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-1",
-      path: workspacePath,
-      headSha: baseSha.trim(),
-    };
-
-    await writeFile(join(workspacePath, "a.txt"), "updated\n");
-  await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
-  await expect(manager.commitWorkspace(workspace, "Fix the regression")).rejects.toThrow("staged files are not allowed");
-  await execFile("git", ["-C", workspacePath, "reset", "-q", "--", "a.txt"]);
-    await expect(manager.commitWorkspace(workspace, "Fix the regression")).resolves.toMatchObject({
-      message: "Fix the regression",
-      changedFiles: ["a.txt"],
-    });
-    const { stdout: author } = await execFile("git", ["-C", workspacePath, "log", "-1", "--format=%an <%ae>"]);
-    expect(author.trim()).toBe("Corvex Agent <corvex-agent@localhost>");
-    await expect(manager.getWorkspaceStatus(workspace)).resolves.toMatchObject({ clean: true });
-  });
-
-  it("pushes the current commit with a normal fast-forward ref update", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-git-push-"));
-    const root = join(directory, "storage");
-    const workspacePath = join(root, "workspaces", "7", "event-1");
-    const remotePath = join(directory, "remote.git");
-    await mkdir(workspacePath, { recursive: true });
-    await execFile("git", ["init", "--bare", "-q", remotePath]);
-    await execFile("git", ["init", "-q", workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Local User"]);
-    await writeFile(join(workspacePath, "a.txt"), "old\n");
-    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
-    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
-    await execFile("git", ["-C", workspacePath, "remote", "add", "origin", remotePath]);
-    await execFile("git", ["-C", workspacePath, "push", "-q", "origin", "HEAD:refs/heads/feature/bug-fix"]);
-    const { stdout: baseSha } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token", "write-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-1",
-      path: workspacePath,
-      headSha: baseSha.trim(),
-    };
-
-    await writeFile(join(workspacePath, "a.txt"), "updated\n");
-    const commit = await manager.commitWorkspace(workspace, "Fix the regression");
-    await expect(manager.pushWorkspace(workspace, "feature/bug-fix", remotePath)).resolves.toMatchObject({
-      sha: commit.sha,
-      branch: "feature/bug-fix",
-    });
-    const { stdout: remoteSha } = await execFile("git", ["--git-dir", remotePath, "rev-parse", "refs/heads/feature/bug-fix"]);
-    expect(remoteSha.trim()).toBe(commit.sha);
-    await expect(manager.pushWorkspace(workspace, "feature/bug-fix", remotePath)).rejects.toThrow(
-      "remote MR source branch no longer matches",
-    );
-  });
-
-  it("reverts only the latest Corvex commit without rewriting history", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-git-revert-"));
-    const root = join(directory, "storage");
-    const workspacePath = join(root, "workspaces", "7", "event-1");
-    await mkdir(workspacePath, { recursive: true });
-    await execFile("git", ["init", "-q", workspacePath]);
-    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
-    await execFile("git", ["-C", workspacePath, "config", "user.name", "Local User"]);
-    await writeFile(join(workspacePath, "a.txt"), "old\n");
-    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
-    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
-    const { stdout: baseSha } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
-    await manager.initialize();
-    const workspace: Workspace = {
-      projectId: 7,
-      eventId: "event-1",
-      path: workspacePath,
-      headSha: baseSha.trim(),
-    };
-
-    await writeFile(join(workspacePath, "a.txt"), "updated\n");
-    const commit = await manager.commitWorkspace(workspace, "Fix the regression");
-    const rollback = await manager.revertWorkspaceCommit(workspace, commit.sha);
-    expect(rollback.sha).not.toBe(commit.sha);
-    expect(rollback.revertedSha).toBe(commit.sha);
-    await expect(manager.getWorkspaceStatus(workspace)).resolves.toMatchObject({ clean: true });
-    const { stdout: content } = await execFile("git", ["-C", workspacePath, "show", "HEAD:a.txt"]);
-    expect(content).toBe("old\n");
-    await expect(manager.revertWorkspaceCommit(workspace, baseSha.trim())).rejects.toThrow("latest Corvex commit");
   });
 
   it("searches only the pinned Git tree with bounded literal path input", async () => {
@@ -608,45 +324,6 @@ describe("Git workflows", () => {
       output: expect.stringContaining("+second"),
     });
     await expect(manager.showCommit(workspace, "HEAD")).rejects.toThrow("full commit SHA");
-  });
-
-  it("dry-runs and removes only old unprotected Git storage", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-"));
-    const root = join(directory, "storage");
-    const manager = new GitManager(root, "https://gitlab.example.com", "");
-    await manager.initialize();
-    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
-    const oldWorkspace = join(root, "workspaces", "7", "orphan-event");
-    const activeWorkspace = join(root, "workspaces", "7", "active-event");
-    const oldMirror = join(root, "mirrors", "8.git");
-    const protectedMirror = join(root, "mirrors", "9.git");
-    await Promise.all([
-      mkdir(oldWorkspace, { recursive: true }),
-      mkdir(activeWorkspace, { recursive: true }),
-      mkdir(oldMirror, { recursive: true }),
-      mkdir(protectedMirror, { recursive: true }),
-    ]);
-    await Promise.all([oldWorkspace, oldMirror].map((path) => utimes(path, old, old)));
-
-    const candidates = await manager.cleanupStorage(
-      new Set(["active-event"]),
-      new Set([9]),
-      new Date(Date.now() - 24 * 60 * 60_000),
-    );
-    expect(candidates.workspaces).toEqual([oldWorkspace]);
-    expect(candidates.mirrors).toEqual([oldMirror]);
-    await expect(lstat(oldWorkspace)).resolves.toBeDefined();
-
-    await manager.cleanupStorage(
-      new Set(["active-event"]),
-      new Set([9]),
-      new Date(Date.now() - 24 * 60 * 60_000),
-      true,
-    );
-    await expect(lstat(oldWorkspace)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(oldMirror)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(lstat(activeWorkspace)).resolves.toBeDefined();
-    await expect(lstat(protectedMirror)).resolves.toBeDefined();
   });
 
   it("reuses one conversation worktree across turns and realigns the snapshot", async () => {
@@ -766,28 +443,6 @@ describe("Git workflows", () => {
     expect(await manager.pruneConversationChanges(new Set())).toBe(1);
     expect(await manager.listConversationChanges()).toMatchObject(new Map());
     expect(await manager.gcMirrors(7)).toBe(1);
-  });
-
-  it("skips protected conversation workspaces during storage cleanup", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-cleanup-conversation-"));
-    const root = join(directory, "storage");
-    const manager = new GitManager(root, "https://gitlab.example.com", "");
-    await manager.initialize();
-    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
-    const conversationId = "11111111-2222-3333-4444-555555555555";
-    const conversationWorkspace = join(root, "workspaces", "7", conversationWorkspaceName(conversationId));
-    const idleWorkspace = join(root, "workspaces", "7", conversationWorkspaceName("99999999-8888-7777-6666-555555555555"));
-    await Promise.all([
-      mkdir(conversationWorkspace, { recursive: true }),
-      mkdir(idleWorkspace, { recursive: true }),
-    ]);
-    await Promise.all([conversationWorkspace, idleWorkspace].map((path) => utimes(path, old, old)));
-
-    const cutoff = new Date(Date.now() - 24 * 60 * 60_000);
-    const protectedPlan = await manager.cleanupStorage(new Set(), new Set(), cutoff, false, new Set([conversationId]));
-    expect(protectedPlan.workspaces).toEqual([idleWorkspace]);
-    const unprotectedPlan = await manager.cleanupStorage(new Set(), new Set(), cutoff, false);
-    expect(unprotectedPlan.workspaces.sort()).toEqual([conversationWorkspace, idleWorkspace].sort());
   });
 
   it("derives conversation workspace names only from safe identifiers", () => {

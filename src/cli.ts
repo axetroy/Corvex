@@ -1,9 +1,8 @@
 import { initializeConfig, loadConfig, type ConfigRole } from "./config/config.js";
 import { applyRuntimeSettingRows } from "./config/settings.js";
 import { CorvexServer } from "./app/server.js";
-import { EventStore } from "./events/store.js";
+import { AppStore } from "./store.js";
 import { errorMessage } from "./errors.js";
-import { isEventStatus, type EventStatus } from "./events/model.js";
 import { GitLabClient } from "./gitlab/client.js";
 import { GitManager } from "./git/manager.js";
 
@@ -95,50 +94,10 @@ async function runBackup(args: string[]): Promise<void> {
   if (!database || !output) {
     throw new Error("usage: corvex backup --database <path> --output <new-path>");
   }
-  const store = await EventStore.open(database);
+  const store = await AppStore.open(database);
   try {
     await store.backup(output);
     console.info("SQLite backup created", { output });
-  } finally {
-    store.close();
-  }
-}
-
-async function runEvents(args: string[]): Promise<void> {
-  const action = args[0];
-  if (action !== "list" && action !== "retry") {
-    throw new Error("usage: corvex events [list|retry <event-id>] --database <path>");
-  }
-  const eventId = action === "retry" ? args[1] : undefined;
-  const optionStart = action === "retry" ? 2 : 1;
-  let database = "";
-  let status: EventStatus | undefined;
-  let limit = 50;
-  for (let index = optionStart; index < args.length; index++) {
-    const arg = args[index]!;
-    const value = args[++index];
-    if (!value) throw new Error(`${arg} requires a value`);
-    if (arg === "--database") {
-      database = value;
-    } else if (arg === "--status") {
-      if (!isEventStatus(value)) throw new Error(`unknown event status "${value}"`);
-      status = value;
-    } else if (arg === "--limit") {
-      limit = Number(value);
-      if (!Number.isSafeInteger(limit)) throw new Error("--limit must be an integer");
-    } else {
-      throw new Error(`unknown events option "${arg}"`);
-    }
-  }
-  if (!database || (action === "retry" && !eventId)) {
-    throw new Error("usage: corvex events [list|retry <event-id>] --database <path>");
-  }
-  const store = await EventStore.open(database);
-  try {
-    const result = action === "list"
-      ? store.listEvents(status, limit)
-      : store.retryFailedEvent(eventId ?? "");
-    console.info(JSON.stringify(result, null, 2));
   } finally {
     store.close();
   }
@@ -168,7 +127,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
     }
   }
   const config = await loadConfig(configPath, "storage");
-  const store = await EventStore.open(config.storage.database);
+  const store = await AppStore.open(config.storage.database);
   try {
     // 控制台里改过的运行时设置存在同一个 SQLite 里，CLI 也要遵守。
     applyRuntimeSettingRows(config, store.listRuntimeSettings());
@@ -179,7 +138,6 @@ async function runStorageCleanup(args: string[]): Promise<void> {
     );
     const startedAt = new Date().toISOString();
     const plan = await manager.cleanupStorage(
-      store.activeEventIds(),
       store.pendingProjectIds(),
       new Date(Date.now() - olderThanDays * 24 * 60 * 60_000),
       apply,
@@ -213,10 +171,6 @@ async function run(): Promise<void> {
     await runBackup(args.slice(1));
     return;
   }
-  if (args[0] === "events") {
-    await runEvents(args.slice(1));
-    return;
-  }
   if (args[0] === "storage") {
     if (args[1] !== "cleanup") {
       throw new Error("usage: corvex storage cleanup [--env path] [--config path] [--older-than-days days] [--apply]");
@@ -230,7 +184,7 @@ async function run(): Promise<void> {
     console.info("Configuration is valid", { path: options.configPath });
     return;
   }
-  const store = await EventStore.open(config.storage.database);
+  const store = await AppStore.open(config.storage.database);
   const gitlab = new GitLabClient(
     config.gitlab.baseUrl,
     config.gitlab.readToken,

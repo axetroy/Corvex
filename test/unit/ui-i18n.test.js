@@ -19,20 +19,12 @@ describe("operations UI locale", () => {
   });
 
   it("provides matching English and Simplified Chinese dashboard catalogs", () => {
-    expect(zhCN.overviewTitle).toBe("概览");
-    expect(en.age).toBe("Event duration");
-    expect(zhCN.age).toBe("事件耗时");
     expect(en.conversationTurnActive).toBe("A response is already in progress for this conversation.");
     expect(zhCN.conversationTurnActive).toBe("该对话已有回复正在处理中。");
     expect(zhCN.traceFirstToken).toBe("Time to First Token (TTFT)");
     expect(zhCN.traceGenerationDuration).toBe("Generation duration");
     expect(zhCN.traceTps).toBe("Generation TPS");
     expect(zhCN.traceTpsTemplate).toBe("{value} tokens/s");
-    expect(zhCN.executionSteps).toBe("执行步骤");
-    expect(en.requester).toBe("Requester");
-    expect(zhCN.requester).toBe("发起人");
-    expect(en.triggerComment).toBe("Original comment");
-    expect(zhCN.triggerComment).toBe("触发评论");
     expect(zhCN.executionStatuses.interrupted).toBe("已中断");
     expect(en.branchPickerHint).toBe("Type to search, or scroll to browse every branch.");
     expect(zhCN.branchPickerHint).toBe("输入关键字搜索，或滚动浏览全部分支。");
@@ -75,6 +67,5 @@ describe("operations UI locale", () => {
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zhCN.statuses).sort()).toEqual(Object.keys(en.statuses).sort());
     expect(Object.keys(zhCN.types).sort()).toEqual(Object.keys(en.types).sort());
-    expect(Object.keys(zhCN.outcomes).sort()).toEqual(Object.keys(en.outcomes).sort());
   });
 });

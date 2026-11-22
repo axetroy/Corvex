@@ -15,7 +15,7 @@ export interface OperationsAuthContext {
   oauthConfigured: () => boolean;
 }
 
-/** 需要登录的路径前缀；健康检查、Webhook 与 OAuth 回调保持公开。 */
+/** 需要登录的路径前缀；健康检查与 OAuth 回调保持公开。 */
 function requiresOperationsAuth(pathname: string): boolean {
   // 构建产物是公开静态资源；安装页与控制台都从 /ops/assets 加载它们。
   if (pathname.startsWith("/ops/assets/")) return false;

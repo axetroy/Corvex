@@ -1,14 +1,5 @@
-/** 系统可入队并由 Server 内联执行的事件类型集合；对话轮次不进入该队列。 */
-export const eventTypes = ["review", "fix", "explain", "chat", "implement"] as const;
-export type EventType = (typeof eventTypes)[number];
-
-/** 在边界处校验外部字符串是否为已知事件类型。 */
-export function isEventType(value: string): value is EventType {
-  return eventTypes.some((type) => type === value);
-}
-
-/** 需要模型调用的任务类型：事件类型加由 Server 内联执行的对话轮次。 */
-export const modelTaskTypes = [...eventTypes, "conversation"] as const;
+/** 需要模型调用的任务类型：Server 内联执行的对话轮次。 */
+export const modelTaskTypes = ["conversation"] as const;
 export type ModelTaskType = (typeof modelTaskTypes)[number];
 
 /** 在边界处校验外部字符串是否为已知模型任务类型。 */
@@ -16,7 +7,6 @@ export function isModelTaskType(value: string): value is ModelTaskType {
   return modelTaskTypes.some((type) => type === value);
 }
 
-export type EventTargetType = "merge_request" | "issue" | "repository";
 export type ConversationMessageStatus = "queued" | "running" | "completed" | "failed";
 
 /** 对话轮次的执行状态；由 Server 内联执行，不经过事件队列。 */
@@ -77,68 +67,9 @@ export function conversationCapabilities(mode: ConversationMode): ConversationCa
   }
 }
 
-/** 轨迹归属：事件轨迹写入事件表，对话轨迹写入对话表。 */
-export type TraceScope =
-  | { kind: "event"; eventId: string }
-  | { kind: "conversation"; turnId: string };
-
-/** SQLite、事件执行器和运维界面共同使用的事件生命周期状态集合。 */
-export const eventStatuses = [
-  "queued",
-  "preparing",
-  "analyzing",
-  "fixing",
-  "verifying",
-  "publishing",
-  "completed",
-  "failed",
-  "stale",
-  "cancelled",
-] as const;
-export type EventStatus = (typeof eventStatuses)[number];
-
-/** 在边界处校验外部字符串是否为已知事件状态。 */
-export function isEventStatus(value: string): value is EventStatus {
-  return eventStatuses.some((status) => status === value);
-}
-
-export interface Event {
-  id: string;
-  type: EventType;
-  status: EventStatus;
-  projectId: number;
-  mrIid: number;
-  targetType: EventTargetType;
-  targetIid: number;
-  targetBranch: string;
-  headSha: string;
-  actorId: number;
-  request: string;
-  createdAt: string;
-  attemptCount: number;
-  lastError: string;
-  cancellationRequested: boolean;
-  leaseToken: string;
-  failureStage: EventStatus | "";
-}
-
-export interface EventSummary extends Omit<Event, "leaseToken"> {
-  updatedAt: string;
-}
-
-export interface EventListQuery {
-  status?: EventStatus;
-  type?: EventType;
-  projectId?: number;
-  mrIid?: number;
-  search?: string;
-  limit: number;
-  offset: number;
-}
-
-export interface EventPage {
-  items: EventOperationsSummary[];
-  total: number;
+/** 轨迹归属：每条对话轨迹都属于一个轮次。 */
+export interface TraceScope {
+  turnId: string;
 }
 
 /** 模型生成内容的语言；控制台按界面语言传入，服务端缺省使用运行时配置。 */
@@ -171,7 +102,7 @@ export interface ConversationSummary {
  */
 export interface ConversationToolCall {
   name: string;
-  status: EventTraceStatus;
+  status: TraceStatus;
   /** 工具调用参数（脱敏后的 JSON 文本）；未记录时为空。 */
   input: string | null;
   durationMs: number | null;
@@ -186,7 +117,7 @@ export type ConversationProcessEntry =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "context"; id: string; text: string }
-  | { kind: "tool"; id?: string; name: string; input: string | null; status: EventTraceStatus; durationMs: number | null };
+  | { kind: "tool"; id?: string; name: string; input: string | null; status: TraceStatus; durationMs: number | null };
 
 export interface ConversationMessage {
   id: string;
@@ -234,7 +165,7 @@ export interface ConversationStreamTool {
   id: string;
   name: string;
   input: string | null;
-  status: EventTraceStatus;
+  status: TraceStatus;
   durationMs: number | null;
 }
 
@@ -279,7 +210,7 @@ export interface ConversationTurn {
   /** 该轮落库的过程条目，与对话详情里的过程块同源。 */
   process: ConversationProcessEntry[];
   timeline: ConversationTurnTransition[];
-  trajectory: EventTraceEntry[];
+  trajectory: TraceEntry[];
   events: ExecutionStep[];
 }
 
@@ -394,7 +325,7 @@ export interface ConversationTurns {
   /** 合并后的轮次分段，按轮次创建时间升序。 */
   turns: ConversationTurnSegment[];
   /** 全部轮次合并后的轨迹，按开始时间升序。 */
-  trajectory: EventTraceEntry[];
+  trajectory: TraceEntry[];
   /** 全部轮次合并后的执行步骤，按开始时间升序。 */
   events: ExecutionStep[];
 }
@@ -462,7 +393,7 @@ export function normalizeConversationTitle(raw: string, language: ResponseLangua
 }
 
 export interface CreateConversationInput {
-  /** 拥有该会话的本地用户 ID；Webhook 事件不创建会话。 */
+  /** 拥有该会话的本地用户 ID。 */
   ownerUserId: string;
   projectId: number;
   projectName: string;
@@ -474,38 +405,26 @@ export interface CreateConversationInput {
   mode?: ConversationMode;
 }
 
-export interface EventOperationsSummary extends EventSummary {
-  activityStartedAt: string;
-}
-
-export interface EventAttemptSummary {
-  attempt: number;
-  startedAt: string;
-  finishedAt: string | null;
-  error: string;
-}
-
-export interface StatusTransition<S extends string = EventStatus> {
+export interface StatusTransition<S extends string = ConversationTurnStatus> {
   from: S;
   to: S;
   at: string;
 }
 
-export type EventStatusTransition = StatusTransition<EventStatus>;
 export type ConversationTurnTransition = StatusTransition<ConversationTurnStatus>;
 
-export type EventTraceKind = "tool" | "llm" | "context";
-export type EventTraceStatus = "running" | "succeeded" | "failed";
+export type TraceKind = "tool" | "llm" | "context";
+export type TraceStatus = "running" | "succeeded" | "failed";
 
-export interface EventTraceEntry {
+export interface TraceEntry {
   id: number;
-  /** 对话轨迹所属轮次 ID；事件轨迹为空。 */
-  turnId: string | null;
+  /** 该轨迹条目所属的对话轮次 ID。 */
+  turnId: string;
   attempt: number;
   round: number | null;
-  kind: EventTraceKind;
+  kind: TraceKind;
   name: string;
-  status: EventTraceStatus;
+  status: TraceStatus;
   startedAt: string;
   finishedAt: string | null;
   durationMs: number | null;
@@ -525,23 +444,17 @@ export interface EventTraceEntry {
 
 /**
  * 执行步骤的持久化状态。`unknown` 表示副作用可能已生效但未收到回执；
- * `interrupted` 表示步骤因事件租约过期而未能正常收尾。
+ * `interrupted` 表示步骤因轮次中断而未能正常收尾。
  */
 export type ExecutionStepStatus = "running" | "succeeded" | "failed" | "ignored" | "unknown" | "interrupted";
 
-/** 单个 webhook 或事件执行步骤的脱敏追踪记录。 */
+/** 单个对话执行步骤的脱敏追踪记录。 */
 export interface ExecutionStep {
   id: number;
-  /** Webhook 投递关联 ID；纯事件执行步骤为空。 */
-  deliveryId: string | null;
-  /** GitLab webhook 事件 ID；尚未关联到 webhook 时为空。 */
-  webhookEventId: string | null;
-  /** 事件 ID；事件创建前记录的 webhook 步骤可能为空。 */
-  eventId: string | null;
-  /** 对话轨迹所属轮次 ID；事件与 webhook 步骤为空。 */
-  turnId: string | null;
-  /** 事件尝试序号；webhook 步骤为空。 */
-  attempt: number | null;
+  /** 该步骤所属的对话轮次 ID。 */
+  turnId: string;
+  /** 轮次尝试序号。 */
+  attempt: number;
   step: string;
   status: ExecutionStepStatus;
   startedAt: string;
@@ -554,33 +467,11 @@ export interface ExecutionStep {
   errorDetail: string | null;
 }
 
-export interface EventDetails extends EventSummary {
-  actorUsername: string | null;
-  triggerComment: string | null;
-  attempts: EventAttemptSummary[];
-  timeline: EventStatusTransition[];
-  trajectory: EventTraceEntry[];
-  /** 执行事件按开始时间倒序排列，包含已关联到此事件的 webhook 与执行步骤。 */
-  events: ExecutionStep[];
-}
-
+/** 运维概览：按轮次状态汇总当前活动，供 `/api/ops/overview` 使用。 */
 export interface OperationsOverview {
-  counts: Record<EventStatus, number>;
+  counts: Record<ConversationTurnStatus, number>;
   oldestQueuedAt: string | null;
-  /** 内联事件执行器的心跳；单进程部署下最多只有一个执行器在线。 */
-  runner: {
-    online: boolean;
-    lastSeenAt: string | null;
-  };
-}
-
-export interface EventResult {
-  response: string;
-  delivered: boolean;
-  event?: {
-    id: string;
-    created: boolean;
-  };
+  conversationCount: number;
 }
 
 export interface ModelCallMetric {

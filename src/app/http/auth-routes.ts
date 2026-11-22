@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { currentUser } from "../auth/context.js";
 import type { GitLabOAuthService } from "../auth/service.js";
-import type { EventStore } from "../../events/store.js";
+import type { AppStore } from "../../store.js";
 import {
   oauthStateCookieName,
   readCookie,
@@ -13,7 +13,7 @@ import { sendJson, sendText } from "./respond.js";
 
 interface AuthRoutesContext {
   oauth: GitLabOAuthService;
-  store: EventStore;
+  store: AppStore;
   /** Cookie 是否必须带 Secure；由 OAuth 回调地址推断。 */
   secureCookie: boolean;
 }

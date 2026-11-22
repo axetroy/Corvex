@@ -3,7 +3,7 @@ import { Collapse } from "antd";
 import { translate } from "../i18n.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ExecutionStep } from "../types.js";
-import { DataTable, DetailItem, Empty, ExpandableText } from "./common.js";
+import { DataTable, Empty, ExpandableText } from "./common.js";
 
 /** 执行事件的输入、输出与标识折叠区。 */
 function ExecutionStepDetails({ event, copy }: { event: ExecutionStep; copy: Copy }) {
@@ -16,12 +16,6 @@ function ExecutionStepDetails({ event, copy }: { event: ExecutionStep; copy: Cop
         label: copy.executionDetails,
         children: (
           <>
-            {event.deliveryId || event.webhookEventId ? (
-              <dl className="execution-event-identifiers">
-                {event.deliveryId ? <DetailItem label={copy.executionDeliveryId} value={event.deliveryId} /> : null}
-                {event.webhookEventId ? <DetailItem label={copy.executionWebhookEventId} value={event.webhookEventId} /> : null}
-              </dl>
-            ) : null}
             {event.input ? (
               <ExpandableText label={copy.traceInput} value={formatExecutionPayload(event.input)} className="trace-payload" />
             ) : null}

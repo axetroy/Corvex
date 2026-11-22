@@ -29,17 +29,6 @@ export function formatRelativeTime(value: string | null | undefined, copy: Copy,
   return copy.commitYearsTemplate.replace("{value}", String(Math.floor(months / 12)));
 }
 
-/** 把事件目标渲染为 `project:MR !iid` 或 `project:Issue #iid`。 */
-export function formatEventTarget(
-  event: { targetType: string; projectId: number; mrIid: number; targetIid: number },
-  copy: Copy,
-): string {
-  const issue = event.targetType === "issue";
-  return (issue ? copy.issueTargetTemplate : copy.mrTargetTemplate)
-    .replace("{project}", String(event.projectId))
-    .replace("{iid}", String(issue ? event.targetIid : event.mrIid));
-}
-
 /** 按秒、分、小时三档格式化持续时长。 */
 export function formatDuration(seconds: number | null | undefined, copy: Copy): string {
   if (seconds === null || seconds === undefined) return copy.none;

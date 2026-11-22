@@ -1,9 +1,7 @@
-import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import {
   createAgentSession,
-  createMcpExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -15,11 +13,10 @@ import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingCo
 import type { CorvexConfig } from "../config/config.js";
 import { applyActiveModel } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
-import { conversationCapabilities, defaultConversationMode } from "../events/model.js";
-import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, EventTraceEntry, EventTraceKind, ModelTaskType, TraceScope } from "../events/model.js";
-import type { EventStore } from "../events/store.js";
+import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, TraceEntry, TraceKind, ModelTaskType, TraceScope } from "../model.js";
+import type { AppStore } from "../store.js";
 import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
-import { stepContextFor, traceExecutionStep } from "../events/execution.js";
+
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
@@ -31,12 +28,6 @@ import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
-import {
-  GitLabWriteError,
-  type GitLabWriteReceipt,
-  type MergeRequestComment,
-  type MergeRequestMetadataUpdate,
-} from "../gitlab/client.js";
 import { createFsReadExtension } from "./fs-read.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
 import {
@@ -46,9 +37,6 @@ import {
   resolveTurnToolResultBytes,
 } from "./tool-budget.js";
 import { createGitHistoryExtension } from "./git/chat-history.js";
-import { createMergeRequestCommentsExtension } from "./mr-comments.js";
-import { createMergeRequestMetadataExtension } from "./mr-update.js";
-import { createGitWriteExtension } from "./git/chat-write.js";
 import { createWebReadExtension } from "./web-read.js";
 
 /** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
@@ -149,19 +137,11 @@ export interface ModelRequest {
 
 export function getAgentToolAccess(
   taskType: ModelTaskType,
-  config: Pick<CorvexConfig["agent"], "webEnabled" | "mcpEnabled">,
-  conversationMode: ConversationMode = defaultConversationMode,
-): { webFetch: boolean; mcp: boolean; mrComments: boolean; mrMetadata: boolean; gitHistory: boolean; gitWrite: boolean } {
+  config: Pick<CorvexConfig["agent"], "webEnabled">,
+): { webFetch: boolean; gitHistory: boolean } {
   return {
-    webFetch: ["review", "explain", "chat", "conversation"].includes(taskType) && config.webEnabled,
-    mcp: taskType === "review" && config.mcpEnabled,
-    mrComments: taskType === "chat",
-    mrMetadata: taskType === "chat",
-    gitHistory: taskType === "chat" || taskType === "conversation",
-    // 这里的 gitWrite 指 git commit/push 扩展，需要 MR 的源分支/远端上下文；
-    // 对话绑定的是分支而非 MR，所以不走这条路径，文件改动改由 fs-write 工具集
-    // 写入 worktree 并持久化到会话 ref，永远不会 commit/push。
-    gitWrite: taskType === "chat" || (taskType === "conversation" && conversationCapabilities(conversationMode).repositoryWrite),
+    webFetch: taskType === "conversation" && config.webEnabled,
+    gitHistory: taskType === "conversation",
   };
 }
 
@@ -177,29 +157,11 @@ export interface ModelResponse {
   usage: ModelUsage;
 }
 
-export interface EventTraceContext {
+export interface TraceContext {
   scope: TraceScope;
   attempt: number;
   taskType: ModelTaskType;
   workspace?: Workspace;
-  mergeRequest?: {
-    projectId: number;
-    mrIid: number;
-    sourceProjectId?: number;
-    targetProjectId?: number;
-    sourceBranch?: string;
-    repositoryUrl?: string;
-    expectedRemoteSha?: string;
-    pushedSha?: string;
-  };
-  issue?: {
-    projectId: number;
-    issueIid: number;
-    sourceBranch: string;
-    targetBranch: string;
-    repositoryUrl?: string;
-    expectedTargetSha?: string;
-  };
 }
 
 /**
@@ -235,44 +197,24 @@ function hasGeneratedOutput(event: AssistantMessageEvent): boolean {
   return false;
 }
 
-export type ReadMergeRequestComments = (
-  projectId: number,
-  mrIid: number,
-  limit: number,
-  signal?: AbortSignal,
-) => Promise<MergeRequestComment[]>;
-
-export type UpdateMergeRequestMetadata = (
-  projectId: number,
-  mrIid: number,
-  update: MergeRequestMetadataUpdate,
-  signal?: AbortSignal,
-) => Promise<GitLabWriteReceipt>;
-
 export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store?: EventStore,
+    private readonly store?: AppStore,
     private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit" | "getWorkspaceDiff">,
-    private readonly readMergeRequestComments?: ReadMergeRequestComments,
-    private readonly updateMergeRequestMetadata?: UpdateMergeRequestMetadata,
-    private readonly gitWriter?: Pick<
-      GitManager,
-      "writeEnabled" | "getWorkspaceStatus" | "applyWorkspacePatch" | "commitWorkspace" | "pushWorkspace" | "revertWorkspaceCommit"
-    >,
     private readonly gitlab?: GitLabClient,
     private readonly hooks?: CorvexHooks,
   ) {}
 
-  getTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
-    return this.store?.getEventTraceEntries(scope, attempt) ?? [];
+  getTraceEntries(scope: TraceScope, attempt: number): TraceEntry[] {
+    return this.store?.getTraceEntries(scope, attempt) ?? [];
   }
 
   async generate(
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: EventTraceContext,
+    trace?: TraceContext,
   ): Promise<ModelResponse> {
     if (this.hooks) await callAsyncHook(this.hooks.agentBeforeModel, request);
     if (!request.systemPrompt.trim() || !request.userPrompt.trim()) {
@@ -383,7 +325,7 @@ export class PiAgent {
     request: ModelRequest,
     workingDirectory: string,
     signal?: AbortSignal,
-    trace?: EventTraceContext,
+    trace?: TraceContext,
   ): Promise<ModelResponse> {
     const agentDir = resolve(join(this.config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
@@ -471,10 +413,9 @@ export class PiAgent {
     }));
     const model = runtime.getModel(providerId, this.config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
-    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent, request.conversationMode);
+    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
     const gitlab = request.gitlab ?? this.gitlab;
     const workspace = trace?.workspace;
-    const mergeRequest = trace?.mergeRequest;
     // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
     // 预留必须覆盖这段最坏增量加上输出预留，否则估算偏低的请求仍会超窗。
     const compactionReserveTokens = resolveCompactionReserveTokens(
@@ -534,98 +475,7 @@ export class PiAgent {
               (sha, path) => this.git!.showCommit(trace.workspace!, sha, path, signal),
             )]
           : []),
-        ...(toolAccess.mrComments && trace?.mergeRequest && this.readMergeRequestComments
-          ? [createMergeRequestCommentsExtension(
-              (limit) => this.readMergeRequestComments!(
-                trace.mergeRequest!.projectId,
-                trace.mergeRequest!.mrIid,
-                limit,
-                signal,
-              ),
-              this.config.chat.historyComments,
-            )]
-          : []),
-          ...(toolAccess.mrMetadata && trace?.mergeRequest && this.updateMergeRequestMetadata
-            ? [createMergeRequestMetadataExtension(
-                (update) => {
-                  const operation = () => this.updateMergeRequestMetadata!(
-                    trace.mergeRequest!.projectId,
-                    trace.mergeRequest!.mrIid,
-                    update,
-                    signal,
-                  );
-                  if (!this.store) return operation();
-                  return traceExecutionStep(
-                    this.store,
-                    stepContextFor(trace.scope, trace.attempt),
-                    "gitlab.update_merge_request_metadata",
-                    {
-                      projectId: trace.mergeRequest!.projectId,
-                      mrIid: trace.mergeRequest!.mrIid,
-                      fields: Object.keys(update),
-                      titleCharacters: update.title === undefined ? 0 : [...update.title].length,
-                      descriptionCharacters: update.description === undefined ? 0 : [...update.description].length,
-                    },
-                    operation,
-                    (receipt) => receipt,
-                    (error) => error instanceof GitLabWriteError && error.outcomeUnknown ? "unknown" : "failed",
-                  );
-                },
-              )]
-            : []),
-        ...(toolAccess.gitWrite &&
-          workspace &&
-          mergeRequest &&
-          mergeRequest.sourceProjectId === mergeRequest.projectId &&
-          mergeRequest.targetProjectId === mergeRequest.projectId &&
-          mergeRequest.sourceBranch &&
-          mergeRequest.repositoryUrl &&
-          this.gitWriter?.writeEnabled
-          ? [createGitWriteExtension({
-              status: () => this.runGitWrite(
-                trace!, "git.status", {}, () => this.gitWriter!.getWorkspaceStatus(workspace, signal),
-                (value) => ({ headSha: value.headSha, clean: value.clean, files: value.files }),
-              ),
-              applyPatch: (patch) => this.runGitWrite(
-                trace!, "git.apply_patch",
-                { patchBytes: Buffer.byteLength(patch), patchSha256: createHash("sha256").update(patch).digest("hex") },
-                () => this.gitWriter!.applyWorkspacePatch(workspace, patch, signal),
-                (value) => ({ changedFiles: value.changedFiles, patchBytes: Buffer.byteLength(value.patch) }),
-              ),
-              commit: (message) => this.runGitWrite(
-                trace!, "git.commit", { messageCharacters: [...message].length },
-                () => this.gitWriter!.commitWorkspace(workspace, message, signal),
-                (value) => ({ sha: value.sha, changedFiles: value.changedFiles }),
-              ),
-              push: async () => {
-                const result = await this.runGitWrite(
-                  trace!, "git.push",
-                  { projectId: mergeRequest.projectId, branch: mergeRequest.sourceBranch },
-                  () => this.gitWriter!.pushWorkspace(
-                    workspace,
-                    mergeRequest.sourceBranch!,
-                    mergeRequest.repositoryUrl!,
-                    signal,
-                    mergeRequest.expectedRemoteSha ?? workspace.headSha,
-                  ),
-                  (value) => value,
-                  (error) => error instanceof Error && "outcomeUnknown" in error ? "unknown" : "failed",
-                );
-                mergeRequest.expectedRemoteSha = result.sha;
-                mergeRequest.pushedSha = result.sha;
-                return result;
-              },
-              revert: (sha) => this.runGitWrite(
-                trace!, "git.revert", { sha },
-                () => this.gitWriter!.revertWorkspaceCommit(workspace, sha, signal),
-                (value) => value,
-              ),
-            })]
-          : []),
-        ...(toolAccess.mcp ? [createMcpExtension()] : []),
-        ...(request.taskType === "conversation" || request.taskType === "fix" || request.taskType === "implement"
-          ? [createPlanExtension()]
-          : []),
+        ...(request.taskType === "conversation" ? [createPlanExtension()] : []),
         ...(request.taskType === "conversation" && request.fs
           ? [createFsWriteExtension(request.fs)]
           : []),
@@ -1083,29 +933,9 @@ export class PiAgent {
     }
   }
 
-  private runGitWrite<T>(
-    trace: EventTraceContext,
-    step: string,
-    input: unknown,
-    operation: () => Promise<T>,
-    output: (value: T) => unknown,
-    failureStatus: (error: unknown) => "failed" | "unknown" = () => "failed",
-  ): Promise<T> {
-    if (!this.store) return operation();
-    return traceExecutionStep(
-      this.store,
-      stepContextFor(trace.scope, trace.attempt),
-      step,
-      input,
-      operation,
-      output,
-      failureStatus,
-    );
-  }
-
   private startTrace(
-    trace: EventTraceContext,
-    kind: EventTraceKind,
+    trace: TraceContext,
+    kind: TraceKind,
     name: string,
     model = "",
     rawContent: string | null = null,
@@ -1113,7 +943,7 @@ export class PiAgent {
   ): number | undefined {
     if (!this.store) return undefined;
     try {
-      return this.store.startEventTrace(
+      return this.store.startTrace(
         trace.scope,
         trace.attempt,
         kind,
@@ -1148,7 +978,7 @@ export class PiAgent {
   ): void {
     if (!this.store || traceId === undefined) return;
     try {
-      this.store.finishEventTrace(
+      this.store.finishTrace(
         traceId,
         status,
         durationMs,

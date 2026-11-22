@@ -16,7 +16,7 @@ import {
   traceTurnId,
   wheelZoomFactor,
 } from "../trace.js";
-import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
+import type { ConversationTurnSegment, TraceEntry } from "../types.js";
 import { DetailItem, TraceField } from "./common.js";
 
 type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing" | "context";
@@ -43,8 +43,8 @@ function InspectorContent({
   locale,
 }: {
   tab: InspectorTab;
-  selected: readonly EventTraceEntry[];
-  traces: readonly EventTraceEntry[];
+  selected: readonly TraceEntry[];
+  traces: readonly TraceEntry[];
   copy: Copy;
   locale: Locale;
 }) {
@@ -193,7 +193,7 @@ interface TurnBand {
 }
 
 interface DiagramProps {
-  traces: readonly EventTraceEntry[];
+  traces: readonly TraceEntry[];
   /** 按轮分组的元数据；为空表示单段（事件轨迹），时间轴不分段。 */
   turns?: readonly ConversationTurnSegment[];
   copy: Copy;

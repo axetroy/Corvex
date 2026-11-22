@@ -61,30 +61,6 @@ export function ConversationsIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 事件图标：带状态点的列表，用于侧边栏导航。 */
-export function EventsIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg {...iconProps(props)}>
-      <path d="M6 4h7.5M6 8h7.5M6 12h7.5" />
-      <circle cx="2.8" cy="4" r="0.9" />
-      <circle cx="2.8" cy="8" r="0.9" />
-      <circle cx="2.8" cy="12" r="0.9" />
-    </svg>
-  );
-}
-
-/** 概览图标：仪表盘网格，用于侧边栏导航。 */
-export function OverviewIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg {...iconProps(props)}>
-      <rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1.1" />
-      <rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1.1" />
-      <rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1.1" />
-      <rect x="8.9" y="8.9" width="4.6" height="4.6" rx="1.1" />
-    </svg>
-  );
-}
-
 /** 设置图标：齿轮，用于侧边栏导航。 */
 export function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   return (

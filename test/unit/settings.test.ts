@@ -25,7 +25,6 @@ function agentConfig(): CorvexConfig["agent"] {
     sessionTimeout: 30 * 60_000,
     maxOutputTokens: 4_096,
     dailyTokenBudget: 0,
-    mcpEnabled: false,
     webEnabled: true,
     webBlockedHosts: [],
     skillPaths: [],
@@ -44,10 +43,6 @@ function settingsConfig(): CorvexConfig {
   return {
     operations: { username: "", password: "" },
     agent: agentConfig(),
-    review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-    chat: { historyComments: 20 },
-    issue: { implementEnabled: false, historyComments: 20 },
-    fix: { enabled: false, maxPatchBytes: 128 << 10 },
     storage: {
       root: "",
       database: "",
@@ -56,14 +51,10 @@ function settingsConfig(): CorvexConfig {
       conversationWorkspaceTtlMinutes: 60,
       conversationWorkspaceMax: 8,
     },
-    events: { pollInterval: 2_000, eventTimeout: 30 * 60_000 },
     gitlab: {
       baseUrl: "https://gitlab.example.com",
       readToken: "read",
       writeToken: "write",
-      webhookSecret: "secret",
-      blockedUserIds: [7],
-      botUsername: "corvex-bot",
     },
   } as CorvexConfig;
 }
@@ -101,19 +92,14 @@ describe("validateRuntimeSettings", () => {
   });
 
   it("校验列表项", () => {
-    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[7,8]" })).toEqual([]);
-    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[]" })).toEqual([]);
-    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: '["7"]' })).toEqual([]);
-    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "[7.5]" })).toEqual([
-      "gitlab_blocked_user_ids items must be positive integers",
-    ]);
-    expect(validateRuntimeSettings({ gitlab_blocked_user_ids: "7,8" })).toEqual([
-      "gitlab_blocked_user_ids must be a JSON array",
-    ]);
     expect(validateRuntimeSettings({ web_blocked_hosts: '["https://example.com/a"]' })).toEqual([
       "web_blocked_hosts items must be bare hostnames",
     ]);
     expect(validateRuntimeSettings({ web_blocked_hosts: '["example.com"]' })).toEqual([]);
+    expect(validateRuntimeSettings({ skill_paths: '["/opt/skills"]' })).toEqual([]);
+    expect(validateRuntimeSettings({ skill_paths: "7,8" })).toEqual([
+      "skill_paths must be a JSON array",
+    ]);
   });
 
   it("校验带单位的时长", () => {
@@ -121,7 +107,7 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ agent_request_timeout: "0" })).toEqual([
       "agent_request_timeout must be at least 1",
     ]);
-    expect(validateRuntimeSettings({ events_poll_interval: "1.5" })).toEqual([]);
+    expect(validateRuntimeSettings({ agent_session_timeout: "1.5" })).toEqual([]);
   });
 
   it("校验跨字段约束", () => {
@@ -139,25 +125,19 @@ describe("applyRuntimeSettings", () => {
       context_window: "200000",
       summary_enabled: "false",
       max_output_tokens: "2048",
-      review_max_files: "42",
-      fix_enabled: "true",
       model: "gpt-4o",
       response_language: "zh-CN",
       agent_request_timeout: "300",
-      gitlab_blocked_user_ids: "[7,8]",
       web_blocked_hosts: '["example.com","example.org"]',
       skill_paths: '["/opt/skills"]',
     });
     expect(config.agent.contextWindow).toBe(200_000);
     expect(config.agent.summaryEnabled).toBe(false);
     expect(config.agent.maxOutputTokens).toBe(2_048);
-    expect(config.review.maxFiles).toBe(42);
-    expect(config.fix.enabled).toBe(true);
     expect(config.agent.model).toBe("gpt-4o");
     expect(config.agent.responseLanguage).toBe("zh-CN");
     // 界面单位是秒，配置内部仍是毫秒。
     expect(config.agent.requestTimeout).toBe(300_000);
-    expect(config.gitlab.blockedUserIds).toEqual([7, 8]);
     expect(config.agent.webBlockedHosts).toEqual(["example.com", "example.org"]);
     expect(config.agent.skillPaths).toEqual(["/opt/skills"]);
   });
@@ -209,12 +189,12 @@ describe("applyRuntimeSettingRows", () => {
   it("应用合法行并跳过损坏行", () => {
     const config = settingsConfig();
     const applied = applyRuntimeSettingRows(config, [
-      { key: "review_max_findings", value: "12" },
+      { key: "response_language", value: "zh-CN" },
       { key: "unknown_key", value: "1" },
       { key: "context_window", value: "not-a-number" },
     ]);
-    expect(applied).toEqual(["review_max_findings"]);
-    expect(config.review.maxFindings).toBe(12);
+    expect(applied).toEqual(["response_language"]);
+    expect(config.agent.responseLanguage).toBe("zh-CN");
     expect(config.agent.contextWindow).toBe(131_072);
   });
 });
@@ -226,11 +206,7 @@ describe("runtimeSettingsView", () => {
       context_window: 131_072,
       history_token_budget: 24_000,
       summary_enabled: true,
-      review_max_files: 100,
-      fix_max_patch_bytes: 128 << 10,
       agent_request_timeout: 120,
-      events_poll_interval: 2,
-      gitlab_blocked_user_ids: ["7"],
       web_blocked_hosts: [],
     });
   });
@@ -269,12 +245,12 @@ describe("copyRuntimeSettings", () => {
     const from = settingsConfig();
     from.agent.contextWindow = 300_000;
     from.agent.summaryEnabled = false;
-    from.review.maxFiles = 10;
+    from.agent.historyTokenBudget = 8_000;
     const to = settingsConfig();
     copyRuntimeSettings(from, to);
     expect(to.agent.contextWindow).toBe(300_000);
     expect(to.agent.summaryEnabled).toBe(false);
-    expect(to.review.maxFiles).toBe(10);
+    expect(to.agent.historyTokenBudget).toBe(8_000);
   });
 });
 
@@ -326,12 +302,11 @@ describe("设置页与服务端设置键的一致性", () => {
 });
 
 describe("GitLab runtime settings", () => {
-  it("treats GitLab tokens and the webhook secret as redacted settings", () => {
+  it("treats GitLab tokens as redacted settings", () => {
     expect([...secretRuntimeSettingKeys]).toEqual(expect.arrayContaining([
       "model_api_key",
       "gitlab_read_token",
       "gitlab_token",
-      "gitlab_webhook_secret",
     ]));
   });
 

@@ -2,17 +2,15 @@ import type { ServerResponse } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { CorvexConfig } from "../config/config.js";
-import type { EventStore } from "../events/store.js";
-import type { ResponseLanguage } from "../events/model.js";
+import type { AppStore } from "../store.js";
+import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
 import { currentUser } from "./auth/context.js";
 import { GitLabOAuthService } from "./auth/service.js";
 import type { FastifyRequest } from "fastify";
 import { createTokenCipher, type TokenCipher } from "../tokens.js";
 import { GitLabClient } from "../gitlab/client.js";
-import { MAX_WEBHOOK_BODY_BYTES } from "../gitlab/webhook.js";
 import { ConversationRunner } from "./conversation-runner.js";
-import { EventRunner } from "./event-runner.js";
 import { attachOperationsAuth, readCookie, sessionCookieName } from "./http/auth.js";
 import { callAsyncHook, createCorvexHooks, type CorvexHooks, type StorageCleanupContext } from "./hooks.js";
 import type { OpsContext } from "./http/context.js";
@@ -43,10 +41,8 @@ function parseListenAddress(address: string): { host: string; port: number } {
 export class CorvexServer {
   private readonly app: FastifyInstance;
   private readonly address: { host: string; port: number };
-  /** 对话轮次在 Server 进程内联执行，不进入事件队列。 */
+  /** 对话轮次在 Server 进程内联执行。 */
   private readonly conversations: ConversationRunner;
-  /** 事件（review/chat/explain/fix/implement）在 Server 进程内联执行。 */
-  private readonly events: EventRunner;
   private readonly settings: SettingsService;
   private readonly cipher: TokenCipher;
   private readonly oauth: GitLabOAuthService;
@@ -57,7 +53,7 @@ export class CorvexServer {
 
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: EventStore,
+    private readonly store: AppStore,
     private readonly gitlab: GitLabClient,
     /** 配置文件路径；提供时 Agent 控制台可在运行时覆盖上下文设置并持久化。 */
     configPath?: string,
@@ -68,8 +64,6 @@ export class CorvexServer {
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
     this.conversations = new ConversationRunner(config, store, gitlab, this.hooks);
-    // 内联事件执行器与 HTTP 服务共用同一个进程、同一个 SQLite 和同一份 Git 存储。
-    this.events = new EventRunner(config, store, gitlab, this.hooks);
     // 默认行为也走钩子：认证会话解析与设置热更新都可被插件扩展或替换。
     this.hooks.authResolveUser.tapPromise("session", async (request) => {
       const sessionId = readCookie(request.headers.cookie, sessionCookieName);
@@ -83,8 +77,6 @@ export class CorvexServer {
         applied.gitlab.readToken,
         applied.gitlab.writeToken,
       );
-      // 事件执行器持有构造期读取的参数，设置变更后立即重建，无需等下一轮循环。
-      this.events.refreshRuntimeSettings();
     });
     // 默认清理步骤全部通过钩子接入，插件可在任意 stage 追加自己的清理。
     // 每个步骤自行捕获错误写入 context.errors，避免一个失败阻断后续步骤。
@@ -170,11 +162,8 @@ export class CorvexServer {
     this.app = Fastify({
       // 原实现对 HEAD 不额外放行，交给路由兜底；保持同样的可见行为。
       exposeHeadRoutes: false,
-      // 多读一个字节，让超限 1 字节的 webhook 进入处理器并留下执行轨迹。
-      bodyLimit: MAX_WEBHOOK_BODY_BYTES + 1,
     });
-    // 所有请求体先按原始字节读取：webhook 需要原文验签与解析，
-    // `/api/ops` 自行校验 content-type 并解析 JSON。
+    // 所有请求体先按原始字节读取；`/api/ops` 自行校验 content-type 并解析 JSON。
     this.app.removeAllContentTypeParsers();
     this.app.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
       done(null, body);
@@ -208,7 +197,6 @@ export class CorvexServer {
       store: this.store,
       gitlab: this.gitlab,
       conversations: this.conversations,
-      events: this.events,
       oauth: this.oauth,
       hooks: this.hooks,
       settings: this.settings,
@@ -253,13 +241,6 @@ export class CorvexServer {
     };
     const retentionTask = this.runRetention(retention.signal);
     signal.addEventListener("abort", stopRetention, { once: true });
-    // 事件在 Server 进程内联执行：Webhook 入队后立即唤醒，重启时补跑残留事件。
-    const runnerAbort = new AbortController();
-    const abortRunner = () => runnerAbort.abort();
-    signal.addEventListener("abort", abortRunner, { once: true });
-    const eventRunnerTask = this.events.run(runnerAbort.signal).catch((error: unknown) => {
-      console.error("event runner stopped unexpectedly", { error: errorMessage(error) });
-    });
     try {
       await new Promise<void>((resolvePromise, rejectPromise) => {
         const close = () => {
@@ -293,11 +274,7 @@ export class CorvexServer {
       });
     } finally {
       signal.removeEventListener("abort", stopRetention);
-      signal.removeEventListener("abort", abortRunner);
       retention.abort();
-      // 先让执行器在关闭信号下收尾（在途事件保留租约，下次启动补跑），再释放资源。
-      runnerAbort.abort();
-      await eventRunnerTask;
       try {
         await retentionTask;
       } catch (error) {

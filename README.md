@@ -1,19 +1,20 @@
 # Corvex
 
-Corvex is a self-hosted GitLab code review and repair agent built as a single TypeScript application powered by the Pi SDK. See [design.md](design.md) for the architecture and the [documentation](https://axetroy.github.io/Corvex/).
+Corvex is a self-hosted GitLab agent built as a single TypeScript application powered by the Pi SDK. See [design.md](design.md) for the architecture and the [documentation](https://axetroy.github.io/Corvex/).
 
 ## Overview
 
-Corvex receives GitLab Note Hooks, queues work in SQLite, and executes model tasks inline in the same Server process. It supports merge-request review, chat, explanation and fix proposals, plus Issue assistance that can answer or propose implementation.
+Corvex runs persistent conversations in the ops console. Each conversation is bound to one repository branch and a pinned revision, and runs inline in the Server process.
 
-- The agent console can discover every repository visible to its GitLab read token; webhook commands can be restricted with an optional user blocklist.
-- Reviews use pinned merge-request revisions and publish validated findings as line discussions.
-- Fix proposals are for manual application. Issue replies do not write code; implementation is separately disabled by default with `issue.implement_enabled`.
-- Issue implementation targets the project default branch unless the current request explicitly names another existing branch. It creates a Draft MR and never auto-merges.
-- Corvex does not execute repository scripts or tests. SQLite records tasks and lifecycle events.
-- An optional read-only agent console and Prometheus metrics support monitoring.
+- The console discovers every repository visible to the signed-in user's GitLab token and stores conversations and turns in SQLite.
+- Each turn keeps its own trajectory, execution records and a streaming reply; the workspace includes a read-only Git graph, file browser and conversation records.
+- Conversations may read and, with explicit user intent, write to GitLab through bounded tools; the Git tool set is confined to the conversation worktree and local mirror.
+- Corvex does not execute repository scripts or tests. There is no shell executor by design.
+- Prometheus metrics and a storage cleanup console support operations.
 
-See the [getting started guide](https://axetroy.github.io/Corvex/guide), [configuration reference](https://axetroy.github.io/Corvex/configuration), [architecture](https://axetroy.github.io/Corvex/architecture), and [operations guide](https://axetroy.github.io/Corvex/operations) for setup, limits, and safety details.
+Webhook-driven task events (review, chat, explain, fix, Issue implementation) are not part of this stage; see [ROADMAP.md](ROADMAP.md) for the deferred design.
+
+See the [getting started guide](https://axetroy.github.io/Corvex/guide), [configuration reference](https://axetroy.github.io/Corvex/configuration), [architecture](https://axetroy.github.io/Corvex/architecture), and [operations guide](https://axetroy.github.io/Corvex/operations) for setup and safety details.
 
 ## Quick start
 
@@ -25,11 +26,11 @@ pnpm run build
 pnpm start -- init
 ```
 
-Provide secrets through environment variables, then set the GitLab base URL and read token in the agent console Settings page (or via CORVEX_GITLAB_BASE_URL). Follow the [getting started guide](https://axetroy.github.io/Corvex/guide) to register the Note Hook and start the Server. For Docker Compose, backups, retention, TLS, and persistent conversations, see the [operations guide](https://axetroy.github.io/Corvex/operations).
+Configure GitLab OAuth in the setup page, then sign in at `/ops` to create conversations. For Docker Compose, backups, retention and TLS, see the [operations guide](https://axetroy.github.io/Corvex/operations).
 
 ## Deployment
 
-Corvex provides a prebuilt `ghcr.io/axetroy/corvex` image and a Compose deployment with a single Server service. Follow the [operations guide](https://axetroy.github.io/Corvex/operations) for deployment, webhook registration, storage, and resource settings.
+Corvex provides a prebuilt `ghcr.io/axetroy/corvex` image and a Compose deployment with a single Server service. See the [operations guide](https://axetroy.github.io/Corvex/operations) for deployment, storage and resource settings.
 
 ## Development
 
@@ -40,10 +41,4 @@ pnpm run typecheck
 pnpm run build
 ```
 
-Run the labeled review benchmark explicitly (it calls the configured model three times):
-
-```sh
-pnpm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
-```
-
-Corvex uses a GitLab read token for API/repository reads and a write token for publication. No untrusted-code executor is included.
+Corvex uses a GitLab read token for API/repository reads and a write token when a user explicitly requests GitLab writes. No untrusted-code executor is included.

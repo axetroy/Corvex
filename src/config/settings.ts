@@ -1,5 +1,5 @@
 import type { CorvexConfig } from "./config.js";
-import type { ActiveModel } from "../events/model.js";
+import type { ActiveModel } from "../model.js";
 import { isIP } from "node:net";
 import { resolveMaxInputTokens } from "../agent/budget.js";
 import {
@@ -13,12 +13,12 @@ import {
 /**
  * Agent 控制台可在运行时覆盖的设置。
  *
- * 这些值影响模型上下文、审查流程、工具边界与发布策略，改错会直接导致请求失败或
+ * 这些值影响模型上下文、工具边界与存储策略，改错会直接导致请求失败或
  * 行为异常，因此每个键都带类型与范围约束；写入前逐项校验，写入后立即作用于后续请求。
- * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌、
- * Webhook 密钥等，这些仍从配置文件或环境变量读取。
+ * 只有启动必需项不在其中：监听地址、数据库与存储路径、控制台凭据、GitLab 令牌等，
+ * 这些仍从配置文件或环境变量读取。
  */
-export type RuntimeSettingSection = "agent" | "review" | "chat" | "issue" | "fix" | "storage" | "events" | "gitlab" | "operations";
+export type RuntimeSettingSection = "agent" | "storage" | "gitlab" | "operations";
 
 export interface RuntimeSettingDefinition {
   key: string;
@@ -37,11 +37,6 @@ export interface RuntimeSettingDefinition {
   item?: "integer" | "hostname" | "path";
   /** 允许提交空字符串（例如 bot 用户名留空）。 */
   allowEmpty?: boolean;
-  /**
-   * 该键由事件执行器在构造阶段读取（例如审查文件上限）。变更后执行器需要重建
-   * 依赖这些参数的组件，仅改内存配置不会生效。
-   */
-  eventRunnerScoped?: boolean;
   /**
    * 不在运维台展示的旧键。模型名、地址、密钥、上下文窗口与输出上限已由
    * 「模型 > 供应商与模型」管理，这里保留读取是为了升级后旧覆盖项仍能生效。
@@ -71,37 +66,20 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
   // 工具开关与联网白名单
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
-  { key: "mcp_enabled", section: "agent", field: "mcpEnabled", type: "boolean" },
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },
-  // 运行时长与事件调度：秒为界面单位，配置内部仍用毫秒。
+  // 运行时长：秒为界面单位，配置内部仍用毫秒。
   { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
   { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
-  { key: "events_poll_interval", section: "events", field: "pollInterval", type: "number", min: 1, max: 3_600, scale: 1_000 },
-  { key: "events_timeout", section: "events", field: "eventTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
-  // GitLab Webhook 行为：Server 每次处理 Note Hook 时读取。
+  // GitLab 连接：Server 每次请求时读取。
   { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500 },
   { key: "gitlab_read_token", section: "gitlab", field: "readToken", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_token", section: "gitlab", field: "writeToken", type: "string", maxLength: 2_000, allowEmpty: true },
-  { key: "gitlab_webhook_secret", section: "gitlab", field: "webhookSecret", type: "string", maxLength: 2_000, allowEmpty: true },
-  { key: "gitlab_bot_username", section: "gitlab", field: "botUsername", type: "string", maxLength: 200, allowEmpty: true },
-  { key: "gitlab_blocked_user_ids", section: "gitlab", field: "blockedUserIds", type: "list", item: "integer" },
   // GitLab OAuth：由安装页面写入，三者必须同时配置。
   { key: "gitlab_oauth_client_id", section: "gitlab", field: "oauthClientId", type: "string", maxLength: 500, allowEmpty: true },
   { key: "gitlab_oauth_client_secret", section: "gitlab", field: "oauthClientSecret", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_oauth_redirect_uri", section: "gitlab", field: "oauthRedirectUri", type: "string", maxLength: 500, allowEmpty: true },
-  // 审查与历史评论
-  { key: "review_max_files", section: "review", field: "maxFiles", type: "number", min: 1, max: 1_000, eventRunnerScoped: true },
-  { key: "review_max_findings", section: "review", field: "maxFindings", type: "number", min: 1, max: 100, eventRunnerScoped: true },
-  { key: "review_max_context_bytes", section: "review", field: "maxContextBytes", type: "number", min: 1, max: 8 << 20, eventRunnerScoped: true },
-  { key: "review_batch_concurrency", section: "review", field: "batchConcurrency", type: "number", min: 1, max: 4, eventRunnerScoped: true },
-  { key: "chat_history_comments", section: "chat", field: "historyComments", type: "number", min: 0, max: 50 },
-  { key: "issue_history_comments", section: "issue", field: "historyComments", type: "number", min: 0, max: 50 },
-  // 修复与 Issue 实现
-  { key: "fix_enabled", section: "fix", field: "enabled", type: "boolean" },
-  { key: "fix_max_patch_bytes", section: "fix", field: "maxPatchBytes", type: "number", min: 1, max: 256 << 10, eventRunnerScoped: true },
-  { key: "issue_implement_enabled", section: "issue", field: "implementEnabled", type: "boolean" },
   // 存储与对话工作区：Server 每次回收工作区/执行保留任务时读取，改后无需重启。
   { key: "storage_retention_days", section: "storage", field: "retentionDays", type: "number", min: 1, max: 36_500 },
   { key: "storage_audit_retention_days", section: "storage", field: "auditRetentionDays", type: "number", min: 1, max: 36_500 },
@@ -116,7 +94,6 @@ export const secretRuntimeSettingKeys = new Set([
   "model_api_key",
   "gitlab_read_token",
   "gitlab_token",
-  "gitlab_webhook_secret",
   "gitlab_oauth_client_secret",
 ]);
 

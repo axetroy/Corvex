@@ -8,7 +8,7 @@ export default defineConfig({
       label: 'English',
       lang: 'en-US',
       title: 'Corvex',
-      description: 'A self-hosted GitLab code review and repair agent',
+      description: 'A self-hosted GitLab agent with persistent conversations',
       themeConfig: {
         nav: [
           { text: 'Home', link: '/' },
@@ -34,7 +34,7 @@ export default defineConfig({
       label: '简体中文',
       lang: 'zh-CN',
       title: 'Corvex',
-      description: '面向自托管 GitLab 的代码审查与修复代理',
+      description: '面向自托管 GitLab 的持久对话代理',
       themeConfig: {
         nav: [
           { text: '首页', link: '/zh-CN/' },

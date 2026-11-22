@@ -3,276 +3,158 @@
 ## 架构决策与状态
 
 **目标架构与当前实现：单一 TypeScript 应用，以 Pi TypeScript SDK 作为 Agent 运行时。**
-在不保留已替换运行时遗留物的前提下，维持现有用户可见行为和安全边界。
 
-Corvex 是一个可自行部署的 GitLab 合并请求（MR）审查与修复建议助手。用户在
-GitLab MR 评论中提及 `@corvex`，并发送 `review`、`explain <path>`、`fix`、
-`status` 或 `cancel` 命令。运维控制台还提供绑定到 GitLab 项目与分支固定 SHA 的
-持久对话。系统会验证请求身份和权限，将请求持久化，针对确切的目标版本进行分析，
-并按对应工作流校验或保存结果。
+Corvex 是一个可自行部署的 GitLab 协作代理。用户在运维控制台创建绑定到某个仓库分支与固定 SHA 的持久对话，并在对话中让 Agent 查看仓库、分析 GitLab 资源、修改文件、操作本地 Git 以及按明确要求写入 GitLab。系统验证登录身份，把每轮对话持久化，并把轮次固定到服务端解析的分支头 SHA。
+
+Webhook 驱动的合并请求任务事件（review / chat / explain / fix / implement）已完整移除并记录在 [ROADMAP.md](ROADMAP.md)，当前阶段不实现。
 
 ## 目标与非目标
 
 ### 目标
 
-- 使用 Pi 处理 Agent 循环、模型和会话生命周期、自定义工具、Skills，以及可选的
-  MCP 集成；不重复实现这些运行时能力。
-- 将产品作为单一 Node.js 应用部署，只有一个 `server` 进程模式；Webhook 事件与
-  对话轮次都在该进程内执行，共享同一个 SQLite 数据库和 Git 存储。
-- 保留持久化任务、Webhook 幂等性、租约、取消、重试策略、审计、Token 用量统计和
-  可观测性。
-- 将每项任务固定到 MR 的准确 base/head SHA，并在独立的 detached Git worktree 中
-  执行。
-- 将权限控制、结果校验、补丁范围检查和发布决策保留在可信的 Corvex 代码中，不交由
-  Agent 决定。
-- 通过运维控制台创建持久对话，发现范围由 GitLab 只读 Token 的可见项目决定；对话绑定
-  仓库分支，每轮固定到服务端解析的分支头 SHA。对话统一为可读可写（`ConversationMode`
-  当前仅有 `gitlab` 一种模式）：可读取仓库、在用户明确要求时向 GitLab 发布内容，并通过
-  `src/agent/git/` 的受控 Git 工具集操作当前 worktree（status/log/diff/clone/branch/pull/merge/commit/push/revert）。
-  这些工具固定到本会话的项目与 worktree：不接受任意 URL、任意远端或强制推送；提交与 push
-  都写入项目镜像里的 `refs/conversations/<id>`，不会推送到 GitLab 分支。对话是运维控制台
-  的一等对象：每一轮都保留自己的轨迹与执行记录，可在对话内直接查看。
+- 使用 Pi 处理 Agent 循环、模型和会话生命周期、自定义工具与 Skills；不重复实现这些运行时能力。
+- 将产品作为单一 Node.js 应用部署，只有一个 `server` 进程模式；对话轮次在该进程内执行，共享同一个 SQLite 数据库和 Git 存储。
+- 保留持久化对话与轮次、取消、审计、Token 用量统计和可观测性。
+- 将每一轮固定到服务端解析的分支头 SHA，并在该对话常驻的 detached worktree 中执行。
+- 将权限控制、工具边界和 GitLab 写操作的授权判断保留在可信的 Corvex 代码中，不交由 Agent 决定。
+- 对话统一为可读可写（`ConversationMode` 当前仅有 `gitlab` 一种模式）：可读取仓库与 GitLab、在用户明确要求时写入 GitLab，并通过 `src/agent/git/` 的受控 Git 工具集操作当前 worktree（status/log/diff/show/branches/clone/branch/checkout/pull/merge/commit/push/revert）。工具固定到本会话的项目、worktree 与本地镜像：不接受任意 URL、任意远端或强制推送；push 只写入项目镜像里的 `refs/conversations/<id>`，不会推送到 GitLab 分支。
 - 将仓库代码、GitLab 凭证、模型凭证和 Agent 工具限制在已配置的自托管部署边界内。
 
 ### 非目标
 
 - 引入第二套控制平面运行时，或通过 TypeScript/Pi sidecar 与另一种运行时通信。
-- 向模型开放不受限制的 shell、文件系统、网络、GitLab 或 MCP 访问。
-- 在当前修复建议流程中执行仓库脚本、提交更改、推送分支或合并 MR。
+- 向模型开放不受限制的 shell、文件系统、网络或 GitLab 访问。
+- 执行仓库脚本、测试或任意命令；若要增加执行器，必须单独设计沙箱与显式授权模型。
 - 将 Pi 项目信任设置或提示词指令视作沙箱。
 - 在单机部署尚不需要时替换 SQLite 或引入分布式基础设施。
 
 ## 目标架构
 
 ```text
-GitLab 评论 Webhook
-       |
-       v
+用户浏览器（运维控制台）
+        |
+        v
 TypeScript Server（单进程）
-  - 验证 Webhook 令牌和事件
-  - 过滤机器人及系统评论
-  - 检查可选用户阻止列表
-  - 解析命令并创建幂等任务
-  - 提供运维 API 和持久对话工作台
-       |
-       v
-SQLite 任务/对话存储 <----- 内联事件执行器（EventRunner）
-                         - 领取租约、心跳、处理取消和重试
-                         - 获取当前 MR 或对话目标及固定版本
-                         - 准备隔离的 detached worktree
-                         - 使用任务专属工具调用 Pi SDK
-                         - 校验输出并重新确认 MR 版本
-                         - 对话不提供仓库写入，可在用户要求时发布到 GitLab
-                         - 其他授权工作流按策略校验和发布结果
+   - OAuth2 登录与请求鉴权
+   - 对话、轮次、设置与模型目录的运维 API
+   - 内联启动对话轮次
+        |
+        v
+SQLite 存储 <----- 内联对话执行器（ConversationRunner）
+                  - 领取轮次并固定分支 SHA
+                  - 准备并复用该对话的 detached worktree
+                  - 使用狭窄的工具集调用 Pi SDK
+                  - 流式推送思考、工具与正文
+                  - 落库轨迹、过程快照与最终回复
 ```
 
-事件执行器是 Server 的一个组件，而不是独立进程或独立服务。租约仍然存在，用于表达
-事件生命周期、取消与崩溃恢复；因为是单进程部署，Server 启动时可以立即回收上次进程
-留下的在途事件，不必等待租约自然过期。不得在网络文件系统上跨主机共享 SQLite 数据库。
+对话执行器是 Server 的一个组件，而不是独立进程或独立服务。不得在网络文件系统上跨主机共享 SQLite 数据库。
 
 ### 职责边界
 
 | 领域 | 负责方 |
 |---|---|
-| Webhook 验证、命令解析、用户阻止列表和能力授权 | Corvex 策略代码 |
-| 持久化任务/对话、幂等性、租约、状态转换、重试和取消 | Corvex SQLite 存储与内联事件执行器 |
-| GitLab API 访问和评论发布 | Corvex GitLab 客户端 |
+| 登录鉴权、GitLab 写操作授权 | Corvex 策略代码 |
+| 持久化对话/轮次、状态转换与取消 | Corvex SQLite 存储与内联对话执行器 |
+| GitLab API 访问 | Corvex GitLab 客户端；写操作只通过受控工具 |
 | 镜像、固定 SHA 的 worktree、受限差异和安全文件访问 | Corvex Git 引擎 |
 | Agent 循环、模型提供方、会话和上下文生命周期 | Pi SDK |
-| Skills、自定义 Agent 工具和可选 MCP 集成 | Pi 资源/扩展，由 Corvex 显式配置 |
-| 发现项/补丁校验、版本复核和发布决策 | Corvex 策略代码 |
+| Skills 与自定义 Agent 工具 | Pi 资源/扩展，由 Corvex 显式配置 |
+| 工具结果脱敏、大小限制与轨迹限长 | Corvex 策略代码 |
 
-Pi 是执行依赖，不是业务状态的权威来源。Pi 会话用于 Agent 上下文和诊断；任务状态、
-持久聊天轮次、重试、审计、取消和发布状态均以 SQLite 记录为准。独立任务使用一次性
-Pi 会话；持久对话的消息另存于 Corvex SQLite，不依赖 Pi 进程生命周期。
+Pi 是执行依赖，不是业务状态的权威来源。任务状态、持久对话消息、取消和发布状态均以 SQLite 记录为准；持久对话的消息另存于 Corvex SQLite，不依赖 Pi 进程生命周期。
 
 ## Pi 集成与能力
 
-内联事件执行器通过 TypeScript SDK 使用 `@earendil-works/pi-coding-agent`。每项任务单独创建
-会话，并显式配置工作目录、模型/运行时设置、资源加载器、工具和清理生命周期。
+内联对话执行器通过 TypeScript SDK 使用 `@earendil-works/pi-coding-agent`。每轮单独创建会话，并显式配置工作目录、模型/运行时设置、资源加载器、工具和清理生命周期。
 
 - 使用 Pi 循环执行多步推理和工具调用。
-- 仅提供当前任务所需的工具。审查或修复建议任务不得启用内置 `bash`、`edit` 或
-  `write` 工具。
-- 将自定义工具限制在狭窄用途内，例如读取固定 worktree 中经过校验的路径，或获取已
-  授权的 MR 元数据。工具实现自身必须执行字节数上限和路径边界检查。
+- 仅提供当前任务所需的工具；不启用内置 `bash`、`edit` 或 `write`。
+- 仓库文件读写工具限制在对话 worktree 内，拒绝绝对路径（可信 Skill 根目录除外），并自行执行字节数上限与路径边界检查。
 - 仅从 Corvex 管理的可信目录发现 Skills。Skills 提供指令，不提供访问控制。
-- MCP 按部署和任务类型选择启用。通过 SDK 资源加载器显式注册 Pi 的 MCP 扩展；校验
-  服务端配置，并且只暴露获批的服务和工具。不得默认认为任意 MCP 工具都是安全的。
-- 以严格的结构化格式接收 Agent 输出。发现项必须与新增差异行核对；在本地应用或发布
-  前，必须校验补丁路径和内容。
-- 订阅 Pi 事件用于日志和指标，但默认不得记录源代码、提示词、凭证或完整工具负载。
+- 订阅 Pi 事件用于流式展示、日志和指标，但默认不得记录源代码、提示词、凭证或完整工具负载；轨迹数据在 `src/store.ts` 统一脱敏并限长。
 
-Pi 工具和扩展以 Server 进程的操作系统权限运行。Server 应使用专用低权限用户，仅挂载所需
-的 worktree 和数据，使用权限范围受限的凭证，并配置容器及网络限制。提示注入防护有
-帮助，但不能视作安全边界。
+Pi 工具和扩展以 Server 进程的操作系统权限运行。Server 应使用专用低权限用户，仅挂载所需 worktree 和数据，使用权限范围受限的凭证，并配置容器及网络限制。提示注入防护有帮助，但不能视作安全边界。
 
 ## 安全不变量
 
-1. 以恒定时间比较 Webhook 密钥，并限制请求体大小。
-2. Webhook Secret 用于认证投递；只在需要接受指令的项目中注册 Webhook。运维控制台的
-  项目发现范围由 GitLab 只读 Token 决定，不使用静态项目白名单；可选用户阻止列表
-  由 Corvex 强制执行。
-3. 机器人和系统评论不得创建任务；重复的 Webhook 事件必须保持幂等。
-4. `fix` 请求必须满足修复模式已启用（`fix.enabled`）。
-5. 任务记录完整的 MR Head SHA；获取差异、准备 worktree 和发布时均须验证预期快照。
-6. 仓库路径必须规范化并限制在任务 worktree 内；在适用场景下拒绝符号链接、超大文件、
-   二进制文件和范围外路径。
-7. Agent 输出一律视为不可信。发现项必须精确引用新增行。修复补丁仅限变更路径、受大小
-   限制，并通过 `git apply --check` 和 `git diff --check` 检查。
-8. Agent 不得直接发布。发布前由 Corvex 重新检查授权、任务取消状态和 MR 版本，并使用
-   仅具备写入所需权限的 Token。
-9. 外部发布结果不确定时不得盲目重试。
-10. 不执行仓库命令或脚本。若要增加执行器，必须单独设计沙箱和显式授权模型。
+1. 用户通过 GitLab OAuth2 登录；运维 API 只暴露给登录用户，管理接口另需管理员权限。
+2. 控制台的项目发现范围由登录用户的 GitLab 令牌决定，不使用静态项目白名单。
+3. 对话轮次固定到服务端解析的分支头 SHA；快照过期时以 `stale` 结束。
+4. 仓库路径必须规范化并限制在对话 worktree 内；拒绝符号链接、超大文件、二进制文件和范围外路径。
+5. Agent 输出一律视为不可信；GitLab 写工具要求用户明确意图，不可逆或公开动作（删除、合并、审批）在描述中明确提示。
+6. 所有会话 ref 只写在本地项目镜像中，绝不推送到 GitLab 远端。
+7. 不执行仓库命令或脚本。
+8. 凭证永不回显到 API、审计日志或轨迹中；SQLite 文件及其备份必须妥善保护。
 
 ## 对话与轨迹语义
 
-对话是运维控制台的一等对象，绑定 GitLab 项目与分支，并固定到服务端解析的分支头
-SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助手回复组成；每轮回复对应一个
-`conversation` 任务，因此每轮都拥有自己独立的轨迹（`job_trace`）与执行记录
-（`execution_events`）。
+对话是运维控制台的一等对象，绑定 GitLab 项目与分支，并固定到服务端解析的分支头 SHA。一个对话包含若干轮次，每轮由一条用户消息和一条助手回复组成；每轮拥有自己的轨迹（`conversation_trace`）与执行记录（`execution_steps`）。
 
-- 对话列表与详情返回轮次数量与最近一轮状态，让控制台无需额外请求即可概览对话进展；
-  详情中的每条助手回复还会带上该轮工具调用摘要（名称、状态、脱敏后的参数与耗时），
-  使对话页可以直接展示本轮读过哪些文件、调用是否成功，而无需切到轨迹标签。
-  摘要只读取列表所需的轨迹字段并限长，完整轨迹仍只在单轮记录接口中读取。
-- 对话详情还附带由响应语言与对话模式派生的系统提示词，与执行器真正下发给模型的一致；
-  服务端在详情响应中现算，因此尚未执行过任何轮次的新对话也能在控制台查看。
-- 单轮记录通过 `GET /api/ops/conversations/:id/turns/:jobId` 读取；服务端校验该任务
-  确实属于目标对话的助手回复，避免跨对话读取轨迹。
-- 轨迹是任务级的只读可观测数据，不构成授权依据；每轮对话的轨迹与记录随任务终态固定
-  下来，不因后续轮次或对话状态变化而改变。
-- 对话的仓库能力由显式模式决定，而不是散落的硬编码假设：`gitlab` 模式可发布到
-  GitLab，文件改动通过受限的 fs-write 工具写入 worktree；`gitToolset: true` 还开放
-  `src/agent/git/` 的受控 Git 工具（含 commit/push），其中 push 只写入项目镜像的会话 ref，
-  不推送到 GitLab 远端。轨迹内容在 `src/events/store.ts` 统一脱敏并限长，不得绕过该路径。
-- 一个对话常驻一个 worktree 并跨轮次复用（目录名由对话 ID 推导，位于
-  `workspaces/<projectId>/conversation-<conversationId>`）。同一对话的轮次串行执行，
-  因此复用在并发上安全；文件改动仅通过受限的 fs-write 工具写入并保存到项目镜像的会话 ref，
-  每次执行仍重新校验分支快照。命中同一快照时只做一次 `rev-parse` 校验；快照前进时在同一目录内
-  `checkout --detach`，不重建目录。常驻工作区按空闲 TTL 与数量上限淘汰，Server
-  关闭时统一删除，`storage cleanup` 也会跳过仍有在途轮次的对话。
+- 对话列表与详情返回轮次数量与最近一轮状态；详情中的每条助手回复附带该轮工具调用摘要（名称、状态、脱敏后的参数与耗时）。
+- 对话详情附带由响应语言与对话模式派生的系统提示词，与执行器真正下发给模型的一致。
+- 单轮记录通过 `GET /api/ops/conversations/:id/turns/:turnId` 读取；服务端校验该轮确实属于目标对话。
+- 轨迹是轮次级只读可观测数据，不构成授权依据；内容在 `src/store.ts` 统一脱敏并限长，不得绕过该路径。
+- 一个对话常驻一个 worktree 并跨轮次复用（目录名由对话 ID 推导，位于 `workspaces/<projectId>/conversation-<conversationId>`）。同一对话的轮次串行执行，因此复用在并发上安全；文件改动通过受限的 fs-write 工具写入并保存到项目镜像的会话 ref，每次执行仍重新校验分支快照。命中同一快照时只做一次 `rev-parse` 校验；快照前进时在同一目录内 `checkout --detach`。常驻工作区按空闲 TTL 与数量上限淘汰，Server 关闭时统一删除，`storage cleanup` 也会跳过仍有在途轮次的对话。
 
 ## Git 快照的懒加载
 
-镜像（`mirrors/<projectId>.git`）是持久复用的对象库。固定提交不可变，因此只要镜像
-里已有目标 SHA，就不需要联网刷新远端：`prepareWorkspace` 与
-`prepareConversationWorkspace` 先做一次 `cat-file -e`，命中即跳过 fetch；缺失时才按
-SHA 定向抓取。需要比较差异基准（`git.ensure_base_sha`）等额外快照时，同样先查本地
-再联网。这既保留了「每个任务固定到不可变 SHA」的不变量，也去掉了每次执行一次多余
-的远端往返。
+镜像（`mirrors/<projectId>.git`）是持久复用的对象库。固定提交不可变，因此只要镜像里已有目标 SHA，就不需要联网刷新远端：`prepareConversationWorkspace` 先做一次 `cat-file -e`，命中即跳过 fetch；缺失时才按 SHA 定向抓取。需要导出补丁或查看提交时同样先查本地。这既保留了「每轮固定到不可变 SHA」的不变量，也去掉了每次执行多余的远端往返。
 
-## 任务与失败语义
+## 对话轮次生命周期
 
-任务生命周期为 `queued -> preparing -> analyzing -> [fixing -> verifying] ->
-publishing -> completed`，并可进入 `failed`、`stale` 或 `cancelled` 终态。任务存储
-负责校验所有状态转换。
-
-内联事件执行器通过可续期租约领取任务，并在任务运行期间检查调用方的取消请求。发布前中断的
-工作可在限定的尝试次数内重试。若租约在发布期间过期，则任务失败且不自动重试，以免
-向 GitLab 重复发布评论。执行器必须始终释放 Pi 会话并清理 worktree；清理错误也须
-明确报告。
+轮次状态为 `queued -> running -> completed`，并可进入 `failed`、`stale` 或 `cancelled` 终态。存储层校验状态转换。运行期间由 Server 内联执行，取消请求通过 SQLite 标记并在工具边界检查。取消外的失败不自动重试，避免重复产生副作用。
 
 ## TypeScript 项目结构
 
 ```text
 src/
   cli.ts
-  config/
-  app/                 # HTTP 服务端、内联事件执行器与对话执行器生命周期
-  app/http/            # Fastify 路由、鉴权、webhook 与控制台静态资源
-  jobs/                # SQLite schema、存储、状态机和指标
-  gitlab/              # Webhook 解析、命令和 REST 客户端
-  git/                 # 镜像、worktree、差异、路径和补丁操作
-  agent/               # Pi 会话工厂、事件和结构化结果解析
-  review/
-  fix/
-  implement/           # Issue 助手 / Draft MR 工作流
+  store.ts            # SQLite schema、迁移、存储与指标
+  model.ts            # 共享领域类型
+  execution.ts        # 执行步骤追踪助手
+  config/             # YAML 配置与运行时设置
+  app/                # HTTP 服务端与内联对话执行器生命周期
+  app/http/           # Fastify 路由、鉴权与控制台静态资源
+  gitlab/             # REST 客户端
+  git/                # 镜像、worktree、提交图与补丁导出
+  agent/              # Pi 会话工厂、提示词与受控工具集
 test/
   unit/
-  integration/
 ```
 
 控制台样式通过 PostCSS 编译：`postcss.config.mjs` 与 `src/app/ui/vite.config.ts` 都启用了 `postcss-nesting`，允许用标准 `&` 嵌套把重复的长祖先选择器收拢到父规则内；编译产物仍是扁平选择器，Ant Design 覆盖所需的优先级不变。
 
-HTTP 层使用 Fastify，路由按系统检查、GitLab webhook、运维 API 和控制台静态资源拆分在
-`src/app/http`；`CorvexServer` 只保留生命周期、内联事件执行、内联对话轮次与清理任务。应用级扩展点由
-`tapable` 提供（见 `src/app/hooks.ts`）：启动/关闭、认证用户解析、设置生效、事件处理前后与
-对话轮次前后都有钩子；默认行为同样注册为 tap，后续功能可追加 tap 而无需修改主流程。
-选择 Fastify 是因为
-它在不引入 ORM 或额外中间件的前提下提供成熟的路由、请求体上限和钩子机制，同时仍允许
-webhook 以原始字节读取、SSE 直接写原生响应，从而保留既有的验签、响应头、状态码与日志。
-信号、进程管理、SQLite 和文件系统操作继续使用 Node.js 内置能力。外部依赖保持精简，
-主要用于 Pi、HTTP 框架、YAML 解析和测试。运行时包管理与锁文件遵循仓库现有的 pnpm 约定；
-Node.js 版本由 `engines.node` 和 CI 固定。
+HTTP 层使用 Fastify，路由按系统检查、认证、运维 API 和控制台静态资源拆分在 `src/app/http`；`CorvexServer` 只保留生命周期、内联对话轮次与清理任务。应用级扩展点由 `tapable` 提供（见 `src/app/hooks.ts`）：启动/关闭、认证用户解析、设置生效与对话轮次前后都有钩子；默认行为同样注册为 tap，后续功能可追加 tap 而无需修改主流程。选择 Fastify 是因为它在不引入 ORM 或额外中间件的前提下提供成熟的路由、请求体上限和钩子机制，同时仍允许 SSE 直接写原生响应。信号、进程管理、SQLite 和文件系统操作继续使用 Node.js 内置能力。外部依赖保持精简，主要用于 Pi、HTTP 框架、YAML 解析和测试。
 
 ## 配置与运维
 
-保留 YAML 配置和现有环境变量名称，涵盖站点级 GitLab 令牌、Webhook 密钥、模型连接、
-监听地址、数据库路径和存储根目录，首次安装的 `/setup` 页面用于填写 GitLab OAuth Application 并写入 SQLite；用户令牌加密密钥也在首次启动时生成并保存在 SQLite，不需要额外环境变量。通过 `init` 生成配置模板，并在启动 Server 前
-按运行角色校验配置。站点令牌仍供 Webhook 事件发布使用；控制台与会话使用登录用户自己的
-GitLab 令牌。示例配置和日志中不得包含密钥。
+保留 YAML 配置和现有环境变量名称，涵盖站点级 GitLab 令牌、模型连接、监听地址、数据库路径和存储根目录。首次安装的 `/setup` 页面用于填写 GitLab OAuth Application 并写入 SQLite；用户令牌加密密钥也在首次启动时生成并保存在 SQLite。运行时设置（模型、响应语言、预算、工具开关、GitLab 连接、保留策略等）由运维台写入 `runtime_settings`，数据库是首次保存后的唯一来源。通过 `init` 生成配置模板，并在启动 Server 前按运行角色校验配置。示例配置和日志中不得包含密钥。
 
 必须保留以下能力：
 
-- `init`、按角色校验配置、`server`、`backup`、任务列表/安全重试和 Git
-  存储清理 CLI 能力。
+- `init`、按角色校验配置、`server`、`backup` 与 Git 存储清理 CLI 能力。
 - `/healthz`、基于数据库状态的 `/readyz` 和 Prometheus `/metrics`。
-- Docker Compose 的单 server 服务、非 root 用户、只读容器根文件系统、移除
-  不必要的 capabilities、资源限制，以及持久化 SQLite/Git 卷。
+- Docker Compose 的单 server 服务、非 root 用户、只读容器根文件系统、移除不必要的 capabilities、资源限制，以及持久化 SQLite/Git 卷。
 - 数据保留策略、SQLite 在线备份/恢复流程，以及 dry-run 优先的 Git 存储清理。
-- 通过人工标注样例和显式在线运行的评审基准评估质量；基准运行不属于常规 CI。
 
-运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；
-Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台包含持久对话工作台，会按
-只读 Token 发现目标、固定 SHA 并保存每轮消息；助手回复按 Markdown 渲染并提供复制操作。
-对话可以读取仓库并在用户明确要求时发布 GitLab 评论；也能通过 fs-write 工具在固定快照的 worktree 中增删改文件，并通过 `src/agent/git/` 的受控 Git 工具查看历史/差异、管理本地分支、抓取镜像、合并本地 ref、提交并把改动持久化到会话 ref；push 仅写本地镜像，不推送 GitLab 分支。
-React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、
-`react-icons`（Simple Icons 文件类型图标）、`monaco-editor`（只读代码查看器，按扩展名覆盖绝大多数语言的语法高亮，
-通过动态 import 单独分包，明暗主题分别定义并跟随 `data-theme`）、`highlight.js`（聊天回复中 Markdown 代码块的语法高亮，
-通过 XMarkdown 的 `components.code` 注入，输出先转义再渲染）与
-`react-resizable-panels`（会话列表/工作台/文件面板三栏的尺寸与折叠）
-均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。Monaco 和 highlight.js 用于不同用途：前者是文件面板的只读查看器，
-后者用于聊天输出的轻量代码块，二者不互相替代。Monaco 的语法 tokenizer 在主线程运行，只需一个同源 `editor.worker`，
-CSP 因此额外允许 `worker-src 'self' blob:`，动态注入的样式仍由 `csp.ts` 补 nonce。控制台路由选择 `react-router-dom`
-的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化
-集中在 `src/app/ui/routing.ts` 的纯函数中，`App` 用 `Routes`/`useNavigate`，管理后台用 `Link`。
+运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台以对话为核心：发现项目、绑定分支、固定 SHA、保存每轮消息与轨迹，并提供只读 Git 图谱、文件浏览与执行记录。助手回复按 Markdown 渲染并提供复制操作。
 
-运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker
-构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。
-版本标签发布会在 CI 检查通过后构建多架构 GHCR 镜像并创建源码 Release。
+React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、`react-icons`、`monaco-editor`、`highlight.js` 与 `react-resizable-panels` 均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。控制台路由选择 `react-router-dom` 的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化集中在 `src/app/ui/routing.ts` 的纯函数中。
+
+运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。版本标签发布会在 CI 检查通过后构建多架构 GHCR 镜像并创建源码 Release。
 
 ## 迁移记录
 
-TypeScript 迁移已完成。迁移按小步实施，并以原运行时行为作为参照；当前不保留永久
-RPC/sidecar 桥接。
+TypeScript 迁移已完成。Webhook 驱动的任务事件路径随后完整移除，延期设计见 [ROADMAP.md](ROADMAP.md)。当前单一运行时只保留对话执行路径。
 
-1. **架构契约：** 以本文档记录目标架构，迁移期间保持当前行为和安全不变量。
-2. **TypeScript 基础设施：** 固定 Node 和 pnpm 版本、包管理脚本、严格 TypeScript、测试运行器、
-   lint、构建和 Pi SDK 依赖。
-3. **纯领域模块：** 迁移配置校验、命令解析、模型、验证和状态转换测试。
-4. **存储与集成：** 迁移 SQLite schema/存储、GitLab API/Webhook 和 Git 引擎；迁移
-   测试并增加基于 fixture 的集成测试。
-5. **应用运行时：** 迁移 CLI、HTTP 服务端、内联事件执行器、租约、取消、数据保留、指标
-   和备份。
-6. **Pi 事件执行器：** 每项任务使用独立 Pi 会话和受控工具/资源，实现结构化输出、Token
-   统计，以及与既有行为一致的审查/修复流程。
-7. **打包发布：** 迁移 Docker/Compose、CI、发布流程、示例和文档。
-8. **切换完成：** 在通过行为一致性检查后，移除被替代的源码、模块文件、CI/发布步骤和
-   过时说明。
-
-任何阶段都不得为了简化迁移而削弱授权或安全约束。必须验证数据兼容性：TypeScript
-存储层须能无数据丢失地打开既有 SQLite schema；否则，必须在切换前提供经过测试并有
-文档说明的备份与迁移方案。
+任何阶段都不得为简化而削弱授权或安全约束。存储层须能无数据丢失地打开既有 SQLite schema：旧的 `event_trace` 会在启动时迁移为 `conversation_trace`，只保留轮次归属的数据。
 
 ## 完成标准
 
-- TypeScript 实现所有现有命令、Webhook 过滤和授权、队列/状态/重试/取消行为、GitLab
-  发布、Git 隔离、审查校验、修复补丁检查、Token 统计、指标、数据保留和备份。
-- 测试覆盖既有行为及异常输入、租约过期、取消、MR 版本过期、重复事件、无效模型输出
-  和补丁范围违规。
-- CI 中 `pnpm install --frozen-lockfile`、lint、typecheck、单元/集成测试和生产构建均通过；Docker server 与
-  server 模式均可成功启动。
+- TypeScript 实现所有对话、鉴权、工具边界、GitLab 写授权、Token 统计、指标、数据保留和备份能力。
+- 测试覆盖正常路径与异常输入、过期快照、取消和无效模型输出。
+- CI 中 `pnpm install --frozen-lockfile`、lint、typecheck、单元/集成测试和生产构建均通过；Docker server 与 server 模式均可成功启动。
 - 部署与配置文档仅描述 TypeScript/Pi 运行时。
 - 生产构建和部署使用单一运行时，不再保留被替代的源码或发布路径。
 

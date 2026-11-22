@@ -6,7 +6,6 @@ import type { Copy, Locale } from "../i18n.js";
 import type { ResolvedTheme, ThemeMode } from "../theme.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 import { AdminPanel } from "./AdminPanel.js";
-import { OverviewPage } from "./OverviewPage.js";
 import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
 import "./AdminConsole.css";
@@ -16,7 +15,6 @@ interface Props {
   locale: Locale;
   /** 当前 hash 路由，不含开头的 `#`。 */
   route: string;
-  refreshToken: number;
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;
   onThemeChange: (mode: ThemeMode) => void;
@@ -38,7 +36,6 @@ export function AdminConsole({
   copy,
   locale,
   route,
-  refreshToken,
   themeMode,
   resolvedTheme,
   onThemeChange,
@@ -46,8 +43,6 @@ export function AdminConsole({
   onRefresh,
 }: Props) {
   const [allowed, setAllowed] = useState<boolean>();
-  const [updated, setUpdated] = useState<string>();
-  const overviewActive = route === "admin/overview";
   const usersActive = route === "admin/users";
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
 
@@ -80,9 +75,6 @@ export function AdminConsole({
         </div>
         <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">
-          <Link className={overviewActive ? "active" : ""} to={adminPath("overview")}>
-            {copy.navOverview}
-          </Link>
           <Link className={usersActive ? "active" : ""} to={adminPath("users")}>
             {copy.adminUsersTitle}
           </Link>
@@ -99,15 +91,7 @@ export function AdminConsole({
         </nav>
       </aside>
       <main className="admin-console-main">
-        {overviewActive ? (
-          <OverviewPage
-            copy={copy}
-            locale={locale}
-            refreshToken={refreshToken}
-            onUpdated={onUpdated}
-            onRefresh={onRefresh}
-          />
-        ) : usersActive ? (
+        {usersActive ? (
           <>
             <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />
@@ -117,11 +101,10 @@ export function AdminConsole({
             copy={copy}
             locale={locale}
             section={section}
-            onUpdated={setUpdated}
-            onRefresh={() => undefined}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
           />
         )}
-        {updated ? <span className="admin-console-updated">{updated}</span> : null}
       </main>
     </div>
   );

@@ -3,19 +3,14 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { DiffEngine } from "./diff.js";
-import type { DiffResult, GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
+import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
 
 /** 单条 Git 命令允许捕获的标准输出上限。 */
 const maxOutput = 16 << 20;
 /** 单条 Git 命令保留的标准错误输出上限。 */
 const maxErrorOutput = 4 << 10;
-/** 安全读取 Git 工作区文件时允许的最大文件大小。 */
-const maxReadFileBytes = 16 << 20;
 /** 单次工作区 diff 返回的最大字节数。 */
 const maxWorkspaceDiffBytes = 32 << 10;
-/** 补丁解析和应用流程允许处理的最大字节数。 */
-const maxPatchBytes = 256 << 10;
 /** Git commit 对象的完整 SHA-1 或 SHA-256 十六进制格式。 */
 const shaPattern = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 /** 可安全用作工作区目录名的事件 ID 格式，并限制其最大长度。 */
@@ -70,15 +65,6 @@ export interface GitWorkspaceStatus {
   files: { path: string; status: string }[];
 }
 
-export class GitPushError extends Error {
-  readonly outcomeUnknown = true;
-
-  constructor(message: string, cause: unknown) {
-    super(message, { cause });
-    this.name = "GitPushError";
-  }
-}
-
 export interface GitStorageCleanupPlan {
   workspaces: string[];
   mirrors: string[];
@@ -125,7 +111,6 @@ export class GitManager {
   private token: string;
   private writeToken: string;
   private readonly projectLocks = new Map<number, Promise<void>>();
-  private readonly diffEngine: DiffEngine;
 
   constructor(root: string, gitlabBaseUrl: string, token: string, writeToken = "") {
     if (!root.trim()) throw new Error("Git storage root is required");
@@ -136,9 +121,6 @@ export class GitManager {
     this.token = "";
     this.writeToken = "";
     this.reconfigureGitLab(gitlabBaseUrl, token, writeToken);
-    this.diffEngine = new DiffEngine((workspace, args, input, limit, signal) =>
-      this.run(workspace.path, args, input, limit, signal),
-    );
   }
 
   /** 运维台修改 GitLab 连接设置后更新镜像来源校验与凭据；现有镜像在下次使用时重新校验来源。 */
@@ -172,7 +154,6 @@ export class GitManager {
   }
 
   async cleanupStorage(
-    activeEventIds: ReadonlySet<string>,
     protectedProjectIds: ReadonlySet<number>,
     olderThan: Date,
     apply = false,
@@ -198,7 +179,7 @@ export class GitManager {
         throw new Error(`project workspace path "${projectRoot}" is not a regular directory`);
       }
       for (const eventId of await readdir(projectRoot)) {
-        if (!eventIdPattern.test(eventId) || activeEventIds.has(eventId)) continue;
+        if (!eventIdPattern.test(eventId)) continue;
         if (
           conversationWorkspacePattern.test(eventId) &&
           activeConversationIds.has(eventId.slice(conversationWorkspacePrefix.length))
@@ -256,150 +237,6 @@ export class GitManager {
       }
     }
     return { workspaces, mirrors, applied: apply };
-  }
-
-  async prepareWorkspace(
-    projectId: number,
-    eventId: string,
-    repositoryUrl: string,
-    expectedSha: string,
-    signal?: AbortSignal,
-  ): Promise<Workspace> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    if (!eventIdPattern.test(eventId)) throw new Error("event ID contains invalid path characters");
-    if (!shaPattern.test(expectedSha)) {
-      throw new Error("expected commit SHA must be a full 40- or 64-character hexadecimal SHA");
-    }
-    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
-    return this.withProjectLock(projectId, async () => {
-      const mirror = join(this.mirrorRoot, `${projectId}.git`);
-      await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal);
-
-      const projectRoot = join(this.workspaceRoot, String(projectId));
-      await mkdir(projectRoot, { recursive: true, mode: 0o750 });
-      const rootInfo = await lstat(projectRoot);
-      if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-        throw new Error("project workspace path is not a regular directory");
-      }
-      const workspacePath = join(projectRoot, eventId);
-      try {
-        await lstat(workspacePath);
-        throw new Error(`workspace "${eventId}" already exists`);
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-      }
-      try {
-        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, expectedSha], undefined, maxErrorOutput, signal);
-      } catch (error) {
-        await this.removeWorktree(mirror, workspacePath);
-        throw error;
-      }
-      const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
-      if (actual.toLowerCase() !== expectedSha.toLowerCase()) {
-        await this.removeWorktree(mirror, workspacePath);
-        throw new Error(`workspace HEAD mismatch: got ${actual}, expected ${expectedSha}`);
-      }
-      return { projectId, eventId, path: workspacePath, headSha: expectedSha };
-    });
-  }
-
-  async prepareIssueWorkspace(
-    projectId: number,
-    eventId: string,
-    repositoryUrl: string,
-    targetBranch: string,
-    sourceBranch: string,
-    signal?: AbortSignal,
-  ): Promise<{ workspace: Workspace; baseSha: string }> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    if (!eventIdPattern.test(eventId)) throw new Error("event ID contains invalid path characters");
-    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
-    return this.withProjectLock(projectId, async () => {
-      const mirror = join(this.mirrorRoot, `${projectId}.git`);
-      await this.updateMirror(mirror, canonicalUrl, signal);
-      for (const branch of [targetBranch, sourceBranch]) {
-        await this.run(mirror, ["--git-dir", mirror, "check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
-      }
-      if (!sourceBranch.startsWith("corvex/issue-") || sourceBranch === targetBranch) {
-        throw new Error("Issue source branches must use the corvex/issue- prefix and differ from the target branch");
-      }
-      const base = await this.run(
-        mirror,
-        ["--git-dir", mirror, "rev-parse", "--verify", `refs/heads/${targetBranch}^{commit}`],
-        undefined,
-        maxErrorOutput,
-        signal,
-      );
-      const baseSha = base.stdout.toString().trim();
-      if (!shaPattern.test(baseSha)) throw new Error("GitLab target branch did not resolve to a full commit SHA");
-      const projectRoot = join(this.workspaceRoot, String(projectId));
-      await mkdir(projectRoot, { recursive: true, mode: 0o750 });
-      const rootInfo = await lstat(projectRoot);
-      if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-        throw new Error("project workspace path is not a regular directory");
-      }
-      const workspacePath = join(projectRoot, eventId);
-      try {
-        await lstat(workspacePath);
-        throw new Error(`workspace "${eventId}" already exists`);
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-      }
-      try {
-        await this.run(mirror, ["--git-dir", mirror, "worktree", "add", "--detach", workspacePath, baseSha], undefined, maxErrorOutput, signal);
-      } catch (error) {
-        await this.removeWorktree(mirror, workspacePath);
-        throw error;
-      }
-      try {
-        await this.run(workspacePath, ["switch", "--create", sourceBranch], undefined, maxErrorOutput, signal);
-        const actual = (await this.run(workspacePath, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
-        if (actual.toLowerCase() !== baseSha.toLowerCase()) {
-          throw new Error(`Issue workspace HEAD mismatch: got ${actual}, expected ${baseSha}`);
-        }
-      } catch (error) {
-        await this.removeWorktree(mirror, workspacePath);
-        throw error;
-      }
-      return { workspace: { projectId, eventId, path: workspacePath, headSha: baseSha }, baseSha };
-    });
-  }
-
-  async cleanupWorkspace(workspace: Workspace, signal?: AbortSignal, issueSourceBranch?: string): Promise<void> {
-    if (workspace.projectId <= 0 || !eventIdPattern.test(workspace.eventId)) {
-      throw new Error("invalid workspace identity");
-    }
-    if (issueSourceBranch && !issueSourceBranch.startsWith("corvex/issue-")) {
-      throw new Error("invalid Issue source branch");
-    }
-    const expectedPath = join(this.workspaceRoot, String(workspace.projectId), workspace.eventId);
-    if (resolve(workspace.path) !== resolve(expectedPath)) {
-      throw new Error("workspace path does not match its managed location");
-    }
-    await this.withProjectLock(workspace.projectId, async () => {
-      const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
-      await this.removeWorktree(mirror, expectedPath, signal);
-      if (issueSourceBranch) {
-        await this.run(mirror, ["--git-dir", mirror, "check-ref-format", "--branch", issueSourceBranch], undefined, maxErrorOutput, signal);
-        await this.run(mirror, ["--git-dir", mirror, "branch", "-D", issueSourceBranch], undefined, maxErrorOutput, signal);
-      }
-    });
-  }
-
-  /**
-   * 保证镜像里已有指定提交，供差异比较等需要额外快照的场景使用。命中本地对象库
-   * 时只做一次 `cat-file`，不联网；缺失时才按 SHA 定向抓取（会带上其全部祖先）。
-   */
-  async ensureCommitAvailable(
-    projectId: number,
-    repositoryUrl: string,
-    sha: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    if (!shaPattern.test(sha)) throw new Error("commit SHA must be a full 40- or 64-character hexadecimal SHA");
-    const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
-    await this.withProjectLock(projectId, () => this.ensureCommit(join(this.mirrorRoot, `${projectId}.git`), canonicalUrl, sha, signal));
   }
 
   /**
@@ -748,39 +585,6 @@ export class GitManager {
   private async touch(path: string): Promise<void> {
     const now = new Date();
     await utimes(path, now, now);
-  }
-
-  async diff(
-    workspace: Workspace,
-    baseSha: string,
-    maxFiles: number,
-    maxFileDiffBytes: number,
-    signal?: AbortSignal,
-  ): Promise<DiffResult> {
-    this.validateWorkspace(workspace);
-    return this.diffEngine.diff(workspace, baseSha, maxFiles, maxFileDiffBytes, signal);
-  }
-
-  async readFile(
-    workspace: Workspace,
-    name: string,
-    maxBytes: number,
-    signal?: AbortSignal,
-  ): Promise<Uint8Array> {
-    this.validateWorkspace(workspace);
-    if (maxBytes <= 0 || maxBytes > maxReadFileBytes) {
-      throw new Error(`maxBytes must be between 1 and ${maxReadFileBytes}`);
-    }
-    this.validateWorkspaceFilePath(name);
-    const result = await this.run(
-      workspace.path,
-      ["cat-file", "blob", `${workspace.headSha}:${name}`],
-      undefined,
-      maxBytes,
-      signal,
-    );
-    if (result.truncated) throw new Error(`file exceeds ${maxBytes}-byte read limit`);
-    return result.stdout;
   }
 
   async getWorkspaceDiff(
@@ -1266,136 +1070,6 @@ export class GitManager {
     return { sha, output: result.stdout.toString("utf8"), truncated: result.truncated };
   }
 
-  async applyPatch(
-    workspace: Workspace,
-    patch: string,
-    allowedPaths: string[],
-    limit: number,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    this.validateWorkspace(workspace);
-    if (limit <= 0 || limit > maxPatchBytes || !patch || Buffer.byteLength(patch) > limit) {
-      throw new Error("fix patch is empty or exceeds its configured size limit");
-    }
-    const paths = this.validateFixPatch(patch, allowedPaths);
-    const status = await this.run(
-      workspace.path,
-      ["status", "--porcelain", "--untracked-files=all"],
-      undefined,
-      maxErrorOutput,
-      signal,
-    );
-    if (status.stdout.byteLength > 0) throw new Error("patch worktree is not clean");
-    for (const name of paths) {
-      const entry = await this.run(workspace.path, ["ls-tree", "-z", "HEAD", "--", name], undefined, maxErrorOutput, signal);
-      const value = entry.stdout.toString();
-      if (!value.startsWith("100644 blob ") && !value.startsWith("100755 blob ")) {
-        throw new Error(`patch target "${name}" is not a regular tracked file`);
-      }
-    }
-    await this.run(workspace.path, ["apply", "--check", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
-    await this.run(workspace.path, ["apply", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
-    await this.run(workspace.path, ["diff", "--check", "HEAD", "--"], undefined, maxErrorOutput, signal);
-    const changedResult = await this.run(workspace.path, ["diff", "--name-only", "-z", "HEAD", "--"], undefined, maxPatchBytes, signal);
-    if (changedResult.truncated) throw new Error("patched file list exceeds output limit");
-    const changed = changedResult.stdout.toString().split("\0").filter(Boolean);
-    if (changed.some((name) => !paths.includes(name))) {
-      throw new Error("applied patch changed an unauthorized path");
-    }
-    const finalPatch = await this.run(
-      workspace.path,
-      ["diff", "--no-ext-diff", "--unified=3", "HEAD", "--"],
-      undefined,
-      limit,
-      signal,
-    );
-    if (finalPatch.truncated) throw new Error("validated patch exceeds configured size limit");
-    if (finalPatch.stdout.length === 0) throw new Error("generated patch produced no worktree changes");
-    return finalPatch.stdout.toString();
-  }
-
-  async applyWorkspacePatch(
-    workspace: Workspace,
-    patch: string,
-    signal?: AbortSignal,
-  ): Promise<{ patch: string; changedFiles: string[] }> {
-    this.validateWorkspace(workspace);
-    const tracked = await this.run(workspace.path, ["ls-files", "-z"], undefined, maxOutput, signal);
-    if (tracked.truncated) throw new Error("tracked file list exceeds the output limit");
-    const allowedPaths = tracked.stdout.toString().split("\0").filter(Boolean);
-    const changedFiles = this.validateFixPatch(patch, allowedPaths);
-    for (const name of changedFiles) {
-      const entry = await this.run(workspace.path, ["ls-tree", "-z", "HEAD", "--", name], undefined, maxErrorOutput, signal);
-      if (!entry.stdout.toString().startsWith("100644 blob ") && !entry.stdout.toString().startsWith("100755 blob ")) {
-        throw new Error(`patch target "${name}" is not a regular tracked file`);
-      }
-    }
-    const appliedPatch = await this.applyPatch(workspace, patch, allowedPaths, maxPatchBytes, signal);
-    return { patch: appliedPatch, changedFiles };
-  }
-
-  async applyIssuePatch(
-    workspace: Workspace,
-    patch: string,
-    limit: number,
-    signal?: AbortSignal,
-  ): Promise<{ patch: string; changedFiles: string[] }> {
-    this.validateWorkspace(workspace);
-    if (!patch.trim() || Buffer.byteLength(patch) > limit || limit <= 0 || limit > maxPatchBytes) {
-      throw new Error("Issue patch is empty or exceeds its configured size limit");
-    }
-    const status = await this.getWorkspaceStatus(workspace, signal);
-    if (!status.clean) throw new Error("Issue patch worktree is not clean");
-    const trackedResult = await this.run(workspace.path, ["ls-files", "-z"], undefined, maxOutput, signal);
-    if (trackedResult.truncated) throw new Error("tracked file list exceeds the output limit");
-    const trackedPaths = new Set(trackedResult.stdout.toString().split("\0").filter(Boolean));
-    const paths = this.validateIssuePatch(patch, trackedPaths);
-    for (const name of paths) {
-      const parts = name.split("/");
-      for (let index = 1; index < parts.length; index++) {
-        const parentPath = join(workspace.path, ...parts.slice(0, index));
-        try {
-          const parent = await lstat(parentPath);
-          if (!parent.isDirectory() || parent.isSymbolicLink()) {
-            throw new Error(`Issue patch path "${name}" has a non-directory or symbolic-link parent`);
-          }
-        } catch (error) {
-          if (error instanceof Error && "code" in error && error.code === "ENOENT") break;
-          throw error;
-        }
-      }
-      if (!trackedPaths.has(name)) {
-        try {
-          await lstat(join(workspace.path, ...parts));
-          throw new Error(`Issue patch new file "${name}" already exists`);
-        } catch (error) {
-          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-        }
-      }
-      const current = await this.run(workspace.path, ["ls-tree", "-z", "HEAD", "--", name], undefined, maxErrorOutput, signal);
-      const entry = current.stdout.toString();
-      if (trackedPaths.has(name) && !entry.startsWith("100644 blob ") && !entry.startsWith("100755 blob ")) {
-        throw new Error(`Issue patch target "${name}" is not a regular tracked file`);
-      }
-    }
-    await this.run(workspace.path, ["apply", "--check", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
-    await this.run(workspace.path, ["apply", "--whitespace=error", "-"], Buffer.from(patch), maxErrorOutput, signal);
-    await this.run(workspace.path, ["diff", "--check", "HEAD", "--"], undefined, maxErrorOutput, signal);
-    const [modified, untracked] = await Promise.all([
-      this.run(workspace.path, ["diff", "--name-only", "-z", "HEAD", "--"], undefined, maxPatchBytes, signal),
-      this.run(workspace.path, ["ls-files", "--others", "--exclude-standard", "-z"], undefined, maxPatchBytes, signal),
-    ]);
-    if (modified.truncated || untracked.truncated) throw new Error("Issue patch changed-file list exceeds output limits");
-    const changedFiles = [...new Set([
-      ...modified.stdout.toString().split("\0").filter(Boolean),
-      ...untracked.stdout.toString().split("\0").filter(Boolean),
-    ])].sort();
-    if (changedFiles.length !== paths.length || changedFiles.some((name) => !paths.includes(name)) || paths.some((name) => !changedFiles.includes(name))) {
-      throw new Error("Issue patch changed no files or modified an unauthorized path");
-    }
-    return { patch, changedFiles };
-  }
-
   async getWorkspaceStatus(workspace: Workspace, signal?: AbortSignal): Promise<GitWorkspaceStatus> {
     this.validateWorkspace(workspace);
     const [head, status] = await Promise.all([
@@ -1415,309 +1089,6 @@ export class GitManager {
       path: line.slice(3),
     }));
     return { headSha: head.stdout.toString().trim(), clean: files.length === 0, files };
-  }
-
-  async commitWorkspace(
-    workspace: Workspace,
-    message: string,
-    signal?: AbortSignal,
-  ): Promise<{ sha: string; message: string; changedFiles: string[] }> {
-    this.validateWorkspace(workspace);
-    if (!message.trim() || message.length > 2000 || message.includes("\0")) {
-      throw new Error("commit message must contain 1-2000 characters");
-    }
-    const status = await this.getWorkspaceStatus(workspace, signal);
-    if (status.clean) throw new Error("cannot commit a clean worktree");
-    if (status.files.some(({ status: fileStatus }) => fileStatus !== " M")) {
-      throw new Error("commit only supports unstaged modifications to tracked files; untracked, deleted, or staged files are not allowed");
-    }
-    const baseAncestor = await this.run(
-      workspace.path,
-      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 10_000, allowExitCodes: [1] },
-    );
-    if (baseAncestor.exitCode !== 0) throw new Error("workspace HEAD is not descended from the pinned MR HEAD");
-    await this.run(workspace.path, ["add", "-u", "--"], undefined, maxErrorOutput, signal);
-    await this.run(workspace.path, ["diff", "--cached", "--check"], undefined, maxErrorOutput, signal);
-    await this.run(
-      workspace.path,
-      [
-        "-c", "user.name=Corvex Agent",
-        "-c", "user.email=corvex-agent@localhost",
-        "-c", "commit.gpgsign=false",
-        "commit", "--no-verify", "-m", message,
-      ],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000 },
-    );
-    const [head, changed] = await Promise.all([
-      this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal),
-      this.run(workspace.path, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"], undefined, 64 << 10, signal),
-    ]);
-    if (changed.truncated) throw new Error("committed file list exceeds the output limit");
-    return {
-      sha: head.stdout.toString().trim(),
-      message: message.trim(),
-      changedFiles: changed.stdout.toString().split("\0").filter(Boolean),
-    };
-  }
-
-  async commitIssueWorkspace(
-    workspace: Workspace,
-    message: string,
-    changedFiles: string[],
-    signal?: AbortSignal,
-  ): Promise<{ sha: string; message: string; changedFiles: string[] }> {
-    this.validateWorkspace(workspace);
-    if (!message.trim() || message.length > 2000 || message.includes("\0")) {
-      throw new Error("commit message must contain 1-2000 characters");
-    }
-    if (changedFiles.length === 0 || changedFiles.length > 1000 || changedFiles.some((name) => !this.validPatchPath(name))) {
-      throw new Error("Issue commit requires a bounded list of valid patch paths");
-    }
-    const status = await this.getWorkspaceStatus(workspace, signal);
-    if (status.clean || status.files.some(({ status: fileStatus, path }) =>
-      !changedFiles.includes(path) || ![" M", " D", "??"].includes(fileStatus),
-    )) {
-      throw new Error("Issue commit worktree contains changes outside the validated patch");
-    }
-    await this.run(workspace.path, ["--literal-pathspecs", "add", "-A", "--", ...changedFiles], undefined, maxErrorOutput, signal);
-    await this.run(workspace.path, ["diff", "--cached", "--check"], undefined, maxErrorOutput, signal);
-    const staged = await this.run(workspace.path, ["diff", "--cached", "--name-only", "-z"], undefined, maxPatchBytes, signal);
-    if (staged.truncated) throw new Error("Issue staged file list exceeds output limit");
-    const stagedFiles = staged.stdout.toString().split("\0").filter(Boolean).sort();
-    const expectedFiles = [...new Set(changedFiles)].sort();
-    if (stagedFiles.length !== expectedFiles.length || stagedFiles.some((name, index) => name !== expectedFiles[index])) {
-      throw new Error("Issue commit staged paths do not match the validated patch");
-    }
-    const ancestry = await this.run(
-      workspace.path,
-      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 10_000, allowExitCodes: [1] },
-    );
-    if (ancestry.exitCode !== 0) throw new Error("Issue workspace HEAD is not descended from its pinned base");
-    await this.run(
-      workspace.path,
-      ["-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false", "commit", "--no-verify", "-m", message.trim()],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000 },
-    );
-    const committed = await this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal);
-    const committedFiles = await this.run(
-      workspace.path,
-      ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"],
-      undefined,
-      maxPatchBytes,
-      signal,
-    );
-    if (committedFiles.truncated) throw new Error("Issue committed file list exceeds output limit");
-    return {
-      sha: committed.stdout.toString().trim(),
-      message: message.trim(),
-      changedFiles: committedFiles.stdout.toString().split("\0").filter(Boolean),
-    };
-  }
-
-  async pushWorkspace(
-    workspace: Workspace,
-    branch: string,
-    expectedRepositoryUrl: string,
-    signal?: AbortSignal,
-    expectedRemoteSha = workspace.headSha,
-  ): Promise<{ sha: string; branch: string }> {
-    this.validateWorkspace(workspace);
-    if (!this.writeToken) throw new Error("Git write token is required to push changes");
-    if (!shaPattern.test(expectedRemoteSha)) throw new Error("expected remote commit SHA must be full-length");
-    if (!branch || branch.startsWith("-") || branch.length > 255) {
-      throw new Error("target branch is invalid");
-    }
-    await this.run(workspace.path, ["check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
-    const [fetchUrl, pushUrl, status] = await Promise.all([
-      this.run(workspace.path, ["remote", "get-url", "origin"], undefined, maxErrorOutput, signal),
-      this.run(workspace.path, ["remote", "get-url", "--push", "origin"], undefined, maxErrorOutput, signal),
-      this.getWorkspaceStatus(workspace, signal),
-    ]);
-    if (
-      fetchUrl.stdout.toString().trim() !== expectedRepositoryUrl ||
-      pushUrl.stdout.toString().trim() !== expectedRepositoryUrl
-    ) {
-      throw new Error("Git origin does not match the authorized merge request repository");
-    }
-    if (!status.clean) throw new Error("push requires a clean worktree");
-    const remote = await this.run(
-      workspace.path,
-      ["ls-remote", "--heads", "origin", `refs/heads/${branch}`],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000, authToken: this.writeToken },
-    );
-    const remoteSha = remote.stdout.toString().trim().split(/\s+/u)[0];
-    if (remoteSha?.toLowerCase() !== expectedRemoteSha.toLowerCase()) {
-      throw new Error("remote MR source branch no longer matches the pinned MR HEAD");
-    }
-    const ancestry = await this.run(
-      workspace.path,
-      ["merge-base", "--is-ancestor", workspace.headSha, status.headSha],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 10_000, allowExitCodes: [1] },
-    );
-    if (ancestry.exitCode !== 0) throw new Error("workspace HEAD is not descended from the pinned MR HEAD");
-    const remoteAncestor = await this.run(
-      workspace.path,
-      ["merge-base", "--is-ancestor", expectedRemoteSha, status.headSha],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 10_000, allowExitCodes: [1] },
-    );
-    if (remoteAncestor.exitCode !== 0) throw new Error("workspace HEAD is not descended from the expected remote commit");
-    try {
-      await this.run(
-        workspace.path,
-        ["push", "--porcelain", "origin", `${status.headSha}:refs/heads/${branch}`],
-        undefined,
-        maxErrorOutput,
-        signal,
-        { timeoutMs: 60_000, authToken: this.writeToken },
-      );
-    } catch (error) {
-      throw new GitPushError(`Git push outcome is unknown: ${String(error)}`, error);
-    }
-    return { sha: status.headSha, branch };
-  }
-
-  async pushIssueWorkspace(
-    workspace: Workspace,
-    sourceBranch: string,
-    targetBranch: string,
-    expectedRepositoryUrl: string,
-    expectedTargetSha: string,
-    signal?: AbortSignal,
-  ): Promise<{ sha: string; branch: string }> {
-    this.validateWorkspace(workspace);
-    if (!this.writeToken) throw new Error("Git write token is required to push changes");
-    if (!sourceBranch.startsWith("corvex/issue-") || sourceBranch === targetBranch) {
-      throw new Error("Issue pushes are restricted to a new corvex/issue- branch");
-    }
-    if (!shaPattern.test(expectedTargetSha)) throw new Error("expected target SHA must be full-length");
-    for (const branch of [sourceBranch, targetBranch]) {
-      if (!branch || branch.startsWith("-")) throw new Error("target branch is invalid");
-      await this.run(workspace.path, ["check-ref-format", "--branch", branch], undefined, maxErrorOutput, signal);
-    }
-    const [fetchUrl, pushUrl, status] = await Promise.all([
-      this.run(workspace.path, ["remote", "get-url", "origin"], undefined, maxErrorOutput, signal),
-      this.run(workspace.path, ["remote", "get-url", "--push", "origin"], undefined, maxErrorOutput, signal),
-      this.getWorkspaceStatus(workspace, signal),
-    ]);
-    if (
-      fetchUrl.stdout.toString().trim() !== expectedRepositoryUrl ||
-      pushUrl.stdout.toString().trim() !== expectedRepositoryUrl
-    ) {
-      throw new Error("Git origin does not match the authorized GitLab project repository");
-    }
-    if (!status.clean) throw new Error("Issue branch push requires a clean worktree");
-    const target = await this.run(
-      workspace.path,
-      ["ls-remote", "--heads", "origin", `refs/heads/${targetBranch}`],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000, authToken: this.writeToken },
-    );
-    const targetSha = target.stdout.toString().trim().split(/\s+/u)[0];
-    if (targetSha?.toLowerCase() !== expectedTargetSha.toLowerCase()) {
-      throw new Error("GitLab target branch changed while the Issue task was running");
-    }
-    const source = await this.run(
-      workspace.path,
-      ["ls-remote", "--heads", "origin", `refs/heads/${sourceBranch}`],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000, authToken: this.writeToken },
-    );
-    if (source.stdout.toString().trim()) throw new Error("Issue source branch already exists; refusing to overwrite it");
-    const ancestry = await this.run(
-      workspace.path,
-      ["merge-base", "--is-ancestor", expectedTargetSha, status.headSha],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 10_000, allowExitCodes: [1] },
-    );
-    if (ancestry.exitCode !== 0) throw new Error("Issue branch is not descended from the pinned target commit");
-    try {
-      await this.run(
-        workspace.path,
-        ["push", "--porcelain", "origin", `${status.headSha}:refs/heads/${sourceBranch}`],
-        undefined,
-        maxErrorOutput,
-        signal,
-        { timeoutMs: 60_000, authToken: this.writeToken },
-      );
-    } catch (error) {
-      throw new GitPushError(`Git push outcome is unknown: ${String(error)}`, error);
-    }
-    return { sha: status.headSha, branch: sourceBranch };
-  }
-
-  async revertWorkspaceCommit(
-    workspace: Workspace,
-    sha: string,
-    signal?: AbortSignal,
-  ): Promise<{ sha: string; revertedSha: string }> {
-    this.validateWorkspace(workspace);
-    if (!shaPattern.test(sha)) throw new Error("rollback requires a full commit SHA");
-    const status = await this.getWorkspaceStatus(workspace, signal);
-    if (!status.clean) throw new Error("rollback requires a clean worktree");
-    if (status.headSha.toLowerCase() !== sha.toLowerCase()) {
-      throw new Error("rollback is limited to the latest Corvex commit");
-    }
-    const result = await this.run(
-      workspace.path,
-      ["show", "-s", "--format=%H%x00%an%x00%ae%x00%P", sha],
-      undefined,
-      maxErrorOutput,
-      signal,
-    );
-    const [commitSha, author, email, parents] = result.stdout.toString().trimEnd().split("\0");
-    if (
-      commitSha?.toLowerCase() !== sha.toLowerCase() ||
-      author !== "Corvex Agent" ||
-      email !== "corvex-agent@localhost" ||
-      !parents ||
-      parents.split(" ").length !== 1
-    ) {
-      throw new Error("rollback is limited to the latest Corvex commit");
-    }
-    await this.run(
-      workspace.path,
-      [
-        "-c", "user.name=Corvex Agent",
-        "-c", "user.email=corvex-agent@localhost",
-        "-c", "commit.gpgsign=false",
-        "revert", "--no-edit", sha,
-      ],
-      undefined,
-      maxErrorOutput,
-      signal,
-      { timeoutMs: 30_000 },
-    );
-    const reverted = await this.run(workspace.path, ["rev-parse", "--verify", "HEAD"], undefined, maxErrorOutput, signal);
-    return { sha: reverted.stdout.toString().trim(), revertedSha: sha };
   }
 
   private validateFixPatch(patch: string, allowedPaths: string[]): string[] {

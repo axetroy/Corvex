@@ -1,6 +1,5 @@
 /**
- * 对话斜杠指令。与 GitLab webhook 的事件命令（`src/gitlab/command.ts`）完全不同：
- * 这里只改变当前这一轮的模型指令，不会创建事件、不改状态机、不发布评论。
+ * 对话斜杠指令只改变当前这一轮的模型指令：不会创建事件、不改状态机、不发布评论。
  */
 export const conversationCommands = ["review", "explain", "fix", "test", "docs", "commit", "mr"] as const;
 export type ConversationCommand = (typeof conversationCommands)[number];

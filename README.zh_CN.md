@@ -1,17 +1,18 @@
 # Corvex
 
-Corvex 是基于单一 TypeScript 应用和 Pi SDK 构建的自托管 GitLab 代码审查与修复代理。架构说明请参阅 [design.md](design.md)，使用文档请参阅[文档站点](https://axetroy.github.io/Corvex/)。
+Corvex 是基于单一 TypeScript 应用和 Pi SDK 构建的自托管 GitLab 代理。架构说明请参阅 [design.md](design.md)，使用文档请参阅[文档站点](https://axetroy.github.io/Corvex/)。
 
 ## 项目概览
 
-Corvex 接收 GitLab Note Hook，将任务写入 SQLite，并在同一个 Server 进程内执行。它支持 MR 审查、聊天、解释和修复提案，以及可回复或提出实现方案的 Issue 助手。
+Corvex 在运维控制台中运行持久化对话。每个对话绑定一个仓库分支和固定版本，并在 Server 进程内内联执行。
 
-- Agent 控制台可发现只读令牌可访问的全部仓库；Webhook 指令可通过可选用户阻止列表限制。
-- 审查针对固定 MR 版本执行，并以行级讨论发布经过校验的问题。
-- Fix 提案供人工应用。Issue 回复不会写代码；Issue 实现默认关闭，由 `issue.implement_enabled` 单独控制。
-- Issue 实现默认使用项目默认分支，除非当前请求明确指定另一个已存在的分支；只会创建 Draft MR，不会自动合并。
-- Corvex 不执行仓库脚本或测试；SQLite 持久化任务和生命周期事件。
-- 可选的只读 Agent 控制台和 Prometheus 指标用于监控。
+- 控制台可发现当前登录用户的 GitLab 令牌可访问的全部仓库，并把对话与轮次保存在 SQLite 中。
+- 每一轮都有自己的轨迹、执行记录和流式回复；工作区包含只读 Git 图谱、文件浏览器与对话记录。
+- 对话可以读取仓库与 GitLab，并在用户明确要求时通过受约束的工具执行 GitLab 写操作；Git 工具集限定在对话工作区与本地镜像内。
+- Corvex 不执行仓库脚本或测试；设计上没有 shell 执行器。
+- Prometheus 指标与存储清理控制台用于运维。
+
+Webhook 驱动的任务事件（审查、聊天、解释、修复、Issue 实现）不在当前阶段内，延期设计见 [ROADMAP.zh_CN.md](ROADMAP.zh_CN.md)。
 
 从[快速开始](https://axetroy.github.io/Corvex/zh-CN/guide)入门，或查看[配置参考](https://axetroy.github.io/Corvex/zh-CN/configuration)、[架构说明](https://axetroy.github.io/Corvex/zh-CN/architecture)和[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
 
@@ -25,10 +26,11 @@ pnpm run build
 pnpm start -- init
 ```
 
-通过环境变量提供密钥，然后在 Agent 控制台设置页填写 GitLab 根地址与只读令牌（也可用 CORVEX_GITLAB_BASE_URL）。然后按[快速开始指南](https://axetroy.github.io/Corvex/zh-CN/guide)注册 Note Hook 并启动 Server。Docker Compose、备份、保留策略、TLS 和持久对话见[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
+在安装页面配置 GitLab OAuth，然后访问 `/ops` 登录并创建对话。Docker Compose、备份、保留策略与 TLS 见[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
+
 ## 部署
 
-Corvex 提供预构建的 `ghcr.io/axetroy/corvex` 镜像和仅包含单个 Server 服务的 Compose 部署。部署、Webhook 注册、存储和资源配置请参阅[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
+Corvex 提供预构建的 `ghcr.io/axetroy/corvex` 镜像和仅包含单个 Server 服务的 Compose 部署。部署、存储与资源配置请参阅[运行与运维](https://axetroy.github.io/Corvex/zh-CN/operations)。
 
 ## 开发
 
@@ -39,10 +41,4 @@ pnpm run typecheck
 pnpm run build
 ```
 
-显式运行带标注的审查基准（会调用配置的模型）：
-
-```sh
-pnpm run benchmark:review -- --config configs/config.yaml --min-f1 0.6
-```
-
-Corvex 使用 GitLab 只读令牌读取 API/仓库，并使用写令牌发布内容；不可信代码不会被执行。
+Corvex 使用 GitLab 只读令牌读取 API/仓库，并在用户明确要求时才使用写令牌执行 GitLab 写操作；不可信代码不会被执行。

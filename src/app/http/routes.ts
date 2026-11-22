@@ -14,7 +14,6 @@ import { registerStorageRoutes } from "./ops/storage.js";
 import { sendJson, sendText } from "./respond.js";
 import { requireAdmin } from "../auth/context.js";
 import { registerSystemRoutes } from "./system.js";
-import { registerWebhookRoute, WebhookHandler } from "./webhook.js";
 
 /**
  * 注册全部 HTTP 路由。
@@ -43,7 +42,6 @@ export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
     secureCookie: (ctx.config.gitlab.oauthRedirectUri ?? "").startsWith("https:"),
   });
   registerSetupRoutes(app, { config: ctx.config, store: ctx.store, oauth: ctx.oauth });
-  registerWebhookRoute(app, new WebhookHandler(ctx.config, ctx.store, ctx.gitlab, () => ctx.events.wake()));
   registerOperationsUi(app);
 
   registerProjectRoutes(app, ctx);

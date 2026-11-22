@@ -1,20 +1,21 @@
 # Getting started
 
-Corvex is a self-hosted code review and repair agent for GitLab merge requests. It runs as a single process:
+Corvex is a self-hosted agent for GitLab repositories. It runs as a single process:
 
-- **Server** receives GitLab Note Hook events, checks access, writes tasks to SQLite, replies to the note, and executes those tasks inline through the event runner.
-- **Inline event runner** reads the exact merge request revision, calls an OpenAI-compatible model when needed, and publishes the result in the same process.
+- **Server** serves the operations console, authenticates each user through GitLab OAuth2, exposes the HTTP API and health endpoints, and executes conversation turns inline.
+- **ConversationRunner** pins the branch head SHA at the start of each turn, reuses that conversation's detached Git worktree, runs one Pi SDK session, streams its output to the console, and persists the trajectory and final reply.
 
-See [Architecture and workflow](./architecture), [Configuration reference](./configuration), and [Runtime and operations](./operations) for details.
+Persistent conversations are the only execution path. See [Architecture](./architecture), [Configuration reference](./configuration) and [Runtime and operations](./operations) for details.
 
 ## Requirements
 
 - Node.js 26.12.1 and pnpm 12.4.1 to run from source. Install the locked dependencies with `pnpm install --frozen-lockfile`.
-- GitLab access from the Server, including a reachable webhook URL.
-- A GitLab read token for API reads and repository fetches and a separate write token for MR notes and discussions, both saved in the console Settings page.
+- A GitLab instance and an OAuth2 application so users can sign in to the console. Each user only sees projects visible to their own GitLab account.
+- A GitLab read token for API reads and authenticated repository fetches, and (optionally) a write token for the GitLab write tools. Both are saved in the console Settings page.
 - The `git` executable on the Server host. The supplied Docker image includes it.
-- If using an agent, an OpenAI-compatible Chat Completions endpoint and an API key. Pi SDK provides the agent runtime.
-- Persistent writable storage for the SQLite database and Git mirrors. Keep it across restarts.
+- An OpenAI-compatible Chat Completions endpoint and an API key for a provider that needs one. Pi SDK provides the agent runtime; model providers and keys are managed in the console.
+- Persistent writable storage for the SQLite database, Git mirrors and conversation worktrees. Keep it across restarts.
+- No inbound webhook URL is needed.
 
 ## 1. Prepare configuration and secrets
 
@@ -26,18 +27,16 @@ pnpm run build
 pnpm start -- init
 ```
 
-Copy `configs/config.example.yaml` to `configs/config.yaml`. The GitLab base URL, `gitlab.blocked_user_ids` and `gitlab.bot_username` are managed in the console Settings page. Set these variables for the Server:
+Copy `configs/config.example.yaml` to `configs/config.yaml`. The template is intentionally small: it contains only the listener and storage paths. The GitLab base URL, read/write tokens, model providers, budgets, tool switches and retention values are managed in the console and stored in SQLite; the config file supplies their initial values only.
 
 ```sh
-# Optional startup fallbacks; the console Settings page stores these in SQLite.
+# Optional startup fallbacks; prefer saving these in the console Settings page.
+# CORVEX_GITLAB_BASE_URL=https://gitlab.example.com
 # CORVEX_GITLAB_READ_TOKEN=your-read-token
 # CORVEX_GITLAB_TOKEN=your-write-token
-# CORVEX_WEBHOOK_SECRET=a-long-random-secret
 ```
 
-The IDs are numeric GitLab IDs. Enter the GitLab base URL, read/write tokens and webhook secret in the console Settings page; blank secret fields keep the saved value. The agent console lists projects visible to the read token; only register webhooks on projects where Corvex should accept commands. Refer to the [configuration reference](./configuration) for every setting and its limits.
-
-No GitLab credentials or model API key are required at startup; both can be saved in the console. Use separate read/write tokens with only the required permissions.
+No GitLab credentials, OAuth credentials or model API key are required at startup. Use a read token with only the permissions you need and a separate write token only if you want the agent to perform GitLab writes. Refer to the [configuration reference](./configuration) for every setting and its limits.
 
 ## 2. Start the server
 
@@ -46,86 +45,51 @@ pnpm start -- --config configs/config.yaml check-config
 pnpm start -- --config configs/config.yaml server
 ```
 
-The default listener is `0.0.0.0:8080`. Put it behind HTTPS when exposing it to GitLab; do not expose the service directly to an untrusted network without appropriate network controls.
+`server` is the only runtime mode: it serves HTTP and runs conversations inline in the same process. The default listener is `0.0.0.0:8080`. Put it behind HTTPS when exposing it to users; do not expose the service directly to an untrusted network without appropriate network controls.
 
-## 3. Configure the GitLab webhook
+## 3. Sign in and configure GitLab OAuth
 
-Create a project webhook whose URL is:
+Open the console at `/ops`. On a fresh installation it redirects to `/setup`, where you enter the GitLab instance URL plus the OAuth application's client ID, client secret and callback URL. These values are stored in SQLite, not in environment variables, and can later be edited in the admin **Settings** page. The callback URL must point back to the console (for example `https://corvex.example.com/auth/gitlab/callback`).
 
-```text
-https://corvex.example.com/webhooks/gitlab
-```
+After setup, sign in with **GitLab OAuth2**. Corvex stores each user's encrypted token in SQLite and uses it for that user's console API calls. The project picker lists only projects visible to the signed-in user, so there is no static project allowlist to maintain.
 
-Use the webhook secret saved in the console Settings page for the project webhook secret token. Enable **Comments** (Note events); the endpoint processes comments on merge requests and Issues. It does not process merge-request state events or push events. Keep SSL verification enabled.
+## 4. Start a conversation
 
-The optional `scripts/register-webhook.sh` helper creates or updates the project hook idempotently. It requires `curl`, `jq`, and a GitLab administrator token used only for registration:
+The console opens on **Conversations**. Use the repository and branch pickers to start one: search projects by full path, then pick a branch. The server resolves and pins that branch's head SHA when a message is queued; conversations and their turns are stored in SQLite and one turn per conversation can run at a time.
 
-```sh
-GITLAB_URL=https://gitlab.example.com \
-GITLAB_ADMIN_TOKEN=... \
-GITLAB_PROJECT_ID=101 \
-CORVEX_WEBHOOK_URL=https://corvex.example.com/webhooks/gitlab \
-CORVEX_WEBHOOK_SECRET=... \
-./scripts/register-webhook.sh
-```
+The workspace fills the viewport and offers several views:
 
-The runtime service does not need the administrator token.
+- **Chat** — the Markdown transcript. Assistant replies fill in token by token while a turn runs, with the model's thinking and each tool call shown separately in a process block above the final reply. The conversation's system prompt appears as a collapsible block above the transcript, and every settled reply shows its copy action, generation speed, duration and producing model.
+- **Activity records** (`records`) — the execution records of the turns in this conversation.
+- **Trace** — one merged timeline of every turn's model, tool and context activity, switchable to a single turn. Context compaction and trimming notices carry bounded before/after snapshots.
+- **Stats** — model usage and elapsed time for the whole conversation, with a per-turn breakdown.
+- **Git** — a read-only commit graph of the project mirror, with the pinned SHA and saved conversation commits highlighted, expandable commit details and downloadable patches.
+- **File panel** — a toggled side pane that browses the pinned worktree (falling back to GitLab files if the worktree has not been prepared), previews images and opens text files in a read-only code viewer.
 
-## 4. Use the bot on GitLab
+The composer completes slash commands (`/review`, `/explain`, `/fix`, `/test`, `/docs`, `/commit`, `/mr`). These are **turn-local instructions to the model only**: they do not create tasks, change conversation state or publish anything to GitLab. A running or queued turn shows a **Stop** button that cancels it. If the branch moves before a queued turn starts, that turn ends as `stale`; send the message again to use the current revision.
 
-Mention the configured GitLab bot account. The username comes from `gitlab.bot_username` (for example, `corvex-bot`).
+## 5. Enable a model
 
-### Merge request commands
+Open **Settings → Model** (admin) to add a provider with its Base URL and API key, then add a model with its context window and max output tokens. The first model added is activated automatically; choosing another applies it to subsequent turns without a restart. Corvex sends requests to the provider's `/chat/completions` endpoint. The API key is never returned by the API or written to audit logs; leaving its password field empty keeps the saved value.
 
-Use these commands in a merge request comment:
+Every user also has a personal **Settings** page (`#/settings`) to add their own providers and models alongside the shared system ones (marked **System**, read-only). Activating a model there changes only that user's conversations.
 
-| Command | Behavior |
-|---|---|
-| `@corvex-bot /review [request]` | Queue a review of the current merge request revision, optionally with supplemental instructions or examples. |
-| `@corvex-bot <message>` | Chat about the current merge request, such as summarizing its changes or suggesting a title. |
-| `@corvex-bot /explain path/to/file.ts` | Explain a file at the pinned merge request Head SHA. |
-| `@corvex-bot /status` | Show the latest task state for the merge request. |
-| `@corvex-bot /cancel` | Cancel a queued task or request cancellation of an active task you started. |
-| `@corvex-bot /fix Make this error easier to handle` | Request a bounded fix proposal, if fix mode is enabled and you are not blocked. |
+## What the agent can do
 
-`/review` accepts an optional supplemental request of up to 2,000 characters. Its line breaks, indentation, and repeated spaces are preserved, so it can include multi-line examples. Plain-text MR mentions also accept up to 2,000 characters and use the pinned MR metadata, diff, and recent comments as chat context. The default is 20 comments; configure `chat.history_comments` from 0 to 50. Chat can also read more recent comments from the current MR on demand. `/status` and `/cancel` take no arguments. `/explain` takes one path; `/fix` takes an optional natural-language request. Any commenter on a project configured with the shared webhook secret can invoke commands unless their ID is in `gitlab.blocked_user_ids`.
+Conversations are uniformly read-write. Every tool is bound to the conversation's project and worktree:
 
-### Issue mentions
+- **Files** — bounded read-only tools (`read_file`, `git_grep`, `search_text`) and bounded write tools (`write_file`, `edit_file`, `delete_file`, `move_file`, `copy_file`). Edits are committed to a per-conversation ref (`refs/conversations/<id>`) in the local mirror, so they survive worktree cleanup; they are never pushed to a GitLab branch.
+- **Git** — `git_status`, `git_log`, `git_show`, `git_diff`, `git_branches`, `git_clone`, `git_branch`, `git_checkout`, `git_pull`, `git_merge`, `git_commit`, `git_push` and `git_revert`. There is no arbitrary URL, remote or force option. A push writes only `refs/conversations/<id>` in the local mirror, never a GitLab branch.
+- **GitLab** — discovery and reads (project info, issues, merge requests, changes, commits, discussions) plus lifecycle and note tools for issues and merge requests. Write tools require explicit user intent, target the conversation's bound project, and mark irreversible or public actions (delete, merge, approve) in their descriptions.
 
-Plain-text mentions in an Issue start an assistant task. The agent can answer, ask for clarification, or propose implementation using the Issue and recent comments:
+There is no built-in shell, and Corvex never executes repository code, scripts or tests. `web_fetch`, enabled by default, is read-only and limited to public HTTP(S) hosts with private/reserved addresses always blocked. Skills are trusted instruction directories, not an access-control boundary.
 
-| Mention | Behavior |
-|---|---|
-| `@corvex-bot Is this change feasible?` | Ask for analysis or clarification; the agent replies without changing code. |
-| `@corvex-bot Add the requested validation` | Let the agent decide whether to reply or propose implementation. Code writes require Issue implementation to be enabled. |
-| `@corvex-bot /implement Add the requested validation` | Explicitly request implementation; code writes still require Issue implementation to be enabled. |
+## Deferred features
 
-Any commenter on a project configured with the shared webhook secret can mention the bot unless their ID is in `gitlab.blocked_user_ids`.
-
-## 5. Enable model tasks
-
-Reviews, explanations, fix proposals, and Issue assistance require a model configuration. Configure the model and its API key in the console Settings page. The base URL is the API root; Corvex sends requests to its `/chat/completions` endpoint.
-
-## Issue assistance and implementation
-
-Issue mentions require the agent to be enabled. The agent receives the Issue and the latest 20 non-system comments by default; configure `issue.history_comments` from 0 to 50. It decides whether to answer, ask a clarifying question, or propose implementation. Replies do not create or push code.
-
-Code writes are disabled by default. To allow implementation, set `issue.implement_enabled: true` and provide a GitLab write token with permission to push branches and create merge requests. The event runner targets the project's default branch unless the current request explicitly names another existing branch; comments cannot select a branch. It creates a new `corvex/issue-*` branch and opens a Draft MR. It does not run repository scripts, tests, or automatically merge. Review the resulting MR before merging.
-
-The Server is already running; enabling the agent takes effect on the next event without a restart. When the agent is disabled, the Server still accepts events and persists tasks, but does not execute them. For local-only Server testing, use the health endpoints described in [Runtime and operations](./operations).
-
-## Enable fix proposals carefully
-
-Fix mode is disabled by default. To enable it, set `fix.enabled: true` in the console. Any non-blocked commenter on a project configured with the shared webhook secret can then request a proposal. The model can propose a patch only for changed text files in the MR diff. Corvex validates and applies that patch in a disposable isolated worktree, then posts it for a human to review and apply. It does **not** run repository code or tests, create a commit, or push changes. A proposal is not evidence that the project tests pass.
-
-## Persistent conversations
-
-Open the agent console at `/ops` and sign in with your GitLab account. Search projects visible to your GitLab token, then pick a repository and branch to start a general chat about the code. Corvex resolves and pins the branch head SHA on the server when a message is queued. Conversations and each turn are stored in SQLite; one turn per conversation can run at a time. The page fills the viewport: the sidebar lists conversations by their model-generated title (falling back to the project name until the first turn is titled), with their turn counts and latest turn status, and the workspace has a repository header plus four tabs. **Chat** shows the Markdown transcript and lets you copy a reply, and displays the conversation's system prompt as a collapsible block above the transcript; **Trace** shows a single timeline of the model and tool activity, merging every turn by default (or focusing a single turn) and showing that scope's execution steps and lifecycle transitions without leaving the conversation; **Stats** totals usage and timing and breaks it down per turn. The agent reads the repository, can publish GitLab notes (such as issue/MR replies and updates) when you explicitly ask, and can edit files in the pinned conversation worktree with bounded file tools (edit_file / write_file / delete_file / move_file / copy_file). Edits are saved to a per-conversation ref in the project mirror and restored after worktree cleanup; they are never committed or pushed. The repository file panel browses the pinned snapshot and previews images (PNG/JPEG/GIF/WebP/BMP/AVIF/SVG/ICO) as well as text. If the branch moves before a queued turn starts, that turn ends as `stale`; send the message again to use the current revision. Each user also has a personal **Settings** page (`#/settings`) to add their own model providers and models alongside the shared system ones (marked **System**, read-only); activating a model there changes only that user's conversations.
-
-The Pi session exposes no built-in shell or arbitrary command execution. Its repository tools include bounded `read_file` and `git_grep`, plus chat-only `git_log` and `git_show` for commits reachable from the pinned MR HEAD. Chat provides `update_mr_metadata` to change only the current MR's title and/or description when requested; omitted fields stay unchanged. With a write token and a same-project MR, Chat also provides `git_status`, `git_apply_patch`, `git_commit`, `git_push`, and `git_revert`, all bound to the current isolated worktree and MR source branch. Writes require no extra confirmation after the user requested them. Patches modify existing tracked regular files only; commits accept unstaged tracked modifications only; after all requested edits and available checks, Chat creates one final commit and pushes as the last repository operation before replying. It does not push intermediate work or modify files after pushing. Pushes are ordinary fast-forward updates and force-push is never possible; rollback adds a revert commit for the latest Corvex commit. Fork MRs do not receive Git write tools. Literal `search_text` remains available for bounded searches in the worktree and trusted skill roots; it is limited to 1,000 files, 16 MiB, and 50 matches per call. `web_fetch` is available only to review and explain tasks when enabled; private/reserved addresses are always blocked, `agent.web_blocked_hosts` adds optional host blocks, and at most 10 pages can be fetched per session. Redirects are revalidated and page text is untrusted input. Skills are loaded from `agent.skill_paths`. MCP is disabled by default; enabling `agent.mcp_enabled` loads MCP tools only for review tasks from the service's Pi agent directory. MCP server processes run with the Server's OS permissions; use only administrator-controlled configurations and do not treat MCP as a sandbox.
+Webhook-driven task events (`review`, `chat`, `explain`, `fix`, `implement`) have been removed in full. They are recorded in [ROADMAP.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.md) as deferred work; the slash-command suggestions in the composer are turn-local instructions, not those event commands.
 
 ## Next steps
 
-- Read [Architecture and workflow](./architecture) to understand task processing, retries, and safety boundaries.
+- Read [Architecture](./architecture) to understand the turn lifecycle, context budgets and safety boundaries.
 - Review every option in the [Configuration reference](./configuration).
-- Follow [Runtime and operations](./operations) for Docker Compose, health checks, backups, retention, and troubleshooting.
+- Follow [Runtime and operations](./operations) for Docker Compose, health checks, backups, retention and troubleshooting.

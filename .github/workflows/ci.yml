@@ -90,7 +90,6 @@ jobs:
             --mount "type=bind,source=$GITHUB_WORKSPACE/test/fixtures/server-smoke.yaml,target=/etc/corvex/config.yaml,readonly" \
             --env CORVEX_GITLAB_TOKEN=ci-write-token \
             --env CORVEX_GITLAB_READ_TOKEN=ci-read-token \
-            --env CORVEX_WEBHOOK_SECRET=ci-webhook-secret \
             --env CORVEX_STORAGE_ROOT=/data/corvex \
             --env CORVEX_DATABASE=/data/corvex/state/corvex.db \
             corvex-smoke --config /etc/corvex/config.yaml server

@@ -14,10 +14,9 @@
     "ui:dev": "vite --config src/app/ui/vite.config.ts",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p src/app/ui/tsconfig.json",
-    "lint": "eslint src test scripts",
+    "lint": "eslint src test",
     "test": "pnpm run ui:build && vitest run",
     "test:watch": "pnpm run ui:build && vitest",
-    "benchmark:review": "tsx scripts/review-benchmark.ts",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"

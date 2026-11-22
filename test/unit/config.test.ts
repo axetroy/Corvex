@@ -17,14 +17,14 @@ function validConfig(): CorvexConfig {
       baseUrl: "https://gitlab.example.com",
       readToken: "read",
       writeToken: "write",
-      webhookSecret: "secret",
-      blockedUserIds: [],
-      botUsername: "corvex",
       oauthClientId: "",
       oauthClientSecret: "",
       oauthRedirectUri: "",
     },
-    storage: { root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365 },
+    storage: {
+      root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365,
+      conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8,
+    },
     agent: {
       responseLanguage: "en",
       baseUrl: "https://api.openai.com/v1",
@@ -34,16 +34,17 @@ function validConfig(): CorvexConfig {
       sessionTimeout: 30 * 60_000,
       maxOutputTokens: 4096,
       dailyTokenBudget: 0,
-      mcpEnabled: false,
       webEnabled: true,
       webBlockedHosts: [],
       skillPaths: [],
+      contextWindow: 131_072,
+      maxInputTokens: 0,
+      historyTokenBudget: 24_000,
+      turnToolResultBytes: 256 << 10,
+      compactionReserveTokens: 16_384,
+      compactionKeepRecentTokens: 20_000,
+      summaryEnabled: true,
     },
-    review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-    chat: { historyComments: 20 },
-    events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
-    fix: { enabled: false, maxPatchBytes: 128 << 10 },
-    issue: { implementEnabled: false, historyComments: 20 },
   };
 }
 
@@ -59,31 +60,6 @@ describe("validateConfig", () => {
       await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
         agent: { turnToolResultBytes: 256 << 10 },
       });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps issue implementation disabled by default", async () => {
-    expect(validConfig().issue.implementEnabled).toBe(false);
-  });
-
-  it("defaults and bounds Issue history comments", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-config-issue-comments-"));
-    const configPath = join(root, "config.yaml");
-    try {
-      const base = {
-        gitlab: { base_url: "https://gitlab.example.com" },
-        storage: { root, database: join(root, "state.db") },
-      };
-      await writeFile(configPath, JSON.stringify(base));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({ issue: { historyComments: 20 } });
-
-      await writeFile(configPath, JSON.stringify({ ...base, issue: { history_comments: 8 } }));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({ issue: { historyComments: 8 } });
-
-      await writeFile(configPath, JSON.stringify({ ...base, issue: { history_comments: 51 } }));
-      await expect(loadConfig(configPath, "storage")).rejects.toThrow("issue.history_comments must be between 0 and 50");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -132,61 +108,6 @@ describe("validateConfig", () => {
     }
   });
 
-  it("defaults and bounds review batch concurrency", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-config-review-concurrency-"));
-    const configPath = join(root, "config.yaml");
-    try {
-      const base = {
-        gitlab: { base_url: "https://gitlab.example.com" },
-        storage: { root, database: join(root, "state.db") },
-      };
-      await writeFile(configPath, JSON.stringify(base));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        review: { batchConcurrency: 2 },
-      });
-
-      await writeFile(configPath, JSON.stringify({ ...base, review: { batch_concurrency: 3 } }));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        review: { batchConcurrency: 3 },
-      });
-
-      await writeFile(configPath, JSON.stringify({ ...base, review: { batch_concurrency: 5 } }));
-
-      await expect(loadConfig(configPath, "storage")).rejects.toThrow(
-        "review.batch_concurrency must be between 1 and 4",
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("defaults and bounds chat history comments", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-config-chat-history-"));
-    const configPath = join(root, "config.yaml");
-    try {
-      const base = {
-        gitlab: { base_url: "https://gitlab.example.com" },
-        storage: { root, database: join(root, "state.db") },
-      };
-      await writeFile(configPath, JSON.stringify(base));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        chat: { historyComments: 20 },
-      });
-
-      await writeFile(configPath, JSON.stringify({ ...base, chat: { history_comments: 8 } }));
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        chat: { historyComments: 8 },
-      });
-
-      await writeFile(configPath, JSON.stringify({ ...base, chat: { history_comments: 51 } }));
-      await expect(loadConfig(configPath, "storage")).rejects.toThrow(
-        "chat.history_comments must be between 0 and 50",
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
   it("defaults model response language to English and accepts Simplified Chinese", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-language-"));
     const configPath = join(root, "config.yaml");
@@ -227,27 +148,6 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).toThrow("operations console credentials contain invalid characters");
   });
 
-  it("accepts all projects while permitting an empty user blocklist", () => {
-    const config = validConfig();
-    expect(() => validateConfig(config)).not.toThrow();
-  });
-
-  it("reads the legacy worker YAML section as event settings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "corvex-config-events-"));
-    const configPath = join(root, "config.yaml");
-    try {
-      await writeFile(configPath, JSON.stringify({
-        gitlab: { base_url: "https://gitlab.example.com", blocked_user_ids: [] },
-        storage: { root, database: join(root, "state.db") },
-        worker: { poll_interval: "3s", event_timeout: "2m" },
-      }));
-      const config = await loadConfig(configPath, "storage");
-      expect(config.events).toEqual({ pollInterval: 3_000, eventTimeout: 120_000 });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
   it("requires all GitLab OAuth settings together when configured", () => {
     const config = validConfig();
     config.gitlab.oauthClientId = "client";
@@ -271,7 +171,6 @@ describe("validateConfig", () => {
     const config = validConfig();
     config.gitlab.readToken = "";
     config.gitlab.writeToken = "";
-    config.gitlab.webhookSecret = "";
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
@@ -356,22 +255,20 @@ describe("validateConfig", () => {
       );
       process.env.CORVEX_GITLAB_READ_TOKEN = "";
       process.env.CORVEX_GITLAB_TOKEN = "write";
-      process.env.CORVEX_WEBHOOK_SECRET = "webhook";
       await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "", writeToken: "write", webhookSecret: "webhook" },
+        gitlab: { readToken: "", writeToken: "write" },
       });
 
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
-      process.env.CORVEX_WEBHOOK_SECRET = "";
       await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "read", writeToken: "write", webhookSecret: "" },
+        gitlab: { readToken: "read", writeToken: "write" },
         agent: { webEnabled: true, webBlockedHosts: [] },
       });
 
       process.env.CORVEX_GITLAB_READ_TOKEN = "";
       process.env.CORVEX_GITLAB_TOKEN = "";
       await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        gitlab: { readToken: "", writeToken: "", webhookSecret: "" },
+        gitlab: { readToken: "", writeToken: "" },
       });
     } finally {
       for (const name of names) {

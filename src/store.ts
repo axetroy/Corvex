@@ -5,14 +5,12 @@ import {
   backup as sqliteBackup,
   DatabaseSync,
 } from "node:sqlite";
-import type { AuthUser, GitLabIdentity, ManagedUser } from "../app/auth/model.js";
-import type { TokenCipher } from "../tokens.js";
+import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
+import type { TokenCipher } from "./tokens.js";
 import {
   defaultConversationMode,
   isConversationMode,
   isConversationTurnStatus,
-  isEventStatus,
-  isEventType,
   isModelTaskType,
   normalizeConversationTitle,
   type Conversation,
@@ -30,21 +28,9 @@ import {
   type CreateConversationInput,
   type ExecutionStep,
   type ExecutionStepStatus,
-  type Event,
-  type EventAttemptSummary,
-  type EventDetails,
-  type EventListQuery,
-  type EventOperationsSummary,
-  type EventPage,
-  type EventResult,
-  type EventSummary,
-  type EventStatus,
-  type EventTargetType,
-  type EventStatusTransition,
-  type EventTraceEntry,
-  type EventTraceKind,
-  type EventTraceStatus,
-  type EventType,
+  type TraceEntry,
+  type TraceKind,
+  type TraceStatus,
   type ConversationTurnSegment,
   type StorageCleanupRecord,
   type ActiveModel,
@@ -64,14 +50,8 @@ import {
   type TraceScope,
 } from "./model.js";
 
-/** 事件执行器从开始到终止状态允许执行的最大尝试次数。 */
-const maxAttempts = 3;
-/** 已完成、失败、过期或取消的终态事件集合。 */
-const terminal = new Set<EventStatus>(["completed", "failed", "stale", "cancelled"]);
 /** 已结束的对话轮次状态；仅这些轮次的耗时才算已确定。 */
 const terminalConversationTurn = new Set<ConversationTurnStatus>(["completed", "failed", "stale", "cancelled"]);
-/** 持有租约期间可能运行的状态，用于检测并恢复过期租约。 */
-const active = ["preparing", "analyzing", "fixing", "verifying", "publishing"];
 /** 单条持久化执行轨迹输入或输出允许保存的最大字节数。 */
 const maxExecutionPayloadBytes = 64 << 10;
 /** 执行轨迹中用于识别并脱敏凭证类字段名的匹配规则。 */
@@ -109,27 +89,6 @@ interface ConversationTurnRow {
   updated_at: string;
 }
 
-interface EventRow {
-  id: string;
-  type: EventType;
-  status: EventStatus;
-  project_id: number;
-  mr_iid: number;
-  target_type: EventTargetType;
-  target_iid: number;
-  target_branch: string;
-  head_sha: string;
-  actor_id: number;
-  request: string;
-  created_at: string;
-  attempt_count: number;
-  last_error: string;
-  cancel_requested: number;
-  lease_token: string;
-  failure_stage: string;
-  updated_at: string;
-}
-
 function stringColumn(row: Record<string, unknown>, name: string): string {
   const value = row[name];
   if (typeof value !== "string") throw new Error(`SQLite column "${name}" is not text`);
@@ -153,20 +112,15 @@ function providerName(baseUrl: string): string {
   }
 }
 
-/** 轨迹归属对应的 owner 列名：事件轨迹用 `event_id`，对话轨迹用 `turn_id`。 */
-function traceScopeColumn(scope: TraceScope): "event_id" | "turn_id" {
-  return scope.kind === "event" ? "event_id" : "turn_id";
-}
-
-/** 轨迹归属对应的 owner 主键；校验为空或超长时抛错。 */
+/** 轨迹归属的轮次 ID；校验为空或超长时抛错。 */
 function traceScopeId(scope: TraceScope): string {
-  const id = scope.kind === "event" ? scope.eventId : scope.turnId;
+  const id = scope.turnId;
   if (!id.trim() || id.length > 256) throw new Error("trace scope ID is invalid");
   return id;
 }
 
 /**
- * 事件从创建到最近更新的耗时（毫秒）。仅终态事件的耗时已确定；
+ * 对话轮次从创建到最近更新的耗时（毫秒）。仅终态轮次的耗时已确定；
  * 时间缺失或倒序（时钟回拨）时返回 null，避免统计出现负值。
  */
 function turnDurationMs(createdAt: string, updatedAt: string, isTerminal: boolean): number | null {
@@ -284,42 +238,6 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
   }).slice(-maxConversationProcessEntries);
 }
 
-function readEventRow(row: Record<string, unknown> | undefined): EventRow | undefined {
-  if (!row) return undefined;
-  const type = stringColumn(row, "type");
-  if (!isEventType(type)) throw new Error(`SQLite event type "${type}" is invalid`);
-  const status = stringColumn(row, "status");
-  if (!isEventStatus(status)) throw new Error(`SQLite event status "${status}" is invalid`);
-  const targetType = stringColumn(row, "target_type");
-  if (targetType !== "merge_request" && targetType !== "issue" && targetType !== "repository") {
-    throw new Error(`SQLite event target type "${targetType}" is invalid`);
-  }
-  const failureStage = stringColumn(row, "failure_stage");
-  if (failureStage && !isEventStatus(failureStage)) {
-    throw new Error(`SQLite event failure stage "${failureStage}" is invalid`);
-  }
-  return {
-    id: stringColumn(row, "id"),
-    type,
-    status,
-    project_id: numberColumn(row, "project_id"),
-    mr_iid: numberColumn(row, "mr_iid"),
-    target_type: targetType,
-    target_iid: numberColumn(row, "target_iid"),
-    target_branch: stringColumn(row, "target_branch"),
-    head_sha: stringColumn(row, "head_sha"),
-    actor_id: numberColumn(row, "actor_id"),
-    request: stringColumn(row, "request"),
-    created_at: stringColumn(row, "created_at"),
-    attempt_count: numberColumn(row, "attempt_count"),
-    last_error: stringColumn(row, "last_error"),
-    cancel_requested: numberColumn(row, "cancel_requested"),
-    lease_token: stringColumn(row, "lease_token"),
-    failure_stage: failureStage,
-    updated_at: stringColumn(row, "updated_at"),
-  };
-}
-
 function readConversationTurnRow(row: Record<string, unknown> | undefined): ConversationTurnRow | undefined {
   if (!row) return undefined;
   const status = stringColumn(row, "status");
@@ -365,7 +283,7 @@ function readModelCallMetric(row: Record<string, unknown>): ModelCallMetric {
   };
 }
 
-function readEventTrace(row: Record<string, unknown>): EventTraceEntry {
+function readTrace(row: Record<string, unknown>): TraceEntry {
   const kind = stringColumn(row, "kind");
   if (kind !== "tool" && kind !== "llm" && kind !== "context") throw new Error(`SQLite event trace kind "${kind}" is invalid`);
   const status = stringColumn(row, "status");
@@ -385,7 +303,7 @@ function readEventTrace(row: Record<string, unknown>): EventTraceEntry {
   };
   return {
     id: numberColumn(row, "id"),
-    turnId: nullableString("turn_id"),
+    turnId: stringColumn(row, "turn_id"),
     attempt: numberColumn(row, "attempt"),
     round: nullableNumber("round"),
     kind,
@@ -427,11 +345,8 @@ function readExecutionStep(row: Record<string, unknown>): ExecutionStep {
   };
   return {
     id: numberColumn(row, "id"),
-    deliveryId: nullableString("delivery_id"),
-    webhookEventId: nullableString("webhook_event_id"),
-    eventId: nullableString("event_id"),
-    turnId: nullableString("turn_id"),
-    attempt: nullableNumber("attempt"),
+    turnId: stringColumn(row, "turn_id"),
+    attempt: numberColumn(row, "attempt"),
     step: stringColumn(row, "step"),
     status: status as ExecutionStepStatus,
     startedAt: stringColumn(row, "started_at"),
@@ -443,99 +358,14 @@ function readExecutionStep(row: Record<string, unknown>): ExecutionStep {
   };
 }
 
-function readWebhookOrigin(events: ExecutionStep[]): Pick<EventDetails, "actorUsername" | "triggerComment"> {
-  const decodedEvent = events.find((event) => event.step === "webhook.decode");
-  if (!decodedEvent?.output) return { actorUsername: null, triggerComment: null };
-  try {
-    const output: unknown = JSON.parse(decodedEvent.output);
-    if (typeof output !== "object" || output === null || Array.isArray(output)) {
-      return { actorUsername: null, triggerComment: null };
-    }
-    const record = output as Record<string, unknown>;
-    return {
-      actorUsername: typeof record.actorUsername === "string" ? record.actorUsername : null,
-      triggerComment: typeof record.note === "string" ? record.note : null,
-    };
-  } catch {
-    return { actorUsername: null, triggerComment: null };
-  }
-}
-
-function mapEvent(row: EventRow): Event {
-  return {
-    id: row.id,
-    type: row.type,
-    status: row.status,
-    projectId: row.project_id,
-    mrIid: row.mr_iid,
-    targetType: row.target_type,
-    targetIid: row.target_iid,
-    targetBranch: row.target_branch,
-    headSha: row.head_sha,
-    actorId: row.actor_id,
-    request: row.request,
-    createdAt: row.created_at,
-    attemptCount: row.attempt_count,
-    lastError: row.last_error,
-    cancellationRequested: row.cancel_requested !== 0,
-    leaseToken: row.lease_token,
-    failureStage: row.failure_stage as Event["failureStage"],
-  };
-}
-
-function mapEventSummary(row: EventRow): EventSummary {
-  const event = mapEvent(row);
-  return {
-    id: event.id,
-    type: event.type,
-    status: event.status,
-    projectId: event.projectId,
-    mrIid: event.mrIid,
-    targetType: event.targetType,
-    targetIid: event.targetIid,
-    targetBranch: event.targetBranch,
-    headSha: event.headSha,
-    actorId: event.actorId,
-    request: event.request,
-    createdAt: event.createdAt,
-    updatedAt: row.updated_at,
-    attemptCount: event.attemptCount,
-    lastError: event.lastError,
-    cancellationRequested: event.cancellationRequested,
-    failureStage: event.failureStage,
-  };
-}
-
-/** 归属重建后需要恢复的索引名。 */
-const indexNames = {
-  event_trace: "event_trace_event_started_idx",
-  execution_steps: "execution_steps_event_started_idx",
-} as const;
-
-/** 归属重建时使用的表结构：保留外键级联，去掉旧库 NOT NULL 的 `event_id` 约束。 */
-const ownershipDdl = {
-  event_trace: `id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
-    turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
-    attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
-    started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
-    input_tokens INTEGER, output_tokens INTEGER, trace_input TEXT, trace_output TEXT, trace_schema TEXT,
-    raw_content TEXT, error_detail TEXT, request_started_at TEXT, response_headers_ms INTEGER,
-    first_token_ms INTEGER, generation_duration_ms INTEGER`,
-  execution_steps: `id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, webhook_event_id TEXT,
-    event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
-    turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
-    attempt INTEGER, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    duration_ms INTEGER, input_json TEXT, output_json TEXT, error_detail TEXT`,
-} as const;
-
-export class EventStore {
+export class AppStore {
   private readonly db: DatabaseSync;
 
   private constructor(private readonly path: string, db: DatabaseSync) {
     this.db = db;
   }
 
-  static async open(path: string): Promise<EventStore> {
+  static async open(path: string): Promise<AppStore> {
     if (!path) throw new Error("database path is required");
     if (path !== ":memory:") await mkdir(dirname(resolve(path)), { recursive: true });
     const db = new DatabaseSync(path, {
@@ -543,7 +373,7 @@ export class EventStore {
       timeout: 5000,
     });
     db.exec("PRAGMA journal_mode = WAL");
-    const store = new EventStore(path, db);
+    const store = new AppStore(path, db);
     store.migrate();
     return store;
   }
@@ -556,73 +386,34 @@ export class EventStore {
     this.db.prepare("SELECT 1").get();
   }
 
-  eventCounts(): Record<string, number> {
-    const rows = this.db
-      .prepare("SELECT status, COUNT(*) AS count FROM events GROUP BY status")
-      .all() as { status: string; count: number }[];
-    return Object.fromEntries(rows.map((row) => [row.status, row.count]));
-  }
-
-  /** 运维总览：队列计数与内联事件执行器心跳。 */
-  operationsOverview(heartbeatTimeoutMs = 30_000): OperationsOverview {
-    if (!Number.isFinite(heartbeatTimeoutMs) || heartbeatTimeoutMs <= 0) {
-      throw new Error("event runner heartbeat timeout must be positive");
-    }
-    // ... counts / oldest ...
-    const counts: Record<EventStatus, number> = {
+  /** 运维总览：按对话轮次状态汇总当前活动。 */
+  operationsOverview(): OperationsOverview {
+    const counts: Record<ConversationTurnStatus, number> = {
       queued: 0,
-      preparing: 0,
-      analyzing: 0,
-      fixing: 0,
-      verifying: 0,
-      publishing: 0,
+      running: 0,
       completed: 0,
       failed: 0,
       stale: 0,
       cancelled: 0,
     };
     const rows = this.db
-      .prepare("SELECT status, COUNT(*) AS count FROM events GROUP BY status")
+      .prepare("SELECT status, COUNT(*) AS count FROM conversation_turns GROUP BY status")
       .all() as { status: string; count: number }[];
     for (const row of rows) {
-      if (!isEventStatus(row.status)) throw new Error(`SQLite event status "${row.status}" is invalid`);
+      if (!isConversationTurnStatus(row.status)) {
+        throw new Error(`SQLite conversation turn status "${row.status}" is invalid`);
+      }
       counts[row.status] = row.count;
     }
     const oldest = this.db
-      .prepare("SELECT created_at FROM events WHERE status='queued' ORDER BY created_at ASC LIMIT 1")
+      .prepare("SELECT created_at FROM conversation_turns WHERE status='queued' ORDER BY created_at ASC LIMIT 1")
       .get() as { created_at: string } | undefined;
-    const heartbeat = this.db
-      .prepare("SELECT last_seen_at FROM worker_heartbeats ORDER BY last_seen_at DESC LIMIT 1")
-      .get() as { last_seen_at: string } | undefined;
-    const lastSeenAt = heartbeat?.last_seen_at ?? null;
+    const conversationCount = (this.db.prepare("SELECT COUNT(*) AS count FROM conversations").get() as { count: number }).count;
     return {
       counts,
       oldestQueuedAt: oldest?.created_at ?? null,
-      runner: {
-        online: lastSeenAt !== null && Date.parse(lastSeenAt) >= Date.now() - heartbeatTimeoutMs,
-        lastSeenAt,
-      },
+      conversationCount,
     };
-  }
-
-  /**
-   * 记录内联事件执行器心跳。
-   *
-   * 表名沿用 `worker_heartbeats`，避免为纯改名做一次数据库迁移；
-   * 单进程部署下只有一个执行器写入，总览据此判断它是否在线。
-   */
-  heartbeatRunner(runnerId: string): void {
-    const id = runnerId.trim();
-    if (!id || id.length > 128) throw new Error("event runner ID must be between 1 and 128 characters");
-    const now = new Date();
-    this.db
-      .prepare(
-        `INSERT INTO worker_heartbeats(worker_id, last_seen_at) VALUES (?, ?)
-         ON CONFLICT(worker_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
-      )
-      .run(id, now.toISOString());
-    const staleBefore = new Date(now.valueOf() - 7 * 24 * 60 * 60_000).toISOString();
-    this.db.prepare("DELETE FROM worker_heartbeats WHERE last_seen_at < ?").run(staleBefore);
   }
 
   modelCallMetrics(): ModelCallMetric[] {
@@ -664,37 +455,36 @@ export class EventStore {
       .run(taskType, outcome, Math.floor(durationMs), inputTokens, outputTokens);
   }
 
-  startEventTrace(
+  startTrace(
     scope: TraceScope,
     attempt: number,
-    kind: EventTraceKind,
+    kind: TraceKind,
     name: string,
     model = "",
     rawContent: string | null = null,
     details: { round?: number; input?: string | null; schema?: string | null } = {},
   ): number {
-    const column = traceScopeColumn(scope);
-    const ownerId = traceScopeId(scope);
+    const turnId = traceScopeId(scope);
     if (!Number.isSafeInteger(attempt) || attempt <= 0) {
-      throw new Error("event trace requires a positive attempt number");
+      throw new Error("trace requires a positive attempt number");
     }
-    if (kind !== "tool" && kind !== "llm" && kind !== "context") throw new Error(`unsupported event trace kind "${kind}"`);
+    if (kind !== "tool" && kind !== "llm" && kind !== "context") throw new Error(`unsupported trace kind "${kind}"`);
     if (
       !name.trim() ||
       name.length > 128 ||
       model.length > 256 ||
       (details.round !== undefined && (!Number.isSafeInteger(details.round) || details.round <= 0))
     ) {
-      throw new Error("event trace name or model is invalid");
+      throw new Error("trace name or model is invalid");
     }
     const result = this.db
       .prepare(
-        `INSERT INTO event_trace
-         (${column},attempt,round,kind,name,status,started_at,model,trace_input,trace_schema,raw_content)
+        `INSERT INTO conversation_trace
+         (turn_id,attempt,round,kind,name,status,started_at,model,trace_input,trace_schema,raw_content)
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        ownerId,
+        turnId,
         attempt,
         details.round ?? null,
         kind,
@@ -707,13 +497,13 @@ export class EventStore {
         rawContent,
       );
     const id = Number(result.lastInsertRowid);
-    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid event trace ID");
+    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid trace ID");
     return id;
   }
 
-  finishEventTrace(
+  finishTrace(
     traceId: number,
-    status: Exclude<EventTraceStatus, "running">,
+    status: Exclude<TraceStatus, "running">,
     durationMs: number,
     inputTokens?: number,
     outputTokens?: number,
@@ -741,7 +531,7 @@ export class EventStore {
     }
     const result = this.db
       .prepare(
-        `UPDATE event_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?,
+        `UPDATE conversation_trace SET status=?, finished_at=?, duration_ms=?, input_tokens=?, output_tokens=?, error_detail=?,
          trace_output=?, first_token_ms=?, generation_duration_ms=?, request_started_at=?, response_headers_ms=?
          WHERE id=? AND status='running'`,
       )
@@ -762,39 +552,25 @@ export class EventStore {
     if (result.changes !== 1) throw new Error(`event trace "${traceId}" is not running`);
   }
   startExecutionStep(input: {
-    deliveryId?: string | null;
-    webhookEventId?: string | null;
-    eventId?: string | null;
-    turnId?: string | null;
-    attempt?: number | null;
+    turnId: string;
+    attempt: number;
     step: string;
     input?: unknown;
   }): number {
-    const deliveryId = input.deliveryId ?? null;
-    const webhookEventId = input.webhookEventId ?? null;
-    const eventId = input.eventId ?? (webhookEventId
-      ? (this.db.prepare("SELECT id FROM events WHERE webhook_event_id=?").get(webhookEventId) as { id: string } | undefined)?.id ?? null
-      : null);
-    const turnId = input.turnId ?? null;
-    const attempt = input.attempt ?? null;
+    const { turnId, attempt } = input;
     if (
-      (!deliveryId && !webhookEventId && !eventId && !turnId) ||
-      [deliveryId, webhookEventId, eventId, turnId].some((value) => value !== null && (!value.trim() || value.length > 256)) ||
+      !turnId.trim() || turnId.length > 256 ||
       !/^[a-z][a-z0-9_.-]{1,127}$/.test(input.step) ||
-      (attempt !== null && (!Number.isSafeInteger(attempt) || attempt <= 0))
+      !Number.isSafeInteger(attempt) || attempt <= 0
     ) {
       throw new Error("execution step identity or step is invalid");
     }
     const result = this.db
       .prepare(
-        `INSERT INTO execution_steps
-         (delivery_id,webhook_event_id,event_id,turn_id,attempt,step,status,started_at,input_json)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO execution_steps (turn_id,attempt,step,status,started_at,input_json)
+         VALUES (?,?,?,?,?,?)`,
       )
       .run(
-        deliveryId,
-        webhookEventId,
-        eventId,
         turnId,
         attempt,
         input.step,
@@ -803,7 +579,7 @@ export class EventStore {
         serializeTraceValue(input.input),
       );
     const id = Number(result.lastInsertRowid);
-    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid execution event ID");
+    if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid execution step ID");
     return id;
   }
 
@@ -838,11 +614,8 @@ export class EventStore {
   }
 
   recordExecutionStep(input: {
-    deliveryId?: string | null;
-    webhookEventId?: string | null;
-    eventId?: string | null;
-    turnId?: string | null;
-    attempt?: number | null;
+    turnId: string;
+    attempt: number;
     step: string;
     status: Exclude<ExecutionStepStatus, "running">;
     input?: unknown;
@@ -854,13 +627,6 @@ export class EventStore {
     return id;
   }
 
-  linkExecutionStepsToEvent(deliveryId: string, webhookEventId: string): void {
-    if (!deliveryId.trim() || !webhookEventId.trim()) throw new Error("execution event correlation IDs are required");
-    this.db
-      .prepare("UPDATE execution_steps SET webhook_event_id=? WHERE delivery_id=? AND webhook_event_id IS NULL")
-      .run(webhookEventId, deliveryId);
-  }
-
   pruneHistory(historyBefore: Date, auditBefore: Date): void {
     if (Number.isNaN(historyBefore.valueOf()) || Number.isNaN(auditBefore.valueOf())) {
       throw new Error("history and audit retention cutoffs are required");
@@ -868,20 +634,6 @@ export class EventStore {
     this.transaction(() => {
       const history = historyBefore.toISOString();
       const audit = auditBefore.toISOString();
-      const terminalStatuses = ["completed", "failed", "stale", "cancelled"];
-      const statusParams = terminalStatuses.map(() => "?").join(",");
-      this.db
-        .prepare(
-          `DELETE FROM event_attempts WHERE event_id IN
-           (SELECT id FROM events WHERE status IN (${statusParams}) AND updated_at < ?)`,
-        )
-        .run(...terminalStatuses, history);
-      this.db
-        .prepare(`DELETE FROM events WHERE status IN (${statusParams}) AND updated_at < ?`)
-        .run(...terminalStatuses, history);
-      this.db
-        .prepare("DELETE FROM execution_steps WHERE event_id IS NULL AND turn_id IS NULL AND started_at < ?")
-        .run(history);
       // 对话消息与轨迹通过外键级联删除；保留仍有排队或运行中轮次的对话。
       this.db
         .prepare(
@@ -889,7 +641,6 @@ export class EventStore {
            AND id NOT IN (SELECT conversation_id FROM conversation_turns WHERE status IN ('queued','running'))`,
         )
         .run(history);
-      this.db.prepare("DELETE FROM webhook_deliveries WHERE received_at < ?").run(history);
       this.db
         .prepare("DELETE FROM model_token_usage WHERE day < ?")
         .run(historyBefore.toISOString().slice(0, 10));
@@ -949,354 +700,6 @@ export class EventStore {
     await sqliteBackup(this.db, output);
   }
 
-  createReview(webhookEventId: string, key: string, event: Partial<Event> & Pick<Event, "projectId" | "mrIid" | "actorId" | "headSha">): EventResult {
-  // 在事务中检查并增加预留量，避免并发请求同时通过预算检查。
-    return this.createQueuedTask(webhookEventId, key, event, "review");
-  }
-
-  createExplain(
-    webhookEventId: string,
-    key: string,
-    event: Partial<Event> & Pick<Event, "projectId" | "mrIid" | "actorId" | "headSha" | "request">,
-  ): EventResult {
-    return this.createQueuedTask(webhookEventId, key, event, "explain");
-  }
-
-  createChat(
-    webhookEventId: string,
-    key: string,
-    event: Partial<Event> & Pick<Event, "projectId" | "mrIid" | "actorId" | "headSha" | "request">,
-  ): EventResult {
-    return this.createQueuedTask(webhookEventId, key, event, "chat");
-  }
-
-  createFix(
-    webhookEventId: string,
-    key: string,
-    event: Partial<Event> & Pick<Event, "projectId" | "mrIid" | "actorId" | "headSha" | "request">,
-    enabled: boolean,
-  ): EventResult {
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) {
-        const existing = this.db.prepare("SELECT id FROM events WHERE webhook_event_id=?").get(webhookEventId) as { id: string } | undefined;
-        if (existing) this.linkExecutionSteps(webhookEventId, existing.id);
-        return previous;
-      }
-      let auditResult = "authorized_queued";
-      let response: string;
-      let resultEvent: EventResult["event"];
-      if (!enabled) {
-        response = "Fix proposals are disabled.";
-        auditResult = "denied_disabled";
-      } else {
-        const existing = this.db.prepare("SELECT id FROM events WHERE idempotency_key = ?").get(key) as
-          | { id: string }
-          | undefined;
-        if (existing) {
-          resultEvent = { id: existing.id, created: false };
-          response = `Fix task \`${existing.id}\` is already queued for this comment.`;
-          auditResult = "authorized_duplicate";
-        } else {
-          const created = new Date().toISOString();
-          const id = randomUUID();
-          this.db
-            .prepare(
-              `INSERT INTO events
-              (id,idempotency_key,webhook_event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            )
-            .run(id, key, webhookEventId, "fix", "queued", event.projectId, event.mrIid, "merge_request", event.mrIid, event.headSha, event.actorId, event.request, created, created);
-          resultEvent = { id, created: true };
-          response = `Queued fix task \`${id}\` for MR !${event.mrIid} at \`${event.headSha.slice(0, 12)}\`.`;
-        }
-      }
-      this.insertWebhookEvent(webhookEventId, response);
-      if (resultEvent) this.linkExecutionSteps(webhookEventId, resultEvent.id);
-      this.insertAudit(event.actorId, "request_fix", `${event.projectId}:${event.mrIid}`, auditResult);
-      return { response, delivered: false, ...(resultEvent ? { event: resultEvent } : {}) };
-    });
-  }
-
-  createIssueImplementation(
-    webhookEventId: string,
-    key: string,
-    event: { projectId: number; issueIid: number; actorId: number; request: string },
-  ): EventResult {
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) return previous;
-      let response: string;
-      let resultEvent: EventResult["event"];
-      let auditResult = "queued";
-      const existing = this.db.prepare("SELECT id FROM events WHERE idempotency_key = ?").get(key) as
-        | { id: string }
-        | undefined;
-      if (existing) {
-        resultEvent = { id: existing.id, created: false };
-        response = `Issue assistant task \`${existing.id}\` is already queued for this comment.`;
-        auditResult = "authorized_duplicate";
-      } else {
-        const created = new Date().toISOString();
-        const id = randomUUID();
-        this.db
-          .prepare(
-            `INSERT INTO events
-             (id,idempotency_key,webhook_event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          )
-          .run(id, key, webhookEventId, "implement", "queued", event.projectId, 0, "issue", event.issueIid, "", event.actorId, event.request, created, created);
-        resultEvent = { id, created: true };
-        response = `Queued Issue assistant task \`${id}\` for issue #${event.issueIid}.`;
-      }
-      this.insertWebhookEvent(webhookEventId, response);
-      if (resultEvent) this.linkExecutionSteps(webhookEventId, resultEvent.id);
-      this.insertAudit(event.actorId, "request_issue_assistant", `${event.projectId}:#${event.issueIid}`, auditResult);
-      return { response, delivered: false, ...(resultEvent ? { event: resultEvent } : {}) };
-    });
-  }
-
-  status(webhookEventId: string, projectId: number, mrIid: number): EventResult {
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) return previous;
-      const row = this.db
-        .prepare(
-          `SELECT id, status, actor_id, cancel_requested FROM events
-           WHERE project_id = ? AND mr_iid = ? ORDER BY created_at DESC LIMIT 1`,
-        )
-        .get(projectId, mrIid) as
-        | { id: string; status: string; actor_id: number; cancel_requested: number }
-        | undefined;
-      let response = "No Corvex task has been created for this MR.";
-      if (row) {
-        response = `Latest task \`${row.id}\`: **${row.status}** (requested by user ${row.actor_id}).`;
-        if (row.cancel_requested) response += " Cancellation has been requested.";
-      }
-      this.insertWebhookEvent(webhookEventId, response);
-      return { response, delivered: false };
-    });
-  }
-
-  cancel(webhookEventId: string, projectId: number, mrIid: number, actorId: number): EventResult {
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) return previous;
-      const row = this.db
-        .prepare(
-          `SELECT id, status, actor_id FROM events
-           WHERE project_id = ? AND mr_iid = ? ORDER BY created_at DESC LIMIT 1`,
-        )
-        .get(projectId, mrIid) as { id: string; status: EventStatus; actor_id: number } | undefined;
-      let response: string;
-      let auditResult: string;
-      let resource = `${projectId}:${mrIid}`;
-      if (!row) {
-        response = "There is no task to cancel for this MR.";
-        auditResult = "no_task";
-      } else {
-        resource = row.id;
-        if (row.actor_id !== actorId) {
-          response = "You can only cancel a task that you started.";
-          auditResult = "denied_not_owner";
-        } else if (row.status === "queued") {
-          const updated = this.db
-            .prepare("UPDATE events SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-            .run("cancelled", new Date().toISOString(), row.id, "queued").changes;
-          response =
-            updated === 1
-              ? `Cancelled task \`${row.id}\`.`
-              : `Task \`${row.id}\` changed state before it could be cancelled.`;
-          if (updated === 1) this.insertAudit(row.actor_id, "event_status", row.id, "queued->cancelled");
-          auditResult = updated === 1 ? "cancelled" : "denied_state_changed";
-        } else if (["preparing", "analyzing", "fixing", "verifying"].includes(row.status)) {
-          const updated = this.db
-            .prepare(
-              "UPDATE events SET cancel_requested = 1, updated_at = ? WHERE id = ? AND status = ? AND cancel_requested = 0",
-            )
-            .run(new Date().toISOString(), row.id, row.status).changes;
-          response =
-            updated === 1
-              ? `Cancellation requested for task \`${row.id}\`.`
-              : `Task \`${row.id}\` changed state before it could be cancelled.`;
-          auditResult = updated === 1 ? "cancellation_requested" : "denied_state_changed";
-        } else {
-          response = `Task \`${row.id}\` is ${row.status} and can no longer be cancelled.`;
-          auditResult = `denied_status_${row.status}`;
-        }
-      }
-      this.insertAudit(actorId, "cancel_event", resource, auditResult);
-      this.insertWebhookEvent(webhookEventId, response);
-      return { response, delivered: false };
-    });
-  }
-
-  markDelivered(webhookEventId: string, token: string): void {
-    if (!webhookEventId.trim() || !token.trim()) throw new Error("webhook delivery completion requires an event ID and token");
-    const result = this.db
-      .prepare(
-        "UPDATE webhook_deliveries SET delivered=1,delivery_token='',delivery_until=0 WHERE webhook_event_id=? AND delivery_token=? AND delivered=0",
-      )
-      .run(webhookEventId, token);
-    if (result.changes === 1) return;
-    const row = this.db.prepare("SELECT delivered FROM webhook_deliveries WHERE webhook_event_id=?").get(webhookEventId) as
-      | { delivered: number }
-      | undefined;
-    if (row?.delivered) return;
-    throw new Error(`webhook delivery claim for "${webhookEventId}" is no longer owned`);
-  }
-
-  claimWebhookDelivery(
-    webhookEventId: string,
-    leaseMs: number,
-  ): { status: "claimed"; token: string } | { status: "delivered" | "in_progress" } {
-    if (!webhookEventId.trim() || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
-      throw new Error("webhook delivery claim requires an event ID and positive lease duration");
-    }
-    const now = Date.now();
-    const token = randomUUID();
-    const result = this.db
-      .prepare(
-        `UPDATE webhook_deliveries SET delivery_token=?,delivery_until=?
-         WHERE webhook_event_id=? AND delivered=0 AND (delivery_token='' OR delivery_until<=?)`,
-      )
-      .run(token, now + leaseMs, webhookEventId, now);
-    if (result.changes === 1) return { status: "claimed", token };
-    const row = this.db
-      .prepare("SELECT delivered FROM webhook_deliveries WHERE webhook_event_id=?")
-      .get(webhookEventId) as { delivered: number } | undefined;
-    if (!row) throw new Error(`webhook event "${webhookEventId}" not found`);
-    return { status: row.delivered ? "delivered" : "in_progress" };
-  }
-
-  releaseWebhookDelivery(webhookEventId: string, token: string): void {
-    if (!webhookEventId.trim() || !token.trim()) throw new Error("webhook delivery release requires an event ID and token");
-    this.db
-      .prepare(
-        "UPDATE webhook_deliveries SET delivery_token='',delivery_until=0 WHERE webhook_event_id=? AND delivery_token=? AND delivered=0",
-      )
-      .run(webhookEventId, token);
-  }
-
-  recordResponse(webhookEventId: string, response: string): EventResult {
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) return previous;
-      this.insertWebhookEvent(webhookEventId, response);
-      return { response, delivered: false };
-    });
-  }
-
-  claimNextWithLease(leaseMs: number): Event | undefined {
-    if (leaseMs <= 0) throw new Error("event lease duration must be positive");
-    return this.transaction(() => {
-      this.recoverExpiredLeases();
-      const row = readEventRow(this.db
-        .prepare(
-          "SELECT * FROM events WHERE status = 'queued' AND available_at <= ? ORDER BY created_at LIMIT 1",
-        )
-        .get(Date.now()));
-      if (!row) return undefined;
-      const now = new Date();
-      const leaseToken = randomUUID();
-      const result = this.db
-        .prepare(
-          `UPDATE events SET status='preparing', attempt_count=attempt_count+1, updated_at=?,
-           lease_token=?, lease_until=? WHERE id=? AND status='queued'`,
-        )
-        .run(now.toISOString(), leaseToken, now.valueOf() + leaseMs, row.id);
-      if (result.changes !== 1) return undefined;
-      this.db
-        .prepare("INSERT INTO event_attempts(event_id,attempt,started_at) VALUES (?,?,?)")
-        .run(row.id, row.attempt_count + 1, now.toISOString());
-      this.insertAudit(row.actor_id, "event_status", row.id, "queued->preparing", now.toISOString());
-      const claimed = readEventRow(this.db.prepare("SELECT * FROM events WHERE id = ?").get(row.id));
-      if (!claimed) throw new Error(`claimed event "${row.id}" disappeared`);
-      return mapEvent(claimed);
-    });
-  }
-
-  updateLeasedStatus(eventId: string, leaseToken: string, from: EventStatus, to: EventStatus, failure = ""): void {
-    if (!leaseToken) throw new Error("event lease token is required");
-    if (!this.validTransition(from, to)) throw new Error(`invalid event transition "${from}" -> "${to}"`);
-    this.transaction(() => {
-      const row = this.db
-        .prepare("SELECT actor_id, cancel_requested FROM events WHERE id=? AND status=? AND lease_token=?")
-        .get(eventId, from, leaseToken) as { actor_id: number; cancel_requested: number } | undefined;
-      if (!row) throw new Error(`event "${eventId}" is no longer in status "${from}"`);
-      if (row.cancel_requested && to !== "cancelled") throw new Error("event cancellation requested");
-      const now = new Date().toISOString();
-      const result = this.db
-        .prepare(
-          `UPDATE events SET status=?, last_error=?, failure_stage=CASE WHEN ?='failed' THEN ? ELSE '' END, updated_at=?,
-           lease_token=CASE WHEN ? THEN '' ELSE lease_token END,
-           lease_until=CASE WHEN ? THEN 0 ELSE lease_until END
-           WHERE id=? AND status=? AND lease_token=? AND (? OR cancel_requested=0)`,
-        )
-        .run(to, failure, to, from, now, terminal.has(to) ? 1 : 0, terminal.has(to) ? 1 : 0, eventId, from, leaseToken, to === "cancelled" ? 1 : 0);
-      if (result.changes !== 1) throw new Error(`event "${eventId}" is no longer in status "${from}"`);
-      if (terminal.has(to)) {
-        this.db
-          .prepare("UPDATE event_attempts SET finished_at=?, error=? WHERE event_id=? AND finished_at IS NULL")
-          .run(now, failure, eventId);
-      }
-      this.insertAudit(row.actor_id, "event_status", eventId, `${from}->${to}`, now);
-    });
-  }
-
-  retryLeasedEvent(
-    eventId: string,
-    leaseToken: string,
-    from: EventStatus,
-    availableAt: number,
-    failure: string,
-  ): boolean {
-    if (!leaseToken) throw new Error("event lease token is required");
-    if (from === "publishing") throw new Error("publishing events cannot be retried automatically");
-    if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
-      throw new Error("retry availability must be a non-negative timestamp");
-    }
-    return this.transaction(() => {
-      const row = this.db
-        .prepare("SELECT actor_id, cancel_requested, attempt_count FROM events WHERE id=? AND status=? AND lease_token=?")
-        .get(eventId, from, leaseToken) as {
-        actor_id: number;
-        cancel_requested: number;
-        attempt_count: number;
-      } | undefined;
-      if (!row) throw new Error(`event "${eventId}" is no longer in status "${from}"`);
-      if (row.cancel_requested || row.attempt_count >= maxAttempts) return false;
-
-      const now = new Date();
-      const finishedAt = now.toISOString();
-      const result = this.db
-        .prepare(
-          `UPDATE events SET status='queued', last_error=?, failure_stage='', available_at=?, updated_at=?,
-           lease_token='', lease_until=0 WHERE id=? AND status=? AND lease_token=? AND cancel_requested=0`,
-        )
-        .run(failure, availableAt, finishedAt, eventId, from, leaseToken);
-      if (result.changes !== 1) throw new Error(`event "${eventId}" changed before it could be retried`);
-      this.db
-        .prepare("UPDATE event_attempts SET finished_at=?, error=? WHERE event_id=? AND finished_at IS NULL")
-        .run(finishedAt, failure, eventId);
-      this.insertAudit(row.actor_id, "event_status", eventId, `${from}->queued`, finishedAt);
-      this.insertAudit(row.actor_id, "automatic_retry", eventId, `available_at:${availableAt}`, finishedAt);
-      return true;
-    });
-  }
-
-  renewLease(eventId: string, leaseToken: string, leaseMs: number): void {
-    if (!leaseToken || leaseMs <= 0) throw new Error("event lease token and positive duration are required");
-    const now = new Date();
-    const result = this.db
-      .prepare(
-        `UPDATE events SET lease_until=?, updated_at=? WHERE id=? AND lease_token=?
-         AND status IN (${active.map(() => "?").join(",")})`,
-      )
-      .run(now.valueOf() + leaseMs, now.toISOString(), eventId, leaseToken, ...active);
-    if (result.changes !== 1) throw new Error(`event "${eventId}" lease is no longer owned`);
-  }
-
   createConversation(input: CreateConversationInput): CreatedConversationTurn {
     this.validateConversationInput(input);
     const conversationId = randomUUID();
@@ -1354,11 +757,11 @@ export class EventStore {
       `SELECT conversation_messages.*, conversation_turns.status AS turn_status,
          conversation_turns.process AS turn_process, conversation_turns.model AS turn_model,
          conversation_turns.created_at AS turn_created_at, conversation_turns.updated_at AS turn_updated_at,
-         (SELECT COALESCE(SUM(COALESCE(output_tokens, 0)), 0) FROM event_trace
+         (SELECT COALESCE(SUM(COALESCE(output_tokens, 0)), 0) FROM conversation_trace
           WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_output_tokens,
-         (SELECT COALESCE(SUM(COALESCE(generation_duration_ms, 0)), 0) FROM event_trace
+         (SELECT COALESCE(SUM(COALESCE(generation_duration_ms, 0)), 0) FROM conversation_trace
           WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_duration_ms,
-         (SELECT COUNT(*) FROM event_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
+         (SELECT COUNT(*) FROM conversation_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
          (SELECT COUNT(*) FROM execution_steps WHERE turn_id=conversation_messages.turn_id) AS step_count
        FROM conversation_messages
        LEFT JOIN conversation_turns ON conversation_turns.id=conversation_messages.turn_id
@@ -1369,7 +772,7 @@ export class EventStore {
     const turnIds = messages.flatMap((message) => (message.role === "assistant" && message.turnId ? [message.turnId] : []));
     if (turnIds.length > 0) {
       const rows = this.db.prepare(
-        `SELECT turn_id, name, status, trace_input, duration_ms FROM event_trace
+        `SELECT turn_id, name, status, trace_input, duration_ms FROM conversation_trace
          WHERE kind='tool' AND turn_id IN (${turnIds.map(() => "?").join(",")})
          ORDER BY started_at,id`,
       ).all(...turnIds);
@@ -1416,8 +819,8 @@ export class EventStore {
       lastError: turn.last_error,
       process: readConversationProcess(turn.process),
       timeline: this.readTurnTimeline(turnId),
-      trajectory: this.readEventTrajectory({ kind: "conversation", turnId }),
-      events: this.readExecutionSteps({ kind: "conversation", turnId }),
+      trajectory: this.readTrajectory({ turnId }),
+      events: this.readExecutionSteps({ turnId }),
     };
   }
 
@@ -1453,9 +856,9 @@ export class EventStore {
       turns,
       // 同一对话的轮次内联串行执行，轨迹时间天然不重叠；这里仍按时间排序，便于直接渲染。
       trajectory: this.db
-        .prepare(`SELECT * FROM event_trace WHERE turn_id IN (${placeholders}) ORDER BY started_at,id`)
+        .prepare(`SELECT * FROM conversation_trace WHERE turn_id IN (${placeholders}) ORDER BY started_at,id`)
         .all(...turnIds)
-        .map((value) => readEventTrace(value as Record<string, unknown>)),
+        .map((value) => readTrace(value as Record<string, unknown>)),
       events: this.db
         .prepare(`SELECT * FROM execution_steps WHERE turn_id IN (${placeholders}) ORDER BY started_at,id`)
         .all(...turnIds)
@@ -1473,10 +876,10 @@ export class EventStore {
       `SELECT conversation_turns.id AS turn_id, conversation_turns.message_id AS message_id,
          conversation_turns.status AS turn_status, conversation_turns.request AS turn_request,
          conversation_turns.created_at AS turn_created_at, conversation_turns.updated_at AS turn_updated_at,
-         COALESCE((SELECT SUM(CASE WHEN kind='llm' THEN 1 ELSE 0 END) FROM event_trace WHERE turn_id=conversation_turns.id), 0) AS model_calls,
-         COALESCE((SELECT SUM(CASE WHEN kind='tool' THEN 1 ELSE 0 END) FROM event_trace WHERE turn_id=conversation_turns.id), 0) AS tool_calls,
-         COALESCE((SELECT SUM(COALESCE(input_tokens, 0)) FROM event_trace WHERE turn_id=conversation_turns.id), 0) AS input_tokens,
-         COALESCE((SELECT SUM(COALESCE(output_tokens, 0)) FROM event_trace WHERE turn_id=conversation_turns.id), 0) AS output_tokens
+         COALESCE((SELECT SUM(CASE WHEN kind='llm' THEN 1 ELSE 0 END) FROM conversation_trace WHERE turn_id=conversation_turns.id), 0) AS model_calls,
+         COALESCE((SELECT SUM(CASE WHEN kind='tool' THEN 1 ELSE 0 END) FROM conversation_trace WHERE turn_id=conversation_turns.id), 0) AS tool_calls,
+         COALESCE((SELECT SUM(COALESCE(input_tokens, 0)) FROM conversation_trace WHERE turn_id=conversation_turns.id), 0) AS input_tokens,
+         COALESCE((SELECT SUM(COALESCE(output_tokens, 0)) FROM conversation_trace WHERE turn_id=conversation_turns.id), 0) AS output_tokens
        FROM conversation_turns
        WHERE conversation_turns.conversation_id=? AND conversation_turns.role='assistant'
        ORDER BY conversation_turns.created_at,conversation_turns.rowid`,
@@ -1735,30 +1138,6 @@ export class EventStore {
     }));
   }
 
-  /**
-   * 升级兼容：事件调度参数曾存放在 `worker_*` 键下，统一迁移为 `events_*`。
-   * 新旧键同时存在时以新键为准并删除旧键；返回迁移的键数量。
-   */
-  migrateLegacyEventRuntimeSettings(): number {
-    return this.transaction(() => {
-      const mappings = [
-        ["worker_poll_interval", "events_poll_interval"],
-        ["worker_event_timeout", "events_timeout"],
-      ] as const;
-      let migrated = 0;
-      for (const [legacy, current] of mappings) {
-        if (this.getRuntimeSetting(legacy) === undefined) continue;
-        if (this.getRuntimeSetting(current) === undefined) {
-          this.db.prepare("UPDATE runtime_settings SET key=? WHERE key=?").run(current, legacy);
-        } else {
-          this.db.prepare("DELETE FROM runtime_settings WHERE key=?").run(legacy);
-        }
-        migrated++;
-      }
-      return migrated;
-    });
-  }
-
   /** 按 GitLab 用户 ID 创建或更新本地用户，返回带解密令牌的用户。 */
   upsertUser(identity: GitLabIdentity, cipher: TokenCipher): AuthUser {
     return this.transaction(() => {
@@ -1919,7 +1298,7 @@ export class EventStore {
         .all(conversationId) as { id: string }[]).map((row) => row.id);
       if (turnIds.length > 0) {
         const placeholders = turnIds.map(() => "?").join(",");
-        this.db.prepare(`DELETE FROM event_trace WHERE turn_id IN (${placeholders})`).run(...turnIds);
+        this.db.prepare(`DELETE FROM conversation_trace WHERE turn_id IN (${placeholders})`).run(...turnIds);
         this.db.prepare(`DELETE FROM execution_steps WHERE turn_id IN (${placeholders})`).run(...turnIds);
       }
       this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
@@ -2128,152 +1507,6 @@ export class EventStore {
     };
   }
 
-  cancellationRequested(eventId: string, leaseToken: string): boolean {
-    if (!leaseToken) throw new Error("event lease token is required");
-    const row = this.db
-      .prepare("SELECT cancel_requested FROM events WHERE id=? AND lease_token=?")
-      .get(eventId, leaseToken) as { cancel_requested: number } | undefined;
-    if (!row) throw new Error(`event "${eventId}" lease is no longer owned`);
-    return row.cancel_requested !== 0;
-  }
-
-  getEvent(eventId: string): Event {
-    const row = readEventRow(this.db.prepare("SELECT * FROM events WHERE id=?").get(eventId));
-    if (!row) throw new Error(`event "${eventId}" not found`);
-    return mapEvent(row);
-  }
-
-  listEvents(status?: EventStatus, limit = 50): EventSummary[] {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
-      throw new Error("event list limit must be between 1 and 200");
-    }
-    const rows = status
-      ? this.db
-          .prepare("SELECT * FROM events WHERE status = ? ORDER BY created_at DESC LIMIT ?")
-          .all(status, limit)
-      : this.db.prepare("SELECT * FROM events ORDER BY created_at DESC LIMIT ?").all(limit);
-    return rows.map((value) => {
-      const row = readEventRow(value as Record<string, unknown>);
-      if (!row) throw new Error("SQLite returned an empty event row");
-      return mapEventSummary(row);
-    });
-  }
-
-  listOperationsEvents(query: EventListQuery): EventPage {
-    if (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100) {
-      throw new Error("operations event list limit must be between 1 and 100");
-    }
-    if (!Number.isSafeInteger(query.offset) || query.offset < 0 || query.offset > 1_000_000) {
-      throw new Error("operations event list offset must be between 0 and 1000000");
-    }
-    if (query.status && !isEventStatus(query.status)) {
-      throw new Error(`unknown event status "${query.status}"`);
-    }
-    if (query.type && !isEventType(query.type)) {
-      throw new Error(`unknown event type "${query.type}"`);
-    }
-    for (const [label, value] of [
-      ["project ID", query.projectId],
-      ["MR IID", query.mrIid],
-    ] as const) {
-      if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
-        throw new Error(`${label} must be a positive safe integer`);
-      }
-    }
-    const search = query.search?.trim() ?? "";
-    if (search.length > 100) throw new Error("operations event search must be at most 100 characters");
-
-    const clauses: string[] = [];
-    const parameters: Array<string | number> = [];
-    if (query.status) {
-      clauses.push("status = ?");
-      parameters.push(query.status);
-    }
-    if (query.type) {
-      clauses.push("type = ?");
-      parameters.push(query.type);
-    }
-    if (query.projectId !== undefined) {
-      clauses.push("project_id = ?");
-      parameters.push(query.projectId);
-    }
-    if (query.mrIid !== undefined) {
-      clauses.push("mr_iid = ?");
-      parameters.push(query.mrIid);
-    }
-    if (search) {
-      clauses.push("(instr(lower(id), lower(?)) > 0 OR instr(CAST(project_id AS TEXT) || ':' || CAST(CASE WHEN target_type='merge_request' THEN mr_iid ELSE target_iid END AS TEXT), ?) > 0)");
-      parameters.push(search, search);
-    }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const count = this.db
-      .prepare(`SELECT COUNT(*) AS count FROM events ${where}`)
-      .get(...parameters) as Record<string, unknown>;
-    const rows = this.db
-      .prepare(
-        `SELECT events.*,
-         CASE
-           WHEN events.status='queued' THEN COALESCE(
-             (SELECT created_at FROM audit_events
-              WHERE resource=events.id AND action IN ('event_status','operator_retry') AND result LIKE '%->queued'
-              ORDER BY id DESC LIMIT 1),
-             events.created_at
-           )
-           WHEN events.status IN ('preparing','analyzing','fixing','verifying','publishing') THEN COALESCE(
-             (SELECT started_at FROM event_attempts WHERE event_id=events.id AND attempt=events.attempt_count),
-             events.created_at
-           )
-           ELSE events.created_at
-         END AS activity_started_at
-         FROM events ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...parameters, query.limit, query.offset);
-    const items = rows.map((value) => {
-      const record = value as Record<string, unknown>;
-      const row = readEventRow(record);
-      if (!row) throw new Error("SQLite returned an empty event row");
-      return {
-        ...mapEventSummary(row),
-        activityStartedAt: stringColumn(record, "activity_started_at"),
-      } satisfies EventOperationsSummary;
-    });
-    return { items, total: numberColumn(count, "count") };
-  }
-
-  getEventDetails(eventId: string): EventDetails | undefined {
-    const event = readEventRow(this.db.prepare("SELECT * FROM events WHERE id=?").get(eventId));
-    if (!event) return undefined;
-    const attempts = this.readEventAttempts(eventId);
-    const timeline = this.readEventTimeline(eventId);
-    const trajectory = this.readEventTrajectory({ kind: "event", eventId });
-    const events = this.readExecutionSteps({ kind: "event", eventId });
-    const origin = readWebhookOrigin(events);
-    return { ...mapEventSummary(event), ...origin, attempts, timeline, trajectory, events };
-  }
-
-  private readEventAttempts(eventId: string): EventAttemptSummary[] {
-    return this.db
-      .prepare("SELECT attempt, started_at, finished_at, error FROM event_attempts WHERE event_id=? ORDER BY attempt")
-      .all(eventId)
-      .map((value) => {
-        const row = value as Record<string, unknown>;
-        const finishedAt = row.finished_at;
-        if (finishedAt !== null && typeof finishedAt !== "string") {
-          throw new Error('SQLite column "finished_at" is not text or null');
-        }
-        return {
-          attempt: numberColumn(row, "attempt"),
-          startedAt: stringColumn(row, "started_at"),
-          finishedAt,
-          error: stringColumn(row, "error"),
-        } satisfies EventAttemptSummary;
-      });
-  }
-
-  private readEventTimeline(eventId: string): EventStatusTransition[] {
-    return this.readStatusTransitions(eventId, "event_status", isEventStatus);
-  }
-
   private readTurnTimeline(turnId: string): ConversationTurnTransition[] {
     return this.readStatusTransitions(turnId, "conversation_turn", isConversationTurnStatus);
   }
@@ -2305,49 +1538,34 @@ export class EventStore {
       });
   }
 
-  private readEventTrajectory(scope: TraceScope): EventTraceEntry[] {
-    const column = traceScopeColumn(scope);
+  private readTrajectory(scope: TraceScope): TraceEntry[] {
     return this.db
-      .prepare(`SELECT * FROM event_trace WHERE ${column}=? ORDER BY started_at DESC,id DESC`)
+      .prepare("SELECT * FROM conversation_trace WHERE turn_id=? ORDER BY started_at DESC,id DESC")
       .all(traceScopeId(scope))
-      .map((value) => readEventTrace(value as Record<string, unknown>));
+      .map((value) => readTrace(value as Record<string, unknown>));
   }
 
   private readExecutionSteps(scope: TraceScope): ExecutionStep[] {
-    const column = traceScopeColumn(scope);
     return this.db
-      .prepare(`SELECT * FROM execution_steps WHERE ${column}=? ORDER BY started_at DESC,id DESC`)
+      .prepare("SELECT * FROM execution_steps WHERE turn_id=? ORDER BY started_at DESC,id DESC")
       .all(traceScopeId(scope))
       .map((value) => readExecutionStep(value as Record<string, unknown>));
   }
 
-  getEventTraceEntries(scope: TraceScope, attempt: number): EventTraceEntry[] {
+  getTraceEntries(scope: TraceScope, attempt: number): TraceEntry[] {
     if (!Number.isSafeInteger(attempt) || attempt <= 0) {
-      throw new Error("event trace query requires a positive attempt number");
+      throw new Error("trace query requires a positive attempt number");
     }
-    const column = traceScopeColumn(scope);
     return this.db
-      .prepare(`SELECT * FROM event_trace WHERE ${column}=? AND attempt=? ORDER BY started_at,id`)
+      .prepare("SELECT * FROM conversation_trace WHERE turn_id=? AND attempt=? ORDER BY started_at,id")
       .all(traceScopeId(scope), attempt)
-      .map((value) => readEventTrace(value as Record<string, unknown>));
-  }
-
-  activeEventIds(): Set<string> {
-    const rows = this.db
-      .prepare(`SELECT id FROM events WHERE status IN (${active.map(() => "?").join(",")})`)
-      .all(...active) as { id: string }[];
-    return new Set(rows.map((row) => row.id));
+      .map((value) => readTrace(value as Record<string, unknown>));
   }
 
   pendingProjectIds(): Set<number> {
-    const terminalStatuses = ["completed", "failed", "stale", "cancelled"];
     const rows = this.db
-      .prepare(
-        `SELECT DISTINCT project_id FROM events
-         WHERE status NOT IN (${terminalStatuses.map(() => "?").join(",")})
-         UNION SELECT DISTINCT project_id FROM conversations`,
-      )
-      .all(...terminalStatuses) as { project_id: number }[];
+      .prepare("SELECT DISTINCT project_id FROM conversations")
+      .all() as { project_id: number }[];
     // 对话可以随后续提问重新访问任何历史仓库：这些项目的镜像不能被清理掉，
     // 否则每次重新提问都要重新克隆整座仓库。
     return new Set(rows.map((row) => row.project_id));
@@ -2731,204 +1949,10 @@ export class EventStore {
     return new Set(rows.map((row) => row.conversation_id));
   }
 
-  retryFailedEvent(eventId: string): EventSummary {
-    if (!eventId.trim()) throw new Error("event ID is required");
-    return this.transaction(() => {
-      const row = this.db
-        .prepare("SELECT * FROM events WHERE id = ?")
-        .get(eventId) as Record<string, unknown> | undefined;
-      const event = readEventRow(row);
-      if (!event) throw new Error(`event "${eventId}" not found`);
-      if (event.status !== "failed") throw new Error(`event "${eventId}" is not failed`);
-      if (event.failure_stage === "publishing") {
-        throw new Error("publishing failures cannot be retried because the GitLab outcome may be uncertain");
-      }
-      if (!event.failure_stage) {
-        throw new Error("event failure stage is unknown; refusing a potentially unsafe retry");
-      }
-      if (event.attempt_count >= maxAttempts) {
-        throw new Error(`event "${eventId}" has used all ${maxAttempts} attempts`);
-      }
-      const now = new Date().toISOString();
-      const result = this.db
-        .prepare(
-          `UPDATE events SET status='queued', failure_stage='', cancel_requested=0,
-           lease_token='', lease_until=0, available_at=0, updated_at=? WHERE id=? AND status='failed'`,
-        )
-        .run(now, eventId);
-      if (result.changes !== 1) throw new Error(`event "${eventId}" changed before it could be retried`);
-      this.insertAudit(0, "operator_retry", eventId, "failed->queued", now);
-      const updated = readEventRow(this.db.prepare("SELECT * FROM events WHERE id = ?").get(eventId));
-      if (!updated) throw new Error(`retried event "${eventId}" disappeared`);
-      const summary = mapEvent(updated);
-      return {
-        id: summary.id,
-        type: summary.type,
-        status: summary.status,
-        projectId: summary.projectId,
-        mrIid: summary.mrIid,
-        targetType: summary.targetType,
-        targetIid: summary.targetIid,
-        targetBranch: summary.targetBranch,
-        headSha: summary.headSha,
-        actorId: summary.actorId,
-        request: summary.request,
-        createdAt: summary.createdAt,
-        updatedAt: updated.updated_at,
-        attemptCount: summary.attemptCount,
-        lastError: summary.lastError,
-        cancellationRequested: summary.cancellationRequested,
-        failureStage: summary.failureStage,
-      };
-    });
-  }
-
-  private createQueuedTask(
-    webhookEventId: string,
-    key: string,
-    event: Partial<Event> & Pick<Event, "projectId" | "mrIid" | "actorId" | "headSha">,
-    type: "review" | "explain" | "chat",
-  ): EventResult {
-    // 将事件去重、事件创建和事件记录放进同一事务，避免 webhook 重投创建重复事件。
-    return this.transaction(() => {
-      const previous = this.webhookEventResult(webhookEventId);
-      if (previous) {
-        const existingEvent = this.db.prepare("SELECT id FROM events WHERE webhook_event_id=?").get(webhookEventId) as { id: string } | undefined;
-        if (existingEvent) this.linkExecutionSteps(webhookEventId, existingEvent.id);
-        return previous;
-      }
-      const existing = this.db
-        .prepare("SELECT id FROM events WHERE idempotency_key = ?")
-        .get(key) as { id: string } | undefined;
-      const label = type === "review" ? "Review" : type === "explain" ? "Explain" : "Chat";
-      let response: string;
-      let resultEvent: EventResult["event"];
-      let auditResult = "queued";
-      if (existing) {
-        resultEvent = { id: existing.id, created: false };
-        response = `${label} task \`${existing.id}\` is already queued for this comment.`;
-        auditResult = "authorized_duplicate";
-      } else {
-        const id = randomUUID();
-        const created = new Date().toISOString();
-        this.db
-          .prepare(
-            `INSERT INTO events
-             (id,idempotency_key,webhook_event_id,type,status,project_id,mr_iid,target_type,target_iid,head_sha,actor_id,request,created_at,updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          )
-           .run(id, key, webhookEventId, type, "queued", event.projectId, event.mrIid, "merge_request", event.mrIid, event.headSha, event.actorId, event.request ?? "", created, created);
-        resultEvent = { id, created: true };
-        response = `Queued ${label.toLowerCase()} task \`${id}\` for MR !${event.mrIid} at \`${event.headSha.slice(0, 12)}\`.`;
-      }
-      this.insertWebhookEvent(webhookEventId, response);
-      if (resultEvent) this.linkExecutionSteps(webhookEventId, resultEvent.id);
-      this.insertAudit(event.actorId, `request_${type}`, `${event.projectId}:${event.mrIid}`, auditResult);
-      return { response, delivered: false, ...(resultEvent ? { event: resultEvent } : {}) };
-    });
-  }
-
-  /**
-   * 启动时回收上次进程留下的在途事件。
-   *
-   * 单进程部署下不存在其他租约持有者，因此可以立即回收，不必等待租约到期；
-   * 这对「启动补跑」是必要的，否则要空转到 `lease_until` 才会重新入队。
-   */
-  recoverInterruptedEvents(): number {
-    return this.transaction(() => this.recoverExpiredLeases(true));
-  }
-
-  private recoverExpiredLeases(recoverActiveLeases = false): number {
-    const now = new Date();
-    const condition = recoverActiveLeases
-      ? "lease_token != ''"
-      : "lease_token != '' AND lease_until > 0 AND lease_until <= ?";
-    const rows = this.db
-      .prepare(
-        `SELECT id,status,attempt_count,cancel_requested,actor_id FROM events
-         WHERE ${condition}
-         AND status IN (${active.map(() => "?").join(",")})`,
-      )
-      .all(...(recoverActiveLeases ? active : [now.valueOf(), ...active])) as {
-      id: string;
-      status: EventStatus;
-      attempt_count: number;
-      cancel_requested: number;
-      actor_id: number;
-    }[];
-    for (const row of rows) {
-      // 发布阶段无法确认 GitLab 是否已收到评论，不能像其他阶段那样自动重试。
-      let status: EventStatus = "queued";
-      let error = "Event lease expired; task will be retried.";
-      if (row.cancel_requested) {
-        status = "cancelled";
-        error = "Event lease expired after cancellation was requested; task was cancelled.";
-      } else if (row.status === "publishing") {
-        status = "failed";
-        error = "Event lease expired during publishing; outcome is uncertain, so automatic retry was skipped to prevent duplicate GitLab comments.";
-      } else if (row.attempt_count >= maxAttempts) {
-        status = "failed";
-        error = "Event lease expired and the maximum number of attempts was reached.";
-      }
-      this.db
-        .prepare(
-          "UPDATE events SET status=?,last_error=?,failure_stage=?,updated_at=?,lease_token='',lease_until=0 WHERE id=? AND status=?",
-        )
-        .run(status, error, status === "failed" ? row.status : "", now.toISOString(), row.id, row.status);
-      this.db
-        .prepare("UPDATE event_attempts SET finished_at=?,error=? WHERE event_id=? AND finished_at IS NULL")
-        .run(now.toISOString(), error, row.id);
-      const runningEvents = this.db
-        .prepare("SELECT id,started_at FROM execution_steps WHERE event_id=? AND attempt=? AND status='running'")
-        .all(row.id, row.attempt_count) as { id: number; started_at: string }[];
-      for (const event of runningEvents) {
-        const elapsed = Math.max(0, now.valueOf() - Date.parse(event.started_at));
-        this.db
-          .prepare(
-            `UPDATE execution_steps SET status='interrupted',finished_at=?,duration_ms=?,error_detail=?
-             WHERE id=? AND status='running'`,
-          )
-          .run(now.toISOString(), elapsed, error, event.id);
-      }
-      this.insertAudit(row.actor_id, "event_status", row.id, `${row.status}->${status}`, now.toISOString());
-    }
-    return rows.length;
-  }
-
-  private validTransition(from: EventStatus, to: EventStatus): boolean {
-    const transitions: Partial<Record<EventStatus, EventStatus[]>> = {
-      preparing: ["analyzing", "stale", "failed", "cancelled"],
-      analyzing: ["fixing", "verifying", "publishing", "completed", "stale", "failed", "cancelled"],
-      fixing: ["verifying", "stale", "failed", "cancelled"],
-      verifying: ["publishing", "stale", "failed", "cancelled"],
-      publishing: ["completed", "failed"],
-    };
-    return transitions[from]?.includes(to) ?? false;
-  }
-
-  private webhookEventResult(webhookEventId: string): EventResult | undefined {
-    const row = this.db
-      .prepare("SELECT response, delivered FROM webhook_deliveries WHERE webhook_event_id=?")
-      .get(webhookEventId) as { response: string; delivered: number } | undefined;
-    return row ? { response: row.response, delivered: row.delivered !== 0 } : undefined;
-  }
-
-  private insertWebhookEvent(webhookEventId: string, response: string): void {
-    this.db
-      .prepare("INSERT INTO webhook_deliveries(webhook_event_id,response,received_at) VALUES (?,?,?)")
-      .run(webhookEventId, response, new Date().toISOString());
-  }
-
   private insertAudit(actorId: number, action: string, resource: string, result: string, at?: string): void {
     this.db
       .prepare("INSERT INTO audit_events(actor_id,action,resource,result,created_at) VALUES (?,?,?,?,?)")
       .run(actorId, action, resource, result, at ?? new Date().toISOString());
-  }
-
-  private linkExecutionSteps(webhookEventId: string, eventId: string): void {
-    this.db
-      .prepare("UPDATE execution_steps SET event_id=? WHERE webhook_event_id=? AND event_id IS NULL")
-      .run(eventId, webhookEventId);
   }
 
   private transaction<T>(callback: () => T, immediate = false): T {
@@ -2951,20 +1975,31 @@ export class EventStore {
     }
   }
 
+  /** 旧库把对话轨迹存在 `event_trace`（或更早的 `job_trace`），迁移到独立的对话轨迹表。 */
+  private migrateLegacyTraceTable(): void {
+    const legacy = (this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('event_trace','job_trace') LIMIT 1")
+      .get() as { name: string } | undefined)?.name;
+    if (!legacy) return;
+    const sourceColumns = new Set(
+      (this.db.prepare(`PRAGMA table_info(${legacy})`).all() as { name: string }[]).map((column) => column.name),
+    );
+    const targetColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_trace)").all() as { name: string }[]).map((column) => column.name),
+    );
+    const shared = [...sourceColumns].filter((name) => targetColumns.has(name));
+    if (shared.includes("turn_id")) {
+      const names = shared.join(",");
+      this.db.exec(
+        `INSERT INTO conversation_trace (${names}) SELECT ${names} FROM ${legacy} WHERE turn_id IS NOT NULL`,
+      );
+    }
+    this.db.exec(`DROP TABLE ${legacy}`);
+  }
+
   private migrate(): void {
-    this.migrateLegacyEventSchema();
     this.migrateLegacyConversationSchema();
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL UNIQUE, webhook_event_id TEXT NOT NULL UNIQUE,
-        type TEXT NOT NULL, status TEXT NOT NULL, project_id INTEGER NOT NULL, mr_iid INTEGER NOT NULL,
-        target_type TEXT NOT NULL DEFAULT 'merge_request', target_iid INTEGER NOT NULL DEFAULT 0,
-        target_branch TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '', actor_id INTEGER NOT NULL, request TEXT NOT NULL DEFAULT '',
-        attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, failure_stage TEXT NOT NULL DEFAULT '',
-        available_at INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS events_mr_created_idx ON events(project_id,mr_iid,created_at DESC);
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY, gitlab_user_id INTEGER NOT NULL UNIQUE,
         username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
@@ -3026,10 +2061,6 @@ export class EventStore {
         active INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS provider_models_provider_idx ON provider_models(provider_id,created_at,id);
-      CREATE TABLE IF NOT EXISTS webhook_deliveries (
-        webhook_event_id TEXT PRIMARY KEY, response TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0,
-        received_at TEXT NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS runtime_settings (
         key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL,
         updated_by TEXT NOT NULL DEFAULT ''
@@ -3038,12 +2069,8 @@ export class EventStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id INTEGER NOT NULL, action TEXT NOT NULL,
         resource TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS event_attempts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL REFERENCES events(id), attempt INTEGER NOT NULL,
-        started_at TEXT NOT NULL, finished_at TEXT, error TEXT NOT NULL DEFAULT '', UNIQUE(event_id,attempt)
-      );
-      CREATE TABLE IF NOT EXISTS event_trace (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
+      CREATE TABLE IF NOT EXISTS conversation_trace (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
         attempt INTEGER NOT NULL, round INTEGER, kind TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL,
         started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, model TEXT,
@@ -3051,17 +2078,13 @@ export class EventStore {
         raw_content TEXT, error_detail TEXT, request_started_at TEXT, response_headers_ms INTEGER
       );
       CREATE TABLE IF NOT EXISTS execution_steps (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT, webhook_event_id TEXT, event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
-        attempt INTEGER, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+        attempt INTEGER NOT NULL, step TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
         duration_ms INTEGER, input_json TEXT, output_json TEXT, error_detail TEXT
       );
-      CREATE INDEX IF NOT EXISTS execution_steps_event_started_idx ON execution_steps(event_id,started_at,id);
-      CREATE INDEX IF NOT EXISTS execution_steps_webhook_event_idx ON execution_steps(webhook_event_id,started_at,id);
-      CREATE INDEX IF NOT EXISTS event_trace_event_started_idx ON event_trace(event_id,started_at,id);
-      CREATE TABLE IF NOT EXISTS worker_heartbeats (
-        worker_id TEXT PRIMARY KEY, last_seen_at TEXT NOT NULL
-      );
+      CREATE INDEX IF NOT EXISTS execution_steps_turn_started_idx ON execution_steps(turn_id,started_at,id);
+      CREATE INDEX IF NOT EXISTS conversation_trace_turn_started_idx ON conversation_trace(turn_id,started_at,id);
       CREATE TABLE IF NOT EXISTS model_token_usage (
         day TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL DEFAULT 0, reserved_tokens INTEGER NOT NULL DEFAULT 0
       );
@@ -3073,40 +2096,8 @@ export class EventStore {
     `);
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
     this.migrateLegacyModelProfiles();
-    const webhookColumns = this.db.prepare("PRAGMA table_info(webhook_deliveries)").all() as { name: string }[];
-    const existingWebhookColumns = new Set(webhookColumns.map((column) => column.name));
-    const webhookAdditions: Record<string, string> = {
-      delivery_token: "TEXT NOT NULL DEFAULT ''",
-      delivery_until: "INTEGER NOT NULL DEFAULT 0",
-    };
-    for (const [name, definition] of Object.entries(webhookAdditions)) {
-      if (!existingWebhookColumns.has(name)) this.db.exec(`ALTER TABLE webhook_deliveries ADD COLUMN ${name} ${definition}`);
-    }
-    const columns = this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[];
-    const existing = new Set(columns.map((column) => column.name));
-    const additions: Record<string, string> = {
-      attempt_count: "INTEGER NOT NULL DEFAULT 0",
-      last_error: "TEXT NOT NULL DEFAULT ''",
-      request: "TEXT NOT NULL DEFAULT ''",
-      lease_token: "TEXT NOT NULL DEFAULT ''",
-      lease_until: "INTEGER NOT NULL DEFAULT 0",
-      cancel_requested: "INTEGER NOT NULL DEFAULT 0",
-      failure_stage: "TEXT NOT NULL DEFAULT ''",
-      available_at: "INTEGER NOT NULL DEFAULT 0",
-      target_type: "TEXT NOT NULL DEFAULT 'merge_request'",
-      target_iid: "INTEGER NOT NULL DEFAULT 0",
-      target_branch: "TEXT NOT NULL DEFAULT ''",
-    };
-    for (const [name, definition] of Object.entries(additions)) {
-      if (!existing.has(name)) this.db.exec(`ALTER TABLE events ADD COLUMN ${name} ${definition}`);
-    }
-    this.db.exec("UPDATE events SET target_iid=mr_iid WHERE target_iid=0 AND target_type='merge_request'");
-    this.db.exec("CREATE INDEX IF NOT EXISTS events_queue_available_idx ON events(status,available_at,created_at)");
-    // 过期租约回收按 lease_until 过滤，仅对已持有租约的行建部分索引，避免全表扫描。
-    this.db.exec(
-      "CREATE INDEX IF NOT EXISTS events_lease_until_idx ON events(lease_until) WHERE lease_token != ''",
-    );
-    const traceColumns = this.db.prepare("PRAGMA table_info(event_trace)").all() as { name: string }[];
+    this.migrateLegacyTraceTable();
+    const traceColumns = this.db.prepare("PRAGMA table_info(conversation_trace)").all() as { name: string }[];
     const existingTraceColumns = new Set(traceColumns.map((column) => column.name));
     const traceAdditions: Record<string, string> = {
       round: "INTEGER",
@@ -3122,7 +2113,7 @@ export class EventStore {
       turn_id: "TEXT",
     };
     for (const [name, definition] of Object.entries(traceAdditions)) {
-      if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE event_trace ADD COLUMN ${name} ${definition}`);
+      if (!existingTraceColumns.has(name)) this.db.exec(`ALTER TABLE conversation_trace ADD COLUMN ${name} ${definition}`);
     }
     const stepColumns = new Set(
       (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((column) => column.name),
@@ -3220,86 +2211,9 @@ export class EventStore {
       }
     }
     this.backfillConversationTurns();
-    this.finalizeConversationMigration();
     // turn_id 可能由上面的 ALTER 补齐，索引必须等列存在后再创建。
-    this.db.exec("CREATE INDEX IF NOT EXISTS event_trace_turn_started_idx ON event_trace(turn_id,started_at,id)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS conversation_trace_turn_started_idx ON conversation_trace(turn_id,started_at,id)");
     this.db.exec("CREATE INDEX IF NOT EXISTS execution_steps_turn_started_idx ON execution_steps(turn_id,started_at,id)");
-  }
-
-  /**
-   * 把旧版 `jobs` / `job_attempts` / `job_trace` / `execution_events` / `webhook_events`
-   * 重命名为事件（event）命名。SQLite 的 RENAME 会自动改写子表外键、索引与触发器，
-   * 因此保留既有数据；重命名后再由 `migrate()` 的建表语句补齐新列。
-   */
-  private migrateLegacyEventSchema(): void {
-    const tables = new Set(
-      (this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[])
-        .map((row) => row.name),
-    );
-    if (tables.has("jobs") && !tables.has("events")) {
-      this.db.exec("ALTER TABLE jobs RENAME TO events");
-    }
-    if (tables.has("job_attempts") && !tables.has("event_attempts")) {
-      this.db.exec("ALTER TABLE job_attempts RENAME TO event_attempts");
-      this.db.exec("ALTER TABLE event_attempts RENAME COLUMN job_id TO event_id");
-    }
-    if (tables.has("job_trace") && !tables.has("event_trace")) {
-      this.db.exec("ALTER TABLE job_trace RENAME TO event_trace");
-      this.db.exec("ALTER TABLE event_trace RENAME COLUMN job_id TO event_id");
-    }
-    if (tables.has("execution_events") && !tables.has("execution_steps")) {
-      this.db.exec("ALTER TABLE execution_events RENAME TO execution_steps");
-      // 旧表同时有 `event_id`（webhook 事件）与 `job_id`（任务）：先腾出列名再改名。
-      const stepColumns = new Set(
-        (this.db.prepare("PRAGMA table_info(execution_steps)").all() as { name: string }[]).map((c) => c.name),
-      );
-      if (stepColumns.has("event_id") && !stepColumns.has("webhook_event_id")) {
-        this.db.exec("ALTER TABLE execution_steps RENAME COLUMN event_id TO webhook_event_id");
-      }
-      if (stepColumns.has("job_id")) {
-        this.db.exec("ALTER TABLE execution_steps RENAME COLUMN job_id TO event_id");
-      }
-    }
-    if (tables.has("webhook_events") && !tables.has("webhook_deliveries")) {
-      this.db.exec("ALTER TABLE webhook_events RENAME TO webhook_deliveries");
-      const deliveryColumns = new Set(
-        (this.db.prepare("PRAGMA table_info(webhook_deliveries)").all() as { name: string }[]).map((c) => c.name),
-      );
-      if (deliveryColumns.has("event_id") && !deliveryColumns.has("webhook_event_id")) {
-        this.db.exec("ALTER TABLE webhook_deliveries RENAME COLUMN event_id TO webhook_event_id");
-      }
-    }
-    // 事件表的列重命名：旧库把 webhook 关联列叫 event_id，与新语义冲突。
-    if (tables.has("events") || tables.has("jobs")) {
-      const eventColumns = new Set(
-        (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
-      );
-      if (eventColumns.has("event_id") && !eventColumns.has("webhook_event_id")) {
-        this.db.exec("ALTER TABLE events RENAME COLUMN event_id TO webhook_event_id");
-      }
-    }
-    // 对话消息的轮次列：旧版存的是任务 ID 列 `job_id`。
-    const messageTables = new Set(
-      (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((c) => c.name),
-    );
-    if (messageTables.has("job_id") && !messageTables.has("turn_id")) {
-      this.db.exec("ALTER TABLE conversation_messages RENAME COLUMN job_id TO turn_id");
-    }
-    // 模型调用统计：旧版把对话轮次记为 `session`，现统一为 `conversation`。
-    if (tables.has("model_call_metrics")) {
-      this.db.exec("UPDATE model_call_metrics SET task_type='conversation' WHERE task_type='session'");
-    }
-    // 事件类型：旧版把对话轮次记为 `session`，现统一为 `conversation`（随后会被清理）。
-    // 表名可能刚由 `jobs` 改名而来，需重新查询表是否存在。
-    const hasEvents = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
-      .get() !== undefined;
-    if (hasEvents) {
-      const eventColumns = new Set(
-        (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
-      );
-      if (eventColumns.has("type")) this.db.exec("UPDATE events SET type='conversation' WHERE type='session'");
-    }
   }
 
   /**
@@ -3330,7 +2244,6 @@ export class EventStore {
 
   /**
    * 为旧库补齐对话轮次：按既有助手消息生成一轮，并把助手消息的轮次列指向该轮次。
-   * 轨迹与执行步骤的归属迁移放在 `finalizeConversationMigration()`，因为那时新列才齐全。
    */
   private backfillConversationTurns(): void {
     const messageColumns = new Set(
@@ -3355,56 +2268,4 @@ export class EventStore {
     `);
   }
 
-  /**
-   * 迁移对话轨迹与执行步骤的归属，并清理旧版存成 `events.type='conversation'` 的事件。
-   * 必须在 `migrate()` 补全新列之后调用：旧库把对话任务的记录存在事件列里，且旧
-   * `job_trace.event_id` 为 NOT NULL，需要按新结构重建表才能把归属改到轮次列。
-   */
-  private finalizeConversationMigration(): void {
-    const turnIds = new Set(
-      (this.db.prepare("SELECT id FROM conversation_turns").all() as { id: string }[]).map((row) => row.id),
-    );
-    if (turnIds.size > 0) {
-      this.reassignTraceOwnership("event_trace", turnIds);
-      this.reassignTraceOwnership("execution_steps", turnIds);
-    }
-    const eventColumns = new Set(
-      (this.db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((column) => column.name),
-    );
-    if (eventColumns.has("type")) this.db.exec("DELETE FROM events WHERE type='conversation'");
-  }
-
-  /** 把表中指向对话轮次的 `event_id` 归属改到 `turn_id`，必要时按新结构重建以解除 NOT NULL。 */
-  private reassignTraceOwnership(table: "event_trace" | "execution_steps", turnIds: ReadonlySet<string>): void {
-    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; notnull: number }[];
-    const names = columns.map((column) => column.name);
-    if (!names.includes("event_id") || !names.includes("turn_id")) return;
-    const eventIdNotNull = columns.find((column) => column.name === "event_id")?.notnull === 1;
-    if (!eventIdNotNull) {
-      this.db.exec(
-        `UPDATE ${table} SET turn_id=event_id WHERE turn_id IS NULL AND event_id IN (SELECT id FROM conversation_turns)`,
-      );
-      this.db.exec(`UPDATE ${table} SET event_id=NULL WHERE event_id IN (SELECT id FROM conversation_turns)`);
-      return;
-    }
-    // 旧 `job_trace` 的关联列是 NOT NULL，无法直接置空，按新结构重建表并保留外键级联。
-    const placeholders = [...turnIds].map(() => "?").join(",");
-    const isTurn = `event_id IN (${placeholders})`;
-    const passthrough = names.filter((name) => name !== "event_id" && name !== "turn_id");
-    const columnList = ["event_id", "turn_id", ...passthrough].join(",");
-    this.db.exec(`CREATE TABLE ${table}_ownership (${ownershipDdl[table]})`);
-    this.db
-      .prepare(
-        `INSERT INTO ${table}_ownership (${columnList})
-         SELECT CASE WHEN ${isTurn} THEN NULL ELSE event_id END,
-                CASE WHEN ${isTurn} THEN event_id ELSE turn_id END,
-                ${passthrough.join(",")}
-         FROM ${table}`,
-      )
-      .run(...[...turnIds, ...turnIds]);
-    this.db.exec(`DROP TABLE ${table}`);
-    this.db.exec(`ALTER TABLE ${table}_ownership RENAME TO ${table}`);
-    // 重建不带索引，按新结构补回（`migrate()` 只在首次建表时创建）。
-    this.db.exec(`CREATE INDEX IF NOT EXISTS ${indexNames[table]} ON ${table}(event_id,started_at,id)`);
-  }
 }

@@ -1,20 +1,20 @@
 # 快速开始
 
-Corvex 是面向 GitLab 合并请求的自托管代码审查与修复代理，作为单进程运行：
+Corvex 是面向 GitLab 的自托管代码协作代理，唯一运行模式是 `server`（单进程：HTTP 服务 + 内联对话执行）：
 
-- **Server** 接收 GitLab Note Hook 事件，校验访问权限，将任务写入 SQLite，回复评论，并在进程内执行这些任务。
-- **内联事件执行器** 读取合并请求的固定版本；需要时调用 OpenAI 兼容模型，并在同一进程中发布结果。
+- **Server** 提供运维台与 API，通过 GitLab OAuth2 认证每个用户，发现该用户可见的项目，并在进程内通过 `ConversationRunner` 执行每一轮对话。
+- **内联对话执行器** 领取轮次、固定仓库分支头 SHA、复用对话专用的 detached worktree、运行一个 Pi SDK 会话，流式返回过程并持久化轨迹与最终回复。
 
-详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
+Webhook 驱动的事件（审查 / 聊天 / 解释 / 修复 / Issue 实现）目前是延期特性，详见 [ROADMAP.zh_CN.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.zh_CN.md)。对话是运维台里唯一的一等对象。详细内容请参阅[架构与工作流程](./architecture)、[配置参考](./configuration)和[运行环境与运维](./operations)。
 
 ## 环境要求
 
 - 从源码运行需要 Node.js 26.12.1 和 pnpm 12.4.1；使用 `pnpm install --frozen-lockfile` 按锁文件安装依赖。
-- Server 必须能够访问 GitLab；GitLab 必须能访问 Webhook 地址。
-- GitLab 只读令牌用于 API 读取和仓库抓取，独立写令牌用于发布 MR 评论和讨论；两者都在控制台设置页保存。
+- Server 需要出站访问 GitLab API（OAuth、项目与分支发现、仓库抓取）和模型 API；用户浏览器需要能访问 `/ops`。不需要入站 Webhook 地址。
 - Server 主机需要 `git` 可执行程序；项目提供的 Docker 镜像已安装 Git。
-- 启用 Agent 时，需要 OpenAI 兼容 Chat Completions 接口及 API 密钥；Agent Runtime 由 Pi SDK 提供。
+- 需要一个 OpenAI 兼容的 Chat Completions 接口及 API Key；Agent Runtime 由 Pi SDK 提供。
 - SQLite 数据库和 Git 镜像目录必须位于重启后仍保留且可写的存储中。
+- 用户在 GitLab 中需要一个 OAuth Application（用于运维台登录）；项目可见范围由登录用户自己的 GitLab 令牌决定。
 
 ## 1. 准备配置和密钥
 
@@ -26,18 +26,18 @@ pnpm run build
 pnpm start -- init
 ```
 
-复制 `configs/config.example.yaml` 为 `configs/config.yaml`。GitLab 根地址、`gitlab.blocked_user_ids` 和 `gitlab.bot_username` 都在控制台设置页维护。为 Server 设置以下变量：
+复制 `configs/config.example.yaml` 为 `configs/config.yaml`。配置文件只需填写启动必需项（监听地址、存储路径）；GitLab 地址、OAuth 凭据、读/写令牌和模型都在安装页或运维台设置页写入 SQLite。可选的环境变量兜底：
 
 ```sh
-# 可选启动兜底；控制台设置页会把这些值存入 SQLite。
+# 可选启动兜底；设置页保存的值优先。
+# CORVEX_GITLAB_BASE_URL=https://gitlab.example.com
 # CORVEX_GITLAB_READ_TOKEN=读取令牌
 # CORVEX_GITLAB_TOKEN=写入令牌
-# CORVEX_WEBHOOK_SECRET=足够长的随机密钥
+# CORVEX_MODEL_BASE_URL=https://api.openai.com/v1
+# CORVEX_MODEL_NAME=your-model-name
 ```
 
-ID 使用 GitLab 数字 ID。GitLab 根地址、读/写令牌和 Webhook Secret 都在控制台设置页填写；密钥留空表示保留已保存值。Agent 控制台会列出只读令牌可访问的项目；仅在需要接受 Corvex 指令的项目中注册 Webhook。所有配置及边界值请参阅[配置参考](./configuration)。
-
-启动时不需要 GitLab 凭据或模型 API Key，两者都可在控制台保存。请使用独立读写令牌并只授予所需权限。
+启动时不需要 GitLab 凭据或模型 API Key，两者都可在控制台保存。只读令牌用于读取 API 与抓取仓库；写令牌仅在需要对话向 GitLab 写入时配置，并只授予所需权限。所有配置项及边界值请参阅[配置参考](./configuration)。
 
 ## 2. 启动 Server
 
@@ -46,86 +46,48 @@ pnpm start -- --config configs/config.yaml check-config
 pnpm start -- --config configs/config.yaml server
 ```
 
-默认监听 `0.0.0.0:8080`。对 GitLab 提供公网服务时，应通过 HTTPS 暴露，并使用适当的网络访问控制；不要将服务直接暴露给不可信网络。
+默认监听 `0.0.0.0:8080`。对公网提供服务时应通过 HTTPS 暴露，并使用适当的网络访问控制；不要将服务直接暴露给不可信网络。
 
-## 3. 配置 GitLab Webhook
+## 3. 配置 GitLab OAuth 与登录
 
-创建项目 Webhook，地址为：
+首次访问 `/ops` 会跳转到 `/setup` 安装页。在此填写 GitLab 实例地址，以及 OAuth Application 的 Application ID、Secret 和回调地址（例如 `https://corvex.example.com/auth/gitlab/callback`，需与 GitLab 应用中登记的一致）。这些值保存在 SQLite，可在「设置 → GitLab 配置」中修改；不需要环境变量。用户令牌的加密密钥在首次启动时生成并保存在数据库中。
 
-```text
-https://corvex.example.com/webhooks/gitlab
-```
+每个用户使用自己的 GitLab 账号登录；运维台只展示该用户令牌可见的项目，没有静态项目白名单。系统级的 GitLab 地址与读/写令牌可在管理后台的设置页配置，作为 OAuth 登录之外的连接兜底。
 
-Webhook Secret Token 应与控制台设置页保存的 Webhook Secret 完全一致。启用 **Comments（评论/Note 事件）**；接口会处理合并请求和 Issue 评论，不处理合并请求状态事件或 Push 事件。保持 SSL 证书验证开启。
+## 4. 发起第一场对话
 
-可使用 `scripts/register-webhook.sh` 幂等地创建或更新项目 Webhook。脚本需要 `curl`、`jq`，以及仅用于注册的 GitLab 管理员令牌：
+登录运维台后新建对话：先用带搜索的仓库选择器挑选项目，再选择分支。Corvex 在服务端解析并固定该分支的头 SHA，这一固定快照贯穿整场对话；每轮消息与回复保存在 SQLite，同一对话一次只运行一轮。
 
-```sh
-GITLAB_URL=https://gitlab.example.com \
-GITLAB_ADMIN_TOKEN=... \
-GITLAB_PROJECT_ID=101 \
-CORVEX_WEBHOOK_URL=https://corvex.example.com/webhooks/gitlab \
-CORVEX_WEBHOOK_SECRET=... \
-./scripts/register-webhook.sh
-```
+工作区铺满视口，左侧为对话列表（按仓库分组、显示轮次数与最近一轮状态），右侧包含六个页签：
 
-运行中的 Corvex 服务不需要管理员令牌。
-
-## 4. 在 GitLab 中使用机器人
-
-先 @ GitLab 机器人账号。账号名由 `gitlab.bot_username` 配置（例如 `corvex-bot`）。
-
-### 合并请求指令
-
-在合并请求评论中使用以下指令：
-
-| 命令 | 功能 |
+| 页签 | 内容 |
 |---|---|
-| `@corvex-bot /review [补充说明]` | 将当前合并请求版本加入审查队列，可附加指令、示例或其他上下文。 |
-| `@corvex-bot <自然语言>` | 基于当前合并请求内容聊天，例如总结变更或建议标题。 |
-| `@corvex-bot /explain path/to/file.ts` | 解释合并请求固定 Head SHA 中的指定文件。 |
-| `@corvex-bot /status` | 查看该合并请求最近任务的状态。 |
-| `@corvex-bot /cancel` | 取消排队任务，或请求取消自己发起的运行中任务。 |
-| `@corvex-bot /fix Make this error easier to handle` | 请求生成受限修复提案；要求已启用 Fix 且用户未被拉黑。 |
+| **Chat** | Markdown 回复记录，逐字流式显示；思考与工具调用按执行顺序排成一条时间线；展示系统提示词，并给出复制按钮、生成 TPS、耗时与模型标签。 |
+| **调用记录** | 按轮次展示执行步骤与生命周期变化。 |
+| **轨迹** | 默认把全部轮次合并成一条带标尺的时间线，也可聚焦单轮；LLM、工具与上下文三条轨道可分别查看，支持缩放与框选。 |
+| **统计** | 汇总用量与耗时，并给出逐轮明细。 |
+| **Git 图谱** | 只读查看项目镜像的提交图，高亮固定 SHA 与会话 ref 的提交，展开提交详情并下载补丁。 |
+| **文件面板** | 浏览固定快照下的文件，文本使用只读代码查看器，图片可直接预览；会标明实际提供数据的来源（本地工作区或 GitLab）。 |
 
-`/review` 可附加最多 2,000 个字符的补充说明；正文中的换行、缩进和连续空格会原样保留，因此也可以包含多行示例。MR 普通提及同样最多接受 2,000 个字符，并使用固定 MR 元信息、diff 和近期评论作为聊天上下文。默认注入最近 20 条评论，可通过 `chat.history_comments` 配置为 0–50 条；Chat 也可按需读取当前 MR 的更多近期评论。`/status` 和 `/cancel` 不接受参数；`/explain` 接受一个路径；`/fix` 可附带自然语言请求。配置了共享 Webhook Secret 的项目中的评论者均可调用指令，`gitlab.blocked_user_ids` 中的用户除外。
+聊天输入框支持斜杠命令（`review`、`explain`、`fix`、`test`、`docs`、`commit`、`mr`）。这些命令只是**本轮的模型指令**：它们不会创建事件、改变状态或向 GitLab 发布内容，标题中也会去掉命令前缀。活跃对话还会在输入框上方提供按意图分组的快捷提示词。
 
-### Issue 提及
+如果分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束；重新发送消息即可使用当前版本。每个用户还有自己的**设置**页（`#/settings`），可在共享的系统级模型供应商（标有「系统」且只读）之外添加私有供应商与模型；Personal 设置中激活的模型只作用于该用户自己的对话。
 
-Issue 中的普通提及会启动助手任务。Agent 会基于 Issue 和近期评论选择回复、追问或提出实现：
+## 5. 配置模型
 
-| 提及 | 功能 |
-|---|---|
-| `@corvex-bot 这个改动可行吗？` | 请求分析或澄清；Agent 会回复但不会修改代码。 |
-| `@corvex-bot 添加所需校验` | 让 Agent 判断应回复还是提出实现；代码写入需要启用 Issue 实现。 |
-| `@corvex-bot /implement 添加所需校验` | 明确请求实现；代码写入仍要求启用 Issue 实现。 |
+在管理后台的「设置 → 模型」中管理模型供应商：每个供应商保存名称、Base URL 与 API Key，并在其下维护各自的模型（上下文窗口与最大输出 Token）。全局只有一个模型处于使用状态，第一个新增的模型自动激活，切换后无需重启即作用于下一轮。API Key 不会通过接口回显；密码框留空表示沿用已保存的值。模型目录为空时，才使用配置文件或环境变量中的兜底连接参数。
 
-配置了共享 Webhook Secret 的项目中的评论者均可 @ 机器人，`gitlab.blocked_user_ids` 中的用户除外。
+## 工具与写入边界
 
-## 5. 启用模型任务
+Pi 会话不开放内建 shell、edit 或 write 工具。仓库文件读取通过有界的 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，仓库路径必须使用相对路径（只有可信 Skill 根目录允许绝对路径）。Skill 从 `agent.skill_paths` 加载，属于指令而非访问控制。
 
-审查、解释、修复提案和 Issue 助手需要模型配置。请在控制台设置页配置模型及其 API Key。Base URL 是 API 根地址；Corvex 会请求其 `/chat/completions` 路径。
-
-## Issue 助手与实现
-
-Issue 提及要求启用 Agent。默认会向 Agent 提供 Issue 和最近 20 条非系统评论；可通过 `issue.history_comments` 设置为 0–50 条。Agent 会自行判断是回复、追问还是提出实现；回复不会创建或推送代码。
-
-代码写入默认关闭。若要允许实现，请设置 `issue.implement_enabled: true`，并配置有权限推送分支和创建合并请求的 GitLab 写令牌。除非当前请求明确命名另一个已存在分支，否则事件执行器使用项目默认分支；评论不能选择目标分支。事件执行器创建新的 `corvex/issue-*` 分支并打开 Draft MR，不会运行仓库脚本或测试，也不会自动合并。合并前请人工审查生成的 MR。
-
-Server 已在运行，启用 Agent 后下一次事件即可使用，无需重启。Agent 关闭时 Server 仍接收事件并持久化任务，但不会执行。可通过[运行环境与运维](./operations)中的健康检查接口测试本地 Server。
-
-## 谨慎启用修复提案
-
-Fix 默认关闭。启用时，在控制台将 `fix.enabled` 设为 `true`。配置了共享 Webhook Secret 的项目中未被拉黑的评论者均可请求提案。模型只能针对 MR Diff 中已变更的文本文件提出补丁。Corvex 会在一次性隔离 worktree 中校验并应用补丁，然后将补丁发布给人工审阅和应用。它**不会**运行仓库代码或测试、创建提交或推送变更。提案不代表项目测试已通过。
-
-## 持久对话
-
-打开 `/ops` 上的 Agent 控制台并使用 GitLab 账号登录。搜索你的 GitLab 令牌可访问的项目，然后选择仓库和分支，即可开始围绕代码的通用聊天。Corvex 在消息入队时于服务端查询并固定分支头 SHA。对话及每轮消息都保存在 SQLite 中；同一对话一次只运行一轮。页面铺满视口：左侧按模型生成的标题列出对话（首轮完成前回退为项目名），并展示轮次数与最近一轮状态，右侧工作区显示仓库头部与四个标签页。**对话** 呈现 Markdown 记录并可复制回复，同时在记录上方以折叠块展示该对话的系统提示词；**轨迹** 以单一时间线呈现模型与工具活动，默认把全部轮次合并（也可聚焦单轮），在不离开对话的情况下查看该范围的执行步骤与生命周期变化；**统计** 汇总用量与耗时并给出逐轮明细。Agent 读取仓库，在你明确要求时可发布 GitLab 评论（如回复 Issue/MR、更新内容），并可用受限的文件工具（edit_file / write_file / delete_file / move_file / copy_file）修改固定快照的对话工作区。改动保存到项目镜像里的会话 ref，工作区被清理后仍会恢复，且永不 commit/push。仓库文件面板可浏览固定快照，除文本外还能预览图片（PNG/JPEG/GIF/WebP/BMP/AVIF/SVG/ICO）。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束；重新发送消息即可使用当前版本。每个用户还有自己的**设置**页（`#/settings`），可在共享的系统级供应商（标有「系统」且只读）之外添加自己的供应商与模型；在此激活模型只影响该用户自己的对话。
-
-Pi Session 不开放内建 shell 或任意命令执行。仓库工具包括有界 `read_file` 和 `git_grep`，以及仅供 Chat 使用、读取固定 MR HEAD 历史的 `git_log` 和 `git_show`。用户要求时，Chat 可通过 `update_mr_metadata` 修改当前 MR 标题和/或描述；未传入的字段保持不变。配置写令牌且 MR 源项目与目标项目相同时，Chat 还可使用 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert`，并固定绑定到当前隔离 worktree 和 MR 源分支。用户要求修改后无需额外确认；补丁仅修改已跟踪普通文件，提交仅接受未暂存的已跟踪文件修改。所有修改和可用验证完成后，Chat 创建最终提交，并在回复前将推送作为最后一次仓库操作；不会推送中间状态，也不会在推送后继续修改文件。推送只进行普通快进更新且永远不能强制推送；回滚只为最近的 Corvex 提交新增 revert commit。Fork MR 不提供 Git 写工具。字面量 `search_text` 可搜索工作树和可信 Skill 根目录（每次最多扫描 1,000 个文件和 16 MiB，返回最多 50 条匹配）。启用后，`web_fetch` 仅对 review 和 explain 任务开放；私网/保留地址始终拦截，`agent.web_blocked_hosts` 可增加主机黑名单，每个 Session 最多抓取 10 页。重定向会重新校验，网页内容属于不可信输入。`agent.skill_paths` 用于加载 Skill。MCP 默认关闭；启用 `agent.mcp_enabled` 后仅为 review 任务从服务的 Pi Agent 目录加载 MCP 工具。MCP 服务进程拥有 Server 的操作系统权限；仅使用管理员控制的配置，且不要将 MCP 当作沙箱。
+- **Git 工具**限定在对话的 worktree 和本地项目镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_merge`、`git_commit`、`git_push`、`git_revert`。不接受任意 URL、远端或强制推送参数；`git_push` 只写镜像中的 `refs/conversations/<id>`，**绝不推送 GitLab 分支**。分支、合并与回滚都经过校验，不会重写历史。
+- **GitLab 工具**固定绑定到对话的项目：项目与分支发现、读取 Issue/MR 及其变更与讨论，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。所有写操作都需要用户明确意图；删除、合并、批准等不可逆或公开动作在工具描述中明确标注。
+- **文件修改**只在工作树中进行，并通过有界的 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成；改动保存到项目镜像的会话 ref，工作区被清理后仍会恢复，且永不 commit 到 GitLab 分支。删除对话或会话改动会移除该 ref。
+- Corvex 不执行仓库代码、脚本或测试；所有 Agent 输出均视为不可信，写入 GitLab 前再次校验授权、取消状态与固定版本。
 
 ## 后续阅读
 
-- 阅读[架构与工作流程](./architecture)，了解任务处理、重试和安全边界。
+- 阅读[架构与工作流程](./architecture)，了解轮次执行、上下文治理和安全边界。
 - 查阅[配置参考](./configuration)中的全部配置项。
 - 按照[运行环境与运维](./operations)配置 Docker Compose、健康检查、备份、保留策略和故障排查。

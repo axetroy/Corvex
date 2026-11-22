@@ -15,23 +15,19 @@ import type {
   ConversationTurnStats,
   ConversationTurns,
   ExecutionStep,
-  EventDetails,
-  EventOperationsSummary,
-  EventStatus,
-  EventTraceEntry,
-  EventTraceKind,
-  EventTraceStatus,
-  EventType,
+  TraceEntry,
+  TraceKind,
+  TraceStatus,
   ModelCallMetric,
   ModelProviderDetails,
   ProviderModel,
   OperationsOverview,
   RepositoryDetails,
   StorageCleanupRecord,
-} from "../../events/model.js";
+} from "../../model.js";
 
 /**
- * Agent 控制台依赖的接口数据结构。字段形状与 `src/events/model.ts` 一致，
+ * Agent 控制台依赖的接口数据结构。字段形状与 `src/model.ts` 一致，
  * 这里只做 HTTP 边界的重新导出，避免前端重复声明。
  */
 export type {
@@ -51,13 +47,9 @@ export type {
   ConversationTurnStats,
   ConversationTurns,
   ExecutionStep,
-  EventDetails,
-  EventOperationsSummary,
-  EventStatus,
-  EventTraceEntry,
-  EventTraceKind,
-  EventTraceStatus,
-  EventType,
+  TraceEntry,
+  TraceKind,
+  TraceStatus,
   ModelCallMetric,
   ModelProviderDetails,
   ProviderModel,
@@ -72,38 +64,7 @@ export interface OverviewResponse extends OperationsOverview {
   modelCalls: ModelCallMetric[];
 }
 
-/** `GET /api/ops/events` 的响应体。 */
-export interface EventPageResponse {
-  items: EventOperationsSummary[];
-  total: number;
-}
-
-/** Agent 控制台展示的事件生命周期状态，与服务端 `eventStatuses` 保持同一顺序。 */
-export const statuses: readonly EventStatus[] = [
-  "queued",
-  "preparing",
-  "analyzing",
-  "fixing",
-  "verifying",
-  "publishing",
-  "completed",
-  "failed",
-  "stale",
-  "cancelled",
-];
-
-/** 事件列表筛选使用的事件类型，与服务端 `eventTypes` 保持一致。 */
-export const eventTypes: readonly EventType[] = ["review", "fix", "explain", "chat", "implement"];
-
-/** 事件列表筛选条件和分页位置。 */
-export interface EventQueue {
-  status: string;
-  type: string;
-  search: string;
-  offset: number;
-}
-
-/** 事件列表单页大小，与服务端 `limit` 上限以下的默认值一致。 */
+/** 分页默认单页大小。 */
 export const pageSize = 25;
 
 /** 运行时设置值：列表项以字符串数组回显，数字项以秒或毫秒为单位。 */
@@ -205,7 +166,6 @@ export const settingGroups: readonly SettingGroup[] = [
     hintKey: "settingsGroupToolsHint",
     fields: [
       { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
-      { key: "mcp_enabled", kind: "boolean", labelKey: "settingsMcpEnabled", hintKey: "settingsMcpEnabledHint" },
       { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
     ],
@@ -217,8 +177,6 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
       { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
-      { key: "events_poll_interval", kind: "number", min: 1, max: 3_600, step: 1, unit: "second", labelKey: "settingsEventsPollInterval", hintKey: "settingsEventsPollIntervalHint" },
-      { key: "events_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsEventsTimeout", hintKey: "settingsEventsTimeoutHint" },
     ],
   },
   {
@@ -228,9 +186,6 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "gitlab_base_url", kind: "string", maxLength: 500, labelKey: "settingsGitLabBaseUrl", hintKey: "settingsGitLabBaseUrlHint" },
       { key: "gitlab_read_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabReadToken", hintKey: "settingsGitLabReadTokenHint" },
       { key: "gitlab_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabToken", hintKey: "settingsGitLabTokenHint" },
-      { key: "gitlab_webhook_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabWebhookSecret", hintKey: "settingsGitLabWebhookSecretHint" },
-      { key: "gitlab_bot_username", kind: "string", maxLength: 200, allowEmpty: true, labelKey: "settingsGitLabBotUsername", hintKey: "settingsGitLabBotUsernameHint" },
-      { key: "gitlab_blocked_user_ids", kind: "list", item: "integer", labelKey: "settingsGitLabBlockedUserIds", hintKey: "settingsGitLabBlockedUserIdsHint" },
       { key: "gitlab_oauth_client_id", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthClientId", hintKey: "settingsOAuthClientIdHint" },
       { key: "gitlab_oauth_client_secret", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsOAuthClientSecret", hintKey: "settingsOAuthClientSecretHint" },
       { key: "gitlab_oauth_redirect_uri", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthRedirectUri", hintKey: "settingsOAuthRedirectUriHint" },
@@ -244,27 +199,6 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "conversation_workspace_max", kind: "number", min: 1, max: 200, step: 1, labelKey: "settingsWorkspaceMax", hintKey: "settingsWorkspaceMaxHint" },
       { key: "storage_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsRetentionDays", hintKey: "settingsRetentionDaysHint" },
       { key: "storage_audit_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsAuditRetentionDays", hintKey: "settingsAuditRetentionDaysHint" },
-    ],
-  },
-  {
-    titleKey: "settingsGroupReview",
-    hintKey: "settingsGroupReviewHint",
-    fields: [
-      { key: "review_max_files", kind: "number", min: 1, max: 1000, step: 10, labelKey: "settingsReviewMaxFiles", hintKey: "settingsReviewMaxFilesHint" },
-      { key: "review_max_findings", kind: "number", min: 1, max: 100, step: 5, labelKey: "settingsReviewMaxFindings", hintKey: "settingsReviewMaxFindingsHint" },
-      { key: "review_max_context_bytes", kind: "number", min: 1, max: 8 << 20, step: 4096, unit: "byte", labelKey: "settingsReviewMaxContextBytes", hintKey: "settingsReviewMaxContextBytesHint" },
-      { key: "review_batch_concurrency", kind: "number", min: 1, max: 4, step: 1, labelKey: "settingsReviewBatchConcurrency", hintKey: "settingsReviewBatchConcurrencyHint" },
-      { key: "chat_history_comments", kind: "number", min: 0, max: 50, step: 5, labelKey: "settingsChatHistoryComments", hintKey: "settingsChatHistoryCommentsHint" },
-      { key: "issue_history_comments", kind: "number", min: 0, max: 50, step: 5, labelKey: "settingsIssueHistoryComments", hintKey: "settingsIssueHistoryCommentsHint" },
-    ],
-  },
-  {
-    titleKey: "settingsGroupWorkflow",
-    hintKey: "settingsGroupWorkflowHint",
-    fields: [
-      { key: "fix_enabled", kind: "boolean", labelKey: "settingsFixEnabled", hintKey: "settingsFixEnabledHint" },
-      { key: "fix_max_patch_bytes", kind: "number", min: 1, max: 256 << 10, step: 1024, unit: "byte", labelKey: "settingsFixMaxPatchBytes", hintKey: "settingsFixMaxPatchBytesHint" },
-      { key: "issue_implement_enabled", kind: "boolean", labelKey: "settingsIssueImplementEnabled", hintKey: "settingsIssueImplementEnabledHint" },
     ],
   },
   {

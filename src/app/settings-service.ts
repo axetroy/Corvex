@@ -12,7 +12,7 @@ import {
   type DerivedContextMetrics,
   type RuntimeSettingValue,
 } from "../config/settings.js";
-import type { EventStore } from "../events/store.js";
+import type { AppStore } from "../store.js";
 import { errorMessage } from "../errors.js";
 import { redactSettingValues, secretSettingPlaceholder } from "./http/respond.js";
 
@@ -40,7 +40,7 @@ export type SettingsSaveResult =
 export class SettingsService {
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: EventStore,
+    private readonly store: AppStore,
     /** 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。 */
     private readonly baseline: CorvexConfig,
     private readonly configPath?: string,
@@ -66,10 +66,6 @@ export class SettingsService {
           provider: migrated.provider.name,
           model: migrated.model.name,
         });
-      }
-      const migratedEventKeys = this.store.migrateLegacyEventRuntimeSettings();
-      if (migratedEventKeys > 0) {
-        console.info("migrated legacy event runtime settings", { keys: migratedEventKeys });
       }
       const applied = applyRuntimeSettingRows(this.config, this.store.listRuntimeSettings());
       if (applied.length > 0) {

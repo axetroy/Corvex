@@ -4,7 +4,7 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import type { ResponseLanguage } from "../events/model.js";
+import type { ResponseLanguage } from "../model.js";
 
 export type { ResponseLanguage };
 
@@ -22,9 +22,6 @@ export interface CorvexConfig {
     baseUrl: string;
     readToken: string;
     writeToken: string;
-    webhookSecret: string;
-    blockedUserIds: number[];
-    botUsername: string;
     /** GitLab OAuth Application；留空时登录入口不可用，但站点仍可启动。 */
     oauthClientId: string;
     oauthClientSecret: string;
@@ -53,7 +50,6 @@ export interface CorvexConfig {
     sessionTimeout: number;
     maxOutputTokens: number;
     dailyTokenBudget: number;
-    mcpEnabled: boolean;
     webEnabled: boolean;
     webBlockedHosts: string[];
     skillPaths: string[];
@@ -72,36 +68,9 @@ export interface CorvexConfig {
     /** 是否启用跨轮滚动摘要，把被裁剪的历史压缩成持久化摘要。 */
     summaryEnabled: boolean;
   };
-  review: {
-    maxFiles: number;
-    maxFindings: number;
-    maxContextBytes: number;
-    batchConcurrency: number;
-  };
-  chat: {
-    historyComments: number;
-  };
-  /**
-   * 事件执行器（Server 内联运行）的调度参数。
-   *
-   * 事件入队后会被立即唤醒执行，`pollInterval` 只是兜底轮询间隔；`eventTimeout`
-   * 限制单个事件的总体执行时长。
-   */
-  events: {
-    pollInterval: number;
-    eventTimeout: number;
-  };
-  fix: {
-    enabled: boolean;
-    maxPatchBytes: number;
-  };
-  issue: {
-    implementEnabled: boolean;
-    historyComments: number;
-  };
 }
 
-export type ConfigRole = "server" | "storage" | "benchmark";
+export type ConfigRole = "server" | "storage";
 
 type JsonObject = Record<string, unknown>;
 
@@ -112,9 +81,6 @@ const defaults: CorvexConfig = {
     baseUrl: "",
     readToken: "",
     writeToken: "",
-    webhookSecret: "",
-    blockedUserIds: [],
-    botUsername: "",
     oauthClientId: "",
     oauthClientSecret: "",
     oauthRedirectUri: "",
@@ -130,7 +96,6 @@ const defaults: CorvexConfig = {
     sessionTimeout: 30 * 60_000,
     maxOutputTokens: 4096,
     dailyTokenBudget: 0,
-    mcpEnabled: false,
     webEnabled: true,
     webBlockedHosts: [],
     skillPaths: [],
@@ -142,11 +107,6 @@ const defaults: CorvexConfig = {
     compactionKeepRecentTokens: 20_000,
     summaryEnabled: true,
   },
-  review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
-  chat: { historyComments: 20 },
-  events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
-  fix: { enabled: false, maxPatchBytes: 128 << 10 },
-  issue: { implementEnabled: false, historyComments: 20 },
 };
 
 function object(value: unknown, label: string): JsonObject {
@@ -185,14 +145,6 @@ function boolean(value: unknown, fallback: boolean): boolean {
   return value;
 }
 
-function numberArray(value: unknown, fallback: number[]): number[] {
-  if (value === undefined) return fallback;
-  if (!Array.isArray(value) || !value.every((item) => Number.isSafeInteger(item))) {
-    throw new Error("configuration value must be an array of safe integers");
-  }
-  return value;
-}
-
 function stringArray(value: unknown, fallback: string[]): string[] {
   if (value === undefined) return fallback;
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
@@ -226,10 +178,6 @@ function parseConfig(raw: unknown): CorvexConfig {
   const gitlab = object(root.gitlab, "gitlab");
   const storage = object(root.storage, "storage");
   const agent = object(root.agent, "agent");
-  const review = object(root.review, "review");
-  // `worker` 是旧配置段名，保留读取以便升级后的配置文件继续可用。
-  const events = object(root.events ?? root.worker, "events");
-  const fix = object(root.fix, "fix");
   return {
     server: {
       listen: process.env.CORVEX_LISTEN ?? string(server.listen, defaults.server.listen),
@@ -247,9 +195,6 @@ function parseConfig(raw: unknown): CorvexConfig {
         process.env.CORVEX_GITLAB_BASE_URL ?? string(gitlab.base_url, defaults.gitlab.baseUrl),
       readToken: process.env.CORVEX_GITLAB_READ_TOKEN ?? "",
       writeToken: process.env.CORVEX_GITLAB_TOKEN ?? "",
-      webhookSecret: process.env.CORVEX_WEBHOOK_SECRET ?? "",
-      blockedUserIds: numberArray(gitlab.blocked_user_ids, defaults.gitlab.blockedUserIds),
-      botUsername: string(gitlab.bot_username, defaults.gitlab.botUsername),
       oauthClientId: "",
       oauthClientSecret: "",
       oauthRedirectUri: "",
@@ -291,7 +236,6 @@ function parseConfig(raw: unknown): CorvexConfig {
       ),
       maxOutputTokens: number(agent.max_output_tokens, defaults.agent.maxOutputTokens),
       dailyTokenBudget: number(agent.daily_token_budget, defaults.agent.dailyTokenBudget),
-      mcpEnabled: boolean(agent.mcp_enabled, defaults.agent.mcpEnabled),
       webEnabled: boolean(agent.web_enabled, defaults.agent.webEnabled),
       webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
@@ -302,27 +246,6 @@ function parseConfig(raw: unknown): CorvexConfig {
       compactionReserveTokens: number(agent.compaction_reserve_tokens, defaults.agent.compactionReserveTokens),
       compactionKeepRecentTokens: number(agent.compaction_keep_recent_tokens, defaults.agent.compactionKeepRecentTokens),
       summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
-    },
-    review: {
-      maxFiles: number(review.max_files, defaults.review.maxFiles),
-      maxFindings: number(review.max_findings, defaults.review.maxFindings),
-      maxContextBytes: number(review.max_context_bytes, defaults.review.maxContextBytes),
-      batchConcurrency: number(review.batch_concurrency, defaults.review.batchConcurrency),
-    },
-    chat: {
-      historyComments: number(object(root.chat, "chat").history_comments, defaults.chat.historyComments),
-    },
-    events: {
-      pollInterval: duration(events.poll_interval, defaults.events.pollInterval, "events.poll_interval"),
-      eventTimeout: duration(events.event_timeout, defaults.events.eventTimeout, "events.event_timeout"),
-    },
-    fix: {
-      enabled: boolean(fix.enabled, defaults.fix.enabled),
-      maxPatchBytes: number(fix.max_patch_bytes, defaults.fix.maxPatchBytes),
-    },
-    issue: {
-      implementEnabled: boolean(object(root.issue, "issue").implement_enabled, defaults.issue.implementEnabled),
-      historyComments: number(object(root.issue, "issue").history_comments, defaults.issue.historyComments),
     },
   };
 }
@@ -399,8 +322,8 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   ) {
     problems.push("GitLab OAuth requires client ID, client secret and redirect URI together");
   }
-  // GitLab 令牌与 Webhook 密钥都可以在运维台设置写入 SQLite，启动时不要求
-  // 环境变量或配置文件提供；未配置时 Webhook 会被拒绝，API 调用会明确报错。
+  // GitLab 令牌可以在运维台设置写入 SQLite，启动时不要求环境变量或配置文件提供；
+  // 未配置时 API 调用会明确报错。
   if (!config.storage.root.trim()) problems.push("storage.root is required");
   if (!config.storage.database.trim()) problems.push("storage.database is required");
   if (config.storage.retentionDays < 1 || config.storage.retentionDays > 36_500) {
@@ -414,30 +337,6 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.storage.conversationWorkspaceMax < 1 || config.storage.conversationWorkspaceMax > 200) {
     problems.push("storage.conversation_workspace_max must be between 1 and 200");
-  }
-  if (config.review.maxFiles <= 0 || config.review.maxFiles > 1000) {
-    problems.push("review.max_files must be between 1 and 1000");
-  }
-  if (config.review.maxFindings <= 0 || config.review.maxFindings > 100) {
-    problems.push("review.max_findings must be between 1 and 100");
-  }
-  if (config.review.maxContextBytes <= 0 || config.review.maxContextBytes > 8 << 20) {
-    problems.push("review.max_context_bytes must be between 1 byte and 8 MiB");
-  }
-  if (!Number.isInteger(config.review.batchConcurrency) || config.review.batchConcurrency < 1 || config.review.batchConcurrency > 4) {
-    problems.push("review.batch_concurrency must be between 1 and 4");
-  }
-  if (!Number.isInteger(config.chat.historyComments) || config.chat.historyComments < 0 || config.chat.historyComments > 50) {
-    problems.push("chat.history_comments must be between 0 and 50");
-  }
-  if (config.events.pollInterval <= 0 || config.events.eventTimeout <= 0) {
-    problems.push("events poll interval and event timeout must be positive");
-  }
-  if (!Number.isInteger(config.issue.historyComments) || config.issue.historyComments < 0 || config.issue.historyComments > 50) {
-    problems.push("issue.history_comments must be between 0 and 50");
-  }
-  if (config.fix.maxPatchBytes <= 0 || config.fix.maxPatchBytes > 256 << 10) {
-    problems.push("fix.max_patch_bytes must be between 1 byte and 256 KiB");
   }
   if (config.agent.webBlockedHosts.length > 100) {
     problems.push("agent.web_blocked_hosts must contain no more than 100 hostnames");

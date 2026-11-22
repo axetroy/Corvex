@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
-import { EventStore } from "../../src/events/store.js";
-import type { ConversationStreamTool } from "../../src/events/model.js";
+import { AppStore } from "../../src/store.js";
+import type { ConversationStreamTool } from "../../src/model.js";
 
 describe("PiAgent", () => {
   let temporaryDirectory = "";
   let server: ReturnType<typeof createServer> | undefined;
-  let store: EventStore | undefined;
+  let store: AppStore | undefined;
 
   afterEach(async () => {
     if (server?.listening) {
@@ -28,25 +28,9 @@ describe("PiAgent", () => {
     }
   });
 
-  it("limits web, MCP, and MR tools to the intended task types", () => {
-    const config = { webEnabled: true, mcpEnabled: true };
-
-    expect(getAgentToolAccess("review", config)).toEqual({ webFetch: true, mcp: true, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
-    expect(getAgentToolAccess("fix", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
-    expect(getAgentToolAccess("explain", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
-    expect(getAgentToolAccess("chat", config)).toEqual({ webFetch: true, mcp: false, mrComments: true, mrMetadata: true, gitHistory: true, gitWrite: true });
-    expect(getAgentToolAccess("implement", config)).toEqual({ webFetch: false, mcp: false, mrComments: false, mrMetadata: false, gitHistory: false, gitWrite: false });
-    // 对话统一为可读可写（GitLab 写入）；仓库写入仍关闭，省略模式时回退为默认模式。
-    expect(getAgentToolAccess("conversation", config, "gitlab")).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: true, gitWrite: false });
-    expect(getAgentToolAccess("conversation", config)).toEqual({ webFetch: true, mcp: false, mrComments: false, mrMetadata: false, gitHistory: true, gitWrite: false });
-    expect(getAgentToolAccess("review", { ...config, webEnabled: false })).toEqual({
-      webFetch: false,
-      mcp: true,
-      mrComments: false,
-      mrMetadata: false,
-      gitHistory: false,
-      gitWrite: false,
-    });
+  it("limits web and Git history tools to conversations", () => {
+    expect(getAgentToolAccess("conversation", { webEnabled: true })).toEqual({ webFetch: true, gitHistory: true });
+    expect(getAgentToolAccess("conversation", { webEnabled: false })).toEqual({ webFetch: false, gitHistory: true });
   });
 
   it("uses the Pi SDK and the configured OpenAI-compatible provider", async () => {
@@ -166,7 +150,6 @@ describe("PiAgent", () => {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -186,7 +169,6 @@ describe("PiAgent", () => {
         sessionTimeout: 10000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: true,
         webBlockedHosts: ["blocked.corp.dev"],
         skillPaths: [],
@@ -205,19 +187,16 @@ describe("PiAgent", () => {
     } satisfies CorvexConfig;
 
     await writeFile(join(temporaryDirectory, "README.md"), "private repository content");
-    store = await EventStore.open(":memory:");
-    store.createReview("event-1", "key-1", {
-      projectId: 7,
-      mrIid: 3,
-      headSha: "a".repeat(40),
-      actorId: 11,
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      ownerUserId: "user-1", projectId: 7, projectName: "group/project",
+      targetBranch: "main", headSha: "a".repeat(40), actorId: 11, request: "test",
     });
-    const event = store.claimNextWithLease(30_000);
-    if (!event) throw new Error("expected a queued event to be claimed");
+    const event = { id: created.turnId, conversationId: created.conversationId, attemptCount: 1, type: "conversation" as const };
     const agent = new PiAgent(config, store);
     const requestCountBeforeOversizedPrompt = requestCount;
     await expect(agent.generate(
-      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "x".repeat(maxAgentPromptBytes * 8) },
+      { taskType: "conversation", systemPrompt: "Return JSON.", userPrompt: "x".repeat(maxAgentPromptBytes * 8) },
       temporaryDirectory,
     )).rejects.toThrow("request budget");
     expect(requestCount).toBe(requestCountBeforeOversizedPrompt);
@@ -228,7 +207,7 @@ describe("PiAgent", () => {
     const toolUpdates: ConversationStreamTool[] = [];
     const result = await agent.generate(
       {
-        taskType: "review",
+        taskType: "conversation",
         systemPrompt: "Return JSON.",
         userPrompt: "Say ok.",
         onTextDelta: (update) => streamUpdates.push(update),
@@ -237,7 +216,7 @@ describe("PiAgent", () => {
       },
       temporaryDirectory,
       undefined,
-      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+      { scope: { turnId: event.id }, attempt: event.attemptCount, taskType: event.type },
     );
     expect(Date.now() - startedAt).toBeGreaterThan(config.agent.requestTimeout);
     expect(result.content).toContain('"summary":"ok"');
@@ -269,7 +248,7 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain('"name":"search_text"');
     expect(requestBodies[0]).toContain('"name":"web_fetch"');
     expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
-    const trajectory = store.getEventDetails(event.id)?.trajectory;
+    const trajectory = store.getConversationTurn(event.conversationId, event.id)?.trajectory;
     expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({
       name: "read_file",
@@ -313,7 +292,7 @@ describe("PiAgent", () => {
         outputTokens: 3,
         input: expect.stringContaining("Say ok."),
         output: expect.stringContaining("call-read-file"),
-        rawContent: JSON.stringify({ taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
+        rawContent: JSON.stringify({ taskType: "conversation", systemPrompt: "Return JSON.", userPrompt: "Say ok." }),
       },
       {
         model: "Acme Models/test-model",
@@ -330,14 +309,14 @@ describe("PiAgent", () => {
 
     responseDelayMs = 0;
     await agent.generate(
-      { taskType: "fix", systemPrompt: "Propose a patch.", userPrompt: "Fix the defect." },
+      { taskType: "conversation", systemPrompt: "Propose a patch.", userPrompt: "Fix the defect." },
       temporaryDirectory,
     );
     expect(requestBodies[2]).toContain('"name":"search_text"');
-    expect(requestBodies[2]).not.toContain('"name":"web_fetch"');
+    expect(requestBodies[2]).toContain('"name":"web_fetch"');
 
     await agent.generate(
-      { taskType: "explain", systemPrompt: "Explain the file.", userPrompt: "Explain README." },
+      { taskType: "conversation", systemPrompt: "Explain the file.", userPrompt: "Explain README." },
       temporaryDirectory,
     );
     expect(requestBodies[3]).toContain('"name":"web_fetch"');
@@ -347,14 +326,14 @@ describe("PiAgent", () => {
     const timeoutStartedAt = Date.now();
     await expect(
       agent.generate(
-        { taskType: "review", systemPrompt: "Wait.", userPrompt: "Wait." },
+        { taskType: "conversation", systemPrompt: "Wait.", userPrompt: "Wait." },
         temporaryDirectory,
         undefined,
-        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+        { scope: { turnId: event.id }, attempt: event.attemptCount, taskType: event.type },
       ),
     ).rejects.toThrow("Pi agent run failed");
     expect(Date.now() - timeoutStartedAt).toBeLessThan(4000);
-    expect(store.getEventDetails(event.id)?.trajectory[0]).toMatchObject({
+    expect(store.getConversationTurn(event.conversationId, event.id)?.trajectory[0]).toMatchObject({
       kind: "llm",
       status: "failed",
     });
@@ -412,15 +391,12 @@ describe("PiAgent", () => {
     if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
 
     await writeFile(join(temporaryDirectory, "big.txt"), "x".repeat(8 << 10));
-    store = await EventStore.open(":memory:");
-    store.createReview("event-budget", "key-budget", {
-      projectId: 7,
-      mrIid: 3,
-      headSha: "a".repeat(40),
-      actorId: 11,
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      ownerUserId: "user-1", projectId: 7, projectName: "group/project",
+      targetBranch: "main", headSha: "a".repeat(40), actorId: 11, request: "test",
     });
-    const event = store.claimNextWithLease(30_000);
-    if (!event) throw new Error("expected a queued event to be claimed");
+    const event = { id: created.turnId, conversationId: created.conversationId, attemptCount: 1, type: "conversation" as const };
     const agent = new PiAgent({
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
@@ -428,7 +404,6 @@ describe("PiAgent", () => {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -447,7 +422,6 @@ describe("PiAgent", () => {
         sessionTimeout: 10_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: false,
         webBlockedHosts: [],
         skillPaths: [],
@@ -467,10 +441,10 @@ describe("PiAgent", () => {
     }, store);
 
     const result = await agent.generate(
-      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read big.txt." },
+      { taskType: "conversation", systemPrompt: "Return JSON.", userPrompt: "Read big.txt." },
       temporaryDirectory,
       undefined,
-      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+      { scope: { turnId: event.id }, attempt: event.attemptCount, taskType: event.type },
     );
     expect(result.content).toBe("partial answer");
     expect(requestCount).toBeGreaterThanOrEqual(2);
@@ -533,15 +507,12 @@ describe("PiAgent", () => {
     if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
 
     await writeFile(join(temporaryDirectory, "medium.txt"), "x".repeat(3_500));
-    store = await EventStore.open(":memory:");
-    store.createReview("event-checkpoint", "key-checkpoint", {
-      projectId: 7,
-      mrIid: 3,
-      headSha: "a".repeat(40),
-      actorId: 11,
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      ownerUserId: "user-1", projectId: 7, projectName: "group/project",
+      targetBranch: "main", headSha: "a".repeat(40), actorId: 11, request: "test",
     });
-    const event = store.claimNextWithLease(30_000);
-    if (!event) throw new Error("expected a queued event to be claimed");
+    const event = { id: created.turnId, conversationId: created.conversationId, attemptCount: 1, type: "conversation" as const };
     const agent = new PiAgent({
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
@@ -549,7 +520,6 @@ describe("PiAgent", () => {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -568,7 +538,6 @@ describe("PiAgent", () => {
         sessionTimeout: 10_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: false,
         webBlockedHosts: [],
         skillPaths: [],
@@ -588,10 +557,10 @@ describe("PiAgent", () => {
     }, store);
 
     const result = await agent.generate(
-      { taskType: "review", systemPrompt: "Return JSON.", userPrompt: "Read medium.txt." },
+      { taskType: "conversation", systemPrompt: "Return JSON.", userPrompt: "Read medium.txt." },
       temporaryDirectory,
       undefined,
-      { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+      { scope: { turnId: event.id }, attempt: event.attemptCount, taskType: event.type },
     );
 
     expect(result.content).toBe("wrapped up");
@@ -623,15 +592,12 @@ describe("PiAgent", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
 
-    store = await EventStore.open(":memory:");
-    store.createReview("event-overflow", "key-overflow", {
-      projectId: 7,
-      mrIid: 3,
-      headSha: "a".repeat(40),
-      actorId: 11,
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      ownerUserId: "user-1", projectId: 7, projectName: "group/project",
+      targetBranch: "main", headSha: "a".repeat(40), actorId: 11, request: "test",
     });
-    const event = store.claimNextWithLease(30_000);
-    if (!event) throw new Error("expected a queued event to be claimed");
+    const event = { id: created.turnId, conversationId: created.conversationId, attemptCount: 1, type: "conversation" as const };
     const agent = new PiAgent({
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
@@ -639,7 +605,6 @@ describe("PiAgent", () => {
         baseUrl: "https://gitlab.example.com",
         readToken: "read",
         writeToken: "write",
-        webhookSecret: "secret",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -658,7 +623,6 @@ describe("PiAgent", () => {
         sessionTimeout: 10_000,
         maxOutputTokens: 4096,
         dailyTokenBudget: 0,
-        mcpEnabled: false,
         webEnabled: false,
         webBlockedHosts: [],
         skillPaths: [],
@@ -680,7 +644,7 @@ describe("PiAgent", () => {
     await expect(
       agent.generate(
         {
-          taskType: "chat",
+          taskType: "conversation",
           systemPrompt: "Answer.",
           userPrompt: "Follow up question.",
           history: [
@@ -690,7 +654,7 @@ describe("PiAgent", () => {
         },
         temporaryDirectory,
         undefined,
-        { scope: { kind: "event", eventId: event.id }, attempt: event.attemptCount, taskType: event.type },
+        { scope: { turnId: event.id }, attempt: event.attemptCount, taskType: event.type },
       ),
     ).rejects.toThrow("maximum context length");
     // 超限会去掉历史重试一次，因此服务端应收到两次请求。

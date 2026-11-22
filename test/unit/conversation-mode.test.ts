@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationCapabilities, isConversationMode, normalizeConversationTitle } from "../../src/events/model.ts";
+import { conversationCapabilities, isConversationMode, normalizeConversationTitle } from "../../src/model.ts";
 
 describe("conversation modes", () => {
   it("recognizes the single read-write mode", () => {

@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Corvex
-  text: GitLab 代码审查与 Issue 实现代理
-  tagline: 自托管异步审查、受限修复，以及可选的 Issue Draft MR。
+  text: 自托管 GitLab 持久对话代理
+  tagline: 在运维台围绕代码持续对话——查看仓库、编辑文件、操作 Git，并在明确要求时写入 GitLab。
   actions:
     - theme: brand
       text: 快速开始
@@ -14,10 +14,10 @@ hero:
       link: https://github.com/axetroy/Corvex
 
 features:
-  - title: 审查合并请求
-    details: 从 GitLab 评论创建审查任务，并以行级讨论的形式发布经过验证的问题。
-  - title: 保留变更控制权
-    details: 修复提案供人工应用；Issue 实现会创建 Draft MR，绝不自动合并。
+  - title: 持久化对话
+    details: 对话绑定仓库分支与固定提交；每一轮的思考、工具调用和轨迹都完整留存，可随时回看。
+  - title: 受控的写入边界
+    details: 文件改动保存到会话 ref，Git push 只写 refs/conversations/<id>；GitLab 写入需要明确的用户意图。
   - title: 自行部署
-    details: 使用 Docker Compose 部署单一 Server 服务，并由 SQLite 提供持久化存储。
+    details: 单一 Server 进程（HTTP + 内联对话），SQLite 持久化，GitLab OAuth2 登录，可用 Docker Compose 部署。
 ---

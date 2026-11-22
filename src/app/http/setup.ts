@@ -2,12 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { applyRuntimeSettings, validateRuntimeSettings } from "../../config/settings.js";
 import type { CorvexConfig } from "../../config/config.js";
 import type { GitLabOAuthService } from "../auth/service.js";
-import type { EventStore } from "../../events/store.js";
+import type { AppStore } from "../../store.js";
 import { readJsonObject, sendJson } from "./respond.js";
 
 interface SetupContext {
   config: CorvexConfig;
-  store: EventStore;
+  store: AppStore;
   oauth: GitLabOAuthService;
 }
 

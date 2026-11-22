@@ -58,17 +58,6 @@ export function sendBinary(
   void reply.send(body);
 }
 
-/** Webhook 响应同时记录日志，方便按状态追踪 GitLab 回调结果。 */
-export function sendWebhook(
-  reply: FastifyReply,
-  status: number,
-  body: string,
-  details: Record<string, string | number | boolean> = {},
-): void {
-  console.info("GitLab webhook response", { status, ...details });
-  sendText(reply, status, body);
-}
-
 /** 常量时间比较控制台 Basic 凭据。 */
 export function basicCredentialsMatch(
   authorization: string | undefined,

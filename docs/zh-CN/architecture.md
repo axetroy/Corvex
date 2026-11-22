@@ -2,91 +2,66 @@
 
 ## 组件
 
-Corvex 将请求接入与模型、仓库处理分离：
+Corvex 是单进程应用：一个 Server 同时提供 HTTP 服务和内联对话执行，共用一个 SQLite 数据库与一个 Git 存储根目录。不再支持拆分部署。
 
-1. **Server** 提供 GitLab Note Hook 和经过认证的 Agent 接口，验证 Webhook Secret、执行可选用户阻止列表检查、将事件写入 SQLite，并回复 GitLab。Agent 控制台通过配置的 GitLab 只读 Token 发现项目和分支。
-2. **SQLite** 是持久化队列和状态存储，记录事件、Webhook 幂等/投递状态、执行尝试、审计事件、对话及其消息/轮次、模型调用指标以及可选的每日 Token 预留。
-3. **内联事件执行器** 运行在 Server 进程内，Webhook 入队后立即唤醒它；它领取事件并续租，记录供 Agent 控制台监控使用的心跳，然后获取合并请求或 Issue 快照及仓库并执行工作流。对话轮次不是事件，同样由 Server 内联执行。
-4. **GitLab API** 提供项目/MR 元信息、分页 Diff，并接收评论和行级讨论。
-5. **OpenAI 兼容模型 API** 由内联事件执行器调用，用于审查、合并请求聊天、解释、修复提案或 Issue 实现，也由 Server 为内联对话轮次调用。
+1. **Server** 提供运维台 `/ops` 与 API，通过 GitLab OAuth2 认证每个用户，按用户令牌发现可见项目；每次请求读取运行时设置，连接参数变更后立即重建 GitLab 客户端。
+2. **SQLite** 是持久化状态存储，记录用户与会话、对话及其消息/轮次、轨迹与执行步骤、过程快照、审计事件、模型调用指标、运行时设置以及可选的每日 Token 预留。
+3. **内联对话执行器（`ConversationRunner`）** 运行在 Server 进程内：领取轮次租约、固定仓库分支头 SHA、复用对话专用 worktree、运行一个 Pi SDK 会话、流式转发过程，并持久化轨迹与最终回复。新入队的轮次会立即唤醒它；启动时回收上次进程留下的在途轮次。
+4. **GitLab API** 提供 OAuth 登录、项目与分支发现、Issue/MR 读取，并接收对话通过显式写工具发出的写入。
+5. **OpenAI 兼容模型 API** 由 Pi Agent 为每一轮对话调用；模型选择按用户支持，个人模型只作用于该用户的对话。
 
 克隆地址与网页地址由配置的 `gitlab.base_url` 加上项目的 `path_with_namespace` 派生，不使用 GitLab 返回的 `http_url_to_repo` / `web_url`：它们由实例的 `external_url` 决定，可能指向 Corvex 无法访问的地址。Git 管理器仍会校验派生地址的协议与主机和配置一致。
 
-GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、503、504 时，最多尝试三次并使用有界退避。POST 写请求不会自动重试，因为远端副作用可能无法确认。
+GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、503、504 时，最多尝试三次并使用有界退避；POST 写请求不会自动重试，因为远端副作用可能无法确认。Webhook 事件及其入队/租约/重试机制已延期，详见 [ROADMAP.zh_CN.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.zh_CN.md)。
 
-队列中的事件还会对发布前的瞬时 HTTP/网络故障和事件超时执行持久化重试。等待时间从 2 秒开始，每次尝试翻倍，最多 30 秒；单个事件的总尝试次数仍不超过三次。鉴权、校验、取消、快照过期和 publishing 阶段错误不会自动重试。
+## 对话轮次流程
 
-未启用 Agent 时 Server 仍会接收并保存命令，但模型事件会保持排队状态。事件与对话共享同一个进程、同一个 SQLite 数据库和同一个 Git 存储根目录，不再支持拆分部署。
-
-## 请求与入队流程
-
-1. GitLab 将 `Note Hook` 请求发送到 `POST /webhooks/gitlab`。
-2. Server 使用恒定时间比较验证 `X-Gitlab-Token` 与配置密钥，接受合并请求和 Issue 评论，限制请求体为 1 MiB，并忽略系统评论。
-3. Server 拒绝 `gitlab.blocked_user_ids` 中的用户。配置了共享 Webhook Secret 的项目中的其他评论者都可以通过 @ `gitlab.bot_username` 使用 slash 指令或直接发送普通文本；部署者应仅在需要接受指令的项目中注册 Webhook。
-4. 解析支持的命令，并在 SQLite 事务中记录事件、响应投递状态、审计事件及（异步工作对应的）事件本身。重复 Webhook 投递具有幂等性。
-5. Server 使用 GitLab 写令牌发布即时确认或校验结果。Webhook 请求处理期间不会执行模型推理。
-6. 内联事件执行器按创建顺序领取排队的审查、解释、聊天、修复或实现事件，并在 30 秒可续期租约内更新事件状态和尝试记录；空闲轮询及执行期间也会更新执行器心跳。启动时它会立即回收上次进程留下的在途事件。
-
-MR 支持 `/review`、`/explain <path>`、`/fix [request]`、`/status` 和 `/cancel`；机器人提及后的普通文本会基于当前 MR 发起聊天。Issue 中的普通提及会进入助手任务，模型可基于 Issue 和近期非系统评论进行回复、追问或提出实现。代码写入由默认关闭的 `issue.implement_enabled` 单独控制；`/implement [request]` 仍可显式请求实现。用法请参阅[快速开始](./guide)。
+1. 用户通过 GitLab OAuth2 登录运维台，选择项目与分支。
+2. `POST /api/ops/conversations` 创建对话：服务端解析并固定分支头 SHA，并立即用 `conversationStart` 钩子从首条消息派生标题；首轮结束后 `conversationTitleRefine` 只提交用户消息给模型精炼标题，禁用所有工具，失败则保留原标题。插件可覆盖这两个钩子。
+3. `POST /api/ops/conversations/<id>/messages` 排入下一轮（`queued`）。执行器按对话串行处理，每轮领取租约并再次校验固定 SHA；若分支已移动，该轮以 `stale` 结束，不会基于不一致的快照作答。
+4. Pi 会话使用窄工具集运行；累计文本、思考过程、工具调用与上下文变化通过 SSE（`text` / `thinking` / `tool` / `context` / `done`）推送给控制台，回答落库后立即关闭流。
+5. 执行器把助手正文写入 SQLite，轮次转为 `completed`，并保存轨迹、执行步骤与过程快照；统计接口从成功的 LLM 轨迹派生 TPS、耗时与模型标签。
+6. 进程崩溃后重启时，仍在 `queued` / `running` 的在途轮次会被标记为失败，避免悬挂。输入框中的斜杠命令只是本轮模型指令，不创建任何状态。
 
 ## 持久对话
 
-经过认证的 Agent 控制台使用 GitLab 只读 Token 搜索其可见的全部项目及分支。对话是绑定到单个仓库分支的通用聊天；服务端在消息入队时解析并固定分支头 SHA，每轮消息保存在 SQLite，并按对话串行执行。对话使用独立表（`conversations`、`conversation_messages`、`conversation_turns`），不进入事件队列：每轮由 Server 通过 `ConversationRunner` 内联执行，因此对话轮次不是事件，也不会出现在事件列表里。每轮仍各自拥有独立的轨迹与执行记录，按 `turn_id` 存储；控制台通过 `GET /api/ops/conversations/<id>/turns` 读取整段对话（把各轮轨迹与执行记录合并成一条时间线），或通过 `GET /api/ops/conversations/<id>/turns/<turnId>` 按轮读取并校验该轮确属该对话，同时通过 `GET /api/ops/conversations/<id>/stats` 汇总用量与耗时；详情响应（`GET /api/ops/conversations/<id>`）还会派生并返回该对话的系统提示词，供控制台展示。对话是控制台的一等对象：页面铺满视口，左侧为对话列表，右侧工作区的 **对话**、**调用记录**、**轨迹**、**统计** 四个标签页分别呈现消息记录（含每条助手回复的工具调用，并在记录上方展示该对话的系统提示词）、各轮的执行记录、整段对话合并后的轨迹（可切换到单轮）与整段对话的汇总。创建对话时，Corvex 通过 `conversationStart` 钩子从用户的首条消息派生简短标题并立即保存。首轮结束后，`conversationTitleRefine` 钩子只把用户消息交给模型精炼标题（绝不使用助手回复），并在禁用所有工具的会话中执行，成功后更新标题，失败则保留原标题。插件可覆盖任一钩子。对话统一为可读可写：内联执行可以读取仓库、通过受限的文件工具（fs-read / fs-write）修改固定快照的 worktree、并在用户明确要求时通过显式写工具向 GitLab 发布内容。每个对话常驻一个 worktree 并跨轮次复用（同一固定快照的追问只重新校验 HEAD），空闲工作区按 TTL 与缓存上限淘汰并在 Server 关闭时删除；文件改动另持久化到项目镜像的会话 ref，因此 worktree 被清理后重建仍会恢复，且永不 commit/push。目前运行在 Server 进程内，后续可迁移到容器而无需改动该契约。若分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束，而不会基于不一致的快照作答。轮次运行期间，Server 还通过 SSE（`GET /api/ops/conversations/<id>/turns/<turnId>/stream`）把助手正文推送给控制台：每个事件携带当前模型轮次的累计文本（工具调用后的新一轮会重置它），注释心跳在工具执行期间保持连接，最终 `done` 在回答落库后立即关闭流。同一条流还用 `thinking` 事件推送每一段思考、用 `tool` 事件推送每次工具执行，控制台在回答上方把它们排成一条交错的时间线：模型每开始一轮就新增一条思考，随后追加该轮触发的工具调用，因此每一次思考和每一个工具调用都能单独看到。思考、中间回复与工具调用会折成一份脱敏且限长的轮次过程快照写入 SQLite，刷新页面后过程块仍能还原；最终回答只保存在消息正文中，不重复存储。因此消息记录会逐字补全，而不是等整段回复完成；轮次结束后仍以落库的消息为准。过程区采用类似 OpenCode 的轻量时间线样式（左侧细轴、每步圆点、弱化小标题、单行工具调用），而不是层层卡片；它在轮次执行期间始终展开且不可收起，轮次结束后作为整体收起（可再次手动展开）；对话窗格本身是唯一的滚动容器，消息区因此占满工作区的可用高度。左侧列表按仓库分组，组标题吸顶并带稳定色点。
+对话是运维台的一等对象，使用独立表（`conversations`、`conversation_messages`、`conversation_turns`）存储，轮次由 Server 通过 `ConversationRunner` 内联执行，不进入任何事件队列。每轮拥有按 `turn_id` 关联的轨迹与执行记录；`GET /api/ops/conversations/<id>/turns` 把整段对话合并成一条有序时间线，`GET /api/ops/conversations/<id>/turns/<turnId>` 只读取单轮并校验归属，`GET /api/ops/conversations/<id>/stats` 汇总用量与耗时，`GET /api/ops/conversations/<id>` 还返回服务端派生的系统提示词。轨迹数据在 `src/store.ts` 中脱敏并限长。
+
+工作区铺满视口：左侧对话列表按仓库分组、最近更新的对话与分组优先，组标题吸顶并带稳定色点，运行中的轮次显示脉冲圆点；右侧工作区的 **Chat**、**调用记录**、**轨迹**、**统计**、**Git 图谱**、**文件面板** 分别呈现回复与工具调用时间线、按轮次的执行步骤、合并轨迹（可聚焦单轮，LLM / 工具 / 上下文三条轨道）、用量汇总、项目镜像的提交图与补丁导出、以及固定快照下的文件浏览。仓库名按钮弹出项目信息 Popover（含分支与固定 SHA）；欢迎页提供按意图分组的快捷提示词。
+
+轮次运行期间，Chat 页逐字流式显示助手回复；思考与工具调用排成一条交错时间线（每轮模型调用开始一条思考，随后是该轮的工具调用），并连同中间回复折成脱敏、限长的轮次过程快照写入 SQLite，刷新页面后仍可还原。上下文变化作为第三类轨迹记录（`context.compact` / `context.trim`），在 Chat 过程块中给出本地化提示，并在 Trace 的 Context 检查器中展示有界的压缩前后快照。`record_plan` 工具把 3–6 步计划记入过程快照；过程块在运行期间强制展开，结束后作为整体收起。右侧文件面板默认读取持久工作区，被淘汰时自动回退到 GitLab 文件接口，并标明实际来源；文本使用只读 Monaco 查看器，图片有独立预览器。Git 图谱高亮固定 SHA 与 `refs/conversations/<id>` 提交，支持按作者筛选、展开提交详情、下载可直接 `git apply` 的补丁。
+
+每个对话常驻一个 worktree（`workspaces/<projectId>/conversation-<id>`），跨轮复用：空闲 TTL 与 LRU 上限由运行时设置控制，Server 关闭与启动时都会清理；同一固定 SHA 的追问只重新校验 HEAD，不会重复检出。镜像按需抓取，只有缺失 SHA 时才 fetch。文件改动通过有界的文件工具写入，并由 `saveConversationChanges` 提交到镜像的会话 ref，因此工作区被清理后仍会恢复。淘汰与清理从不触碰有排队或运行中轮次的对话。
 
 ### 上下文预算
 
-Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 用保守估算（取 chars/4 与 UTF-8 字节数/3 的较大值，避免中文与压缩代码被低估），`trimHistory` 只保留符合 `agent.history_token_budget` 且不超过 `agent.max_input_tokens` 剩余额度的最近历史；被裁掉的历史压缩成持久化的滚动摘要（`conversations.summary`）供后续轮次复用，摘要按预算分块进行，长对话不会因一次摘要请求超窗而丢失早期上下文。请求本身也以结构化多消息构建，而不是拼成一个大字符串。
+Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商拒绝请求。请求离开进程前，`src/agent/budget.ts` 用保守估算（取 chars/4 与 UTF-8 字节数/3 的较大值，避免中文与压缩代码被低估），`trimHistory` 只保留符合 `agent.history_token_budget` 且不超过 `agent.max_input_tokens` 剩余额度的最近历史；被裁掉的历史压缩成持久化的滚动摘要供后续轮次复用，摘要按预算分块进行。请求本身以结构化多消息构建，而非拼成一个大字符串。
 
-单轮内，工具结果在进入会话历史前被确定性截断：`src/agent/tool-budget.ts` 为 128K 窗口限制单次约 32 KiB、每个助手轮次约 64 KiB，并在截断处留下标记，提示模型改用更精确的路径或行范围继续读取。这个硬上限是必要的：SDK 以最后一次服务商真实用量为锚点，只能估算此后新增的内容，无界的大工具结果可能在下次压缩检查之前就越过窗口。`agent.turn_tool_result_bytes` 仍是软检查点，提示模型记录进展并改用聚焦读取；运行时会把它收敛到四个单轮工具预算，确保在压缩之前触发。上下文的增长由 SDK 压缩吸收（Pi Session 通过内存中的设置管理器获得相同的 `agent.context_window` 与压缩阈值），压缩预留会自动上调，以覆盖单轮工具输出的最坏 Token 增量加 `max_output_tokens`。若服务商仍报超窗（`context length exceeded` 等），`isContextOverflowError` 会识别出来，并再去掉全部历史激进重试一次。这些键以及模型名称、回复语言、工具开关、审查上限、修复权限都可以在控制台设置页面运行时调整：Server 用与配置文件相同的定义校验，只保存被覆盖的键并记录操作者与时间，写入 `update_settings` 审计，启动时重新应用；内联事件执行器在保存设置时立即刷新，并重建在构造函数里固定了审查上限的流程对象。接口还会返回用同一套推导函数算出的 `effective` 映射，被安全下限覆盖的填写值会明确标注，而不是看起来没生效。
+单轮内，工具结果在进入会话历史前被确定性截断：`src/agent/tool-budget.ts` 为 128K 窗口限制单次约 32 KiB、每个助手轮次约 64 KiB，并在截断处留下标记提示模型改用更精确的路径或行范围。这个硬上限是必要的：SDK 以最后一次服务商真实用量为锚点，只能估算此后新增的内容。`agent.turn_tool_result_bytes` 仍是软检查点，提示模型记录进展并改用聚焦读取；运行时把它收敛到四个工具输出轮次，确保在压缩之前触发。上下文增长由 SDK 压缩吸收，压缩预留覆盖单轮工具输出的最坏 Token 增量加 `max_output_tokens`。若服务商仍报超窗，`isContextOverflowError` 识别后会再去掉全部历史激进重试一次；开启 `agent.auto_context_tune` 时，还会持久地下调偏大的模型上下文窗口。这些键以及模型、回复语言与工具开关都可以在运维台设置页面运行时调整，Server 用与配置文件相同的定义校验，写入审计并在启动时重新应用；界面展示的生效值会标明被安全下限调整过的字段。
 
-## 审查流程
+## 工具与写入边界
 
-1. 获取 MR，确认其仍处于打开状态，并且 Head SHA 与任务入队时记录的 SHA 一致。若 MR 已关闭或提交变化，则将任务标记为 stale，不会对移动中的版本进行审查。
-2. 更新或创建项目 Git 镜像，并在固定 Head SHA 上创建隔离的 detached worktree。事件执行器获取相对于 MR Base SHA 的 Diff，并遵守文件数和字节数上限。`review.max_files` 范围内的文件每批最多审查 10 个；必要时还会按 `review.max_context_bytes` 进一步缩小批次。
-3. 将受限的 MR 元信息和每批 Diff 上下文发送到配置的模型接口。Corvex 期望每批返回一个结构化 JSON 对象，并在整次审查中汇总用量和问题。
-4. 发布前逐批验证模型结果：问题必须指向精确变更路径和新增行，证据必须是该行上的字面文本，严重程度必须受支持，并通过大小限制和重复指纹检查。所有批次会全局去重，并受 `review.max_findings` 总数限制。Corvex 会检查每批成功的文件读取记录，包括已有问题发现的批次，并对未读完的文件进行一次定向追问。若追问后仍有文件未读完，有效问题会连同部分覆盖警告一起发布；若没有问题发现，则任务失败，不会声称审查完整。受配置限制而省略的文件也会标记为部分覆盖。
-5. 再次获取 MR。如果模型处理期间 MR 状态或相关 Diff SHA 发生变化，则标记为 stale，不发布该结果。
-6. 将有效问题发布为行级讨论。如果 GitLab 拒绝某个行级位置，则将该问题放入摘要评论作为回退。完成后清理 worktree。
+Pi 会话不开放内建 shell、edit 或 write 工具；工具集由对话模式（`ConversationMode`，当前只有 `gitlab`）派生，读写能力统一。
 
-模型不会被告知测试已执行；Corvex 不会运行项目测试或仓库脚本。
+- **文件读取**通过 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本；仓库文件必须使用相对路径，绝对路径只接受 Skill 根目录。文件改动通过 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成，并受统一的 worktree 路径守卫与字节上限约束。
+- **Git 工具**限定在对话 worktree 与本地镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_merge`、`git_commit`、`git_push`、`git_revert`。不接受任意 URL、远端或强制推送；`git_push` 只写镜像中的 `refs/conversations/<id>`，绝不写 GitLab 分支。分支、合并与回滚都经过校验，不会重写历史。
+- **GitLab 工具**固定绑定到对话项目：项目与 MR 发现、Issue/MR 读取、讨论与变更，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。iid 必须来自用户或读取结果；写操作需要用户明确意图，删除、合并、批准等不可逆或公开动作在描述中明确标注。
+- `web_fetch`（启用时）只能访问公网 HTTPS 主机，重定向会重新校验，私网/保留地址与配置的黑名单主机始终被拒绝，返回文本受限且视为不可信输入。Skill 只是指令，不是访问控制。
+- Corvex 不执行仓库代码、脚本或测试；没有 shell 执行器。Agent 输出不被信任，GitLab 写入前再次校验授权、取消状态与固定版本。
 
-## Chat、Explain 与 Fix 流程
+## 轮次状态与取消
 
-**Chat** 会将受限 Diff、固定 MR 元信息、配置数量的最近非系统 MR 评论和调用者的自然语言请求一起发送给模型。`read_mr_comments` 工具只能读取当前 MR 的更多评论。Chat 还可通过 `git_log` 和 `git_show` 读取固定 MR HEAD 可达的提交；读取详情必须提供完整 SHA。用户明确要求时，`update_mr_metadata` 可修改当前 MR 标题和/或描述；执行记录只保存目标及字段长度，不保存正文。配置写令牌且 MR 源项目与目标项目相同时，Chat 还会获得有界的 `git_status`、`git_apply_patch`、`git_commit`、`git_push` 和 `git_revert` 工具。它们固定绑定到任务隔离 worktree 和 MR 源分支，不开放 shell 或任意命令；补丁只能修改已跟踪的普通文件，提交只接受已跟踪文件的未暂存修改，推送要求远端分支仍等于 pinned SHA 或本任务上次推送 SHA，并且只执行普通快进更新；回滚会为最近的 Corvex 提交新增 revert commit。代码修改请求会先完成所有修改和可用验证，再创建最终提交，并在回复前把推送作为最后一次仓库操作；不会推送中间状态，也不会在推送后继续修改文件。Fork MR 不开放 Git 写工具，永远不能强制推送。执行记录不会保存补丁正文或凭据。Git 输出和评论均为不可信输入；达到上下文字节上限时会优先省略较旧评论。推送后，事件执行器会验证 MR 当前 Head 与刚推送的 SHA 完全一致，再将回复作为普通 MR 评论发布。Chat 不创建行级讨论。
-
-**Explain** 从固定 MR Head SHA 的 worktree 中读取指定文件，而不是读取服务器上的任意路径。系统会限制文件路径在工作区内，并遵守配置的上下文大小限制。文件内容和 MR 元信息会发送给模型；只有 MR 快照仍有效时，解释结果才会作为 MR 评论发布。
-
-**Fix** 默认关闭，并遵循其他指令的可选 `gitlab.blocked_user_ids` 黑名单。事件执行器将受限 Diff 和可选请求发送给模型，只接受结构化 unified diff，并将修改限制在 MR Diff 中已有且可审查的文件。补丁会在隔离 worktree 中应用，并通过 `git apply --check` 和 `git diff --check`。再次确认 MR 快照未变化后，事件执行器将补丁作为提案发布，供人工检查和应用。
-
-Fix 模式不会执行测试、脚本、Hook 或其他仓库代码；不会创建提交或推送到 GitLab。发布的补丁只是提案，并不代表已验证。
-
-**Issue 助手**遵循可选用户黑名单。配置了共享 Webhook Secret 的项目中，任何普通机器人提及都会排队；模型会收到 Issue 及最多 `issue.history_comments` 条近期非系统评论（默认 20，范围 0–50，另有分页和字节上限），可直接回复或请求澄清而不发布代码。`issue.implement_enabled` 是独立且默认关闭的写入开关：启用后，明确的实现请求才可生成有界 unified diff。目标分支默认为项目默认分支；只有当前请求明确命名另一个已存在分支时才会改投该分支，评论不能授权分支选择。事件执行器固定目标基线 SHA，校验补丁（仅普通文本文件；拒绝路径穿越、Git 元数据路径、符号链接父目录、二进制、重命名和模式变更），并在推送前再次验证 Issue 与目标 SHA。随后创建新的 `corvex/issue-*` 分支和 Draft MR。不会运行项目脚本/测试、自动合并或关闭 Issue。远端结果不确定时不会自动重试。
-
-## 事件状态、租约、重试和取消
-
-主要状态流程：
-
-```text
-queued -> preparing -> analyzing -> publishing -> completed
- \-> fixing -> verifying -/
-```
-
-事件也可能以 `failed`、`stale` 或 `cancelled` 结束。新入队的事件会立即执行；`events.poll_interval` 只是兜底轮询间隔，`events.event_timeout` 限制单个事件的总时长。
-
-任务租约固定为 30 秒，事件执行期间会续租。若进程在发布前中断，租约过期后事件可重新排队；中断恢复最多尝试三次。已分类的瞬时故障和事件超时也会带持久化退避重新入队。其他处理错误会将事件记为 failed。若事件在 publishing 阶段失败或租约过期，评论结果可能不确定，因此 Corvex 不会自动重试，以免重复评论。
-
-`@<gitlab.bot_username> /status` 显示该 MR 的最近事件。`@<gitlab.bot_username> /cancel` 会立即取消排队事件，或请求事件执行器停止正在执行的事件。只有发起者可以取消。事件进入 publishing 阶段后无法取消，因为 GitLab 可能已经接收评论。
+主要状态流程为 `queued -> running -> completed`，此外还有 `failed`、`stale` 和 `cancelled`。同一对话的轮次串行执行；运行或排队期间，输入框的发送按钮变为 **Stop**，通过 `POST /api/ops/conversations/<id>/turns/<turnId>/cancel` 请求取消，本地挂起状态随即清除。删除对话在轮次运行时会被拒绝。模型请求失败、超窗或工具越界会记录错误；失败不会自动重试，因为 GitLab 写入结果可能不确定——需要重做时重新发送消息，创建一个新轮次。Webhook 事件的状态机、租约与重试已延期，见 [ROADMAP.zh_CN.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.zh_CN.md)。
 
 ## 持久化和数据保留
 
-SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时。数据库必须放在持久且可写的存储中。Server 每天清理超过 `storage.retention_days` 的终态事件、执行尝试、Webhook 事件和每日 Token 用量；审计记录按 `storage.audit_retention_days` 清理。排队和运行中的事件会保留。Git 镜像及 worktree 位于 `storage.root` 下，不由数据库清理逻辑管理，需要单独监控容量。
+SQLite 使用 WAL 模式、单一打开连接和 5 秒忙碌超时；数据库必须放在持久且可写的存储中，建议使用支持 SQLite 锁定的本地文件系统或卷。每日清理按 `storage.retention_days` 删除已结束的轮次、轨迹、执行步骤与每日 Token 用量，按 `storage.audit_retention_days` 清理审计记录；排队和运行中的轮次会被保留。空闲对话超过保留期时连同消息一并删除，仍有排队或运行中轮次的对话不会被丢弃。Git 镜像与 worktree 位于 `storage.root` 下，不由数据库清理管理；清理记录写入 `storage_cleanup_log`，孤儿会话 ref 与不可达对象由 ref 清理和镜像 GC 回收。
 
 ## 安全边界和限制
 
-- Webhook Secret 用于验证 GitLab 投递；仅在需要接受指令的项目中注册 Webhook，并可通过用户黑名单限制发起任务的用户。
-- Agent 控制台可发现只读 GitLab Token 有权访问的所有项目，不受静态项目白名单控制。
-- 使用只读令牌读取 API 和仓库，并使用独立写令牌发布 MR 评论。不要把注册 Webhook 时使用的管理员令牌提供给运行中的服务。
-- 仓库内容、评论、文件名和 Fix 指令都是不可信模型输入。模型输出会经过校验，但校验不能替代人工审阅。
-- 模型提示内容可能包含源代码和 MR 文本。启用模型前，应审查服务商的数据处理方式及组织政策。
-- 事件执行器不运行不可信仓库代码。没有测试执行器，也不会自动将补丁应用到目标分支。
-- HTTP 服务支持 GitLab 合并请求 Note Hook，不支持 Push Hook 或合并请求生命周期事件。
+- 用户在运维台通过 GitLab OAuth2 登录，控制台 API 与对话使用该用户自己的令牌；项目范围由令牌可见性决定，不是静态白名单。
+- OAuth 凭据、读/写令牌与模型 API Key 保存在 SQLite 运行时设置中，接口不回显，留空表示保留原值；请保护数据库及备份。
+- 仓库内容、评论、文件名和网页内容都是不可信模型输入；模型输出会经过校验，但校验不能替代人工审阅。所有 GitLab 写入都需要明确的用户意图。
+- 每轮固定分支头 SHA，并在准备工作区和 GitLab 写入前复核；快照过期以 `stale` 结束，而不是部分写入。
+- 不运行不可信仓库代码，没有测试执行器，也不会自动把改动应用到 GitLab 分支；push 仅写会话 ref。
+- HTTP 服务只提供认证、运维台、健康检查与指标接口，没有 Webhook 接收端点；Webhook 驱动的事件目前是延期特性，见 [ROADMAP.zh_CN.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.zh_CN.md)。

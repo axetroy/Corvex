@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import type { Copy, Locale } from "../i18n.js";
-import type { ConversationTurnSegment, EventTraceEntry } from "../types.js";
+import type { ConversationTurnSegment, TraceEntry } from "../types.js";
 import { Empty } from "./common.js";
 import { TraceDiagram } from "./TraceDiagram.js";
 
@@ -16,7 +16,7 @@ export const TraceExperience = memo(function TraceExperience({
   copy,
   locale,
 }: {
-  entries: readonly EventTraceEntry[];
+  entries: readonly TraceEntry[];
   /** 按轮分组的元数据；有值时按轮分段展示整段对话。 */
   turns?: readonly ConversationTurnSegment[];
   copy: Copy;

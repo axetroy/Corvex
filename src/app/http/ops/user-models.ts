@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireUser } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
-import type { ModelProviderDetails } from "../../../events/model.js";
+import type { ModelProviderDetails } from "../../../model.js";
 import { idParam, readJsonObject, secretSettingPlaceholder, sendJson } from "../respond.js";
 import { testModelConnection, testProviderConnection } from "./model-test.js";
 

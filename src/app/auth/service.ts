@@ -1,5 +1,5 @@
 import type { CorvexConfig } from "../../config/config.js";
-import type { EventStore } from "../../events/store.js";
+import type { AppStore } from "../../store.js";
 import type { TokenCipher } from "../../tokens.js";
 import { gitlabEndpoint } from "../../gitlab/client.js";
 import type { AuthUser, GitLabIdentity } from "./model.js";
@@ -24,7 +24,7 @@ interface GitLabUserResponse {
 export class GitLabOAuthService {
   constructor(
     private readonly config: CorvexConfig,
-    private readonly store: EventStore,
+    private readonly store: AppStore,
     private readonly cipher: TokenCipher,
   ) {}
 

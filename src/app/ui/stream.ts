@@ -1,5 +1,5 @@
-import { isConversationTurnStatus } from "../../events/model.js";
-import type { ConversationStreamContext, ConversationStreamTool, ConversationTurnStatus } from "../../events/model.js";
+import { isConversationTurnStatus } from "../../model.js";
+import type { ConversationStreamContext, ConversationStreamTool, ConversationTurnStatus } from "../../model.js";
 import type { ConversationStreamEvent } from "./types.js";
 
 /**

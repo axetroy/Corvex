@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Corvex
-  text: GitLab code review and Issue implementation agent
-  tagline: Self-hosted reviews, bounded fixes, and opt-in Draft MRs from Issues.
+  text: Self-hosted GitLab repository agent
+  tagline: Persistent, user-driven conversations that read, edit and reason about your code — in one private process.
   actions:
     - theme: brand
       text: Getting started
@@ -14,10 +14,10 @@ hero:
       link: https://github.com/axetroy/Corvex
 
 features:
-  - title: Review merge requests
-    details: Queue reviews from GitLab comments and publish validated findings as line-level discussions.
-  - title: Keep control of changes
-    details: Fix proposals are posted for manual application; Issue implementation opens a Draft MR and never auto-merges.
+  - title: Persistent conversations
+    details: Bind a repository branch and pinned commit, then chat with streaming replies, traces, records and stats kept in SQLite.
+  - title: Repository and GitLab tools
+    details: Inspect and edit files, run bounded Git operations on a per-conversation worktree, and publish to GitLab only when you explicitly ask.
   - title: Run it yourself
-    details: Deploy the single Server service with Docker Compose, backed by SQLite.
+    details: One Server process with GitLab OAuth2 login, backed by SQLite and local Git mirrors; deploy with Docker Compose.
 ---

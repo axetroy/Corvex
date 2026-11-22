@@ -13,7 +13,6 @@ import { UserAvatar } from "./components/UserAvatar.js";
 import { ThemeToggle } from "./components/ThemeToggle.js";
 import {
   ConversationsIcon,
-  EventsIcon,
   LanguageIcon,
   LogoutIcon,
   SidebarCollapseIcon,
@@ -24,13 +23,10 @@ import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, resolveLocaleMode, zhCN } from "./i18n.js";
 import type { LocaleMode } from "./i18n.js";
-import { eventQueueFromParams, eventsBackPath, eventsPath, conversationsPath } from "./routing.js";
-import type { EventQueue } from "./types.js";
+import { conversationsPath } from "./routing.js";
 import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./theme.js";
 
-// 各路由页面按需加载，让首屏只包含概览与外壳，其余页面在导航时再取用。
-const EventsPage = lazy(() => import("./components/EventsPage.js").then((module) => ({ default: module.EventsPage })));
-const EventDetailPage = lazy(() => import("./components/EventDetailPage.js").then((module) => ({ default: module.EventDetailPage })));
+// 各路由页面按需加载，让首屏只包含外壳，其余页面在导航时再取用。
 const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 const UserSettingsPage = lazy(() => import("./components/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
 
@@ -46,8 +42,6 @@ function currentBrowserLanguages(): string[] {
 }
 /** Agent 控制台自动刷新间隔（毫秒）。 */
 const refreshIntervalMs = 15_000;
-/** 非事件列表页使用的空查询参数，保持 `useMemo` 依赖稳定。 */
-const emptyParams = new URLSearchParams();
 /** Server 为当前 HTML 响应生成的 CSP nonce，供 Ant Design 样式标签使用。 */
 const cspNonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce;
 
@@ -94,21 +88,13 @@ function saveNavigationCollapsed(collapsed: boolean): void {
 }
 
 /** 页面种类，供侧栏选中态与主区域布局使用。 */
-type PageKind = "conversations" | "events" | "event" | "settings" | "unknown";
+type PageKind = "conversations" | "settings" | "unknown";
 
 function pageKindOf(pathname: string): PageKind {
   const path = pathname.replace(/^\/+/, "");
   if (path === "" || path === "conversations" || path.startsWith("conversations/")) return "conversations";
-  if (path === "events") return "events";
-  if (path.startsWith("events/")) return "event";
   if (path === "settings") return "settings";
   return "unknown";
-}
-
-/** 把 react-router 的路径参数交给仍以 props 接收 ID 的页面。 */
-function EventRoute(props: Omit<ComponentProps<typeof EventDetailPage>, "eventId">) {
-  const { id } = useParams();
-  return <EventDetailPage {...props} eventId={id ?? ""} />;
 }
 
 function ConversationRoute(props: Omit<ComponentProps<typeof ConversationsPage>, "conversationId">) {
@@ -175,11 +161,6 @@ export function App() {
     };
   }, [location.pathname, navigate]);
 
-  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
-  const queue = useMemo(
-    () => eventQueueFromParams(pageKind === "events" || pageKind === "event" ? params : emptyParams),
-    [pageKind, params],
-  );
   const routeId = route.includes("/") ? decodeURIComponent(route.slice(route.indexOf("/") + 1)) : "";
   const [updated, setUpdated] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -227,7 +208,7 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // 未知路由与非法事件 ID 回到对话页，避免停留在空白页。
+  // 未知路由回到对话页，避免停留在空白页。
   useEffect(() => {
     if (pageKind === "unknown" && !route.startsWith("admin") && route !== "setup") navigate("/conversations", { replace: true });
   }, [pageKind, route, navigate]);
@@ -238,15 +219,6 @@ export function App() {
     window.location.href = "/";
   }, []);
   const handleUpdated = useCallback((value: string) => setUpdated(value), []);
-  const updateQueue = useCallback((next: EventQueue) => {
-    const target = eventsPath(next);
-    // 条件未变化时地址不变，改为直接刷新一次。
-    if (location.pathname + location.search === target) {
-      setRefreshToken((value) => value + 1);
-      return;
-    }
-    navigate(target);
-  }, [location.pathname, location.search, navigate]);
   const updateConversationRoute = useCallback((conversationId: string) => {
     const target = conversationsPath(conversationId);
     if (location.pathname !== target) navigate(target);
@@ -278,7 +250,6 @@ export function App() {
   const languageMenuItems = languageOptions.map((option) => ({ key: option.value, label: option.label }));
   const updatedText = updated ? copy.updatedTemplate.replace("{value}", formatDate(updated, copy, locale)) : "";
 
-  const onEvents = pageKind === "events" || pageKind === "event";
   const theme = useMemo(
     () => ({
       algorithm: resolvedTheme === "dark" ? antdThemeApi.darkAlgorithm : antdThemeApi.defaultAlgorithm,
@@ -320,7 +291,6 @@ export function App() {
           copy={copy}
           locale={locale}
           route={route}
-          refreshToken={refreshToken}
           themeMode={themeMode}
           resolvedTheme={resolvedTheme}
           onThemeChange={changeTheme}
@@ -399,15 +369,13 @@ export function App() {
             className="sidebar-nav"
             mode="inline"
             inlineCollapsed={navigationCollapsed}
-            selectedKeys={[pageKind === "settings" ? "settings" : onEvents ? "events" : "conversations"]}
+            selectedKeys={[pageKind === "settings" ? "settings" : "conversations"]}
             onClick={({ key }) => {
-              if (key === "events") navigate(eventsPath(queue));
-              else if (key === "conversations" && pageKind === "conversations") navigate(conversationsPath(routeId));
+              if (key === "conversations" && pageKind === "conversations") navigate(conversationsPath(routeId));
               else navigate(key.startsWith("/") ? key : `/${key}`);
             }}
             items={[
               { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
-              { key: "events", icon: <EventsIcon />, label: copy.navEvents },
               { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
             ]}
           />
@@ -445,33 +413,6 @@ export function App() {
           <ErrorBoundary key={pageKind === "conversations" ? "conversations" : route} copy={copy}>
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>
               <Routes>
-                <Route
-                  path="/events"
-                  element={
-                    <EventsPage
-                      copy={copy}
-                      locale={locale}
-                      queue={queue}
-                      refreshToken={refreshToken}
-                      onQueueChange={updateQueue}
-                      onUpdated={handleUpdated}
-                      onRefresh={refresh}
-                    />
-                  }
-                />
-                <Route
-                  path="/events/:id"
-                  element={
-                    <EventRoute
-                      copy={copy}
-                      locale={locale}
-                      refreshToken={refreshToken}
-                      backHash={eventsBackPath(params)}
-                      onUpdated={handleUpdated}
-                      onRefresh={refresh}
-                    />
-                  }
-                />
                 <Route path="/settings" element={<UserSettingsPage copy={copy} onChanged={refresh} />} />
                 <Route
                   path="/conversations"

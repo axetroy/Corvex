@@ -2,8 +2,8 @@ import type { FastifyRequest } from "fastify";
 import { AsyncSeriesBailHook, AsyncSeriesHook, SyncHook } from "tapable";
 import type { CorvexConfig } from "../config/config.js";
 import type { ModelRequest, ModelResponse } from "../agent/pi.js";
-import type { ConversationTurnContext, Event, ResponseLanguage, TraceScope } from "../events/model.js";
-import { normalizeConversationTitle } from "../events/model.js";
+import type { ConversationTurnContext, ResponseLanguage, TraceScope } from "../model.js";
+import { normalizeConversationTitle } from "../model.js";
 import { stripConversationCommand } from "./conversation-command.js";
 import type { AuthUser } from "./auth/model.js";
 
@@ -71,8 +71,6 @@ export interface CorvexHooks {
   settingsApplied: SyncHook<[CorvexConfig]>;
   /** 启动与每日保留任务的统一清理入口；默认步骤按 stage 顺序注册。 */
   storageCleanup: AsyncSeriesHook<[StorageCleanupContext]>;
-  eventBeforeProcess: AsyncSeriesHook<[Event]>;
-  eventAfterProcess: AsyncSeriesHook<[Event]>;
   conversationBeforeTurn: AsyncSeriesHook<[ConversationTurnContext]>;
   conversationAfterTurn: AsyncSeriesHook<[ConversationTurnContext]>;
   /** 发起会话：第一个返回非空标题的 tap 生效；默认从用户消息派生标题。 */
@@ -114,8 +112,6 @@ export function createCorvexHooks(): CorvexHooks {
     authResolveUser: new AsyncSeriesBailHook(["request"]),
     settingsApplied: new SyncHook(["config"]),
     storageCleanup: new AsyncSeriesHook(["context"]),
-    eventBeforeProcess: new AsyncSeriesHook(["event"]),
-    eventAfterProcess: new AsyncSeriesHook(["event"]),
     conversationBeforeTurn: new AsyncSeriesHook(["turn"]),
     conversationAfterTurn: new AsyncSeriesHook(["turn"]),
     conversationStart: new AsyncSeriesBailHook(["input"]),
