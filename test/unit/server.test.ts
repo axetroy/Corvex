@@ -175,7 +175,12 @@ describe("CorvexServer", () => {
     hooks.serverBeforeListen.tap("test", async () => { tapped.push("beforeListen"); });
     hooks.serverAfterListen.tap("test", async () => { tapped.push("afterListen"); });
     hooks.serverBeforeClose.tap("test", async () => { tapped.push("beforeClose"); });
-    const cleanupHook = vi.fn();
+    let notifyCleanup!: () => void;
+    // 启动清理在 serverAfterListen 里异步执行，不能用固定延时等待，直接由钩子信号驱动。
+    const cleanupCalled = new Promise<void>((resolve) => {
+      notifyCleanup = resolve;
+    });
+    const cleanupHook = vi.fn(() => notifyCleanup());
     hooks.storageCleanup.tap({ name: "test-cleanup", stage: 80 }, cleanupHook);
     const application = new CorvexServer(
       config,
@@ -196,9 +201,7 @@ describe("CorvexServer", () => {
       }
       const address = application.getListeningAddress();
       expect(tapped).toEqual(["beforeListen", "afterListen"]);
-      for (let attempt = 0; attempt < 20 && cleanupHook.mock.calls.length === 0; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await cleanupCalled;
       expect(cleanupHook).toHaveBeenCalled();
       expect(cleanupHook.mock.calls[0]?.[0]).toMatchObject({ source: "startup", pruneHistory: true });
       const base = `http://127.0.0.1:${address.port}`;
