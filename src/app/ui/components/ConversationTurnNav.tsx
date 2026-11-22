@@ -18,18 +18,33 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-/** 一次最多显示多少轮，其余通过滚轮翻页。 */
-const visibleTurnLimit = 10;
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
-/** 聊天区右侧的轮次快捷导航：悬停看摘要，点击跳到用户该轮提问，滚轮翻看更早/更新的轮次。 */
+/** 聊天区右侧的轮次快捷导航：悬停看摘要，点击跳到用户该轮提问，滚轮逐轮跳转。 */
 export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }: Props) {
   const navRef = useRef<HTMLElement>(null);
-  const [offset, setOffset] = useState(0);
+  const cursorRef = useRef(0);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const [cursor, setCursor] = useState(0);
 
-  // 新对话或轮次数量变化时回到最新一页。
+  // 切换对话或轮次数量变化时定位到最新一轮。
   useEffect(() => {
-    setOffset(0);
+    const last = Math.max(0, items.length - 1);
+    cursorRef.current = last;
+    setCursor(last);
   }, [items.length === 0 ? "empty" : items[0]?.id]);
+
+  // 聊天区滚动带来的高亮变化同步到导航光标（不再触发跳转，避免循环）。
+  useEffect(() => {
+    const index = items.findIndex((item) => item.id === activeId);
+    if (index >= 0 && index !== cursorRef.current) {
+      cursorRef.current = index;
+      setCursor(index);
+    }
+  }, [activeId, items]);
 
   // 以 Bubble.List 的滚动内容元素为基准：往右偏 20px，垂直居中于可见聊天区。
   useLayoutEffect(() => {
@@ -51,35 +66,33 @@ export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }:
     return () => observer.disconnect();
   }, [items.length]);
 
-  // 原生非 passive 监听，滚轮才能阻止页面滚动并切换轮次窗口。
+  // 原生非 passive 监听：滚轮逐轮跳转并把聊天区滚到对应提问。
   useEffect(() => {
     const nav = navRef.current;
-    if (!nav || items.length <= visibleTurnLimit) return;
+    if (!nav || items.length === 0) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const maxOffset = items.length - visibleTurnLimit;
-      setOffset((current) => Math.max(0, Math.min(maxOffset, current + Math.sign(event.deltaY))));
+      // 轮次从上到下由旧到新：向下滚轮回看更早的轮次，向上滚轮回到更新的轮次。
+      const step = -Math.sign(event.deltaY);
+      if (step === 0) return;
+      const next = clamp(cursorRef.current + step, 0, items.length - 1);
+      if (next === cursorRef.current) return;
+      cursorRef.current = next;
+      setCursor(next);
+      const target = items[next];
+      if (target) onSelectRef.current(target.id);
     };
     nav.addEventListener("wheel", onWheel, { passive: false });
     return () => nav.removeEventListener("wheel", onWheel);
-  }, [items.length]);
+  }, [items]);
 
   if (items.length === 0) return null;
-  const end = items.length - offset;
-  const start = Math.max(0, end - visibleTurnLimit);
-  const visibleItems = items.slice(start, end);
-  const olderHidden = start;
-  const newerHidden = items.length - end;
+  const visibleItems = items;
 
   return (
     <nav ref={navRef} className="conversation-turn-nav" aria-label={copy.conversationTurnNavLabel}>
       <div className="conversation-turn-nav-label">{copy.conversationTurnNavLabel}</div>
       <div className="conversation-turn-nav-list">
-        {olderHidden > 0 ? (
-          <Tooltip placement="left" title={copy.conversationTurnNavMore.replace("{count}", String(olderHidden))}>
-            <span className="conversation-turn-nav-more" aria-label={copy.conversationTurnNavMore.replace("{count}", String(olderHidden))}>⋯</span>
-          </Tooltip>
-        ) : null}
         {visibleItems.map((item) => (
           <Tooltip
             key={item.id}
@@ -95,20 +108,22 @@ export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }:
           >
             <button
               type="button"
-              className={`conversation-turn-nav-bar${activeId === item.id ? " is-active" : ""}`}
+              className={`conversation-turn-nav-bar${items[cursor]?.id === item.id ? " is-active" : ""}`}
               aria-label={copy.conversationTurnNavSummaryTemplate
                 .replace("{index}", String(item.index))
                 .replace("{summary}", item.summary)}
-              aria-current={activeId === item.id ? "step" : undefined}
-              onClick={() => onSelect(item.id)}
+              aria-current={items[cursor]?.id === item.id ? "step" : undefined}
+              onClick={() => {
+                const index = items.findIndex((entry) => entry.id === item.id);
+                if (index >= 0) {
+                  cursorRef.current = index;
+                  setCursor(index);
+                }
+                onSelect(item.id);
+              }}
             />
           </Tooltip>
         ))}
-        {newerHidden > 0 ? (
-          <Tooltip placement="left" title={copy.conversationTurnNavNewer.replace("{count}", String(newerHidden))}>
-            <span className="conversation-turn-nav-more" aria-label={copy.conversationTurnNavNewer.replace("{count}", String(newerHidden))}>⋯</span>
-          </Tooltip>
-        ) : null}
       </div>
     </nav>
   );

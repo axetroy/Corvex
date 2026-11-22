@@ -499,6 +499,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  height: min(520px, 60%);
   max-height: min(520px, 60%);
   transform: translateY(-50%);
   pointer-events: auto;
@@ -517,45 +518,32 @@
   flex: 1;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.conversation-turn-nav-list::-webkit-scrollbar {
-  display: none;
+  gap: 0;
+  overflow: hidden;
 }
 
 .conversation-turn-nav-bar {
-  width: 8px;
-  height: 22px;
-  flex: 0 0 22px;
+  width: 12px;
+  min-height: 2px;
+  max-height: 22px;
+  flex: 1 1 0;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  background: var(--bg-panel);
+  border: 0;
+  border-radius: 0;
+  background: var(--border-strong);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, height 0.15s;
+  transition: background 0.15s;
 }
 
 .conversation-turn-nav-bar:hover,
 .conversation-turn-nav-bar:focus-visible {
-  border-color: var(--primary);
   background: var(--primary-soft);
 }
 
 .conversation-turn-nav-bar.is-active {
-  height: 30px;
-  border-color: var(--primary);
   background: var(--primary);
 }
 
-.conversation-turn-nav-more {
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1;
-  cursor: default;
-}
 
 .conversation-turn-nav-tooltip {
   display: flex;
