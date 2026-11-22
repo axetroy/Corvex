@@ -5,7 +5,6 @@ RUN npm install --global pnpm@12.4.1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json eslint.config.js ./
-COPY scripts ./scripts
 COPY src ./src
 RUN pnpm run build && pnpm prune --prod
 
