@@ -1094,6 +1094,17 @@
   margin-bottom: 10px;
 }
 
+.conversation-git-changes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-git-changes-turn-filter {
+  width: 260px;
+}
+
 .conversation-git-files {
   display: flex;
   flex-direction: column;

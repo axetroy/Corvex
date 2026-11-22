@@ -502,6 +502,23 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
 
   // 单轮对话的流式正文：SSE 推送模型已生成的累计文本，结束后立即关闭连接。
   // 鉴权与其余 /api/ops 一致；流里只含本轮正文与终态，不含系统提示或工具输出。
+  app.get("/api/ops/conversations/:id/turns/:turnId/changes", async (request, reply) => {
+    const params = request.params as { id: string; turnId: string };
+    const conversationId = idParam(params.id);
+    const turnId = idParam(params.turnId);
+    if (!conversationId || !turnId) {
+      sendJson(reply, 400, { error: "invalid conversation ID or turn ID" });
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    try {
+      sendJson(reply, 200, await ctx.conversations.getConversationTurnChanges(conversationId, turnId));
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
+    }
+  });
+
   app.get("/api/ops/conversations/:id/turns/:turnId/stream", async (request, reply) => {
     const params = request.params as { id: string; turnId: string };
     const conversationId = idParam(params.id);

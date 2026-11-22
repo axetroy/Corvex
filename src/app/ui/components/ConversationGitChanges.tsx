@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Spin, Typography } from "antd";
+import { Button, Select, Spin, Typography } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -18,6 +18,17 @@ interface ChangesResponse {
   truncated: boolean;
 }
 
+interface TurnSummary {
+  turnId: string;
+  request: string;
+  status: string;
+  createdAt: string;
+}
+
+interface TurnsResponse {
+  turns: TurnSummary[];
+}
+
 interface Props {
   conversationId: string;
   copy: Copy;
@@ -29,33 +40,67 @@ export function ConversationGitChanges({ conversationId, copy }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState("");
+  const [turns, setTurns] = useState<TurnSummary[]>([]);
+  const [selectedTurn, setSelectedTurn] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const result = await fetchJson<ChangesResponse>(
-        `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/changes`, copy,
-      );
+      const path = selectedTurn
+        ? `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(selectedTurn)}/changes`
+        : `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/changes`;
+      const result = await fetchJson<ChangesResponse>(path, copy);
       setChanges(result);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
-  }, [conversationId, copy]);
+  }, [conversationId, copy, selectedTurn]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    let active = true;
+    fetchJson<TurnsResponse>(
+      `/api/ops/conversations/${encodeURIComponent(conversationId)}/turns`, copy,
+    ).then((result) => {
+      if (active) setTurns(result.turns ?? []);
+    }).catch(() => {
+      if (active) setTurns([]);
+    });
+    return () => { active = false; };
+  }, [conversationId, copy]);
+
   return (
     <div className="conversation-git-changes">
       <div className="conversation-git-changes-toolbar">
         <Typography.Text type="secondary">
-          {copy.gitChangesHint}
+          {selectedTurn ? copy.gitChangesTurnHint : copy.gitChangesHint}
         </Typography.Text>
-        <Button size="small" loading={loading} onClick={() => void load()}>{copy.refresh}</Button>
+        <div className="conversation-git-changes-actions">
+          <Select
+            size="small"
+            allowClear
+            showSearch
+            value={selectedTurn || undefined}
+            placeholder={copy.gitChangesSelectTurn}
+            aria-label={copy.gitChangesSelectTurn}
+            onChange={(value) => setSelectedTurn(value ?? "")}
+            className="conversation-git-changes-turn-filter"
+            options={[
+              { value: "", label: copy.gitChangesAllTurns },
+              ...turns.map((turn, index) => ({
+                value: turn.turnId,
+                label: `${copy.gitChangesTurnLabel} ${index + 1}: ${turn.request.trim().replace(/\s+/g, " ").slice(0, 40)}`,
+              })),
+            ]}
+          />
+          <Button size="small" loading={loading} onClick={() => void load()}>{copy.refresh}</Button>
+        </div>
       </div>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {loading && !changes ? <Spin size="small" /> : null}

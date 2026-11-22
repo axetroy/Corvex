@@ -554,6 +554,56 @@ describe("Git workflows", () => {
     expect(details.files[0]?.patch).toContain("+changed");
   });
 
+  it("keeps a separate diff for each saved turn", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-turn-changes-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+    const mirrorPath = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", bare, mirrorPath]);
+    await execFile("git", ["--git-dir", mirrorPath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["--git-dir", mirrorPath, "config", "user.name", "Corvex test"]);
+    const headSha = (await execFile("git", ["--git-dir", mirrorPath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const conversationId = "22222222-2222-4222-8222-222222222222";
+    const workspacePath = join(root, "workspaces", "7", `conversation-${conversationId}`);
+    await mkdir(join(root, "workspaces", "7"), { recursive: true });
+    await execFile("git", ["--git-dir", mirrorPath, "worktree", "add", "-q", "--detach", workspacePath, headSha]);
+    const workspace: Workspace = { projectId: 7, workspaceName: `conversation-${conversationId}`, path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com", "read");
+
+    await writeFile(join(workspacePath, "a.txt"), "turn one\n");
+    const first = await manager.saveConversationChanges(workspace, conversationId, undefined, undefined, "turn-1");
+    expect(first).toBeDefined();
+    await writeFile(join(workspacePath, "a.txt"), "turn two\n");
+    const second = await manager.saveConversationChanges(workspace, conversationId, undefined, undefined, "turn-2");
+    expect(second).toBeDefined();
+
+    const firstDiff = await manager.getConversationTurnChanges(7, conversationId, "turn-1");
+    const secondDiff = await manager.getConversationTurnChanges(7, conversationId, "turn-2");
+    expect(firstDiff.files[0]?.patch).toContain("+turn one");
+    expect(secondDiff.files[0]?.patch).toContain("+turn two");
+    expect(secondDiff.files[0]?.patch).not.toContain("+turn one");
+    expect((await manager.getConversationTurnChanges(7, conversationId, "missing-turn")).files).toEqual([]);
+
+    // 删除对话时必须同时清掉会话 ref 与所有轮次 ref。
+    await manager.discardConversationChanges(7, conversationId);
+    expect((await manager.getConversationChangeDetails(7, conversationId)).files).toEqual([]);
+    expect((await manager.getConversationTurnChanges(7, conversationId, "turn-1")).files).toEqual([]);
+    expect((await manager.getConversationTurnChanges(7, conversationId, "turn-2")).files).toEqual([]);
+  });
+
   it("validates GitLab branch pushes before touching the network", async () => {
     const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
     const sha = "a".repeat(40);

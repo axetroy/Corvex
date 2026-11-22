@@ -214,7 +214,7 @@ export class ConversationRunner {
   }
 
   /** 把 Git 工具绑定到当前会话的 worktree、项目镜像与固定快照。 */
-  private gitTools(workspace: Workspace, conversationId: string, headSha: string, signal?: AbortSignal): GitToolAdapter {
+  private gitTools(workspace: Workspace, conversationId: string, turnId: string, headSha: string, signal?: AbortSignal): GitToolAdapter {
     return {
       status: () => this.repo.getWorkspaceStatus(workspace, signal),
       log: (limit, path) => this.repo.getCommitLog(workspace, limit, path, signal),
@@ -228,9 +228,9 @@ export class ConversationRunner {
       checkout: (name) => this.repo.checkoutBranch(workspace, name, signal),
       pull: () => this.repo.fetchFromMirror(workspace, signal),
       merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
-      commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message),
+      commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message, turnId),
       push: async () => {
-        const result = await this.repo.saveConversationChanges(workspace, conversationId, signal);
+        const result = await this.repo.saveConversationChanges(workspace, conversationId, signal, undefined, turnId);
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
       pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal),
@@ -243,9 +243,9 @@ export class ConversationRunner {
     };
   }
 
-  private async persistChanges(workspace: Workspace, conversationId: string, signal?: AbortSignal): Promise<void> {
+  private async persistChanges(workspace: Workspace, conversationId: string, turnId: string, signal?: AbortSignal): Promise<void> {
     try {
-      await this.repo.saveConversationChanges(workspace, conversationId, signal);
+      await this.repo.saveConversationChanges(workspace, conversationId, signal, undefined, turnId);
     } catch (error) {
       console.warn("save conversation workspace changes failed", {
         conversationId,
@@ -324,6 +324,12 @@ export class ConversationRunner {
     const conversation = this.store.getConversation(conversationId);
     if (!conversation) throw new Error("conversation not found");
     return this.repo.getConversationChangeDetails(conversation.projectId, conversationId);
+  }
+
+  getConversationTurnChanges(conversationId: string, turnId: string) {
+    const conversation = this.store.getConversation(conversationId);
+    if (!conversation) throw new Error("conversation not found");
+    return this.repo.getConversationTurnChanges(conversation.projectId, conversationId, turnId);
   }
 
   listCommitAuthors(projectId: number) {
@@ -724,7 +730,7 @@ export class ConversationRunner {
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.headSha, signal) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal) }
                 : {}),
             },
             workspace.path,
@@ -737,11 +743,11 @@ export class ConversationRunner {
         this.store.recordModelCall("conversation", "failure", Date.now() - started, 0, 0);
         // 失败的轮次里模型也可能已经写入文件；取消信号已中止时用无信号保存，
         // 否则这些改动会随下一次 worktree 淘汰而丢失。
-        await this.persistChanges(workspace, turn.conversationId, signal.aborted ? undefined : signal);
+        await this.persistChanges(workspace, turn.conversationId, turn.turnId, signal.aborted ? undefined : signal);
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
-      await this.persistChanges(workspace, turn.conversationId, signal);
+      await this.persistChanges(workspace, turn.conversationId, turn.turnId, signal);
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。

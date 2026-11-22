@@ -29,6 +29,15 @@ function conversationChangesRef(conversationId: string): string {
   return `refs/conversations/${conversationId}`;
 }
 
+/** 每轮改动单独留一个 ref，便于按轮查看 diff；与会话 ref 分开命名空间避免冲突。 */
+function conversationTurnRef(conversationId: string, turnId: string): string {
+  if (!conversationRefPattern.test(conversationId) || !conversationRefPattern.test(turnId)) {
+    throw new Error("conversation or turn ID contains invalid characters");
+  }
+  return `refs/conversation-turns/${conversationId}/${turnId}`;
+}
+
+
 interface GitResult {
   stdout: Buffer;
   truncated: boolean;
@@ -387,6 +396,7 @@ export class GitManager {
     conversationId: string,
     signal?: AbortSignal,
     message?: string,
+    turnId?: string,
   ): Promise<{ sha: string; paths: string[] } | undefined> {
     this.validateWorkspace(workspace);
     const status = await this.getWorkspaceStatus(workspace, signal);
@@ -418,6 +428,16 @@ export class GitManager {
       signal,
       { timeoutMs: 10_000 },
     );
+    if (turnId) {
+      await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "update-ref", conversationTurnRef(conversationId, turnId), sha],
+        undefined,
+        maxErrorOutput,
+        signal,
+        { timeoutMs: 10_000 },
+      );
+    }
     // 工作区文件保留实际改动，只把暂存区对齐到新 ref，避免后续状态重复上报。
     await this.run(workspace.path, ["read-tree", sha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
     return { sha, paths: status.files.map((file) => file.path) };
@@ -429,6 +449,7 @@ export class GitManager {
     conversationId: string,
     expectedSha: string,
     signal?: AbortSignal,
+    turnId?: string,
   ): Promise<{ sha: string; paths: string[] } | undefined> {
     const workspaceName = conversationWorkspaceName(conversationId);
     const workspace: Workspace = {
@@ -437,7 +458,7 @@ export class GitManager {
       path: join(this.workspaceRoot, String(projectId), workspaceName),
       headSha: expectedSha,
     };
-    return this.saveConversationChanges(workspace, conversationId, signal);
+    return this.saveConversationChanges(workspace, conversationId, signal, undefined, turnId);
   }
 
   /**
@@ -588,6 +609,8 @@ export class GitManager {
         signal,
         { timeoutMs: 10_000, allowExitCodes: [0, 1] },
       );
+      // 同时删除该会话所有轮次 ref，避免删除会话后残留对象。
+      await this.deleteConversationTurnRefs(mirror, entry.conversationId, signal);
       removed += 1;
     }
     return removed;
@@ -608,6 +631,30 @@ export class GitManager {
       count += 1;
     }
     return count;
+  }
+
+  /** 删除某会话所有轮次 ref；会话 ID 必须合法，不接受任意 ref 名。 */
+  private async deleteConversationTurnRefs(
+    mirror: string,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!conversationRefPattern.test(conversationId)) return;
+    const prefix = `refs/conversation-turns/${conversationId}/`;
+    const listed = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "for-each-ref", "--format=%(refname)", prefix],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    for (const ref of listed.stdout.toString().split("\n").map((line) => line.trim()).filter(Boolean)) {
+      if (!ref.startsWith(prefix)) continue;
+      await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "update-ref", "-d", ref],
+        undefined, maxErrorOutput, signal,
+        { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      ).catch(() => undefined);
+    }
   }
 
   /** 放弃对话的本地改动：删除 ref 并清理对应 worktree。 */
@@ -631,6 +678,7 @@ export class GitManager {
           signal,
           { timeoutMs: 10_000, allowExitCodes: [0, 1] },
         );
+        await this.deleteConversationTurnRefs(mirror, conversationId, signal);
       }
       if (await this.pathExists(workspacePath)) await this.removeWorktree(mirror, workspacePath, signal);
     });
@@ -1200,20 +1248,12 @@ export class GitManager {
     return { patch: result.stdout.toString("utf8"), truncated: result.truncated };
   }
 
-  /**
-   * 列出会话 ref 相对其父提交（固定快照）的全部文件变更。
-   * 直接从镜像的 Git 对象计算，不依赖任何工具调用记录：以后即使加入命令行，只要改动
-   * 最终落进 worktree/会话 ref，这里就能检测到。
-   */
-  async getConversationChangeDetails(
-    projectId: number,
-    conversationId: string,
+  /** 对比镜像中某个 ref 与其父提交，返回有界的文件状态与补丁。 */
+  private async diffRefAgainstParent(
+    mirror: string,
+    ref: string,
     signal?: AbortSignal,
   ): Promise<{ sha: string; files: Array<{ path: string; status: string; patch: string; truncated: boolean }>; truncated: boolean }> {
-    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
-    const ref = conversationChangesRef(conversationId);
-    const mirror = join(this.mirrorRoot, `${projectId}.git`);
-    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
     const exists = await this.run(
       this.mirrorRoot,
       ["--git-dir", mirror, "show-ref", "--verify", "--quiet", ref],
@@ -1261,6 +1301,35 @@ export class GitManager {
     }
     if (parts.length > maxFiles * 2) truncated = true;
     return { sha, files, truncated };
+  }
+
+  /**
+   * 列出会话 ref 相对其父提交（固定快照）的全部文件变更。
+   * 直接从镜像的 Git 对象计算，不依赖任何工具调用记录：以后即使加入命令行，只要改动
+   * 最终落进 worktree/会话 ref，这里就能检测到。
+   */
+  async getConversationChangeDetails(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; files: Array<{ path: string; status: string; patch: string; truncated: boolean }>; truncated: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    return this.diffRefAgainstParent(mirror, conversationChangesRef(conversationId), signal);
+  }
+
+  /** 列出某一轮保存的文件变更；该轮没有写入改动时返回空列表。 */
+  async getConversationTurnChanges(
+    projectId: number,
+    conversationId: string,
+    turnId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; files: Array<{ path: string; status: string; patch: string; truncated: boolean }>; truncated: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    return this.diffRefAgainstParent(mirror, conversationTurnRef(conversationId, turnId), signal);
   }
 
   /** 列出镜像中所有提交作者（去重、有界），供控制台的图谱筛选使用。 */
