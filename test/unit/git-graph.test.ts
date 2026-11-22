@@ -37,10 +37,17 @@ describe("git graph layout", () => {
     expect(layout.nodes[1]?.isPinned).toBe(false);
   });
 
-  it("ignores parents outside the current page", () => {
+  it("ignores parents outside the current page unless another commit follows", () => {
     const layout = buildGitGraphLayout([node("new", ["missing"])]);
     expect(layout.edges).toEqual([]);
     expect(layout.laneCount).toBe(1);
+  });
+
+  it("connects filtered-out parents with a dashed edge to the next visible commit", () => {
+    const layout = buildGitGraphLayout([node("a", ["hidden-a"]), node("b", ["hidden-b"]), node("c")]);
+    expect(layout.edges).toHaveLength(2);
+    expect(layout.edges[0]).toMatchObject({ from: "a", to: "b", implicit: true });
+    expect(layout.edges[1]).toMatchObject({ from: "b", to: "c", implicit: true });
   });
 
   it("provides stable coordinates", () => {

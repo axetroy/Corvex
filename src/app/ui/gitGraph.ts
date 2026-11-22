@@ -17,6 +17,8 @@ export interface GraphEdge {
   lane: number;
   targetLane: number;
   row: number;
+  /** 父提交被筛选掉时，连到下一个可见提交的「省略连线」。 */
+  implicit?: boolean;
 }
 
 export interface GitGraphLayout {
@@ -58,10 +60,23 @@ export function buildGitGraphLayout(nodes: readonly GitGraphNode[], pinnedSha = 
 
   const edges: GraphEdge[] = [];
   for (const node of laidOut) {
-    for (const parent of node.parents) {
-      const targetLane = laneOf.get(parent);
-      if (targetLane === undefined) continue;
-      edges.push({ from: node.sha, to: parent, lane: node.lane, targetLane, row: node.row });
+    const visibleParents = node.parents.filter((parent) => laneOf.has(parent));
+    if (visibleParents.length) {
+      for (const parent of visibleParents) {
+        edges.push({
+          from: node.sha, to: parent, lane: node.lane,
+          targetLane: laneOf.get(parent)!, row: node.row,
+        });
+      }
+      continue;
+    }
+    // 全部父提交都被筛选掉时，连到下一个可见提交，用虚线表示中间省略的历史。
+    const next = laidOut[node.row + 1];
+    if (next) {
+      edges.push({
+        from: node.sha, to: next.sha, lane: node.lane,
+        targetLane: next.lane, row: node.row, implicit: true,
+      });
     }
   }
 

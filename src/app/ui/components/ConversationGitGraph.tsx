@@ -211,8 +211,9 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                     key={`${edge.from}-${edge.to}`}
                     d={`M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`}
                     fill="none"
-                    stroke={edge.lane === edge.targetLane ? "var(--text-faint)" : "var(--purple)"}
+                    stroke={edge.implicit ? "var(--text-faint)" : edge.lane === edge.targetLane ? "var(--text-faint)" : "var(--purple)"}
                     strokeWidth={1.4}
+                    strokeDasharray={edge.implicit ? "3 3" : undefined}
                   />
                 );
               })}
