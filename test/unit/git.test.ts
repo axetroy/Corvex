@@ -173,7 +173,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
     await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
-    const workspace: Workspace = { projectId: 7, eventId: "event-tools", path: workspacePath, headSha };
+    const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
     const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
 
     await execFile("git", ["-C", workspacePath, "branch", "local-one", "HEAD"]);
@@ -198,7 +198,7 @@ describe("Git workflows", () => {
     // 本地 origin 指向自身：抓取完全离线，不会尝试联网。
     await execFile("git", ["-C", workspacePath, "remote", "add", "origin", workspacePath]);
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
-    const workspace: Workspace = { projectId: 7, eventId: "event-tools", path: workspacePath, headSha };
+    const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
     const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
 
     expect(await manager.listBranches(workspace)).toMatchObject({ head: headSha });
@@ -238,7 +238,7 @@ describe("Git workflows", () => {
     await manager.initialize();
     const workspace: Workspace = {
       projectId: 7,
-      eventId: "event-1",
+      workspaceName: "event-1",
       path: workspacePath,
       headSha: stdout.trim(),
     };
@@ -278,7 +278,7 @@ describe("Git workflows", () => {
     await manager.initialize();
     const workspace: Workspace = {
       projectId: 7,
-      eventId: "event-1",
+      workspaceName: "event-1",
       path: workspacePath,
       headSha: stdout.trim(),
     };
@@ -309,7 +309,7 @@ describe("Git workflows", () => {
     const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
     const headSha = stdout.trim();
     const manager = new GitManager(root, "https://gitlab.example.com", "");
-    const workspace: Workspace = { projectId: 7, eventId: "event-1", path: workspacePath, headSha };
+    const workspace: Workspace = { projectId: 7, workspaceName: "event-1", path: workspacePath, headSha };
 
     await expect(manager.getCommitLog(workspace, 2, "src/app.ts")).resolves.toMatchObject({
       commits: [
@@ -358,7 +358,7 @@ describe("Git workflows", () => {
     const conversationId = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 
     const first = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
-    expect(first.eventId).toBe(conversationWorkspaceName(conversationId));
+    expect(first.workspaceName).toBe(conversationWorkspaceName(conversationId));
     expect(first.path).toBe(join(root, "workspaces", "7", conversationWorkspaceName(conversationId)));
     expect(await git(first.path, "rev-parse", "HEAD")).toBe(baseSha);
 

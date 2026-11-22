@@ -1,6 +1,6 @@
 import { lstat, readdir, readFile as readFileFs } from "node:fs/promises";
 import { resolve } from "node:path";
-import { resolveWorktreePath } from "../../agent/fs-write.js";
+import { resolveWorktreePath } from "../../agent/fs/index.js";
 import type {
   ConversationFileSource,
   FileContentResult,

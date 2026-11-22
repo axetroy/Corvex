@@ -8,7 +8,7 @@ import { requireUser } from "../../auth/context.js";
 import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
-import { resolveWorktreePath } from "../../../agent/fs-write.js";
+import { resolveWorktreePath } from "../../../agent/fs/index.js";
 import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
 import type { OpsContext } from "../context.js";

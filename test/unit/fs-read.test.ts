@@ -10,7 +10,7 @@ import {
   requireRelativeRepoPath,
   searchAllowedFiles,
   statAllowedPath,
-} from "../../src/agent/fs-read.js";
+} from "../../src/agent/fs/index.js";
 
 describe("readAllowedFile", () => {
   let root: string;

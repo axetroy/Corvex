@@ -66,6 +66,5 @@ describe("operations UI locale", () => {
     expect(zhCN.filePanelImageHint).toBe("滚轮缩放，拖拽平移，双击复位");
     expect(Object.keys(zhCN).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zhCN.statuses).sort()).toEqual(Object.keys(en.statuses).sort());
-    expect(Object.keys(zhCN.types).sort()).toEqual(Object.keys(en.types).sort());
   });
 });

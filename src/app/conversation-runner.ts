@@ -11,7 +11,7 @@ import { GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type TraceContext } from "../agent/pi.js";
-import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs-write.js";
+import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
@@ -361,7 +361,7 @@ export class ConversationRunner {
         await this.repo.removeConversationWorkspace(entry.workspace);
       } catch (error) {
         console.warn("release conversation workspace failed", {
-          conversationId: entry.workspace.eventId,
+          conversationId: entry.workspace.workspaceName,
           error: errorMessage(error),
         });
       }

@@ -202,7 +202,6 @@ describe("validateConfig", () => {
       "CORVEX_GITLAB_BASE_URL",
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
-      "CORVEX_WEBHOOK_SECRET",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
@@ -210,7 +209,6 @@ describe("validateConfig", () => {
       process.env.CORVEX_GITLAB_BASE_URL = "https://gitlab.override.example";
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
       process.env.CORVEX_GITLAB_TOKEN = "write";
-      process.env.CORVEX_WEBHOOK_SECRET = "secret";
       await writeFile(
         configPath,
         JSON.stringify({
@@ -238,7 +236,6 @@ describe("validateConfig", () => {
     const names = [
       "CORVEX_GITLAB_READ_TOKEN",
       "CORVEX_GITLAB_TOKEN",
-      "CORVEX_WEBHOOK_SECRET",
     ] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {

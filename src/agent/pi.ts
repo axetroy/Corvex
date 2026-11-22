@@ -22,13 +22,13 @@ import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
-import { createFsWriteExtension, type WorkspaceFs } from "./fs-write.js";
+import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
-import { createFsReadExtension } from "./fs-read.js";
+import { createFsReadExtension } from "./fs/index.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
 import {
   createToolResultBudgetExtension,
@@ -36,7 +36,6 @@ import {
   resolveCompactionReserveTokens,
   resolveTurnToolResultBytes,
 } from "./tool-budget.js";
-import { createGitHistoryExtension } from "./git/chat-history.js";
 import { createWebReadExtension } from "./web-read.js";
 
 /** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
@@ -138,11 +137,8 @@ export interface ModelRequest {
 export function getAgentToolAccess(
   taskType: ModelTaskType,
   config: Pick<CorvexConfig["agent"], "webEnabled">,
-): { webFetch: boolean; gitHistory: boolean } {
-  return {
-    webFetch: taskType === "conversation" && config.webEnabled,
-    gitHistory: taskType === "conversation",
-  };
+): { webFetch: boolean } {
+  return { webFetch: taskType === "conversation" && config.webEnabled };
 }
 
 export interface ModelUsage {
@@ -201,7 +197,7 @@ export class PiAgent {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store?: AppStore,
-    private readonly git?: Pick<GitManager, "grep" | "getCommitLog" | "showCommit" | "getWorkspaceDiff">,
+    private readonly git?: Pick<GitManager, "grep" | "getWorkspaceDiff">,
     private readonly gitlab?: GitLabClient,
     private readonly hooks?: CorvexHooks,
   ) {}
@@ -468,12 +464,6 @@ export class PiAgent {
         ),
         ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
-          : []),
-        ...(toolAccess.gitHistory && trace?.workspace && this.git
-          ? [createGitHistoryExtension(
-              (limit, path) => this.git!.getCommitLog(trace.workspace!, limit, path, signal),
-              (sha, path) => this.git!.showCommit(trace.workspace!, sha, path, signal),
-            )]
           : []),
         ...(request.taskType === "conversation" ? [createPlanExtension()] : []),
         ...(request.taskType === "conversation" && request.fs

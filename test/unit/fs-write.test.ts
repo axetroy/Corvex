@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { replaceTextExactly, maxReplaceBytes, resolveWorktreePath } from "../../src/agent/fs-write.ts";
+import { replaceTextExactly, maxReplaceBytes, resolveWorktreePath } from "../../src/agent/fs/index.ts";
 
 describe("worktree path guard", () => {
   let root = "";

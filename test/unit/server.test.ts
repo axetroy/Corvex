@@ -464,7 +464,6 @@ describe("CorvexServer", () => {
     // 令牌可以用环境变量兜底，测试用 stubEnv 注入并在结束时还原。
     vi.stubEnv("CORVEX_GITLAB_READ_TOKEN", "read");
     vi.stubEnv("CORVEX_GITLAB_TOKEN", "write");
-    vi.stubEnv("CORVEX_WEBHOOK_SECRET", "secret");
     const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
     const configPath = join(root, "config.yaml");
     // 模型密钥在控制台保存；保存设置时按 Server 角色校验。

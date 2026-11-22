@@ -100,7 +100,7 @@ function savePanelLayout(layout: Layout): void {
 /** 消息处理状态对应的界面文案；完成状态不展示徽标。 */
 function messageStatus(message: ConversationMessage, copy: Copy): string {
   if (message.status === "queued") return copy.statuses.queued;
-  if (message.status === "running") return copy.statuses.analyzing;
+  if (message.status === "running") return copy.statuses.running;
   if (message.status === "failed") return copy.statuses.failed;
   return "";
 }
@@ -710,7 +710,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             title={item.archived ? copy.conversationArchived : undefined}
           >
             <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
-            {running ? <span className="conversation-summary-active" aria-label={copy.statuses.analyzing} /> : null}
+            {running ? <span className="conversation-summary-active" aria-label={copy.statuses.running} /> : null}
           </div>
         </Dropdown>
       ),
@@ -951,7 +951,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       <Typography.Text type="secondary" className="conversation-pinned">
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
                       </Typography.Text>
-                      {hasActiveTurn ? <Tag color="processing">{copy.statuses.analyzing}</Tag> : null}
+                      {hasActiveTurn ? <Tag color="processing">{copy.statuses.running}</Tag> : null}
                       {changePaths.length ? (
                         <>
                           <Tag className="conversation-changes-tag" title={changePaths.join("\n")}>

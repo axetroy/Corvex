@@ -28,9 +28,9 @@ describe("PiAgent", () => {
     }
   });
 
-  it("limits web and Git history tools to conversations", () => {
-    expect(getAgentToolAccess("conversation", { webEnabled: true })).toEqual({ webFetch: true, gitHistory: true });
-    expect(getAgentToolAccess("conversation", { webEnabled: false })).toEqual({ webFetch: false, gitHistory: true });
+  it("limits the web tool to conversations", () => {
+    expect(getAgentToolAccess("conversation", { webEnabled: true })).toEqual({ webFetch: true });
+    expect(getAgentToolAccess("conversation", { webEnabled: false })).toEqual({ webFetch: false });
   });
 
   it("uses the Pi SDK and the configured OpenAI-compatible provider", async () => {
