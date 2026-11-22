@@ -39,5 +39,7 @@ export const branchNameParam = Type.String({
 });
 
 export function text(value: unknown): { content: { type: "text"; text: string }[]; details: Record<string, never> } {
-  return { content: [{ type: "text", text: JSON.stringify(value) }], details: {} };
+  // JSON.stringify(undefined) 返回 undefined，会让工具结果里出现没有 text 的 content 项，
+  // Pi SDK 在拼装下一条请求时读取 text.length 就会崩溃；这里统一落到 "null"。
+  return { content: [{ type: "text", text: JSON.stringify(value ?? null) }], details: {} };
 }

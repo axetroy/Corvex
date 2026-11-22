@@ -12,7 +12,9 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Commit the current worktree changes with a message. Only call this when the user explicitly asks; inspect git_status and git_diff first.",
       promptSnippet: "git_commit: Commit current worktree changes only on explicit user request.",
       parameters: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2_000 }) }),
-      execute: async (_id, params) => text(await git.commit(params.message)),
+      execute: async (_id, params) => text(
+        (await git.commit(params.message)) ?? { committed: false, reason: "no changes in the worktree" },
+      ),
     });
     pi.registerTool({
       name: "git_push",
@@ -21,7 +23,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Write the current worktree changes to this conversation's ref in the project mirror so they survive worktree cleanup. There is no remote push, force update or arbitrary branch target.",
       promptSnippet: "git_push: Persist worktree changes to the conversation ref; no remote push.",
       parameters: Type.Object({}),
-      execute: async () => text(await git.push()),
+      execute: async () => text((await git.push()) ?? { saved: false, reason: "no changes in the worktree" }),
     });
     pi.registerTool({
       name: "git_revert",

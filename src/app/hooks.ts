@@ -35,6 +35,7 @@ export interface ToolHookContext {
   attempt?: number;
 }
 
+/** 工具调用完成后的钩子上下文：状态与耗时由工具执行结果决定。 */
 export interface ToolResultHookContext extends ToolHookContext {
   output: unknown;
   status: "succeeded" | "failed";
@@ -62,26 +63,35 @@ export interface StorageCleanupContext {
  * 不需要修改 Server、 Runner 或路由的主流程。
  */
 export interface CorvexHooks {
+  /** HTTP 服务开始监听之前；适合做启动前检查、资源初始化或注入配置。 */
   serverBeforeListen: AsyncSeriesHook<[]>;
+  /** 监听成功之后、对外提供请求之前；启动清理（含中断轮次恢复）注册在这里。 */
   serverAfterListen: AsyncSeriesHook<[{ host: string; port: number }]>;
+  /** 关闭 HTTP 服务之前；用于先停止接收新请求并释放外部资源。 */
   serverBeforeClose: AsyncSeriesHook<[]>;
+  /** HTTP 服务完全关闭之后；用于最后的清理与审计落库。 */
   serverAfterClose: AsyncSeriesHook<[]>;
-  /** 返回用户即完成认证；第一个返回值的 tap 生效。 */
+  /** 把 Fastify 请求解析为登录用户；第一个返回用户的 tap 生效，未登录返回 undefined。 */
   authResolveUser: AsyncSeriesBailHook<[FastifyRequest], AuthUser | undefined>;
+  /** 运行时设置被保存或启动时重新应用之后；Server 借此刷新 GitLab 客户端与对话执行器。 */
   settingsApplied: SyncHook<[CorvexConfig]>;
-  /** 启动与每日保留任务的统一清理入口；默认步骤按 stage 顺序注册。 */
+  /** 启动与每日保留任务的统一清理入口；各步骤按 stage 顺序执行并把结果写回上下文。 */
   storageCleanup: AsyncSeriesHook<[StorageCleanupContext]>;
+  /** 一轮对话被领取、准备执行之前；可注入上下文、前置校验或记录指标。 */
   conversationBeforeTurn: AsyncSeriesHook<[ConversationTurnContext]>;
+  /** 一轮对话落库并结束之后（含失败与过期）；可追加通知、统计或后处理。 */
   conversationAfterTurn: AsyncSeriesHook<[ConversationTurnContext]>;
-  /** 发起会话：第一个返回非空标题的 tap 生效；默认从用户消息派生标题。 */
+  /** 发起对话时派生标题：第一个返回非空标题的 tap 生效，默认从用户消息提取。 */
   conversationStart: AsyncSeriesBailHook<[ConversationStartInput], string | undefined>;
-  /** 首轮完成后用 LLM 从用户消息精炼标题；默认实现注册在 ConversationRunner。 */
+  /** 首轮完成后用 LLM 精炼标题；默认实现由 ConversationRunner 注册，插件可覆盖。 */
   conversationTitleRefine: AsyncSeriesBailHook<[ConversationTitleRefineInput], string | undefined>;
-  /** 模型调用前后；一次 generate 可能包含多次 SDK 会话（超限重试）。 */
+  /** 每次 SDK 会话发起之前；一次 generate 可能因超窗重试产生多次会话。 */
   agentBeforeModel: AsyncSeriesHook<[ModelRequest]>;
+  /** 每次 SDK 会话返回之后；可记录模型、Token 用量与耗时，失败时也可能被调用。 */
   agentAfterModel: AsyncSeriesHook<[ModelRequest, ModelResponse]>;
-  /** 工具执行前后；事件回调是同步的，钩子以 fire-and-forget 方式触发。 */
+  /** 自定义工具调用之前；回调是同步的，钩子以 fire-and-forget 方式触发。 */
   toolBefore: AsyncSeriesHook<[ToolHookContext]>;
+  /** 自定义工具返回之后；用于记录调用结果与耗时，参数已按轨迹规则脱敏。 */
   toolAfter: AsyncSeriesHook<[ToolResultHookContext]>;
 }
 
@@ -103,6 +113,7 @@ export function callAsyncHook<T extends unknown[], R = void>(
   });
 }
 
+/** 创建全部扩展点并注册默认行为（当前只有标题派生）；插件可在任意节点追加 tap。 */
 export function createCorvexHooks(): CorvexHooks {
   const hooks: CorvexHooks = {
     serverBeforeListen: new AsyncSeriesHook([]),

@@ -64,5 +64,6 @@ export const milestoneIdParam = Type.Optional(Type.Integer({ minimum: 1 }));
 
 /** 工具结果统一序列化为文本；错误由 Pi 的工具调用链路记录到轨迹。 */
 export function text(value: unknown): { content: { type: "text"; text: string }[]; details: Record<string, never> } {
-  return { content: [{ type: "text", text: JSON.stringify(value) }], details: {} };
+  // 避免 undefined 序列化后留下没有 text 字段的 content 项，导致 SDK 读取 text.length 崩溃。
+  return { content: [{ type: "text", text: JSON.stringify(value ?? null) }], details: {} };
 }

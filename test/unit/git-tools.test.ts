@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createGitExtension } from "../../src/agent/git/index.ts";
-import type { GitToolAdapter } from "../../src/agent/git/common.ts";
+import { text, type GitToolAdapter } from "../../src/agent/git/common.ts";
 
 type RegisteredTool = {
   name: string;
@@ -59,5 +59,25 @@ describe("consolidated Git tools", () => {
     expect(adapter.commit).toHaveBeenCalledWith("fix");
     await find("git_revert").execute("5", { sha: "a".repeat(40) });
     expect(adapter.revert).toHaveBeenCalledWith("a".repeat(40));
+  });
+
+  it("serializes an empty result as a text string instead of undefined", () => {
+    const result = text(undefined);
+    expect(result.content).toEqual([{ type: "text", text: "null" }]);
+  });
+
+  it("returns an explicit result when there is nothing to commit or save", async () => {
+    const adapter = fakeAdapter();
+    adapter.commit = vi.fn(async () => undefined);
+    adapter.push = vi.fn(async () => undefined);
+    const registered = collect(adapter);
+    const find = (name: string) => registered.find((tool) => tool.name === name)!;
+
+    const commit = await find("git_commit").execute("1", { message: "noop" });
+    expect(commit.content[0]?.text).toBe('{"committed":false,"reason":"no changes in the worktree"}');
+    const push = await find("git_push").execute("2", {});
+    expect(push.content[0]?.text).toBe('{"saved":false,"reason":"no changes in the worktree"}');
+    expect(commit.content[0]?.text).toBeTypeOf("string");
+    expect(push.content[0]?.text).toBeTypeOf("string");
   });
 });
