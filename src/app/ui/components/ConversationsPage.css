@@ -423,6 +423,21 @@
   font-size: 11px;
 }
 
+/* 放弃改动确认框：列出将要丢失的文件，并提供一个先下载补丁的入口。 */
+.conversation-discard-changes-list {
+  max-height: 120px;
+  margin: 4px 0 6px;
+  padding-left: 20px;
+  overflow: auto;
+  font-size: 11px;
+}
+
+.conversation-discard-download.ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+
 .conversation-pinned {
   flex: 0 1 auto;
   min-width: 0;

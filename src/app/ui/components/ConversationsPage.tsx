@@ -317,18 +317,26 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     message.role === "assistant" && message.status === "running" && message.turnId)?.turnId ?? undefined;
 
   const [changePaths, setChangePaths] = useState<string[]>([]);
+  const [changeSha, setChangeSha] = useState("");
   useEffect(() => {
     let active = true;
     if (!selectedConversationId) {
       setChangePaths([]);
+      setChangeSha("");
       return () => { active = false; };
     }
-    fetchJson<{ paths: string[] }>(
+    fetchJson<{ paths: string[]; sha?: string }>(
       `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/changes`, copy,
     ).then((result) => {
-      if (active) setChangePaths(result.paths ?? []);
+      if (active) {
+        setChangePaths(result.paths ?? []);
+        setChangeSha(result.sha ?? "");
+      }
     }).catch(() => {
-      if (active) setChangePaths([]);
+      if (active) {
+        setChangePaths([]);
+        setChangeSha("");
+      }
     });
     return () => { active = false; };
   }, [copy, selectedConversationId, refreshToken, pollToken]);
@@ -613,6 +621,75 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     } catch (cause) {
       setError(errorMessage(cause));
     }
+  }
+
+  async function downloadChangesPatch(conversationId: string, sha: string) {
+    if (!sha) return;
+    try {
+      const result = await fetchJson<{ patch: string; truncated: boolean }>(
+        `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}/patch`,
+        copy,
+      );
+      const blob = new Blob([result.patch], { type: "text/x-patch;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${sha.slice(0, 8)}.patch`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  function confirmDiscardChanges() {
+    const conversationId = selectedConversationId;
+    const paths = changePaths;
+    modal.confirm({
+      title: copy.discardChangesConfirmTitle,
+      content: (
+        <div>
+          <Typography.Paragraph>{copy.discardChangesConfirmDescription}</Typography.Paragraph>
+          <ul className="conversation-discard-changes-list">
+            {paths.slice(0, 5).map((path) => <li key={path}><code>{path}</code></li>)}
+          </ul>
+          {paths.length > 5 ? (
+            <Typography.Text type="secondary">
+              {copy.discardChangesConfirmMore.replace("{count}", String(paths.length - 5))}
+            </Typography.Text>
+          ) : null}
+          {changeSha ? (
+            <Button
+              type="link"
+              size="small"
+              className="conversation-discard-download"
+              onClick={() => void downloadChangesPatch(conversationId, changeSha)}
+            >
+              {copy.discardChangesDownloadPatch}
+            </Button>
+          ) : null}
+        </div>
+      ),
+      okType: "danger",
+      okText: copy.conversationDiscardChanges,
+      onOk: async () => {
+        // 弹框打开期间用户可能切到别的对话，此时不要误删其它对话的改动。
+        if (selectedConversationIdRef.current !== conversationId) return;
+        setError("");
+        try {
+          await sendJson(
+            `/api/ops/conversations/${encodeURIComponent(conversationId)}/changes`,
+            {}, copy, "DELETE",
+          );
+          setChangePaths([]);
+          setPollToken((value) => value + 1);
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      },
+    });
   }
 
   function confirmDelete(item: ConversationSummary) {
@@ -1149,18 +1226,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             type="link"
                             size="small"
                             disabled={hasActiveTurn}
-                            onClick={() => void (async () => {
-                              try {
-                                await sendJson(
-                                  `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/changes`,
-                                  {}, copy, "DELETE",
-                                );
-                                setChangePaths([]);
-                                setPollToken((value) => value + 1);
-                              } catch (cause) {
-                                setError(errorMessage(cause));
-                              }
-                            })()}
+                            onClick={() => confirmDiscardChanges()}
                           >
                             {copy.conversationDiscardChanges}
                           </Button>
