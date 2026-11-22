@@ -25,6 +25,10 @@ export interface GitToolAdapter {
   /** 把镜像中已有的提交快进推到 GitLab 具名分支；需要用户明确要求与写令牌。 */
   pushBranch(sha: string, branch: string): Promise<{ branch: string; sha: string }>;
   revert(sha: string): Promise<{ sha: string; revertedSha: string }>;
+  /** 变基到指定本地分支/完整提交；只接受已存在的目标，冲突时自动中止。 */
+  rebase(onto: string): Promise<{ sha: string; onto: string }>;
+  /** 把镜像中的提交摘到当前 worktree；冲突时自动中止。 */
+  cherryPick(sha: string): Promise<{ sha: string; pickedSha: string }>;
 }
 
 export const iidSha = Type.String({
@@ -38,6 +42,12 @@ export const branchNameParam = Type.String({
   minLength: 1,
   maxLength: 128,
   pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+});
+/** 变基目标：完整提交 SHA 或本地/远端跟踪分支名。 */
+export const rebaseTargetParam = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[A-Za-z0-9][A-Za-z0-9._/-]*)$",
 });
 
 export function text(value: unknown): { content: { type: "text"; text: string }[]; details: Record<string, never> } {

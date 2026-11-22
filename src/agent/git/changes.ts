@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { branchNameParam, iidSha, text, type GitToolAdapter } from "./common.js";
+import { branchNameParam, iidSha, rebaseTargetParam, text, type GitToolAdapter } from "./common.js";
 
 /** 变更写入：提交、写入会话 ref（push）与回滚，全部限定在当前对话。 */
 export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAPI) => void {
@@ -33,6 +33,24 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       promptSnippet: "git_push_branch: Explicitly publish a commit to a GitLab branch (fast-forward only); use git_push first to save the commit in the mirror, then create or update the MR.",
       parameters: Type.Object({ sha: iidSha, branch: branchNameParam }),
       execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),
+    });
+    pi.registerTool({
+      name: "git_rebase",
+      label: "Rebase current commits",
+      executionMode: "sequential",
+      description: "Rebase the current worktree commits onto a local or origin branch, or onto a full commit SHA. The worktree must be clean; conflicts abort automatically. Only call this when the user explicitly asks to rebase.",
+      promptSnippet: "git_rebase: Rebase clean worktree commits onto a named branch or commit; conflicts are aborted.",
+      parameters: Type.Object({ onto: rebaseTargetParam }),
+      execute: async (_id, params) => text(await git.rebase(params.onto)),
+    });
+    pi.registerTool({
+      name: "git_cherry_pick",
+      label: "Cherry-pick a commit",
+      executionMode: "sequential",
+      description: "Apply one full commit SHA from this project's mirror onto the current worktree as a new commit. The worktree must be clean; conflicts abort automatically. Only call this when the user explicitly asks to cherry-pick.",
+      promptSnippet: "git_cherry_pick: Apply one known commit to the current branch; conflicts are aborted.",
+      parameters: Type.Object({ sha: iidSha }),
+      execute: async (_id, params) => text(await git.cherryPick(params.sha)),
     });
     pi.registerTool({
       name: "git_revert",

@@ -771,6 +771,69 @@ export class GitManager {
     return { sha: head, revertedSha: sha };
   }
 
+  /**
+   * 把当前 worktree 的提交变基到指定的本地分支或完整提交上。
+   * 只接受已存在的本地/远端跟踪分支或完整 SHA；要求工作区干净，冲突时中止，不留半变基状态。
+   */
+  async rebaseWorktree(workspace: Workspace, onto: string, signal?: AbortSignal): Promise<{ sha: string; onto: string }> {
+    this.validateWorkspace(workspace);
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (!status.clean) throw new Error("rebase requires a clean worktree; commit or save changes first");
+    let target = onto;
+    if (!shaPattern.test(onto)) {
+      this.validateBranchName(onto);
+      const local = await this.run(
+        workspace.path, ["show-ref", "--verify", "--quiet", `refs/heads/${onto}`],
+        undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      target = local.exitCode === 0 ? onto : `origin/${onto}`;
+      const available = await this.run(
+        workspace.path, ["rev-parse", "--verify", "--quiet", target],
+        undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (available.exitCode !== 0) throw new Error(`rebase target ${onto} does not exist locally or on origin`);
+    } else {
+      const available = await this.run(
+        workspace.path, ["cat-file", "-e", `${onto}^{commit}`],
+        undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (available.exitCode !== 0) throw new Error("rebase target commit is not available");
+    }
+    try {
+      await this.run(workspace.path, ["rebase", target], undefined, maxErrorOutput, signal, { timeoutMs: 60_000 });
+    } catch (error) {
+      await this.run(workspace.path, ["rebase", "--abort"], undefined, maxErrorOutput, signal, {
+        timeoutMs: 10_000, allowExitCodes: [0, 1, 128],
+      }).catch(() => undefined);
+      throw error;
+    }
+    const sha = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { sha, onto: target };
+  }
+
+  /** 把镜像中已有的提交摘到当前 worktree；冲突时中止。 */
+  async cherryPickWorktree(workspace: Workspace, sha: string, signal?: AbortSignal): Promise<{ sha: string; pickedSha: string }> {
+    this.validateWorkspace(workspace);
+    if (!shaPattern.test(sha)) throw new Error("cherry-pick requires a full commit SHA");
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (!status.clean) throw new Error("cherry-pick requires a clean worktree; commit or save changes first");
+    const available = await this.run(
+      workspace.path, ["cat-file", "-e", `${sha}^{commit}`],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    if (available.exitCode !== 0) throw new Error("cherry-pick commit is not available in the project mirror");
+    try {
+      await this.run(workspace.path, ["cherry-pick", sha], undefined, maxErrorOutput, signal, { timeoutMs: 60_000 });
+    } catch (error) {
+      await this.run(workspace.path, ["cherry-pick", "--abort"], undefined, maxErrorOutput, signal, {
+        timeoutMs: 10_000, allowExitCodes: [0, 1, 128],
+      }).catch(() => undefined);
+      throw error;
+    }
+    const head = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    return { sha: head, pickedSha: sha };
+  }
+
   /** 从已配置的本地镜像抓取对象；worktree 仍固定到当前提交，不自动改变 HEAD。 */
   async fetchFromMirror(workspace: Workspace, signal?: AbortSignal): Promise<{ sha: string; fetched: boolean }> {
     this.validateWorkspace(workspace);
@@ -1150,49 +1213,6 @@ export class GitManager {
       path: line.slice(3),
     }));
     return { headSha: head.stdout.toString().trim(), clean: files.length === 0, files };
-  }
-
-  private validateFixPatch(patch: string, allowedPaths: string[]): string[] {
-    // 修复提案只能修改本次 MR 已变更的现有文件。
-    const allowed = new Set(allowedPaths);
-    if (allowed.size === 0 || [...allowed].some((name) => !this.validPatchPath(name))) {
-      throw new Error("fix patch has no authorized changed files");
-    }
-    const lines = patch.split("\n");
-    const paths: string[] = [];
-    for (let index = 0; index < lines.length;) {
-      const header = (lines[index] ?? "").replace(/\r$/, "");
-      if (!header.startsWith("diff --git ")) {
-        if (!header.trim() && paths.length === 0) {
-          index++;
-          continue;
-        }
-        throw new Error("fix patch contains data outside a git diff section");
-      }
-      const sectionStart = index;
-      index++;
-      while (index < lines.length && !lines[index]!.startsWith("diff --git ")) index++;
-      const section = lines.slice(sectionStart, index).map((line) => line.replace(/\r$/, ""));
-      const match = /^diff --git a\/(.+) b\/(.+)$/.exec(section[0]!);
-      if (!match) throw new Error("fix patch contains an invalid git diff header");
-      const oldPath = match[1]!;
-      const newPath = match[2]!;
-      if (
-        oldPath !== newPath ||
-        !this.validIssuePatchPath(oldPath) ||
-        !allowed.has(oldPath) ||
-        section.some((line) => /^(?:new file mode|deleted file mode|old mode|new mode|similarity index|rename from|rename to)\b/.test(line)) ||
-        !section.some((line) => line.startsWith("@@ "))
-      ) {
-        throw new Error(`fix patch modifies an unauthorized or unsupported path "${oldPath}"`);
-      }
-      if (!section.includes(`--- a/${oldPath}`) || !section.includes(`+++ b/${newPath}`)) {
-        throw new Error("fix patch must modify existing files");
-      }
-      if (!paths.includes(oldPath)) paths.push(oldPath);
-    }
-    if (paths.length === 0) throw new Error("fix patch contains no file changes");
-    return paths;
   }
 
   private validateIssuePatch(patch: string, trackedPaths: Set<string>): string[] {

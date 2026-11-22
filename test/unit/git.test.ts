@@ -445,6 +445,51 @@ describe("Git workflows", () => {
     expect(await manager.gcMirrors(7)).toBe(1);
   });
 
+  it("rebases and cherry-picks commits in a bound worktree", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-history-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "event-tools");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "a.txt"), "base\n");
+    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    await execFile("git", ["-C", workspacePath, "branch", "onto"]);
+    await writeFile(join(workspacePath, "ours.txt"), "ours\n");
+    await execFile("git", ["-C", workspacePath, "add", "ours.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "ours"]);
+    const ours = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+
+    const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+
+    // 在 onto 分支加一个提交，再把当前分支变基到它之上。
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "onto"]);
+    await writeFile(join(workspacePath, "theirs.txt"), "theirs\n");
+    await execFile("git", ["-C", workspacePath, "add", "theirs.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "theirs"]);
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "master"]);
+
+    const rebased = await manager.rebaseWorktree(workspace, "onto");
+    expect(rebased.onto).toBe("onto");
+    expect(rebased.sha).not.toBe(headSha);
+    expect(await readFile(join(workspacePath, "theirs.txt"), "utf8")).toBe("theirs\n");
+    expect(await git(workspacePath, "log", "--format=%s")).toContain("ours");
+
+    // cherry-pick 已知提交到当前 HEAD。
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "onto"]);
+    const picked = await manager.cherryPickWorktree(workspace, ours);
+    expect(picked.pickedSha).toBe(ours);
+    expect(await readFile(join(workspacePath, "ours.txt"), "utf8")).toBe("ours\n");
+
+    // 目标不存在与非法输入要在执行前拒绝。
+    await expect(manager.rebaseWorktree(workspace, "missing")).rejects.toThrow("does not exist");
+    await expect(manager.cherryPickWorktree(workspace, "short")).rejects.toThrow("full commit SHA");
+  });
+
   it("validates GitLab branch pushes before touching the network", async () => {
     const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
     const sha = "a".repeat(40);
