@@ -289,6 +289,39 @@ describe("AppStore", () => {
     expect(() => store.appendUserMessage(created.conversationId, "After the turn")).toThrow("no active turn");
   });
 
+  it("keeps a durable FIFO follow-up queue with reorder, removal and restore", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    expect(() => store.enqueueFollowUp(created.conversationId, "  ")).toThrow("between 1 and 20000");
+    const first = store.enqueueFollowUp(created.conversationId, "first follow-up");
+    const second = store.enqueueFollowUp(created.conversationId, "second follow-up");
+    const contents = () => store.listFollowUps(created.conversationId).map((item) => item.content);
+    expect(contents()).toEqual(["first follow-up", "second follow-up"]);
+    expect(store.moveFollowUp(created.conversationId, second.id, "up")).toBe(true);
+    expect(contents()).toEqual(["second follow-up", "first follow-up"]);
+    // 队首不能再上移；队尾不能再下移。
+    expect(store.moveFollowUp(created.conversationId, second.id, "up")).toBe(false);
+    expect(store.moveFollowUp(created.conversationId, first.id, "down")).toBe(false);
+    expect(store.removeFollowUp(created.conversationId, first.id)).toBe(true);
+    expect(contents()).toEqual(["second follow-up"]);
+    const taken = store.takeNextFollowUp(created.conversationId);
+    expect(taken?.content).toBe("second follow-up");
+    expect(contents()).toEqual([]);
+    store.restoreFollowUp(created.conversationId, taken!.content);
+    expect(store.conversationsWithFollowUps()).toContain(created.conversationId);
+    expect(contents()).toEqual(["second follow-up"]);
+    // 删除对话时排队消息随外键级联清理。
+    store.deleteConversation(created.conversationId);
+    expect(store.conversationsWithFollowUps()).not.toContain(created.conversationId);
+  });
+
   it("stores a model-generated conversation title once and ignores later writes", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
@@ -14,6 +14,7 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
+import type { ConversationFollowUp } from "../../../model.js";
 import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
 import { conversationCommands } from "../../conversation-command.js";
@@ -26,7 +27,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, InterjectIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, InterjectIcon, InterruptIcon, QueueIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
@@ -202,6 +203,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const pendingReplyTurns = useRef(new Map<string, string>());
   const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
+  const [followUps, setFollowUps] = useState<ConversationFollowUp[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -336,6 +338,31 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
 
+  const loadFollowUps = useCallback(async () => {
+    if (!selectedConversationId) {
+      setFollowUps([]);
+      return;
+    }
+    try {
+      const result = await fetchJson<{ items: ConversationFollowUp[] }>(
+        `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/followups`, copy,
+      );
+      setFollowUps(result.items ?? []);
+    } catch {
+      setFollowUps([]);
+    }
+  }, [copy, selectedConversationId]);
+
+  useEffect(() => {
+    void loadFollowUps();
+  }, [loadFollowUps, refreshToken, pollToken]);
+
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    const timer = window.setInterval(() => void loadFollowUps(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [loadFollowUps, selectedConversationId]);
+
   useEffect(() => {
     if (!selectedConversationId || !activeTurnId) {
       setStreamedReply(undefined);
@@ -406,6 +433,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onTool,
         onContext,
         onInterjection: () => setPollToken((value) => value + 1),
+        onQueue: () => void loadFollowUps(),
         onDone: (status) => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;
@@ -440,7 +468,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       controller.abort();
       if (flushTimer !== undefined) window.clearTimeout(flushTimer);
     };
-  }, [selectedConversationId, activeTurnId]);
+  }, [selectedConversationId, activeTurnId, loadFollowUps]);
 
   function selectProject(value: ProjectOption | undefined) {
     setProject(value);
@@ -487,7 +515,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
-  async function sendReply(message: string) {
+  async function sendReply(message: string, delivery?: "steer" | "queue" | "interrupt") {
     if (!currentConversation || !message.trim() || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
     const replyConversationId = currentConversation.id;
     replySubmitting.current = true;
@@ -497,7 +525,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch(`/api/ops/conversations/${encodeURIComponent(replyConversationId)}/messages`, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ message, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
+        body: JSON.stringify({
+          message,
+          responseLanguage: locale === "zh-CN" ? "zh-CN" : "en",
+          ...(delivery ? { delivery } : {}),
+        }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
@@ -511,17 +543,26 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           if (body.error === "conversation already has an active turn") {
             throw new Error(copy.conversationTurnActive);
           }
+          if (body.error === "conversation turn is not running") {
+            throw new Error(copy.interruptUnavailable);
+          }
           throw new Error(copy.targetChanged);
         }
         throw new Error(copy.requestFailedTemplate
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      const queued = await result.json() as { turnId: string; delivery?: "steer" | "queued" };
+      const queued = await result.json() as { turnId: string; delivery?: "steer" | "queued" | "queue" };
       if (queued.delivery === "steer") {
         // 插话复用正在运行的轮次：没有新的 turnId，也不能进入 pendingReplyTurns。
         if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
         setPollToken((value) => value + 1);
+        onRefresh();
+        return;
+      }
+      if (queued.delivery === "queue") {
+        if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
+        void loadFollowUps();
         onRefresh();
         return;
       }
@@ -630,7 +671,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setShowCreate(false);
   }
 
-  function submitMessage(message: string) {
+  function submitMessage(message: string, delivery?: "steer" | "queue" | "interrupt") {
     if (message.trim()) {
       // 发送是用户手势：首次发送时顺带申请通知权限，之后由侧边栏按钮控制开关。
       void requestNotifications().catch(() => undefined);
@@ -641,7 +682,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setHistoryIndex(-1);
     draftBeforeHistory.current = "";
     if (showCreate) void createConversation(message);
-    else void sendReply(message);
+    else void sendReply(message, delivery);
   }
 
   /** 上下键浏览历史输入；只在光标位于首行/末行时接管，保留多行编辑。 */
@@ -732,6 +773,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       setError(errorMessage(cause));
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function changeFollowUp(itemId: string, action: "remove" | "up" | "down") {
+    setError("");
+    try {
+      const base = `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/followups/${encodeURIComponent(itemId)}`;
+      if (action === "remove") await sendJson(base, {}, copy, "DELETE");
+      else await sendJson(`${base}/move`, { direction: action }, copy, "POST");
+      void loadFollowUps();
+    } catch (cause) {
+      setError(errorMessage(cause));
     }
   }
 
@@ -1224,6 +1277,25 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         ))}
                       </div>
                     ) : null}
+                    {followUps.length ? (
+                      <div className="conversation-followup-queue" aria-label={copy.followUpQueueLabel}>
+                        <div className="conversation-followup-queue-head">
+                          <span>{copy.followUpQueueLabel}</span>
+                          <span>{copy.followUpQueueHint}</span>
+                        </div>
+                        {followUps.map((item, index) => (
+                          <div className="conversation-followup-item" key={item.id}>
+                            <span className="conversation-followup-index">{index + 1}</span>
+                            <span className="conversation-followup-content" title={item.content}>
+                              {item.content.replace(/\s+/g, " ").slice(0, 120)}
+                            </span>
+                            <button type="button" aria-label={copy.moveUp} title={copy.moveUp} disabled={index === 0} onClick={() => void changeFollowUp(item.id, "up")}>↑</button>
+                            <button type="button" aria-label={copy.moveDown} title={copy.moveDown} disabled={index === followUps.length - 1} onClick={() => void changeFollowUp(item.id, "down")}>↓</button>
+                            <button type="button" aria-label={copy.removeQueued} title={copy.removeQueued} onClick={() => void changeFollowUp(item.id, "remove")}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <Sender
                       className="conversation-composer"
                       style={{ width: "100%" }}
@@ -1238,7 +1310,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         setDraftMessage(value.slice(0, 20_000));
                       }}
                       onKeyDown={handleComposerKeyDown}
-                      onSubmit={submitMessage}
+                      onSubmit={(message) => submitMessage(message)}
                       footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (isTurnActive ? (
                         <div className="conversation-active-actions">
@@ -1252,6 +1324,28 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                           >
                             <InterjectIcon />
                             <span>{copy.interject}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="conversation-queue-button"
+                            aria-label={copy.queue}
+                            title={copy.queueHint}
+                            disabled={!canSend}
+                            onClick={() => submitMessage(draftMessage, "queue")}
+                          >
+                            <QueueIcon />
+                            <span>{copy.queue}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="conversation-interrupt-button"
+                            aria-label={copy.interrupt}
+                            title={copy.interruptHint}
+                            disabled={!canSend || !activeTurnId}
+                            onClick={() => submitMessage(draftMessage, "interrupt")}
+                          >
+                            <InterruptIcon />
+                            <span>{copy.interrupt}</span>
                           </button>
                           <button
                             type="button"

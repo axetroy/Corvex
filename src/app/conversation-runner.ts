@@ -1,10 +1,11 @@
 import { copyFile as copyFileFs, lstat, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
 import { conversationCapabilities, normalizeConversationTitle } from "../model.js";
-import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../model.js";
+import type { ConversationFollowUp, ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
 import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
 import { conversationWorkspaceName, GitManager } from "../git/manager.js";
@@ -52,6 +53,10 @@ export class ConversationRunner {
    * 思考与工具调用的相对次序因此不会因重连而改变。
    */
   private readonly streamSnapshots = new Map<string, ConversationStreamEvent[]>();
+  /** 每个对话只允许一个排队消费者，避免并发轮次重复取出同一条补充。 */
+  private readonly draining = new Set<string>();
+  /** Server 关闭信号；排队轮次也必须在关闭时中止。 */
+  private shutdownSignal: AbortSignal | undefined;
 
   constructor(
     private readonly config: CorvexConfig,
@@ -92,7 +97,14 @@ export class ConversationRunner {
   }
 
   /** 领取并执行一轮对话；轮次已被领取或不存在时返回 false。 */
-  async runTurn(turnId: string, signal: AbortSignal, gitlab?: GitLabClient, responseLanguage?: ResponseLanguage): Promise<boolean> {
+  async runTurn(
+    turnId: string,
+    signal: AbortSignal,
+    gitlab?: GitLabClient,
+    responseLanguage?: ResponseLanguage,
+    drainFollowUps = true,
+  ): Promise<boolean> {
+    this.shutdownSignal = signal;
     const turn = this.store.claimConversationTurn(turnId);
     if (!turn) return false;
     const controller = new AbortController();
@@ -129,6 +141,8 @@ export class ConversationRunner {
         });
       }
       await this.releaseIdleWorkspaces();
+      // 本轮已落库：按 FIFO 启动该对话下一条排队消息；排出来的轮次不再重复触发消费。
+      if (drainFollowUps) void this.drainFollowUps(turn.conversationId, gitlab, responseLanguage);
     }
     return true;
   }
@@ -505,6 +519,110 @@ export class ConversationRunner {
     if (disposition === "unavailable") return "unavailable";
     this.publishStream(turnId, { type: "interjection", turnId });
     return "steer";
+  }
+
+  private publishQueue(conversationId: string): void {
+    const turnId = this.activeTurnId(conversationId);
+    if (turnId) this.publishStream(turnId, { type: "queue", count: this.store.listFollowUps(conversationId).length });
+  }
+
+  listFollowUps(conversationId: string): ConversationFollowUp[] {
+    return this.store.listFollowUps(conversationId);
+  }
+
+  enqueueFollowUp(conversationId: string, content: string): ConversationFollowUp {
+    const item = this.store.enqueueFollowUp(conversationId, content);
+    this.publishQueue(conversationId);
+    return item;
+  }
+
+  removeFollowUp(conversationId: string, itemId: string): boolean {
+    const removed = this.store.removeFollowUp(conversationId, itemId);
+    if (removed) this.publishQueue(conversationId);
+    return removed;
+  }
+
+  moveFollowUp(conversationId: string, itemId: string, direction: "up" | "down"): boolean {
+    const moved = this.store.moveFollowUp(conversationId, itemId, direction);
+    if (moved) this.publishQueue(conversationId);
+    return moved;
+  }
+
+  /**
+   * 当前轮结束后按 FIFO 执行排队的补充消息。每条消息都在真正开始时重新获取分支
+   * 快照，避免排队期间分支移动导致整队 stale；某个排队项失败时放回队首并停止，
+   * 防止同一个失败项反复重试。
+   */
+  async drainFollowUps(
+    conversationId: string,
+    gitlab?: GitLabClient,
+    responseLanguage?: ResponseLanguage,
+  ): Promise<void> {
+    if (this.draining.has(conversationId)) return;
+    this.draining.add(conversationId);
+    try {
+      const client = gitlab ?? this.gitlab;
+      const signal = this.shutdownSignal ?? new AbortController().signal;
+      while (!this.hasActiveTurn(conversationId)) {
+        const item = this.store.takeNextFollowUp(conversationId);
+        if (!item) break;
+        this.publishQueue(conversationId);
+        try {
+          const conversation = this.store.getConversation(conversationId);
+          if (!conversation) break;
+          const headSha = (await client.getBranch(conversation.projectId, conversation.targetBranch, signal)).commit.id;
+          const created = this.store.addConversationMessage(conversationId, {
+            ownerUserId: conversation.ownerUserId,
+            projectId: conversation.projectId,
+            targetBranch: conversation.targetBranch,
+            headSha,
+            actorId: 0,
+            request: item.content,
+          });
+          // 排出来的轮次不再触发下一轮消费，避免递归；下面的 while 继续处理队列。
+          await this.runTurn(created.turnId, signal, client, responseLanguage, false);
+        } catch (error) {
+          this.store.restoreFollowUp(conversationId, item.content);
+          this.publishQueue(conversationId);
+          console.warn("queued conversation follow-up could not start", {
+            conversationId,
+            error: errorMessage(error),
+          });
+          break;
+        }
+      }
+    } finally {
+      this.draining.delete(conversationId);
+    }
+  }
+
+  /** 进程启动时恢复尚未执行的排队消息。 */
+  async resumeFollowUps(): Promise<void> {
+    for (const conversationId of this.store.conversationsWithFollowUps()) {
+      await this.drainFollowUps(conversationId);
+    }
+  }
+
+  /**
+   * 立即打断：中止当前轮并等待其落库，之后调用方可以用新的快照创建下一轮。
+   * 已完成的文件改动由现有的取消路径落库，不会被丢弃。
+   */
+  async interruptForSend(conversationId: string, turnId: string): Promise<boolean> {
+    const turn = this.store.getConversationTurn(conversationId, turnId);
+    const settled: ConversationTurnStatus[] = ["completed", "failed", "stale", "cancelled"];
+    if (!turn || settled.includes(turn.status)) return false;
+    if (!this.cancelTurn(turnId)) {
+      // 还没被领取的排队轮次没有 AbortController，直接按取消收尾。
+      this.store.cancelConversationTurn(turnId, "Interrupted by a new message.");
+    }
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const current = this.store.getConversationTurn(conversationId, turnId);
+      // 必须等到运行表也清掉该轮次：否则新消息会在它尚未退场时被误判为重叠轮次。
+      if ((!current || settled.includes(current.status)) && !this.running.has(turnId)) return true;
+      await delay(50);
+    }
+    return false;
   }
 
   /**

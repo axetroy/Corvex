@@ -163,6 +163,25 @@ export function InterjectIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 排队图标：三条横线加一个箭头，表示消息排到当前轮之后执行。 */
+export function QueueIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M2.5 4.5h7M2.5 8h7M2.5 11.5h4" />
+      <path d="m10.5 10 3 2-3 2" />
+    </svg>
+  );
+}
+
+/** 立即打断图标：闪电，表示中止当前轮并立刻用新消息开一轮。 */
+export function InterruptIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M9 2 4.5 8.5H8L7 14l4.5-6.5H8L9 2Z" />
+    </svg>
+  );
+}
+
 /** 滚动到底部图标：向下的箭头，用于聊天记录的「回到最新」按钮。 */
 export function ScrollBottomIcon(props: SVGProps<SVGSVGElement>) {
   return (

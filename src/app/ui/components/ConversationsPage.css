@@ -1794,6 +1794,100 @@
   opacity: 0.5;
 }
 
+.conversation-queue-button,
+.conversation-interrupt-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.conversation-queue-button:hover:not(:disabled),
+.conversation-interrupt-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.conversation-interrupt-button {
+  color: var(--warning, var(--text-secondary));
+}
+
+.conversation-queue-button:disabled,
+.conversation-interrupt-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 排队补充消息列表：展示顺序，允许上移/下移与移除。 */
+.conversation-followup-queue {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle, var(--bg-panel));
+}
+
+.conversation-followup-queue-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.conversation-followup-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.conversation-followup-index {
+  flex: 0 0 18px;
+  color: var(--primary);
+  text-align: center;
+}
+
+.conversation-followup-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-followup-item button {
+  flex: 0 0 22px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.conversation-followup-item button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.conversation-followup-item button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
 .conversation-composer-area {
   position: absolute;
   z-index: 3;

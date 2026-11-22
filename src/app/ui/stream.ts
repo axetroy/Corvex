@@ -85,6 +85,8 @@ export interface ConversationStreamHandlers {
   onContext?: (context: ConversationStreamContext) => void;
   /** 用户在执行期间追加了补充消息；详情刷新后即可看到该用户气泡。 */
   onInterjection?: (turnId: string) => void;
+  /** 排队补充消息发生变化，携带当前数量。 */
+  onQueue?: (count: number) => void;
   /** 轮次结束；服务端保证只发送一次。 */
   onDone: (status: ConversationTurnStatus, error?: string) => void;
 }
@@ -132,6 +134,8 @@ export async function streamConversationTurn(
           handlers.onContext?.(event.context);
         } else if (event.type === "interjection") {
           handlers.onInterjection?.(event.turnId);
+        } else if (event.type === "queue") {
+          handlers.onQueue?.(event.count);
         } else {
           handlers.onDone(event.status, event.error);
           await reader.cancel().catch(() => undefined);

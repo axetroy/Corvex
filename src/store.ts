@@ -14,6 +14,7 @@ import {
   isModelTaskType,
   normalizeConversationTitle,
   type Conversation,
+  type ConversationFollowUp,
   type ConversationMessage,
   type ConversationPage,
   type ConversationProcessEntry,
@@ -958,6 +959,104 @@ export class AppStore {
       ).run(randomUUID(), conversationId, "user", request, "completed", null, active.head_sha, now, now);
       this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
     });
+  }
+
+  /** 列出某对话排队等待下一轮执行的补充消息，按 position 顺序。 */
+  listFollowUps(conversationId: string): ConversationFollowUp[] {
+    const rows = this.db.prepare(
+      "SELECT id,conversation_id,content,position,created_at FROM conversation_followups WHERE conversation_id=? ORDER BY position,rowid",
+    ).all(conversationId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      conversationId: String(row.conversation_id),
+      content: String(row.content),
+      position: Number(row.position),
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  /** 追加一条排队消息；数量有上限，避免误操作攒出过长的执行队列。 */
+  enqueueFollowUp(conversationId: string, content: string): ConversationFollowUp {
+    const text = content.trim();
+    if (!text || text.length > 20_000) throw new Error("conversation message must be between 1 and 20000 characters");
+    const exists = this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId);
+    if (!exists) throw new Error(`conversation "${conversationId}" not found`);
+    return this.transaction(() => {
+      if (this.listFollowUps(conversationId).length >= 20) throw new Error("too many queued messages");
+      const last = this.db.prepare(
+        "SELECT position FROM conversation_followups WHERE conversation_id=? ORDER BY position DESC,rowid DESC LIMIT 1",
+      ).get(conversationId) as { position: number } | undefined;
+      const item: ConversationFollowUp = {
+        id: randomUUID(),
+        conversationId,
+        content: text,
+        position: (last?.position ?? -1) + 1,
+        createdAt: new Date().toISOString(),
+      };
+      this.db.prepare(
+        `INSERT INTO conversation_followups (id,conversation_id,content,position,created_at)
+         VALUES (?,?,?,?,?)`,
+      ).run(item.id, item.conversationId, item.content, item.position, item.createdAt);
+      return item;
+    });
+  }
+
+  /** 删除一条尚未执行的排队消息；只接受属于该对话的条目。 */
+  removeFollowUp(conversationId: string, itemId: string): boolean {
+    return this.db.prepare(
+      "DELETE FROM conversation_followups WHERE conversation_id=? AND id=?",
+    ).run(conversationId, itemId).changes > 0;
+  }
+
+  /** 与相邻条目交换位置，实现队列的上下移动。 */
+  moveFollowUp(conversationId: string, itemId: string, direction: "up" | "down"): boolean {
+    return this.transaction(() => {
+      const items = this.listFollowUps(conversationId);
+      const index = items.findIndex((item) => item.id === itemId);
+      const other = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || other < 0 || other >= items.length) return false;
+      const current = items[index]!;
+      const neighbor = items[other]!;
+      const update = this.db.prepare("UPDATE conversation_followups SET position=? WHERE id=? AND conversation_id=?");
+      update.run(neighbor.position, current.id, conversationId);
+      update.run(current.position, neighbor.id, conversationId);
+      return true;
+    });
+  }
+
+  /** 原子取出队首并移除；执行方负责在失败时恢复。 */
+  takeNextFollowUp(conversationId: string): ConversationFollowUp | undefined {
+    return this.transaction(() => {
+      const row = this.db.prepare(
+        "SELECT id,conversation_id,content,position,created_at FROM conversation_followups WHERE conversation_id=? ORDER BY position,rowid LIMIT 1",
+      ).get(conversationId) as Record<string, unknown> | undefined;
+      if (!row) return undefined;
+      this.db.prepare("DELETE FROM conversation_followups WHERE id=? AND conversation_id=?").run(String(row.id), conversationId);
+      return {
+        id: String(row.id),
+        conversationId: String(row.conversation_id),
+        content: String(row.content),
+        position: Number(row.position),
+        createdAt: String(row.created_at),
+      };
+    });
+  }
+
+  /** 把取出失败的消息放回队首。 */
+  restoreFollowUp(conversationId: string, content: string): void {
+    this.transaction(() => {
+      this.db.prepare("UPDATE conversation_followups SET position=position+1 WHERE conversation_id=?").run(conversationId);
+      this.db.prepare(
+        `INSERT INTO conversation_followups (id,conversation_id,content,position,created_at)
+         VALUES (?,?,?,?,?)`,
+      ).run(randomUUID(), conversationId, content, 0, new Date().toISOString());
+    });
+  }
+
+  /** 启动恢复用：找出仍有排队消息的对话。 */
+  conversationsWithFollowUps(): string[] {
+    return (this.db.prepare("SELECT DISTINCT conversation_id FROM conversation_followups").all() as { conversation_id: string }[])
+      .map((row) => row.conversation_id);
   }
 
   /** 领取指定的排队轮次并置为运行中，同时累加尝试次数；不可领取时返回 undefined。 */
@@ -2059,6 +2158,11 @@ export class AppStore {
         head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_messages_order_idx ON conversation_messages(conversation_id,created_at,id);
+      CREATE TABLE IF NOT EXISTS conversation_followups (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        content TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS conversation_followups_order_idx ON conversation_followups(conversation_id,position);
       CREATE TABLE IF NOT EXISTS storage_cleanup_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL,

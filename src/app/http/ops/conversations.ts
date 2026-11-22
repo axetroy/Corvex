@@ -674,15 +674,37 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en"
       ? body.responseLanguage
       : undefined;
+    const delivery = body.delivery === "steer" || body.delivery === "queue" || body.delivery === "interrupt"
+      ? body.delivery
+      : undefined;
     if (!message.trim() || message.length > 20_000) {
       sendJson(reply, 400, { error: "message must be between 1 and 20000 characters" });
       return;
     }
     if (!ensureModelSelected(ctx, reply, user.id)) return;
     try {
+      const activeTurnId = ctx.conversations.activeTurnId(conversation.id);
+      // 显式排队：写入持久队列，当前轮结束后按 FIFO 用当时的分支快照执行。
+      if (delivery === "queue") {
+        const item = ctx.conversations.enqueueFollowUp(conversation.id, message);
+        sendJson(reply, 202, { conversationId: conversation.id, queueId: item.id, delivery: "queue" });
+        return;
+      }
+      // 立即打断：中止当前轮并等待落库，随后按普通路径用新的分支快照开一轮。
+      if (delivery === "interrupt") {
+        if (!activeTurnId || !await ctx.conversations.interruptForSend(conversation.id, activeTurnId)) {
+          sendJson(reply, 409, { error: "conversation turn is not running" });
+          return;
+        }
+        // 中断轮次结束时可能已经启动了排队消息；此时不抢跑，把新消息排到它后面。
+        if (ctx.conversations.activeTurnId(conversation.id)) {
+          const item = ctx.conversations.enqueueFollowUp(conversation.id, message);
+          sendJson(reply, 202, { conversationId: conversation.id, queueId: item.id, delivery: "queue" });
+          return;
+        }
+      }
       // 执行中的轮次优先按「插话」处理：补充消息进入当前轮，不新开轮次，也不需要
       // 再次访问 GitLab。轮次刚好结束时 interject 返回 unavailable，自动降级为下一轮。
-      const activeTurnId = ctx.conversations.activeTurnId(conversation.id);
       if (activeTurnId && await ctx.conversations.interject(activeTurnId, message) === "steer") {
         try {
           ctx.store.appendUserMessage(conversation.id, message);
@@ -715,5 +737,54 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         sendGitLabReadError(reply, error);
       }
     }
+  });
+
+  app.get("/api/ops/conversations/:id/followups", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    sendJson(reply, 200, { conversationId, items: ctx.conversations.listFollowUps(conversationId) });
+  });
+
+  app.delete("/api/ops/conversations/:id/followups/:itemId", async (request, reply) => {
+    const params = request.params as { id: string; itemId: string };
+    const conversationId = idParam(params.id);
+    const itemId = idParam(params.itemId);
+    if (!conversationId || !itemId) {
+      sendJson(reply, 400, { error: "invalid conversation ID or queue item ID" });
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    if (!ctx.conversations.removeFollowUp(conversationId, itemId)) {
+      sendJson(reply, 404, { error: "queued message not found" });
+      return;
+    }
+    sendJson(reply, 200, { conversationId, itemId, removed: true });
+  });
+
+  app.post("/api/ops/conversations/:id/followups/:itemId/move", async (request, reply) => {
+    const params = request.params as { id: string; itemId: string };
+    const conversationId = idParam(params.id);
+    const itemId = idParam(params.itemId);
+    if (!conversationId || !itemId) {
+      sendJson(reply, 400, { error: "invalid conversation ID or queue item ID" });
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    const body = readJsonObject(request, reply);
+    if (!body) return;
+    const direction = body.direction === "up" || body.direction === "down" ? body.direction : undefined;
+    if (!direction) {
+      sendJson(reply, 400, { error: "direction must be up or down" });
+      return;
+    }
+    if (!ctx.conversations.moveFollowUp(conversationId, itemId, direction)) {
+      sendJson(reply, 404, { error: "queued message cannot be moved" });
+      return;
+    }
+    sendJson(reply, 200, { conversationId, itemId, direction, moved: true });
   });
 }

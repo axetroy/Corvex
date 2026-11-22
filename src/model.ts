@@ -171,12 +171,23 @@ export interface ConversationStreamTool {
 
 export type ConversationStreamContext = { id: string; text: string };
 
+/** 排队等待下一轮执行的补充消息；顺序由 position 决定，不依赖创建时间。 */
+export interface ConversationFollowUp {
+  id: string;
+  conversationId: string;
+  content: string;
+  position: number;
+  createdAt: string;
+}
+
 export type ConversationStreamEvent =
   | { type: "text"; reset: boolean; text: string }
   | { type: "thinking"; reset: boolean; text: string }
   | { type: "tool"; tool: ConversationStreamTool }
   | { type: "context"; context: ConversationStreamContext }
   | { type: "interjection"; turnId: string }
+  /** 排队列表发生变化；只带数量，正文由详情接口按需拉取。 */
+  | { type: "queue"; count: number }
   | { type: "done"; status: ConversationTurnStatus; error?: string };
 
 /**

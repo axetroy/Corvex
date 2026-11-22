@@ -154,6 +154,10 @@ export class CorvexServer {
         context.errors.push(errorMessage(error));
         console.warn("conversation workspace cleanup failed", { error: errorMessage(error) });
       }
+      // 上次进程留下的排队补充消息没有在途轮次触发，启动时主动消费一次。
+      void this.conversations.resumeFollowUps().catch((error: unknown) => {
+        console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
+      });
     });
     // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
     this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
