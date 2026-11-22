@@ -116,12 +116,20 @@ function ConversationRoute(props: Omit<ComponentProps<typeof ConversationsPage>,
   return <ConversationsPage {...props} conversationId={id ?? ""} />;
 }
 
+interface AuthStatus {
+  authenticated: boolean;
+  oauthConfigured: boolean;
+  setupRequired: boolean;
+}
+
 /** Agent 控制台根组件：可折叠侧边栏、语言切换、自动刷新与路由分发。 */
 export function App() {
   const [localeMode, setLocaleMode] = useState<LocaleMode>(readLocaleMode);
   const [browserLanguages, setBrowserLanguages] = useState<string[]>(currentBrowserLanguages);
   const locale = localeMode === "system" ? resolveLocale(browserLanguages) : localeMode;
   const copy = locale === "zh-CN" ? zhCN : en;
+  // 路由守卫：受保护页面在确认登录状态前不渲染，避免闪一下工作台再跳登录。
+  const [authStatus, setAuthStatus] = useState<AuthStatus>();
   const [navigationCollapsed, setNavigationCollapsed] = useState<boolean>(() => readNavigationCollapsed());
   const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
   const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
@@ -130,6 +138,25 @@ export function App() {
   const navigate = useNavigate();
   const route = location.pathname.replace(/^\/+/, "");
   const pageKind = pageKindOf(location.pathname);
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/ops")) return;
+    let active = true;
+    fetch("/api/auth/status", { cache: "no-store" })
+      .then((response) => response.json() as Promise<AuthStatus>)
+      .then((status) => { if (active) setAuthStatus(status); })
+      .catch(() => {
+        // 检查失败按「需要登录」处理，让跳转登录兜底，而不是渲染受保护界面。
+        if (active) setAuthStatus({ authenticated: false, oauthConfigured: true, setupRequired: false });
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus && !authStatus.authenticated && !authStatus.setupRequired) {
+      window.location.assign("/auth/gitlab");
+    }
+  }, [authStatus]);
+
   // 页面与筛选条件都来自地址栏，刷新或分享链接后视图保持不变。
   // 首次安装时把控制台重定向到 /setup；服务端只让 API 返回 setupRequired。
   useEffect(() => {
@@ -270,6 +297,17 @@ export function App() {
     return (
       <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
         <LandingPage copy={copy} locale={locale} onLocaleChange={changeLocale} />
+      </ConfigProvider>
+    );
+  }
+
+  // 受保护页面：状态未知、需要登录或尚未完成安装时都不渲染工作台。
+  if (!authStatus || (!authStatus.authenticated && (!authStatus.setupRequired || route !== "setup"))) {
+    return (
+      <ConfigProvider locale={locale === "zh-CN" ? zhCNLocale : enUSLocale} csp={cspNonce ? { nonce: cspNonce } : undefined} theme={theme}>
+        <div style={{ display: "grid", minHeight: "100vh", placeItems: "center" }}>
+          <Loading>{copy.loading}</Loading>
+        </div>
       </ConfigProvider>
     );
   }

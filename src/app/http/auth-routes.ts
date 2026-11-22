@@ -69,6 +69,16 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AuthRoutesContext)
     sendJson(reply, 200, { loggedOut: true });
   });
 
+  /** 前端路由守卫用的轻量状态检查：始终 200，让界面在渲染受保护页面前判断是否需要登录。 */
+  app.get("/api/auth/status", async (request, reply) => {
+    const user = currentUser(request);
+    sendJson(reply, 200, {
+      authenticated: Boolean(user),
+      oauthConfigured: ctx.oauth.configured,
+      setupRequired: !ctx.oauth.configured,
+    });
+  });
+
   app.get("/api/auth/me", async (request, reply) => {
     const user = currentUser(request);
     if (!user) {

@@ -7,7 +7,7 @@ import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant
 import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, handleUnauthorized, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
@@ -462,6 +462,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
+      if (result.status === 401) {
+        handleUnauthorized(result, await result.clone().text());
+        throw new Error(copy.authRequired);
+      }
       if (!result.ok) {
         if (result.status === 409) {
           const body = await result.json() as { error?: unknown };
@@ -498,6 +502,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
+      if (result.status === 401) {
+        handleUnauthorized(result, await result.clone().text());
+        throw new Error(copy.authRequired);
+      }
       if (!result.ok) {
         throw new Error(copy.requestFailedTemplate
           .replace("{status}", String(result.status))
@@ -525,6 +533,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             cache: "no-store",
             signal: AbortSignal.timeout(20_000),
           });
+          if (result.status === 401) {
+            handleUnauthorized(result, await result.clone().text());
+            throw new Error(copy.authRequired);
+          }
           if (!result.ok) {
             throw new Error(copy.requestFailedTemplate
               .replace("{status}", String(result.status))

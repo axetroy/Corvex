@@ -3,7 +3,7 @@ import { Dropdown, Input, Modal, Spin, Tree, Typography } from "antd";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import type { TreeDataNode } from "antd";
-import { fetchJson } from "../api.js";
+import { fetchJson, handleUnauthorized } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import type { FileContentResult, FileListResult, FileSourceKind } from "../../files/source.js";
@@ -168,6 +168,10 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
         `/api/ops/conversations/${encodeURIComponent(conversationId)}/files?${query}`,
         { method: "DELETE", cache: "no-store" },
       );
+      if (response.status === 401) {
+        handleUnauthorized(response, await response.clone().text());
+        throw new Error(copy.authRequired);
+      }
       if (!response.ok) throw new Error((await response.text()).trim() || response.statusText);
       setOpenFiles((current) => current.filter((path) => !affected(path)));
       setActiveFile((current) => (affected(current) ? "" : current));

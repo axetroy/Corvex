@@ -2,6 +2,28 @@ import type { Copy } from "./i18n.js";
 
 /** 单次运维请求的超时时间；Server 卡住时页面不会永久停在加载态。 */
 const requestTimeoutMs = 20_000;
+/** 并发请求同时收到 401 时只跳转一次。 */
+let authRedirectPending = false;
+
+/**
+ * 接口返回 401 时把页面送到登录入口（尚未配置 OAuth 时去安装向导）。
+ * API 继续保持 401 JSON 语义：若改成 302，fetch 会自动跟随并拿到 HTML，调用方无法区分。
+ */
+export function handleUnauthorized(response: Response, body?: string): void {
+  if (response.status !== 401 || typeof window === "undefined" || authRedirectPending) return;
+  let setupRequired = false;
+  if (body) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      setupRequired = Boolean(parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).setupRequired);
+    } catch {
+      // 非 JSON 响应按普通登录失败处理。
+    }
+  }
+  if (setupRequired && window.location.hash === "#/setup") return;
+  authRedirectPending = true;
+  window.location.assign(setupRequired ? "/ops/#/setup" : "/auth/gitlab");
+}
 
 /** 从只读 Agent 控制台接口取 JSON；超时、网络失败与非 2xx 都会抛出可展示的错误。 */
 export async function fetchJson<T>(path: string, copy: Copy): Promise<T> {
@@ -39,6 +61,8 @@ async function requestJson<T>(
   }
   if (!response.ok) {
     const text = (await response.text()).trim();
+    handleUnauthorized(response, text);
+    if (response.status === 401) throw new Error(copy.authRequired);
     let message = text || response.statusText;
     // Agent 控制台接口以 {"error": "..."} 返回失败原因；优先展示该字段而不是原始 JSON。
     try {
