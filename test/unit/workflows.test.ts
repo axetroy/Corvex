@@ -13,6 +13,14 @@ describe("conversation prompt contracts", () => {
     expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("明确要求");
   });
 
+  it("keeps the conversation system prompt organized into readable sections", () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const prompt = getConversationSystemPrompt(language, "gitlab");
+      expect(prompt).toContain("\n## ");
+      expect(prompt.split("\n").length).toBeGreaterThan(10);
+    }
+  });
+
   it("titles a conversation from the first request and keeps the tool budget a soft checkpoint", () => {
     for (const language of ["en", "zh-CN"] as const) {
       const titlePrompt = getConversationTitleSystemPrompt(language);
