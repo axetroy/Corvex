@@ -1419,3 +1419,13 @@ details summary {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 桌面通知开启态与禁用态。 */
+.notification-toggle.is-enabled {
+  color: var(--primary);
+}
+
+.notification-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

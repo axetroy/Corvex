@@ -9,6 +9,7 @@ import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
+import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
@@ -238,6 +239,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   /** 离开底部一段距离后显示「滚动到底部」，避免刚打开对话就弹出按钮。 */
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [activeTurnNavId, setActiveTurnNavId] = useState("");
+  const { request: requestNotifications, notify: notifyTurn } = useTurnNotifications();
   // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
   const [modal, modalContextHolder] = Modal.useModal();
 
@@ -403,11 +405,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onThinking,
         onTool,
         onContext,
-        onDone: () => {
+        onDone: (status) => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;
           flush();
           setPollToken((value) => value + 1);
+          const userMessages = currentConversation?.messages ?? [];
+          const assistantIndex = userMessages.findIndex((item) => item.turnId === activeTurnId);
+          const request = assistantIndex > 0 ? userMessages[assistantIndex - 1]?.content ?? "" : "";
+          const summary = (request || currentConversation?.title || activeTurnId).replace(/\s+/g, " ").slice(0, 80);
+          notifyTurn({
+            conversationId: selectedConversationId,
+            turnId: activeTurnId,
+            title: copy.notificationTitle,
+            body: copy.notificationBodyTemplate
+              .replace("{status}", copy.statuses[status] ?? status)
+              .replace("{summary}", summary),
+          });
         },
       },
       controller.signal,
@@ -610,6 +624,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   function submitMessage(message: string) {
     if (message.trim()) {
+      // 发送是用户手势：首次发送时顺带申请通知权限，之后由侧边栏按钮控制开关。
+      void requestNotifications().catch(() => undefined);
       const next = appendInputHistory(inputHistory, message);
       setInputHistory(next);
       writeInputHistory(window.localStorage, historyKey, next);

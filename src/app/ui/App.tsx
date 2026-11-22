@@ -11,6 +11,7 @@ import { AdminConsole } from "./components/AdminConsole.js";
 import { SetupPage } from "./components/SetupPage.js";
 import { UserAvatar } from "./components/UserAvatar.js";
 import { ThemeToggle } from "./components/ThemeToggle.js";
+import { NotificationToggle } from "./components/NotificationToggle.js";
 import {
   ConversationsIcon,
   LanguageIcon,
@@ -354,6 +355,7 @@ export function App() {
               onChange={changeTheme}
               className="sidebar-theme"
             />
+            <NotificationToggle copy={copy} className="sidebar-notifications" />
             <button
               type="button"
               className="sidebar-toggle"

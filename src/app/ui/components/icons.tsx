@@ -17,6 +17,16 @@ function iconProps(props: SVGProps<SVGSVGElement>): SVGProps<SVGSVGElement> {
   };
 }
 
+/** 通知图标：铃铛，用于侧边栏桌面通知开关。 */
+export function BellIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M4 10.5V7a4 4 0 0 1 8 0v3.5l1.2 1.8H2.8L4 10.5Z" />
+      <path d="M6.5 13.2a1.6 1.6 0 0 0 3 0" />
+    </svg>
+  );
+}
+
 /** 仓库图标：书脊 + 封面，用于仓库选择器。 */
 export function RepositoryIcon(props: SVGProps<SVGSVGElement>) {
   return (
