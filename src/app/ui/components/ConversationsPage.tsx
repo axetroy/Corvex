@@ -1000,7 +1000,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                           aria-label={copy.conversationRepositoryInfo}
                           aria-expanded={repoInfoOpen}
                         >
-                          <Typography.Text strong className="conversation-workspace-project" ellipsis>
+                          <Typography.Text strong className="conversation-workspace-project" ellipsis title={currentConversation.projectName}>
                             {currentConversation.projectName}
                           </Typography.Text>
                         </button>
