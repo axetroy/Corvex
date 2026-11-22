@@ -97,8 +97,8 @@ jobs:
           for attempt in $(seq 1 90); do
             if curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null && \
               curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null && \
-              curl --fail --silent \
-                http://127.0.0.1:8080/api/ops/overview | grep -Eq '"online":true'; then
+              curl --fail --silent --user ci-ops:ci-smoke-password-with-32-chars \
+                http://127.0.0.1:8080/api/ops/overview | grep -Eq '"conversationCount":0'; then
               exit 0
             fi
             sleep 1
