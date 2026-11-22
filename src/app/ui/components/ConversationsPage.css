@@ -1180,6 +1180,7 @@
 }
 
 .conversation-git-toolbar-left,
+.conversation-git-toolbar-right,
 .conversation-git-actions {
   display: flex;
   flex-wrap: wrap;

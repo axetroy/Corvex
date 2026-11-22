@@ -41,6 +41,9 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [authors, setAuthors] = useState<string[]>([]);
   const [author, setAuthor] = useState("");
   const tableRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<HTMLDivElement>(null);
+  /** 滚动触发的分页只保留一个在途请求，避免连续滚动重复追加同一批提交。 */
+  const autoLoadingRef = useRef(false);
   const [rowMetrics, setRowMetrics] = useState<Array<{ top: number; height: number }>>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: GraphLaneNode } | null>(null);
   const [action, setAction] = useState<"pull" | "push" | "">("");
@@ -67,11 +70,26 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   }, [conversationId, copy, author]);
 
   useEffect(() => {
+    autoLoadingRef.current = false;
     setData(undefined);
     setExpanded("");
     setDetail(undefined);
     void load(0);
   }, [load]);
+
+  // 滚动到接近底部时自动加载下一页；仍保留「加载更多」按钮作为键盘/辅助操作入口。
+  useEffect(() => {
+    const element = graphRef.current;
+    if (!element || !data?.truncated) return;
+    const loadNextPage = () => {
+      if (autoLoadingRef.current || loading) return;
+      if (element.scrollHeight - element.scrollTop - element.clientHeight > 240) return;
+      autoLoadingRef.current = true;
+      void load(data.nodes.length).finally(() => { autoLoadingRef.current = false; });
+    };
+    element.addEventListener("scroll", loadNextPage, { passive: true });
+    return () => element.removeEventListener("scroll", loadNextPage);
+  }, [data, loading, load]);
 
   useEffect(() => {
     let active = true;
@@ -259,7 +277,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   ];
 
   return (
-    <div className="conversation-git-graph">
+    <div className="conversation-git-graph" ref={graphRef}>
       <>
       <div className="conversation-git-toolbar">
         <div className="conversation-git-toolbar-left">
@@ -277,25 +295,27 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
             </span>
           ) : null}
         </div>
-        <div className="conversation-git-actions">
-          <Button size="small" loading={action === "pull"} disabled={Boolean(action) || !data} onClick={() => void runAction("pull")}>
-            {copy.gitGraphPull}
-          </Button>
-          <Button size="small" loading={action === "push"} disabled={Boolean(action) || !data} onClick={() => void runAction("push")}>
-            {copy.gitGraphPush}
-          </Button>
+        <div className="conversation-git-toolbar-right">
+          <div className="conversation-git-actions">
+            <Button size="small" loading={action === "pull"} disabled={Boolean(action) || !data} onClick={() => void runAction("pull")}>
+              {copy.gitGraphPull}
+            </Button>
+            <Button size="small" loading={action === "push"} disabled={Boolean(action) || !data} onClick={() => void runAction("push")}>
+              {copy.gitGraphPush}
+            </Button>
+          </div>
+          <Select
+            className="conversation-git-author-filter"
+            allowClear
+            showSearch
+            size="small"
+            value={author || undefined}
+            placeholder={copy.gitGraphFilterAuthor}
+            aria-label={copy.gitGraphFilterAuthor}
+            onChange={(value) => setAuthor(value ?? "")}
+            options={authors.map((name) => ({ value: name, label: name }))}
+          />
         </div>
-        <Select
-          className="conversation-git-author-filter"
-          allowClear
-          showSearch
-          size="small"
-          value={author || undefined}
-          placeholder={copy.gitGraphFilterAuthor}
-          aria-label={copy.gitGraphFilterAuthor}
-          onChange={(value) => setAuthor(value ?? "")}
-          options={authors.map((name) => ({ value: name, label: name }))}
-        />
       </div>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {notice ? <Typography.Text type="success">{notice}</Typography.Text> : null}
