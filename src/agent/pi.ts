@@ -37,6 +37,7 @@ import {
   resolveTurnToolResultBytes,
 } from "./tool-budget.js";
 import { createWebReadExtension } from "./web-read.js";
+import { createWebSearchExtension } from "./web-search.js";
 
 /** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
 export const maxAgentPromptBytes = 96 << 10;
@@ -204,9 +205,12 @@ export interface ModelRequest {
 
 export function getAgentToolAccess(
   taskType: ModelTaskType,
-  config: Pick<CorvexConfig["agent"], "webEnabled">,
-): { webFetch: boolean } {
-  return { webFetch: taskType === "conversation" && config.webEnabled };
+  config: Pick<CorvexConfig["agent"], "webEnabled" | "webSearchEnabled">,
+): { webFetch: boolean; webSearch: boolean } {
+  return {
+    webFetch: taskType === "conversation" && config.webEnabled,
+    webSearch: taskType === "conversation" && config.webEnabled && config.webSearchEnabled,
+  };
 }
 
 export interface ModelUsage {
@@ -539,6 +543,13 @@ export class PiAgent {
         ),
         ...(toolAccess.webFetch
           ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
+          : []),
+        ...(toolAccess.webSearch
+          ? [createWebSearchExtension(
+              this.config.agent.webSearchMaxQueries,
+              this.config.agent.webBlockedHosts,
+              signal,
+            )]
           : []),
         ...(request.taskType === "conversation" ? [createPlanExtension()] : []),
         ...(request.taskType === "conversation" && request.fs

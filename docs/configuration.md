@@ -72,6 +72,8 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.max_output_tokens` | `4096` | 1–8192 | Maximum requested model output tokens. Each model stores its own value; this is the fallback. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
 | `agent.web_enabled` | `true` | Boolean | Enables the read-only `web_fetch` tool. Set to `false` to disable. |
+| `agent.web_search_enabled` | `true` | Boolean | Enables `web_search` via Tavily's free keyless mode. No API key is needed, but every query is sent to Tavily. |
+| `agent.web_search_max_queries` | `5` | Number | Maximum `web_search` calls per turn (1–50). |
 | `agent.web_blocked_hosts` | `[]` | Array of DNS hostnames (max 100) | Optional exact hostnames to block, including their subdomains. Private, reserved, and special-use IP ranges/hostnames are always blocked. |
 | `agent.skill_paths` | `[]` | Array of paths | Additional trusted Pi Skill directories. These paths are also permitted roots for the bounded read-only `read_file` tool. |
 | `agent.context_window` | `131072` | 1,024–10,000,000 | Total token window of the model. It drives prompt budgets and the SDK compaction threshold; it must match what the provider serves. Each model stores its own window; this is the fallback when no model is active. |
@@ -86,7 +88,7 @@ These context-budget keys are the primary defence against provider `context leng
 
 The daily budget conservatively reserves prompt bytes plus the configured maximum output tokens, then settles against provider usage. If a request result is uncertain, the reservation is retained. It is a token limit, not a price-based spending cap.
 
-Pi sessions do not expose built-in shell, edit, or write tools. Repository reads use bounded `read_file` and `git_grep`/`search_text` tools; mutations use the bounded `write_file`, `edit_file`, `delete_file`, `move_file` and `copy_file` tools, all confined to the conversation worktree. Worktree files are addressed with repository-relative paths; absolute paths are accepted only for trusted Skill roots. `web_fetch`, when enabled, can request HTTPS pages from public DNS hosts, revalidates redirects, rejects private/reserved IPs and configured blocked hosts, and treats page text as untrusted model input.
+Pi sessions do not expose built-in shell, edit, or write tools. Repository reads use bounded `read_file` and `git_grep`/`search_text` tools; mutations use the bounded `write_file`, `edit_file`, `delete_file`, `move_file` and `copy_file` tools, all confined to the conversation worktree. Worktree files are addressed with repository-relative paths; absolute paths are accepted only for trusted Skill roots. `web_fetch`, when enabled, can request HTTPS pages from public DNS hosts, revalidates redirects, rejects private/reserved IPs and configured blocked hosts, and treats page text as untrusted model input. `web_search`, also enabled by default, calls Tavily's keyless endpoint with an `X-Tavily-Access-Mode: keyless` header and no key; it returns capped titles, URLs and snippets, filters result links through the same URL validation, turns a 429 into a readable notice, and is limited to a configurable number of calls per turn. Keyless access is rate-limited and query text leaves the server, so disable it in the ops console when that is not acceptable.
 
 ## Runtime settings
 
@@ -110,6 +112,8 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `daily_token_budget` | 0–1,000,000,000 | UTC-day token budget; `0` disables it. |
 | `summary_enabled` | Boolean | Rolling summary for trimmed history. |
 | `web_enabled` | Boolean | Enable the read-only `web_fetch` tool. |
+| `web_search_enabled` | Boolean | Enable `web_search` (Tavily keyless, no API key; queries are sent to Tavily). |
+| `web_search_max_queries` | Number | Max `web_search` calls per turn (1–50). |
 | `web_blocked_hosts` | List of hostnames | Additional exact hosts to block (and their subdomains). |
 | `agent_request_timeout` | 1–3,600 seconds | Model request timeout; entered in seconds, stored in milliseconds. |
 | `agent_session_timeout` | 1–86,400 seconds | Full session timeout; entered in seconds, stored in milliseconds. |

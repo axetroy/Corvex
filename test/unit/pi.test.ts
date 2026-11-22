@@ -28,9 +28,10 @@ describe("PiAgent", () => {
     }
   });
 
-  it("limits the web tool to conversations", () => {
-    expect(getAgentToolAccess("conversation", { webEnabled: true })).toEqual({ webFetch: true });
-    expect(getAgentToolAccess("conversation", { webEnabled: false })).toEqual({ webFetch: false });
+  it("limits the web tools to conversations", () => {
+    expect(getAgentToolAccess("conversation", { webEnabled: true, webSearchEnabled: true })).toEqual({ webFetch: true, webSearch: true });
+    expect(getAgentToolAccess("conversation", { webEnabled: true, webSearchEnabled: false })).toEqual({ webFetch: true, webSearch: false });
+    expect(getAgentToolAccess("conversation", { webEnabled: false, webSearchEnabled: true })).toEqual({ webFetch: false, webSearch: false });
   });
 
   it("uses the Pi SDK and the configured OpenAI-compatible provider", async () => {
@@ -171,6 +172,8 @@ describe("PiAgent", () => {
         dailyTokenBudget: 0,
         webEnabled: true,
         webBlockedHosts: ["blocked.corp.dev"],
+        webSearchEnabled: true,
+        webSearchMaxQueries: 5,
         skillPaths: [],
         contextWindow: 131_072,
         maxInputTokens: 0,
@@ -247,6 +250,8 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain('"name":"read_file"');
     expect(requestBodies[0]).toContain('"name":"search_text"');
     expect(requestBodies[0]).toContain('"name":"web_fetch"');
+    expect(requestBodies[0]).toContain('"name":"web_search"');
+    expect(requestBodies[0]).toContain("Tavily's free keyless mode");
     expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
     const trajectory = store.getConversationTurn(event.conversationId, event.id)?.trajectory;
     expect(trajectory).toHaveLength(4);

@@ -73,6 +73,8 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.max_output_tokens` | `4096` | 1–8192 | 请求模型生成的最大输出 Token 数。每个模型各自保存；这里是回退值。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
 | `agent.web_enabled` | `true` | 布尔值 | 启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
+| `agent.web_search_enabled` | `true` | 布尔值 | 启用 Tavily 免费免 key 模式的 `web_search`；无需 API key，但查询会发送给 Tavily。 |
+| `agent.web_search_max_queries` | `5` | 数字 | 每轮最多调用 `web_search` 的次数（1–50）。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组（最多 100 个） | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 | `agent.skill_paths` | `[]` | 路径数组 | 额外的可信 Pi Skill 目录；这些路径也可作为只读文件工具的允许根目录。 |
 | `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。每个模型各自保存；这里是回退值。 |
@@ -87,7 +89,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 调用需要鉴权的服务商时，请在控制台的模型配置中保存 API Key。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算；请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
-Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本文件，每次最多返回 256 KiB，单行超过 4 KiB 时会截断标记；`git_grep` 在固定 HEAD 的已跟踪文件中做有界字面量搜索。字面量工具 `search_text` 跳过常见依赖/生成目录，并限制文件数、总字节与匹配数。仓库文件工具拒绝仓库文件的绝对路径，只有可信 Skill 根目录允许绝对路径。GitLab 与 Git 的写工具都绑定到当前对话，`git_rebase` / `git_cherry_pick` 需要干净工作区且冲突会自动中止：Git 写操作只能影响本地 worktree 与镜像，`git_push` 只写 `refs/conversations/<id>`；用户明确要求时，`git_publish` 会一步保存改动并把提交快进推到 GitLab 具名分支（仅快进、不强制、无需传递 SHA），`git_push_branch` 则是已知完整 SHA 时的底层变体；GitLab 写操作固定项目并要求用户明确意图。启用后，`web_fetch` 可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址与黑名单主机，拒绝非 HTML/纯文本响应，并限制单页字节数、文本字符数与每 Session 抓取页数；网页内容是不可信模型输入。当前不提供 MCP 扩展，也没有事件/审查/修复任务专属的工具集。
+Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本文件，每次最多返回 256 KiB，单行超过 4 KiB 时会截断标记；`git_grep` 在固定 HEAD 的已跟踪文件中做有界字面量搜索。字面量工具 `search_text` 跳过常见依赖/生成目录，并限制文件数、总字节与匹配数。仓库文件工具拒绝仓库文件的绝对路径，只有可信 Skill 根目录允许绝对路径。GitLab 与 Git 的写工具都绑定到当前对话，`git_rebase` / `git_cherry_pick` 需要干净工作区且冲突会自动中止：Git 写操作只能影响本地 worktree 与镜像，`git_push` 只写 `refs/conversations/<id>`；用户明确要求时，`git_publish` 会一步保存改动并把提交快进推到 GitLab 具名分支（仅快进、不强制、无需传递 SHA），`git_push_branch` 则是已知完整 SHA 时的底层变体；GitLab 写操作固定项目并要求用户明确意图。启用后，`web_fetch` 可通过 HTTPS 访问公网 DNS 主机及默认端口，会重新校验重定向，拒绝私网/保留地址与黑名单主机，拒绝非 HTML/纯文本响应，并限制单页字节数、文本字符数与每 Session 抓取页数；网页内容是不可信模型输入。`web_search` 默认同样启用，用 `X-Tavily-Access-Mode: keyless` 请求 Tavily，无需 key；返回限长的标题/链接/摘要，结果链接经过同样的 URL 校验，429 会转成可读提示，每轮调用次数可配置。免 key 额度有速率限制且查询会离开本机，不允许时可在运维台关闭。当前不提供 MCP 扩展，也没有事件/审查/修复任务专属的工具集。
 
 ## 运行时设置
 
@@ -97,7 +99,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`agent_request_timeout`、`agent_session_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 

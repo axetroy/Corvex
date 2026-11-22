@@ -67,6 +67,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // 工具开关与联网白名单
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },
+  { key: "web_search_enabled", section: "agent", field: "webSearchEnabled", type: "boolean" },
+  { key: "web_search_max_queries", section: "agent", field: "webSearchMaxQueries", type: "number", min: 1, max: 50 },
   // 运行时长：秒为界面单位，配置内部仍用毫秒。
   { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
   { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },

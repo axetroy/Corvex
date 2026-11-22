@@ -52,6 +52,10 @@ export interface CorvexConfig {
     dailyTokenBudget: number;
     webEnabled: boolean;
     webBlockedHosts: string[];
+    /** 是否注册 web_search 工具（Tavily 免 key 搜索）。 */
+    webSearchEnabled: boolean;
+    /** 每个对话轮次最多执行的搜索次数。 */
+    webSearchMaxQueries: number;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -98,6 +102,8 @@ const defaults: CorvexConfig = {
     dailyTokenBudget: 0,
     webEnabled: true,
     webBlockedHosts: [],
+    webSearchEnabled: true,
+    webSearchMaxQueries: 5,
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -238,6 +244,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       dailyTokenBudget: number(agent.daily_token_budget, defaults.agent.dailyTokenBudget),
       webEnabled: boolean(agent.web_enabled, defaults.agent.webEnabled),
       webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
+      webSearchEnabled: boolean(agent.web_search_enabled, defaults.agent.webSearchEnabled),
+      webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),
@@ -343,6 +351,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.agent.webBlockedHosts.some((host) => !validBlockedWebHost(host))) {
     problems.push("agent.web_blocked_hosts must contain DNS hostnames without wildcards, ports, or paths");
+  }
+  if (config.agent.webSearchMaxQueries < 1 || config.agent.webSearchMaxQueries > 50) {
+    problems.push("agent.web_search_max_queries must be between 1 and 50");
   }
   if (role !== "storage") {
     // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），

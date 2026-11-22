@@ -167,6 +167,8 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
       { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
+      { key: "web_search_enabled", kind: "boolean", labelKey: "settingsWebSearchEnabled", hintKey: "settingsWebSearchEnabledHint" },
+      { key: "web_search_max_queries", kind: "number", min: 1, max: 50, step: 1, labelKey: "settingsWebSearchMaxQueries", hintKey: "settingsWebSearchMaxQueriesHint" },
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
     ],
   },

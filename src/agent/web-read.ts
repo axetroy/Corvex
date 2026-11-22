@@ -192,7 +192,8 @@ function isSpecialUseHost(hostname: string): boolean {
   return blockedHostSuffixes.some((suffix) => hostname === suffix.slice(1) || hostname.endsWith(suffix));
 }
 
-function validateWebUrl(value: string, blockedHosts: ReadonlySet<string>): URL {
+/** 校验公网 HTTPS URL；供网页抓取与搜索结果链接复用同一套 SSRF 防护。 */
+export function validateWebUrl(value: string, blockedHosts: ReadonlySet<string>): URL {
   if (value.length > 2048) throw new Error("web page URL exceeds 2048 characters");
   let url: URL;
   try {

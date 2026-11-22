@@ -113,6 +113,11 @@ export function describeSessionTool(
         "{url}",
         typeof record?.url === "string" && record.url ? record.url : copy.traceUnknownPath,
       );
+    case "web_search":
+      return copy.traceToolSearchWebTemplate.replace(
+        "{query}",
+        typeof record?.query === "string" && record.query ? record.query : copy.traceUnknownPath,
+      );
     default:
       return copy.traceToolGenericTemplate.replace("{name}", (name || copy.traceName).replaceAll(/[_-]+/g, " "));
   }
