@@ -85,7 +85,8 @@ describe("AppStore", () => {
     expect(system.ownerUserId).toBe("");
     expect(mine.ownerUserId).toBe("user-1");
 
-    expect(store.listModelProvidersForUser("user-1").map((provider) => provider.id)).toEqual([system.id, mine.id]);
+    // 两条记录的 created_at 可能相同，顺序交由 SQL 决定；这里只验证集合与隔离性。
+    expect(store.listModelProvidersForUser("user-1").map((provider) => provider.id).sort()).toEqual([system.id, mine.id].sort());
     expect(store.listModelProvidersForUser("user-2").map((provider) => provider.id)).toEqual([system.id]);
     expect(store.getModelProvider(mine.id, "user-2")).toBeUndefined();
 

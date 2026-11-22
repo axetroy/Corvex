@@ -145,7 +145,8 @@ describe("Git workflows", () => {
     const patchFile = join(directory, "exported.patch");
     await writeFile(patchFile, patch, "utf8");
     await execFile("git", ["-C", target, "apply", patchFile]);
-    await expect(readFile(join(target, "b.txt"), "utf8")).resolves.toBe("added\n");
+    // Windows 上 core.autocrlf 可能把补丁中的 LF 检成 CRLF。
+    await expect(readFile(join(target, "b.txt"), "utf8").then((text) => text.replace(/\r\n/g, "\n"))).resolves.toBe("added\n");
   });
 
   it("checks out local branches and tracks origin branches", async () => {
@@ -475,6 +476,8 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "add", "theirs.txt"]);
     await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "theirs"]);
     await execFile("git", ["-C", workspacePath, "checkout", "-q", "master"]);
+    // Windows 的 CRLF 转换可能让刚检出的文件看起来有改动，rebase 要求干净工作区。
+    await execFile("git", ["-C", workspacePath, "reset", "--hard", "HEAD"]);
 
     const rebased = await manager.rebaseWorktree(workspace, "onto");
     expect(rebased.onto).toBe("onto");

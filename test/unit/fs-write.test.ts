@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,7 +18,8 @@ describe("worktree path guard", () => {
     await expect(resolveWorktreePath(root, "../escape")).rejects.toThrow("invalid repository-relative path");
     await expect(resolveWorktreePath(root, ".git/config")).rejects.toThrow(".git");
     const resolved = await resolveWorktreePath(root, "a.txt");
-    expect(resolved.target).toBe(join(root, "a.txt"));
+    // macOS 的 /var 与 Windows 的短路径都可能是符号链接，统一按 realpath 比较。
+    expect(resolved.target).toBe(await realpath(join(root, "a.txt")));
   });
 });
 

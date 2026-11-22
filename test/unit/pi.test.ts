@@ -72,7 +72,7 @@ describe("PiAgent", () => {
                       type: "function",
                       function: {
                         name: "read_file",
-                        arguments: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+                        arguments: JSON.stringify({ path: "../outside-missing.txt" }),
                       },
                     }],
                   },
@@ -266,10 +266,10 @@ describe("PiAgent", () => {
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "failed")).toMatchObject({
       name: "read_file",
       round: 1,
-      input: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+      input: JSON.stringify({ path: "../outside-missing.txt" }),
       schema: expect.stringContaining("path"),
       output: expect.stringContaining("repository-relative path"),
-      rawContent: JSON.stringify({ path: join(temporaryDirectory, "missing.txt") }),
+      rawContent: JSON.stringify({ path: "../outside-missing.txt" }),
       errorDetail: expect.stringContaining("repository-relative path"),
     });
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
