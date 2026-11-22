@@ -111,24 +111,15 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   }, [copy]);
 
   const fetchPatch = useCallback(async (sha: string) => {
-    return await fetchJson<CommitDetail>(
-      `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}`, copy,
+    return await fetchJson<{ patch: string; truncated: boolean }>(
+      `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}/patch`, copy,
     );
   }, [conversationId, copy]);
-
-  const copyPatch = useCallback(async (sha: string) => {
-    try {
-      const result = await fetchPatch(sha);
-      await copyValue(result.output);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }, [fetchPatch, copyValue]);
 
   const downloadPatch = useCallback(async (node: GraphLaneNode) => {
     try {
       const result = await fetchPatch(node.sha);
-      const blob = new Blob([result.output], { type: "text/x-patch;charset=utf-8" });
+      const blob = new Blob([result.patch], { type: "text/x-patch;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -167,7 +158,6 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     { key: "subject", label: copy.gitMenuCopySubject, onClick: () => void copyValue(node.subject) },
     { key: "author", label: copy.gitMenuCopyAuthor, onClick: () => void copyValue(node.author) },
     { type: "divider" as const },
-    { key: "patch", label: copy.gitMenuCopyPatch, onClick: () => void copyPatch(node.sha) },
     { key: "download", label: copy.gitMenuDownloadPatch, onClick: () => void downloadPatch(node) },
     { key: "detail", label: copy.gitMenuViewDetail, onClick: () => void toggleRow(node.sha) },
   ];

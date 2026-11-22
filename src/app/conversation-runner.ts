@@ -280,6 +280,10 @@ export class ConversationRunner {
     return this.repo.showCommitFromMirror(projectId, sha);
   }
 
+  formatCommitPatch(projectId: number, sha: string) {
+    return this.repo.formatPatchFromMirror(projectId, sha);
+  }
+
   pruneConversationChanges(validIds: ReadonlySet<string>) {
     return this.repo.pruneConversationChanges(validIds);
   }

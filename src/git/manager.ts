@@ -1186,6 +1186,30 @@ export class GitManager {
   /**
    * 从项目镜像读取单个提交的完整信息与补丁；与图谱同源，不依赖易被淘汰的 worktree。
    */
+  /**
+   * 把单个提交导出为标准 mbox 补丁（git format-patch），可直接被 git apply / git am 应用。
+   * 只从项目镜像读取，不修改 worktree 或 ref。
+   */
+  async formatPatchFromMirror(
+    projectId: number,
+    sha: string,
+    signal?: AbortSignal,
+  ): Promise<{ patch: string; truncated: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    if (!shaPattern.test(sha)) throw new Error("patch export requires a full commit SHA");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    const result = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "format-patch", "-1", "--stdout", "--no-signature", sha],
+      undefined,
+      1 << 20,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    return { patch: result.stdout.toString("utf8"), truncated: result.truncated };
+  }
+
   /** 列出镜像中所有提交作者（去重、有界），供控制台的图谱筛选使用。 */
   async listCommitAuthors(projectId: number, signal?: AbortSignal): Promise<string[]> {
     if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");

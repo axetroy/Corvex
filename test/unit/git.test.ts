@@ -106,6 +106,44 @@ describe("Git workflows", () => {
     expect(secondPage.offset).toBe(2);
   });
 
+  it("exports a patch that git apply can replay onto the parent", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    await writeFile(join(source, "b.txt"), "added\n");
+    await execFile("git", ["-C", source, "add", "b.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "add b"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+    const head = (await execFile("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    const parent = (await execFile("git", ["-C", source, "rev-parse", "HEAD~1"], { encoding: "utf8" })).stdout.trim();
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "3.git")]);
+
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const { patch, truncated } = await manager.formatPatchFromMirror(3, head);
+    expect(truncated).toBe(false);
+    expect(patch).toMatch(/^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001/m);
+
+    const target = join(directory, "apply");
+    await execFile("git", ["clone", "-q", source, target]);
+    await execFile("git", ["-C", target, "checkout", "-q", parent]);
+    const patchFile = join(directory, "exported.patch");
+    await writeFile(patchFile, patch, "utf8");
+    await execFile("git", ["-C", target, "apply", patchFile]);
+    await expect(readFile(join(target, "b.txt"), "utf8")).resolves.toBe("added\n");
+  });
+
   it("checks out local branches and tracks origin branches", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
     const root = join(directory, "storage");

@@ -360,6 +360,22 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
   });
 
+  app.get("/api/ops/conversations/:id/git/commit/:sha/patch", async (request, reply) => {
+    const params = request.params as { id: string; sha: string };
+    const conversationId = idParam(params.id);
+    if (!conversationId || !/^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$/.test(params.sha)) {
+      sendJson(reply, 400, { error: "invalid conversation ID or commit SHA" });
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    try {
+      sendJson(reply, 200, await ctx.conversations.formatCommitPatch(conversation.projectId, params.sha));
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
+    }
+  });
+
   app.get("/api/ops/conversations/:id/git/authors", async (request, reply) => {
     const conversationId = idParam((request.params as { id: string }).id);
     if (!conversationId) {
