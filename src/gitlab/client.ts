@@ -262,15 +262,6 @@ export interface MergeRequestDiscussionList {
   truncated: boolean;
 }
 
-export interface DiscussionPosition {
-  baseSha: string;
-  startSha: string;
-  headSha: string;
-  oldPath: string;
-  newPath: string;
-  newLine: number;
-}
-
 /** GitLab 写操作的最小回执，不包含响应正文。 */
 export interface GitLabWriteReceipt {
   /** GitLab 返回的 HTTP 状态码。 */
@@ -383,15 +374,6 @@ function optionalString(source: Record<string, unknown>, key: string, maxLength:
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > maxLength) return undefined;
   return trimmed;
-}
-
-function validDiscussionPath(value: string): boolean {
-  return (
-    value !== "" &&
-    !value.startsWith("/") &&
-    !value.includes("\\") &&
-    value.split("/").every((part) => part !== "" && part !== "." && part !== "..")
-  );
 }
 
 export class GitLabClient {
@@ -998,60 +980,6 @@ export class GitLabClient {
     return this.write(`/projects/${projectId}/issues/${issueIid}/notes`, new URLSearchParams({ body }), signal);
   }
 
-  async createDraftMergeRequest(
-    projectId: number,
-    input: { title: string; description: string; sourceBranch: string; targetBranch: string },
-    signal?: AbortSignal,
-  ): Promise<CreatedMergeRequest> {
-    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be a positive safe integer");
-    if (!input.title.trim() || [...input.title].length > MAX_MR_TITLE_CHARACTERS - 7) {
-      throw new Error("draft merge request title must contain 1-248 characters");
-    }
-    if ([...input.description].length > MAX_MR_DESCRIPTION_CHARACTERS) {
-      throw new Error(`merge request description must not exceed ${MAX_MR_DESCRIPTION_CHARACTERS} characters`);
-    }
-    for (const [label, branch] of [["source", input.sourceBranch], ["target", input.targetBranch]] as const) {
-      if (!branch.trim() || branch.length > 255 || branch.startsWith("-") || branch.includes("\0")) {
-        throw new Error(`merge request ${label} branch is invalid`);
-      }
-    }
-    const form = new URLSearchParams({
-      title: `Draft: ${input.title.trim()}`,
-      description: input.description,
-      source_branch: input.sourceBranch,
-      target_branch: input.targetBranch,
-    });
-    let response: Response;
-    try {
-      response = await this.request(`/projects/${projectId}/merge_requests`, this.writeToken, "POST", signal, form);
-    } catch (error) {
-      throw new GitLabWriteError(`GitLab merge request creation outcome is unknown: ${String(error)}`, error);
-    }
-    if (!response.ok) await this.throwResponseError(response);
-    const body = await this.successBody(response);
-    let result: unknown;
-    try {
-      result = JSON.parse(new TextDecoder().decode(body));
-    } catch (error) {
-      throw new Error(`decode created merge request response: ${String(error)}`, { cause: error });
-    }
-    if (
-      !isRecord(result) ||
-      !Number.isSafeInteger(result.iid) ||
-      typeof result.web_url !== "string" ||
-      result.source_branch !== input.sourceBranch ||
-      result.target_branch !== input.targetBranch
-    ) {
-      throw new Error("GitLab returned incomplete or mismatched created merge request metadata");
-    }
-    return {
-      iid: result.iid as number,
-      webUrl: result.web_url,
-      sourceBranch: input.sourceBranch,
-      targetBranch: input.targetBranch,
-    };
-  }
-
   async updateMergeRequest(
     projectId: number,
     mrIid: number,
@@ -1332,37 +1260,6 @@ export class GitLabClient {
       new URLSearchParams(),
       signal,
     );
-  }
-
-  async postDiscussion(
-    projectId: number,
-    mrIid: number,
-    body: string,
-    position: DiscussionPosition,
-    signal?: AbortSignal,
-  ): Promise<GitLabWriteReceipt> {
-    if (projectId <= 0 || mrIid <= 0) throw new Error("project ID and MR IID must be positive");
-    if (!fullSha(position.baseSha) || !fullSha(position.startSha) || !fullSha(position.headSha)) {
-      throw new Error("discussion position requires full base, start, and head SHAs");
-    }
-    if (
-      !validDiscussionPath(position.oldPath) ||
-      !validDiscussionPath(position.newPath) ||
-      position.newLine <= 0
-    ) {
-      throw new Error("discussion position has an invalid path or new line");
-    }
-    const form = new URLSearchParams({
-      body,
-      "position[position_type]": "text",
-      "position[base_sha]": position.baseSha,
-      "position[start_sha]": position.startSha,
-      "position[head_sha]": position.headSha,
-      "position[old_path]": position.oldPath,
-      "position[new_path]": position.newPath,
-      "position[new_line]": String(position.newLine),
-    });
-    return this.write(`/projects/${projectId}/merge_requests/${mrIid}/discussions`, form, signal);
   }
 
   private async getJson(path: string, signal?: AbortSignal): Promise<unknown> {

@@ -203,66 +203,6 @@ describe("GitLab write receipts", () => {
     }
   });
 
-  it("reads an Issue and creates a draft merge request with pinned branches", async () => {
-    const requests: string[] = [];
-    let submittedFields = new URLSearchParams();
-    const server = createServer((request, response) => {
-      requests.push(`${request.method} ${request.url}`);
-      if (request.method === "GET" && request.url === "/api/v4/projects/5/issues/9") {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ iid: 9, title: "Add labels", description: "Details", state: "opened" }));
-        return;
-      }
-      if (request.method === "GET" && request.url === "/api/v4/projects/5") {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ id: 5, http_url_to_repo: "https://gitlab.example.com/group/project.git", default_branch: "main" }));
-        return;
-      }
-      let body = "";
-      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-      request.on("end", () => {
-        submittedFields = new URLSearchParams(body);
-        response.writeHead(201, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          iid: 12,
-          web_url: "https://gitlab.example.com/group/project/-/merge_requests/12",
-          source_branch: "corvex/issue-9-event1",
-          target_branch: "main",
-        }));
-      });
-    });
-    const port = await listen(server);
-    try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
-      await expect(client.getIssue(5, 9)).resolves.toMatchObject({ title: "Add labels", state: "opened" });
-      await expect(client.getProject(5)).resolves.toMatchObject({ default_branch: "main" });
-      await expect(client.createDraftMergeRequest(5, {
-        title: "Implement issue #9",
-        description: "Implementation summary",
-        sourceBranch: "corvex/issue-9-event1",
-        targetBranch: "main",
-      })).resolves.toEqual({
-        iid: 12,
-        webUrl: "https://gitlab.example.com/group/project/-/merge_requests/12",
-        sourceBranch: "corvex/issue-9-event1",
-        targetBranch: "main",
-      });
-      expect(requests).toEqual([
-        "GET /api/v4/projects/5/issues/9",
-        "GET /api/v4/projects/5",
-        "POST /api/v4/projects/5/merge_requests",
-      ]);
-      expect([...submittedFields.entries()]).toEqual([
-        ["title", "Draft: Implement issue #9"],
-        ["description", "Implementation summary"],
-        ["source_branch", "corvex/issue-9-event1"],
-        ["target_branch", "main"],
-      ]);
-    } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    }
-  });
-
   it("posts notes to an Issue rather than a merge request", async () => {
     let requestUrl = "";
     const server = createServer((request, response) => {

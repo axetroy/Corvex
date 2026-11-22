@@ -154,9 +154,9 @@ export function LandingPage({ copy, locale, onLocaleChange }: Props) {
       <section className="landing-section landing-wrap">
         <div className="landing-stats" data-reveal>
           {[
-            { value: "3", label: copy.landingStat1 },
-            { value: "5", label: copy.landingStat2 },
-            { value: "30", label: copy.landingStat3 },
+            { value: "1", label: copy.landingStat1 },
+            { value: "6", label: copy.landingStat2 },
+            { value: "0", label: copy.landingStat3 },
             { value: "100", label: copy.landingStat4 },
           ].map((stat) => (
             <div className="landing-stat" key={stat.label}>

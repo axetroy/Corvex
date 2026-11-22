@@ -25,7 +25,6 @@ services:
     environment:
       CORVEX_GITLAB_TOKEN: ${CORVEX_GITLAB_TOKEN-}
       CORVEX_GITLAB_READ_TOKEN: ${CORVEX_GITLAB_READ_TOKEN-}
-      CORVEX_WEBHOOK_SECRET: ${CORVEX_WEBHOOK_SECRET-}
       CORVEX_STORAGE_ROOT: /data/corvex
       CORVEX_DATABASE: /data/corvex/state/corvex.db
     volumes:

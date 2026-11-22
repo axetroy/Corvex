@@ -94,7 +94,6 @@ describe("validateConfig", () => {
         JSON.stringify({
           gitlab: {
             base_url: "https://gitlab.example.com",
-            blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
           agent: { request_timeout: "45s", session_timeout: "20m" },
@@ -115,7 +114,6 @@ describe("validateConfig", () => {
       const base = {
         gitlab: {
           base_url: "https://gitlab.example.com",
-          blocked_user_ids: [],
         },
         storage: { root, database: join(root, "state.db") },
       };
@@ -212,7 +210,6 @@ describe("validateConfig", () => {
       await writeFile(
         configPath,
         JSON.stringify({
-          gitlab: { blocked_user_ids: [] },
           storage: { root, database: join(root, "state.db") },
         }),
       );
@@ -244,7 +241,6 @@ describe("validateConfig", () => {
         JSON.stringify({
           gitlab: {
             base_url: "https://gitlab.example.com",
-            blocked_user_ids: [],
           },
           storage: { root, database: join(root, "state.db") },
           agent: { model: "test-model" },
