@@ -258,7 +258,10 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => ({
     ...node,
     title: (
-      <span className="conversation-file-title" data-node-path={node.path}>
+      <span
+        className={`conversation-file-title${contextMenu?.node.path === node.path ? " is-context-target" : ""}`}
+        data-node-path={node.path}
+      >
         {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
         <span>{node.title}</span>
       </span>

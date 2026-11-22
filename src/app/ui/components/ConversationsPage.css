@@ -1836,6 +1836,15 @@
   min-width: 0;
 }
 
+/* 右键菜单打开时高亮当前节点，便于确认菜单归属。 */
+.conversation-file-tree .ant-tree-treenode:has(.conversation-file-title.is-context-target) {
+  background: var(--primary-soft);
+}
+
+.conversation-file-tree .conversation-file-title.is-context-target {
+  color: var(--conversation-brand);
+}
+
 .file-tree-icon {
   width: 15px;
   height: 15px;
