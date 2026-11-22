@@ -378,7 +378,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
         >
           <span
             className="conversation-file-context-anchor"
-            style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, width: 0, height: 0 }}
+            style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, width: 1, height: 1 }}
           />
         </Dropdown>
       ) : null}
