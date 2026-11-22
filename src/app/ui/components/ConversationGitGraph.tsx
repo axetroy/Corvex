@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Spin, Typography } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Spin, Table, Typography } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import type { GitGraphNode } from "../../../git/types.js";
-import { buildGitGraphLayout, graphLaneX, graphPadding, graphRowHeight } from "../gitGraph.js";
+import { buildGitGraphLayout, graphLaneX, type GraphLaneNode } from "../gitGraph.js";
 import { highlightCode } from "../codeHighlight.js";
 
 interface GraphResponse {
@@ -26,10 +27,8 @@ interface Props {
 }
 
 const pageSize = 100;
-/** 详情展开但还未测量高度时的估值，测量后会被真实高度替换。 */
-const estimatedDetailHeight = 220;
 
-/** 提交图谱：点击提交行就地展开详情；泳道节点与连线按各行实际高度重新定位。 */
+/** 提交图谱：左侧 SVG 泳道 + 右侧 Table 列对齐，点击行就地展开提交详情。 */
 export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [data, setData] = useState<GraphResponse>();
   const [loading, setLoading] = useState(false);
@@ -37,7 +36,8 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [expanded, setExpanded] = useState("");
   const [detail, setDetail] = useState<CommitDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailHeights, setDetailHeights] = useState<Record<string, number>>({});
+  const tableRef = useRef<HTMLDivElement>(null);
+  const [rowMetrics, setRowMetrics] = useState<Array<{ top: number; height: number }>>([]);
 
   const load = useCallback(async (offset: number) => {
     setLoading(true);
@@ -62,7 +62,6 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     setData(undefined);
     setExpanded("");
     setDetail(undefined);
-    setDetailHeights({});
     void load(0);
   }, [load]);
 
@@ -87,23 +86,76 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     }
   }, [expanded, conversationId, copy]);
 
+  // Table 的行高/展开由 antd 控制；读取真实 DOM 位置让泳道节点与连线严格对齐。
+  useEffect(() => {
+    const measure = () => {
+      const container = tableRef.current;
+      if (!container) return;
+      const top = container.getBoundingClientRect().top;
+      const metrics = [...container.querySelectorAll<HTMLElement>("tr.ant-table-row")].map((row) => {
+        const rect = row.getBoundingClientRect();
+        return { top: rect.top - top, height: rect.height };
+      });
+      setRowMetrics((current) => current.length === metrics.length && current.every((item, index) =>
+        item.top === metrics[index]?.top && item.height === metrics[index]?.height) ? current : metrics);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (tableRef.current) observer.observe(tableRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [data, expanded, detail]);
+
   const layout = useMemo(() => buildGitGraphLayout(data?.nodes ?? [], data?.pinnedSha), [data]);
+  const nodeY = (row: number) => {
+    const metric = rowMetrics[row];
+    return metric ? metric.top + metric.height / 2 : row * 34 + 17;
+  };
+  const svgHeight = rowMetrics.length
+    ? rowMetrics.at(-1)!.top + rowMetrics.at(-1)!.height + 12
+    : layout.nodes.length * 34 + 24;
 
-  // 每行顶部位置随上方可展开的详情高度变化；节点与连线都按这个偏移重算。
-  const rowTops = useMemo(() => {
-    const tops: number[] = [];
-    // 行列表没有内边距，节点圆心须与行中心重合，故从 0 开始累加。
-    let top = 0;
-    for (const node of layout.nodes) {
-      tops.push(top);
-      top += expanded === node.sha ? (detailHeights[node.sha] ?? estimatedDetailHeight + graphRowHeight) : graphRowHeight;
-    }
-    return tops;
-  }, [layout.nodes, expanded, detailHeights]);
-  const svgHeight = (rowTops.at(-1) ?? graphPadding) + graphRowHeight + graphPadding;
-  const nodeY = (row: number) => (rowTops[row] ?? 0) + graphRowHeight / 2;
-
-  const expandedNode = layout.nodes.find((node) => node.sha === expanded);
+  const columns: ColumnsType<GraphLaneNode> = [
+    {
+      title: copy.gitGraphCommit,
+      dataIndex: "subject",
+      key: "subject",
+      ellipsis: true,
+      render: (_value, node) => (
+        <span className="conversation-git-cell-title">
+          <span>{node.subject || node.sha.slice(0, 12)}</span>
+          {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
+        </span>
+      ),
+    },
+    {
+      title: copy.gitGraphDate,
+      dataIndex: "authoredAt",
+      key: "authoredAt",
+      width: 150,
+      sorter: (a, b) => a.authoredAt.localeCompare(b.authoredAt),
+      render: (value: string) => <span className="conversation-git-cell-muted">{value.slice(0, 16).replace("T", " ")}</span>,
+    },
+    {
+      title: copy.gitGraphAuthor,
+      dataIndex: "author",
+      key: "author",
+      width: 150,
+      ellipsis: true,
+      sorter: (a, b) => a.author.localeCompare(b.author),
+      render: (value: string) => <span className="conversation-git-cell-muted">{value}</span>,
+    },
+    {
+      title: copy.gitGraphHash,
+      dataIndex: "sha",
+      key: "sha",
+      width: 100,
+      render: (value: string) => <code className="conversation-git-cell-hash">{value.slice(0, 8)}</code>,
+    },
+  ];
 
   return (
     <div className="conversation-git-graph">
@@ -116,7 +168,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       {loading && !data ? <Spin size="small" /> : null}
       {data && data.nodes.length ? (
         <>
-          <div className="conversation-git-board">
+          <div className="conversation-git-board conversation-git-table-board">
             <svg className="conversation-git-lanes" width={layout.width} height={svgHeight} role="img" aria-label={copy.gitGraph}>
               {layout.edges.map((edge) => {
                 const target = layout.nodes.find((node) => node.sha === edge.to);
@@ -136,13 +188,13 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                   />
                 );
               })}
-              {layout.nodes.map((node) => {
+              {layout.nodes.map((node, row) => {
                 const color = node.isPinned ? "var(--primary)" : node.hasLocalRef ? "var(--success)" : "var(--text-secondary)";
                 return (
                   <circle
                     key={node.sha}
                     cx={graphLaneX(node.lane)}
-                    cy={nodeY(node.row)}
+                    cy={nodeY(row)}
                     r={node.isPinned ? 6 : 4.5}
                     fill={expanded === node.sha ? "var(--primary)" : color}
                     stroke="var(--bg-panel)"
@@ -151,47 +203,31 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 );
               })}
             </svg>
-            <div className="conversation-git-rows">
-              {layout.nodes.map((node) => (
-                <div key={node.sha} className="conversation-git-item">
-                  <button
-                    type="button"
-                    className={`conversation-git-row${expanded === node.sha ? " is-selected" : ""}${node.isPinned ? " is-pinned" : ""}`}
-                    onClick={() => void toggleRow(node.sha)}
-                    aria-expanded={expanded === node.sha}
-                  >
-                    <span className="conversation-git-row-main">
-                      <span className="conversation-git-row-subject">{node.subject || node.sha.slice(0, 12)}</span>
-                      {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
-                    </span>
-                    <span className="conversation-git-row-side">
-                      <span>{node.authoredAt.slice(0, 16).replace("T", " ")}</span>
-                      <span>{node.author}</span>
-                      <code>{node.sha.slice(0, 8)}</code>
-                    </span>
-                  </button>
-                  {expanded === node.sha ? (
-                    <div
-                      className="conversation-git-detail"
-                      ref={(element) => {
-                        if (!element) return;
-                        const observer = new ResizeObserver(() => {
-                          // 测量整个条目（含行、详情与间距），使下一行的偏移与页面完全一致。
-                          const item = element.parentElement;
-                          const height = (item ?? element).getBoundingClientRect().height;
-                          setDetailHeights((current) => current[node.sha] === height ? current : { ...current, [node.sha]: height });
-                        });
-                        observer.observe(element);
-                        return () => observer.disconnect();
-                      }}
-                    >
+            <div className="conversation-git-table" ref={tableRef}>
+              <Table<GraphLaneNode>
+                size="small"
+                rowKey="sha"
+                columns={columns}
+                dataSource={layout.nodes}
+                pagination={false}
+                tableLayout="fixed"
+                scroll={{ x: "max-content" }}
+                rowClassName={(node) => `conversation-git-table-row${node.isPinned ? " is-pinned" : ""}${expanded === node.sha ? " is-selected" : ""}`}
+                onRow={(node) => ({ onClick: () => void toggleRow(node.sha) })}
+                expandable={{
+                  columnWidth: 0,
+                  expandedRowKeys: expanded ? [expanded] : [],
+                  onExpandedRowsChange: () => undefined,
+                  expandIcon: () => null,
+                  expandedRowRender: (node) => (
+                    <div className="conversation-git-detail">
                       <div className="conversation-git-detail-head">
-                        <Typography.Text strong>{expandedNode?.subject || node.sha}</Typography.Text>
+                        <Typography.Text strong>{node.subject || node.sha.slice(0, 12)}</Typography.Text>
                         <span>{copy.gitGraphAuthor}: {node.author}</span>
                         <span>{copy.gitGraphDate}: {node.authoredAt}</span>
                         <code>{node.sha}</code>
                       </div>
-                      {detailLoading ? <Spin size="small" /> : detail && expandedNode?.sha === node.sha ? (
+                      {detailLoading ? <Spin size="small" /> : detail?.sha === node.sha ? (
                         <>
                           <div className="conversation-git-detail-parents">
                             {copy.gitGraphParents}: {node.parents.map((sha) => sha.slice(0, 8)).join(" · ") || copy.none}
@@ -202,9 +238,9 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                         </>
                       ) : null}
                     </div>
-                  ) : null}
-                </div>
-              ))}
+                  ),
+                }}
+              />
             </div>
           </div>
           {data.truncated ? (

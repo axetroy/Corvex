@@ -1021,46 +1021,58 @@
   flex: 0 0 auto;
 }
 
-.conversation-git-rows {
-  display: flex;
+.conversation-git-table {
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-}
-
-.conversation-git-item {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.conversation-git-row {
-  display: flex;
-  height: 34px;
-  min-width: 0;
-  flex: 0 0 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px;
   overflow: hidden;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
 }
 
-.conversation-git-row:hover {
+.conversation-git-table-board {
+  padding: 8px 6px;
+}
+
+.conversation-git-table .ant-table {
+  background: transparent;
+  font-size: 12px;
+}
+
+.conversation-git-table .ant-table-thead > tr > th:first-child,
+.conversation-git-table .ant-table-tbody > tr > td:first-child {
+  width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.conversation-git-table .ant-table-thead > tr > th {
+  padding: 6px 12px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--conversation-border);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.conversation-git-table .ant-table-tbody > tr > td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--conversation-border);
+}
+
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row {
+  cursor: pointer;
+}
+
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row:hover > td {
   background: var(--bg-hover);
 }
 
-.conversation-git-row.is-selected {
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row.is-selected > td {
   background: var(--primary-soft);
 }
 
-.conversation-git-row-main {
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row.is-pinned .conversation-git-cell-title > span:first-child {
+  color: var(--primary);
+}
+
+.conversation-git-cell-title {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -1068,17 +1080,22 @@
   overflow: hidden;
 }
 
-.conversation-git-row-subject {
+.conversation-git-cell-title > span:first-child {
   overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.conversation-git-row.is-pinned .conversation-git-row-subject {
-  color: var(--primary);
+.conversation-git-cell-muted {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.conversation-git-cell-hash {
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 
 .conversation-git-row-refs {
@@ -1088,22 +1105,6 @@
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.conversation-git-row-side {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 14px;
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.conversation-git-row-side code {
-  color: var(--text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
 }
 
 .conversation-git-detail {
