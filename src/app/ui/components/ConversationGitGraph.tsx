@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Spin, Table, Typography } from "antd";
+import { Button, Select, Spin, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -36,6 +36,8 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [expanded, setExpanded] = useState("");
   const [detail, setDetail] = useState<CommitDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
+  const [authors, setAuthors] = useState<string[]>([]);
+  const [author, setAuthor] = useState("");
   const tableRef = useRef<HTMLDivElement>(null);
   const [rowMetrics, setRowMetrics] = useState<Array<{ top: number; height: number }>>([]);
 
@@ -44,6 +46,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     setError("");
     try {
       const query = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+      if (author) query.set("author", author);
       const result = await fetchJson<GraphResponse>(
         `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/graph?${query}`, copy,
       );
@@ -56,7 +59,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [conversationId, copy]);
+  }, [conversationId, copy, author]);
 
   useEffect(() => {
     setData(undefined);
@@ -64,6 +67,18 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     setDetail(undefined);
     void load(0);
   }, [load]);
+
+  useEffect(() => {
+    let active = true;
+    fetchJson<{ authors: string[] }>(
+      `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/authors`, copy,
+    ).then((result) => {
+      if (active) setAuthors(result.authors ?? []);
+    }).catch(() => {
+      if (active) setAuthors([]);
+    });
+    return () => { active = false; };
+  }, [conversationId, copy]);
 
   const toggleRow = useCallback(async (sha: string) => {
     if (expanded === sha) {
@@ -159,10 +174,23 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
 
   return (
     <div className="conversation-git-graph">
-      <div className="conversation-git-legend">
-        <span><i className="dot is-pinned" />{copy.gitGraphPinned}</span>
-        <span><i className="dot is-local" />{copy.gitGraphLocalRef}</span>
-        <span><i className="dot is-branch" />{copy.gitGraphBranch}</span>
+      <div className="conversation-git-toolbar">
+        <div className="conversation-git-legend">
+          <span><i className="dot is-pinned" />{copy.gitGraphPinned}</span>
+          <span><i className="dot is-local" />{copy.gitGraphLocalRef}</span>
+          <span><i className="dot is-branch" />{copy.gitGraphBranch}</span>
+        </div>
+        <Select
+          className="conversation-git-author-filter"
+          allowClear
+          showSearch
+          size="small"
+          value={author || undefined}
+          placeholder={copy.gitGraphFilterAuthor}
+          aria-label={copy.gitGraphFilterAuthor}
+          onChange={(value) => setAuthor(value ?? "")}
+          options={authors.map((name) => ({ value: name, label: name }))}
+        />
       </div>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {loading && !data ? <Spin size="small" /> : null}

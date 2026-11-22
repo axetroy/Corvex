@@ -342,16 +342,34 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     if (!conversation) return;
     const limit = optionalInteger(queryParam(request.query, "limit"), 1, 300) ?? 100;
     const offset = optionalInteger(queryParam(request.query, "offset"), 0, 10_000) ?? 0;
-    if (limit === false || offset === false) {
-      sendJson(reply, 400, { error: "invalid graph range" });
+    const author = queryParam(request.query, "author") ?? "";
+    if (limit === false || offset === false || author.length > 200) {
+      sendJson(reply, 400, { error: "invalid graph range or author" });
       return;
     }
     try {
-      const graph = await ctx.conversations.getCommitGraph(conversation.projectId, { limit, offset });
+      const graph = await ctx.conversations.getCommitGraph(conversation.projectId, {
+        limit, offset, ...(author ? { author } : {}),
+      });
       sendJson(reply, 200, {
         ...graph,
         pinnedSha: ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "",
       });
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
+    }
+  });
+
+  app.get("/api/ops/conversations/:id/git/authors", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    try {
+      sendJson(reply, 200, { authors: await ctx.conversations.listCommitAuthors(conversation.projectId) });
     } catch (error) {
       sendJson(reply, 400, { error: errorMessage(error) });
     }

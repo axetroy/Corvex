@@ -34,6 +34,8 @@ export interface GitGraphNode {
 export interface GitGraphOptions {
   limit: number;
   offset?: number;
+  /** 按作者名过滤（GitLab 作者字段的子串匹配）。 */
+  author?: string;
 }
 
 export interface GitGraphResult {

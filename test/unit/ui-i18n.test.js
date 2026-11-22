@@ -58,6 +58,7 @@ describe("operations UI locale", () => {
     expect(en.gitGraphPinned).toBe("Pinned revision");
     expect(zhCN.gitGraphLocalRef).toBe("会话本地改动");
     expect(en.gitGraphCommit).toBe("Commit");
+    expect(zhCN.gitGraphFilterAuthor).toBe("按作者筛选");
     expect(zhCN.fileMenuCopyPath).toBe("复制路径");
     expect(en.fileMenuDelete).toBe("Delete");
     expect(zhCN.scrollToBottom).toBe("滚动到最新");

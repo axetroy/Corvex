@@ -1027,6 +1027,9 @@ export class GitManager {
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
       throw new Error("graph offset must be between 0 and 10000");
     }
+    if (options.author !== undefined && (options.author.length > 200 || options.author.includes("\0"))) {
+      throw new Error("invalid author filter");
+    }
     const mirror = join(this.mirrorRoot, `${projectId}.git`);
     if (!(await this.pathExists(mirror))) return { nodes: [], truncated: false, offset };
 
@@ -1052,6 +1055,7 @@ export class GitManager {
       this.mirrorRoot,
       [
         "--git-dir", mirror, "rev-list", "--parents", "--topo-order", "--date-order", "--all",
+        ...(options.author ? [`--author=${options.author}`] : []),
         `--max-count=${options.limit + 1}`, `--skip=${offset}`,
       ],
       undefined,
@@ -1145,6 +1149,28 @@ export class GitManager {
   /**
    * 从项目镜像读取单个提交的完整信息与补丁；与图谱同源，不依赖易被淘汰的 worktree。
    */
+  /** 列出镜像中所有提交作者（去重、有界），供控制台的图谱筛选使用。 */
+  async listCommitAuthors(projectId: number, signal?: AbortSignal): Promise<string[]> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) return [];
+    const result = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "log", "--all", "--format=%an"],
+      undefined,
+      1 << 20,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    const authors = new Set<string>();
+    for (const name of result.stdout.toString("utf8").split("\n")) {
+      const trimmed = name.trim().slice(0, 200);
+      if (trimmed) authors.add(trimmed);
+      if (authors.size >= 200) break;
+    }
+    return [...authors].sort((a, b) => a.localeCompare(b));
+  }
+
   async showCommitFromMirror(
     projectId: number,
     sha: string,

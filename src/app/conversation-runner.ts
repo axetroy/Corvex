@@ -267,8 +267,12 @@ export class ConversationRunner {
     await this.repo.saveConversationChangesById(projectId, conversationId, expectedSha);
   }
 
-  getCommitGraph(projectId: number, options: { limit: number; offset?: number }) {
+  getCommitGraph(projectId: number, options: { limit: number; offset?: number; author?: string }) {
     return this.repo.getCommitGraph(projectId, options);
+  }
+
+  listCommitAuthors(projectId: number) {
+    return this.repo.listCommitAuthors(projectId);
   }
 
   showCommitFromMirror(projectId: number, sha: string) {
