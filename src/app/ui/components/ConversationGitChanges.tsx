@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Button, Select, Spin, Typography } from "antd";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
-import { highlightCode } from "../codeHighlight.js";
+
+// Monaco 体积较大：只在真正展开某个文件的 diff 时加载。
+const DiffViewer = lazy(() => import("./DiffViewer.js").then((module) => ({ default: module.DiffViewer })));
 
 interface FileChange {
   path: string;
@@ -125,7 +127,9 @@ export function ConversationGitChanges({ conversationId, copy }: Props) {
               </summary>
               <div className="conversation-git-file-body">
                 {file.patch ? (
-                  <pre dangerouslySetInnerHTML={{ __html: highlightCode(file.patch, "diff") }} />
+                  <Suspense fallback={<Typography.Text type="secondary">{copy.gitChangesDiffLoading}</Typography.Text>}>
+                    <DiffViewer path={file.path} patch={file.patch} />
+                  </Suspense>
                 ) : (
                   <Typography.Text type="secondary">{copy.gitChangesNoPatch}</Typography.Text>
                 )}

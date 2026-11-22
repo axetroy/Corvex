@@ -1154,6 +1154,13 @@
   line-height: 1.6;
 }
 
+.conversation-diff-viewer {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .conversation-git-toolbar {
   display: flex;
   flex-wrap: wrap;
