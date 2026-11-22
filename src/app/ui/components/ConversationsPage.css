@@ -1094,12 +1094,6 @@
   padding: 12px 8px 24px;
 }
 
-.conversation-git-view-switch {
-  display: flex;
-  justify-content: flex-start;
-  margin-bottom: 10px;
-}
-
 .conversation-git-changes-toolbar {
   display: flex;
   flex-wrap: wrap;

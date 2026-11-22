@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Button, Dropdown, Segmented, Select, Spin, Table, Typography } from "antd";
+import { Button, Dropdown, Select, Spin, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -7,7 +7,6 @@ import type { Copy } from "../i18n.js";
 import type { GitGraphNode } from "../../../git/types.js";
 import { buildGitGraphLayout, graphLaneX, type GraphLaneNode } from "../gitGraph.js";
 import { highlightCode } from "../codeHighlight.js";
-import { ConversationGitChanges } from "./ConversationGitChanges.js";
 
 interface GraphResponse {
   nodes: GitGraphNode[];
@@ -46,7 +45,6 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: GraphLaneNode } | null>(null);
   const [action, setAction] = useState<"pull" | "push" | "">("");
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"commits" | "changes">("commits");
 
   const load = useCallback(async (offset: number) => {
     setLoading(true);
@@ -262,18 +260,6 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
 
   return (
     <div className="conversation-git-graph">
-      <div className="conversation-git-view-switch">
-        <Segmented
-          size="small"
-          value={view}
-          onChange={(value) => setView(value as "commits" | "changes")}
-          options={[
-            { value: "commits", label: copy.gitGraphTabCommits },
-            { value: "changes", label: copy.gitGraphTabChanges },
-          ]}
-        />
-      </div>
-      {view === "commits" ? (
       <>
       <div className="conversation-git-toolbar">
         <div className="conversation-git-toolbar-left">
@@ -415,9 +401,6 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
         <Typography.Text type="secondary">{copy.gitGraphEmpty}</Typography.Text>
       ) : null}
       </>
-      ) : (
-        <ConversationGitChanges conversationId={conversationId} copy={copy} />
-      )}
       {contextMenu ? (
         <Dropdown
           open
