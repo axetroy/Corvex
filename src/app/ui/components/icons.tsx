@@ -157,6 +157,15 @@ export function FileIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 中止图标：方块，用于停止正在执行的对话轮次。 */
+export function StopIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** 滚动到底部图标：向下的箭头，用于聊天记录的「回到最新」按钮。 */
 export function ScrollBottomIcon(props: SVGProps<SVGSVGElement>) {
   return (

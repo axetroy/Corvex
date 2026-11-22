@@ -24,7 +24,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
@@ -191,6 +191,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [pollToken, setPollToken] = useState(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [showCreate, setShowCreate] = useState(!conversationId);
   const [project, setProject] = useState<ProjectOption>();
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -617,7 +618,37 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const commandSuggestions = commandQuery === null
     ? []
     : conversationCommands.filter((command) => command.startsWith(commandQuery));
-  const canReply = Boolean(currentConversation && !hasActiveTurn && !pendingReplyConversations.has(selectedConversationId));
+  const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
+
+  async function cancelActiveTurn() {
+    const turnId = activeTurnId ?? pendingReplyTurns.current.get(selectedConversationId);
+    if (!turnId || !currentConversation) {
+      setError(copy.cancelTurnUnavailable);
+      return;
+    }
+    setCancelling(true);
+    setError("");
+    try {
+      await sendJson(
+        `/api/ops/conversations/${encodeURIComponent(currentConversation.id)}/turns/${encodeURIComponent(turnId)}/cancel`,
+        {}, copy, "POST",
+      );
+      pendingReplyTurns.current.delete(currentConversation.id);
+      setPendingReplyConversations((current) => {
+        const next = new Set(current);
+        next.delete(currentConversation.id);
+        return next;
+      });
+      setPollToken((value) => value + 1);
+      onRefresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  const canReply = Boolean(currentConversation && !isTurnActive);
   // 输入框在任何时候都可编辑（繁忙时除外），只有发送按钮要求仓库/分支与内容齐备。
   const canSend = !busy && (showCreate
     ? Boolean(project && selectedBranch && draftMessage.trim())
@@ -1069,12 +1100,24 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
                       onSubmit={submitMessage}
                       footer={<ComposerModelPicker copy={copy} disabled={busy} />}
-                      suffix={(_node, { components: { SendButton } }) => (
+                      suffix={(_node, { components: { SendButton } }) => (isTurnActive ? (
+                        <button
+                          type="button"
+                          className="conversation-stop-button"
+                          aria-label={cancelling ? copy.cancelTurning : copy.cancelTurn}
+                          title={cancelling ? copy.cancelTurning : copy.cancelTurn}
+                          disabled={cancelling}
+                          onClick={() => void cancelActiveTurn()}
+                        >
+                          <StopIcon />
+                          <span>{cancelling ? copy.cancelTurning : copy.cancelTurn}</span>
+                        </button>
+                      ) : (
                         <SendButton
                           aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage}
                           disabled={!canSend}
                         />
-                      )}
+                      ))}
                     />
                     </div>
                   </div>

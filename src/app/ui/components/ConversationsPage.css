@@ -1330,6 +1330,29 @@
 /* 输入框：与正文列对齐，不贴边。Ant Design 运行时样式的选择器带三个类名，
    这里用四个类名覆盖宽度、边框与圆角，否则会退回默认的 100% 宽。 */
 /* 输入框与快捷操作一起锚定在底部，面板本身不再绝对定位。 */
+.conversation-stop-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  color: var(--danger);
+  background: var(--bg-panel);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.conversation-stop-button:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.conversation-stop-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .conversation-composer-area {
   position: absolute;
   z-index: 3;
