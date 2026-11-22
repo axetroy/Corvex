@@ -53,6 +53,8 @@ describe("operations UI locale", () => {
     expect(zhCN.authRequired).toBe("需要认证，正在跳转到登录…");
     expect(en.cancelTurn).toBe("Stop");
     expect(zhCN.cancelTurning).toBe("中止中…");
+    expect(en.conversationTabGit).toBe("Git");
+    expect(zhCN.gitGraphEmpty).toBe("暂无可展示的提交。");
     expect(zhCN.fileMenuCopyPath).toBe("复制路径");
     expect(en.fileMenuDelete).toBe("Delete");
     expect(zhCN.scrollToBottom).toBe("滚动到最新");

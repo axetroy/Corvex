@@ -331,6 +331,32 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
   });
 
+  // 提交图谱：只读当前会话项目的镜像，不暴露任意项目 ID。
+  app.get("/api/ops/conversations/:id/git/graph", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const limit = optionalInteger(queryParam(request.query, "limit"), 1, 300) ?? 100;
+    const offset = optionalInteger(queryParam(request.query, "offset"), 0, 10_000) ?? 0;
+    if (limit === false || offset === false) {
+      sendJson(reply, 400, { error: "invalid graph range" });
+      return;
+    }
+    try {
+      const graph = await ctx.conversations.getCommitGraph(conversation.projectId, { limit, offset });
+      sendJson(reply, 200, {
+        ...graph,
+        pinnedSha: ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "",
+      });
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
+    }
+  });
+
   // 本地改动保存在项目 mirror 的 ref 中，SQLite 不存文件内容。
   app.get("/api/ops/conversations/:id/changes", async (request, reply) => {
     const conversationId = idParam((request.params as { id: string }).id);

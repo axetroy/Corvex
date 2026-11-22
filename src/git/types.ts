@@ -20,3 +20,26 @@ export interface Workspace {
   path: string;
   headSha: string;
 }
+
+/** 提交图谱中的一个节点：父提交用于连线，refs 用于标出分支与会话改动。 */
+export interface GitGraphNode {
+  sha: string;
+  parents: string[];
+  subject: string;
+  author: string;
+  authoredAt: string;
+  refs: string[];
+}
+
+export interface GitGraphOptions {
+  limit: number;
+  offset?: number;
+}
+
+export interface GitGraphResult {
+  nodes: GitGraphNode[];
+  /** 是否还有更早的提交可以分页拉取。 */
+  truncated: boolean;
+  /** 本次返回之前已跳过的提交数，便于界面显示与继续翻页。 */
+  offset: number;
+}

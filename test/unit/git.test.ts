@@ -64,6 +64,48 @@ describe("Git workflows", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("reads a bounded commit graph from the project mirror", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "origin.git");
+    const source = join(directory, "source");
+    await mkdir(root, { recursive: true });
+    await execFile("git", ["init", "-q", "--bare", bare]);
+    await mkdir(source);
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    await execFile("git", ["-C", source, "checkout", "-q", "-b", "feature"]);
+    await writeFile(join(source, "b.txt"), "feature\n");
+    await execFile("git", ["-C", source, "add", "b.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "feature"]);
+    await execFile("git", ["-C", source, "checkout", "-q", "master"]);
+    await execFile("git", ["-C", source, "commit", "-q", "--allow-empty", "-m", "main"]);
+    await execFile("git", ["-C", source, "merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "-q", "origin", "--all"]);
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "9.git")]);
+
+    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const graph = await manager.getCommitGraph(9, { limit: 10 });
+    expect(graph.nodes).toHaveLength(4);
+    expect(graph.truncated).toBe(false);
+    const merge = graph.nodes.find((item) => item.subject === "merge");
+    expect(merge?.parents).toHaveLength(2);
+    expect(graph.nodes.some((item) => item.refs.some((ref) => ref.includes("feature")))).toBe(true);
+
+    const firstPage = await manager.getCommitGraph(9, { limit: 2 });
+    expect(firstPage.nodes).toHaveLength(2);
+    expect(firstPage.truncated).toBe(true);
+    const secondPage = await manager.getCommitGraph(9, { limit: 2, offset: 2 });
+    expect(secondPage.nodes).toHaveLength(2);
+    expect(secondPage.offset).toBe(2);
+  });
+
   it("manages local branches, merges and reverts in a bound worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-"));
     const root = join(directory, "storage");

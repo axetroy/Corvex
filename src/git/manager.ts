@@ -4,7 +4,7 @@ import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DiffEngine } from "./diff.js";
-import type { DiffResult, Workspace } from "./types.js";
+import type { DiffResult, GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
 
 /** 单条 Git 命令允许捕获的标准输出上限。 */
 const maxOutput = 16 << 20;
@@ -1008,6 +1008,95 @@ export class GitManager {
       });
     }
     return { commits, truncated: result.truncated };
+  }
+
+  /**
+   * 从项目镜像读取提交图谱：拓扑顺序 + 父提交 + 分支 ref。
+   * 只做查询，不修改 worktree 或 ref；分页由 offset 控制并由 limit+1 探测是否还有更多。
+   */
+  async getCommitGraph(
+    projectId: number,
+    options: GitGraphOptions,
+    signal?: AbortSignal,
+  ): Promise<GitGraphResult> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 300) {
+      throw new Error("graph limit must be between 1 and 300");
+    }
+    const offset = options.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+      throw new Error("graph offset must be between 0 and 10000");
+    }
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) return { nodes: [], truncated: false, offset };
+
+    const refsResult = await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads", "refs/remotes", "refs/conversations"],
+      undefined,
+      1 << 20,
+      signal,
+      { timeoutMs: 10_000 },
+    );
+    const refsBySha = new Map<string, string[]>();
+    for (const line of refsResult.stdout.toString("utf8").split("\n")) {
+      if (!line) continue;
+      const [name, sha] = line.split("\0");
+      if (!name || !sha || !shaPattern.test(sha)) continue;
+      const names = refsBySha.get(sha) ?? [];
+      names.push(name);
+      refsBySha.set(sha, names);
+    }
+
+    const revResult = await this.run(
+      this.mirrorRoot,
+      [
+        "--git-dir", mirror, "rev-list", "--parents", "--topo-order", "--date-order", "--all",
+        `--max-count=${options.limit + 1}`, `--skip=${offset}`,
+      ],
+      undefined,
+      1 << 20,
+      signal,
+      { timeoutMs: 10_000 },
+    );
+    const lines = revResult.stdout.toString("utf8").split("\n").filter(Boolean);
+    const truncated = lines.length > options.limit;
+    const rows = lines.slice(0, options.limit);
+    const shas = rows.map((line) => line.split(" ")[0]!).filter((sha) => shaPattern.test(sha));
+    const details = new Map<string, { subject: string; author: string; authoredAt: string }>();
+    if (shas.length) {
+      const detailResult = await this.run(
+        this.mirrorRoot,
+        ["--git-dir", mirror, "log", "--no-walk", "--format=%H%x00%an%x00%aI%x00%s%x00", ...shas],
+        undefined,
+        1 << 20,
+        signal,
+        { timeoutMs: 10_000 },
+      );
+      for (const record of detailResult.stdout.toString("utf8").split("\n")) {
+        if (!record) continue;
+        const [sha, author, authoredAt, subject] = record.split("\0");
+        if (!sha || !shaPattern.test(sha)) continue;
+        details.set(sha, {
+          author: (author ?? "").slice(0, 256),
+          authoredAt: (authoredAt ?? "").slice(0, 64),
+          subject: (subject ?? "").slice(0, 512),
+        });
+      }
+    }
+    const nodes: GitGraphNode[] = rows.map((line) => {
+      const [sha, ...parents] = line.split(" ").filter(Boolean);
+      const detail = details.get(sha!) ?? { subject: "", author: "", authoredAt: "" };
+      return {
+        sha: sha!,
+        parents: parents.filter((parent) => shaPattern.test(parent)),
+        subject: detail.subject,
+        author: detail.author,
+        authoredAt: detail.authoredAt,
+        refs: refsBySha.get(sha!) ?? [],
+      };
+    });
+    return { nodes, truncated, offset };
   }
 
   async showCommit(

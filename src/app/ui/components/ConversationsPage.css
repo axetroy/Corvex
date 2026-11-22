@@ -978,6 +978,58 @@
   white-space: pre-wrap;
 }
 
+.conversation-git-graph {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px 4px 24px;
+}
+
+.conversation-git-graph-canvas {
+  overflow-x: auto;
+}
+
+.conversation-git-node {
+  cursor: pointer;
+}
+
+.conversation-git-node:hover circle,
+.conversation-git-node.is-selected circle {
+  stroke: var(--primary);
+  stroke-width: 2;
+}
+
+.conversation-git-subject {
+  fill: var(--text);
+  font-size: 12px;
+}
+
+.conversation-git-meta,
+.conversation-git-refs {
+  font-size: 10px;
+}
+
+.conversation-git-meta {
+  fill: var(--text-muted);
+}
+
+.conversation-git-refs {
+  fill: var(--purple);
+}
+
+.conversation-git-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .conversation-message-markdown {
   position: relative;
   min-width: 0;

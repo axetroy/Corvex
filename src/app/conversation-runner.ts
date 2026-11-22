@@ -267,6 +267,10 @@ export class ConversationRunner {
     await this.repo.saveConversationChangesById(projectId, conversationId, expectedSha);
   }
 
+  getCommitGraph(projectId: number, options: { limit: number; offset?: number }) {
+    return this.repo.getCommitGraph(projectId, options);
+  }
+
   pruneConversationChanges(validIds: ReadonlySet<string>) {
     return this.repo.pruneConversationChanges(validIds);
   }
