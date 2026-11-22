@@ -28,6 +28,7 @@ import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
+import { ConversationGitChanges } from "./ConversationGitChanges.js";
 import { ConversationTurnNav } from "./ConversationTurnNav.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
@@ -43,7 +44,7 @@ interface Props {
 }
 
 /** 对话详情右侧的标签：对话流、调用记录、轮次轨迹与用量统计。 */
-type ConversationDetailTab = "chat" | "records" | "trace" | "stats" | "git";
+type ConversationDetailTab = "chat" | "records" | "trace" | "stats" | "changes" | "git";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
@@ -1280,6 +1281,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       refreshToken={refreshToken}
                       onUpdated={onUpdated}
                     />
+                  </div>
+                ),
+              },
+              {
+                key: "changes",
+                label: copy.conversationTabChanges,
+                children: (
+                  <div className="conversation-tab-pane">
+                    {selectedConversationId ? <ConversationGitChanges conversationId={selectedConversationId} copy={copy} /> : null}
                   </div>
                 ),
               },
