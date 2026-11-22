@@ -10,7 +10,7 @@ import { traceExecutionStep } from "../execution.js";
 import { conversationWorkspaceName, GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
-import { PiAgent, type TraceContext } from "../agent/pi.js";
+import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } from "../agent/pi.js";
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
@@ -26,6 +26,8 @@ interface CachedConversationWorkspace {
 interface RunningTurn {
   controller: AbortController;
   conversationId: string;
+  /** 本轮的插话通道；轮次终结时关闭，缓冲中的补充消息不再投递。 */
+  steer: SteerChannel;
 }
 
 /**
@@ -96,7 +98,8 @@ export class ConversationRunner {
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
-    this.running.set(turnId, { controller, conversationId: turn.conversationId });
+    const steer = createSteerChannel();
+    this.running.set(turnId, { controller, conversationId: turn.conversationId, steer });
     try {
       const language = responseLanguage ?? this.config.agent.responseLanguage;
       await callAsyncHook(this.hooks.conversationBeforeTurn, turn);
@@ -109,9 +112,10 @@ export class ConversationRunner {
         applyActiveModel(config, active);
         agent = new PiAgent(config, this.store, this.repo, gitlab ?? this.gitlab, this.hooks);
       }
-      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language, agent);
+      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language, agent, steer);
       await callAsyncHook(this.hooks.conversationAfterTurn, turn);
     } finally {
+      steer.close();
       this.running.delete(turnId);
       signal.removeEventListener("abort", abort);
       // 兜底：正常路径已在落库后推送 done；提前 return 的分支（快照过期）由这里收尾。
@@ -482,6 +486,27 @@ export class ConversationRunner {
     return false;
   }
 
+  /** 当前正在执行的轮次 ID；排队但未领取的轮次不算，因为没有可插话的会话。 */
+  activeTurnId(conversationId: string): string | undefined {
+    for (const [turnId, running] of this.running) {
+      if (running.conversationId === conversationId) return turnId;
+    }
+    return undefined;
+  }
+
+  /**
+   * 把用户在执行期间的补充消息送进当前轮次。会话未就绪的消息由通道缓冲；
+   * 轮次已结束时返回 unavailable，由调用方降级为普通的下一轮。
+   */
+  async interject(turnId: string, text: string): Promise<"steer" | "unavailable"> {
+    const running = this.running.get(turnId);
+    if (!running) return "unavailable";
+    const disposition = await running.steer.send(text);
+    if (disposition === "unavailable") return "unavailable";
+    this.publishStream(turnId, { type: "interjection", turnId });
+    return "steer";
+  }
+
   /**
    * 维护跨轮滚动摘要：把「上一份摘要 + 本轮被裁剪掉的历史」压缩成新摘要并持久化。
    *
@@ -620,6 +645,7 @@ export class ConversationRunner {
     gitlab: GitLabClient,
     language: ResponseLanguage,
     agent: PiAgent,
+    steer: SteerChannel,
   ): Promise<void> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(turn.headSha)) {
       this.store.failConversationTurn(turn.turnId, "stale", "The branch did not have a valid commit snapshot.");
@@ -728,6 +754,7 @@ export class ConversationRunner {
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
+              steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
                 ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal) }

@@ -86,6 +86,57 @@ function seedHistoryMessages(
       });
 }
 
+export type SteerDisposition = "handled" | "queued" | "buffered" | "unavailable";
+
+/**
+ * 轮次内插话通道：会话句柄只在 runSession 内部存在，Runner 通过它把用户的补充
+ * 消息送进当前会话，而不必直接接触 Pi SDK 的 session。
+ */
+export interface SteerChannel {
+  /** 会话就绪后绑定投递函数；可重复绑定（上下文超限会在新会话里重试）。 */
+  bind(steer: (text: string) => Promise<"handled" | "queued">): void;
+  /** 投递一条插话；会话未就绪时缓冲，轮次已结束时返回 unavailable。 */
+  send(text: string): Promise<SteerDisposition>;
+  /** 轮次终结时关闭，丢弃尚未投递的缓冲。 */
+  close(): void;
+}
+
+/** 创建一个与模型会话生命周期解耦的插话通道。 */
+export function createSteerChannel(): SteerChannel {
+  let deliver: ((text: string) => Promise<"handled" | "queued">) | undefined;
+  let closed = false;
+  const buffered: string[] = [];
+  return {
+    bind(steer) {
+      if (closed) return;
+      deliver = steer;
+      const pending = buffered.splice(0);
+      for (const text of pending) {
+        void steer(text).catch((error: unknown) => {
+          console.warn("buffered steer could not be delivered", { error: errorMessage(error) });
+        });
+      }
+    },
+    async send(text) {
+      if (closed) return "unavailable";
+      if (!deliver) {
+        buffered.push(text);
+        return "buffered";
+      }
+      try {
+        return await deliver(text);
+      } catch {
+        return "unavailable";
+      }
+    },
+    close() {
+      closed = true;
+      deliver = undefined;
+      buffered.length = 0;
+    },
+  };
+}
+
 export interface ModelRequest {
   taskType: ModelTaskType;
   systemPrompt: string;
@@ -132,6 +183,11 @@ export interface ModelRequest {
   conversationProjectId?: number;
   /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
   gitTools?: GitToolAdapter;
+  /**
+   * 轮次内插话通道；由 Runner 创建，PiAgent 在会话就绪后绑定。仅对话轮次提供，
+   * 其余任务省略即可。
+   */
+  steer?: SteerChannel;
 }
 
 export function getAgentToolAccess(
@@ -549,6 +605,12 @@ export class PiAgent {
       sessionManager: SessionManager.inMemory(),
       noTools: request.noTools ? "all" : "builtin",
     });
+    // 插话在会话就绪后才可投递：一次边界把积压的补充消息一起交给模型，避免
+    // 逐条拆散到多次模型调用里，让用户误以为补充只被看见一半。
+    if (request.steer) {
+      session.setSteeringMode("all");
+      request.steer.bind((text) => session.steer(text));
+    }
     // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
     // SDK 的压缩切点也才能在正确的轮次边界上工作。
     for (const message of seedHistoryMessages(request.history ?? [], providerId, this.config.agent.model)) {

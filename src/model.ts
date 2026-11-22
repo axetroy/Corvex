@@ -176,6 +176,7 @@ export type ConversationStreamEvent =
   | { type: "thinking"; reset: boolean; text: string }
   | { type: "tool"; tool: ConversationStreamTool }
   | { type: "context"; context: ConversationStreamContext }
+  | { type: "interjection"; turnId: string }
   | { type: "done"; status: ConversationTurnStatus; error?: string };
 
 /**

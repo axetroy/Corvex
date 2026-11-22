@@ -261,6 +261,34 @@ describe("AppStore", () => {
     }).turnId).toBeTruthy();
   });
 
+  it("appends a user interjection to a running turn without creating a new turn", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    store.claimConversationTurn(created.turnId);
+    store.appendUserMessage(created.conversationId, "  Also keep the tests.  ");
+    const conversation = store.getConversation(created.conversationId);
+    expect(conversation?.messages).toHaveLength(3);
+    expect(conversation?.messages[2]).toMatchObject({
+      role: "user",
+      content: "Also keep the tests.",
+      status: "completed",
+      turnId: null,
+      headSha: "a".repeat(40),
+    });
+    expect(conversation?.messages[1]).toMatchObject({ role: "assistant", status: "running" });
+    expect(store.getConversationTurn(created.conversationId, created.turnId)?.request).toBe("First turn");
+    expect(() => store.appendUserMessage(created.conversationId, "  ")).toThrow("between 1 and 20000");
+    store.finishConversationTurn(created.turnId, "Done", "test-model");
+    expect(() => store.appendUserMessage(created.conversationId, "After the turn")).toThrow("no active turn");
+  });
+
   it("stores a model-generated conversation title once and ignores later writes", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

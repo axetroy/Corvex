@@ -83,6 +83,8 @@ export interface ConversationStreamHandlers {
   onTool?: (tool: ConversationStreamTool) => void;
   /** 上下文压缩/裁剪通知；同一 id 的后续事件替换前面的提示。 */
   onContext?: (context: ConversationStreamContext) => void;
+  /** 用户在执行期间追加了补充消息；详情刷新后即可看到该用户气泡。 */
+  onInterjection?: (turnId: string) => void;
   /** 轮次结束；服务端保证只发送一次。 */
   onDone: (status: ConversationTurnStatus, error?: string) => void;
 }
@@ -128,6 +130,8 @@ export async function streamConversationTurn(
           handlers.onTool?.(event.tool);
         } else if (event.type === "context") {
           handlers.onContext?.(event.context);
+        } else if (event.type === "interjection") {
+          handlers.onInterjection?.(event.turnId);
         } else {
           handlers.onDone(event.status, event.error);
           await reader.cancel().catch(() => undefined);

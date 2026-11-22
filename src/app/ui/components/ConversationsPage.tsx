@@ -26,7 +26,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, InterjectIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
@@ -405,6 +405,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onThinking,
         onTool,
         onContext,
+        onInterjection: () => setPollToken((value) => value + 1),
         onDone: (status) => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;
@@ -487,7 +488,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   async function sendReply(message: string) {
-    if (!currentConversation || !message.trim() || hasActiveTurn || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
+    if (!currentConversation || !message.trim() || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
     const replyConversationId = currentConversation.id;
     replySubmitting.current = true;
     setBusy(true);
@@ -516,7 +517,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           .replace("{status}", String(result.status))
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
-      const queued = await result.json() as { turnId: string };
+      const queued = await result.json() as { turnId: string; delivery?: "steer" | "queued" };
+      if (queued.delivery === "steer") {
+        // 插话复用正在运行的轮次：没有新的 turnId，也不能进入 pendingReplyTurns。
+        if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
+        setPollToken((value) => value + 1);
+        onRefresh();
+        return;
+      }
       pendingReplyTurns.current.set(replyConversationId, queued.turnId);
       setPendingReplyConversations((current) => new Set(current).add(replyConversationId));
       if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
@@ -731,7 +739,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   // 输入框在任何时候都可编辑（繁忙时除外），只有发送按钮要求仓库/分支与内容齐备。
   const canSend = !busy && (showCreate
     ? Boolean(project && selectedBranch && draftMessage.trim())
-    : Boolean(canReply && draftMessage.trim()));
+    // 轮次执行中也可发送：服务端会把消息作为插话送进当前轮次。
+    : Boolean(currentConversation && draftMessage.trim() && !pendingReplyConversations.has(currentConversation.id)));
 
   // 面板的展开/收起交给 react-resizable-panels，自带键盘操作与尺寸约束。
   function toggleListPanel() {
@@ -1232,17 +1241,30 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       onSubmit={submitMessage}
                       footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (isTurnActive ? (
-                        <button
-                          type="button"
-                          className="conversation-stop-button"
-                          aria-label={cancelling ? copy.cancelTurning : copy.cancelTurn}
-                          title={cancelling ? copy.cancelTurning : copy.cancelTurn}
-                          disabled={cancelling}
-                          onClick={() => void cancelActiveTurn()}
-                        >
-                          <StopIcon />
-                          <span>{cancelling ? copy.cancelTurning : copy.cancelTurn}</span>
-                        </button>
+                        <div className="conversation-active-actions">
+                          <button
+                            type="button"
+                            className="conversation-interject-button"
+                            aria-label={copy.interject}
+                            title={copy.interjectHint}
+                            disabled={!canSend}
+                            onClick={() => submitMessage(draftMessage)}
+                          >
+                            <InterjectIcon />
+                            <span>{copy.interject}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="conversation-stop-button"
+                            aria-label={cancelling ? copy.cancelTurning : copy.cancelTurn}
+                            title={cancelling ? copy.cancelTurning : copy.cancelTurn}
+                            disabled={cancelling}
+                            onClick={() => void cancelActiveTurn()}
+                          >
+                            <StopIcon />
+                            <span>{cancelling ? copy.cancelTurning : copy.cancelTurn}</span>
+                          </button>
+                        </div>
                       ) : (
                         <SendButton
                           aria-label={showCreate ? copy.createConversationLabel : copy.sendMessage}

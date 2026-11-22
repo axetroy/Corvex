@@ -152,6 +152,17 @@ export function StopIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 插话图标：向右的箭头加一条短横线，表示把补充信息送进正在执行的轮次。 */
+export function InterjectIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M2.5 8h8.5" />
+      <path d="M8 5.5 10.8 8 8 10.5" />
+      <path d="M13 3.5v9" />
+    </svg>
+  );
+}
+
 /** 滚动到底部图标：向下的箭头，用于聊天记录的「回到最新」按钮。 */
 export function ScrollBottomIcon(props: SVGProps<SVGSVGElement>) {
   return (

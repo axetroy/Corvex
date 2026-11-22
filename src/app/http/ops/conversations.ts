@@ -680,6 +680,22 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     if (!ensureModelSelected(ctx, reply, user.id)) return;
     try {
+      // 执行中的轮次优先按「插话」处理：补充消息进入当前轮，不新开轮次，也不需要
+      // 再次访问 GitLab。轮次刚好结束时 interject 返回 unavailable，自动降级为下一轮。
+      const activeTurnId = ctx.conversations.activeTurnId(conversation.id);
+      if (activeTurnId && await ctx.conversations.interject(activeTurnId, message) === "steer") {
+        try {
+          ctx.store.appendUserMessage(conversation.id, message);
+          sendJson(reply, 202, {
+            conversationId: conversation.id,
+            turnId: activeTurnId,
+            delivery: "steer",
+          });
+          return;
+        } catch {
+          // 投递成功后轮次已结束：降级为普通下一轮，避免用户补充丢失。
+        }
+      }
       const gitlab = ctx.gitlabForRequest(request);
       const headSha = (await gitlab.getBranch(conversation.projectId, conversation.targetBranch)).commit.id;
       const queued = ctx.store.addConversationMessage(conversation.id, {
@@ -691,7 +707,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
       });
       ctx.startConversationTurn(queued.turnId, gitlab, responseLanguage);
-      sendJson(reply, 202, { conversationId: conversation.id, turnId: queued.turnId });
+      sendJson(reply, 202, { conversationId: conversation.id, turnId: queued.turnId, delivery: "queued" });
     } catch (error) {
       if (error instanceof Error && error.message.includes("active turn")) {
         sendJson(reply, 409, { error: error.message });

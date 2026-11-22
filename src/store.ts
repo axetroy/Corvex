@@ -939,6 +939,27 @@ export class AppStore {
     });
   }
 
+  /** 在运行中的轮次里追加一条用户补充消息；不创建新轮次，避免打断已固定的快照。 */
+  appendUserMessage(conversationId: string, content: string): void {
+    const request = content.trim();
+    if (!request || request.length > 20_000) throw new Error("conversation message must be between 1 and 20000 characters");
+    const exists = this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId);
+    if (!exists) throw new Error(`conversation "${conversationId}" not found`);
+    this.transaction(() => {
+      const active = this.db.prepare(
+        "SELECT head_sha FROM conversation_turns WHERE conversation_id=? AND role='assistant' AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",
+      ).get(conversationId) as { head_sha: string } | undefined;
+      if (!active) throw new Error("conversation has no active turn");
+      const now = new Date().toISOString();
+      this.db.prepare(
+        `INSERT INTO conversation_messages
+           (id,conversation_id,role,content,status,turn_id,head_sha,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(randomUUID(), conversationId, "user", request, "completed", null, active.head_sha, now, now);
+      this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
+    });
+  }
+
   /** 领取指定的排队轮次并置为运行中，同时累加尝试次数；不可领取时返回 undefined。 */
   claimConversationTurn(turnId: string): ConversationTurnContext | undefined {
     return this.transaction(() => {

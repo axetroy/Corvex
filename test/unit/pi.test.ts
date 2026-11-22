@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
-import { getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
+import { createSteerChannel, getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
 import { AppStore } from "../../src/store.js";
 import type { ConversationStreamTool } from "../../src/model.js";
 
@@ -659,5 +659,94 @@ describe("PiAgent", () => {
     ).rejects.toThrow("maximum context length");
     // 超限会去掉历史重试一次，因此服务端应收到两次请求。
     expect(requestCount).toBe(2);
+  }, 10_000);
+
+  it("delivers a steered follow-up into the running turn", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-steer-"));
+    const requestBodies: string[] = [];
+    let requestCount = 0;
+    let markFirstRequest = () => {};
+    const firstRequest = new Promise<void>((resolve) => { markFirstRequest = resolve; });
+    server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        const index = requestCount++;
+        requestBodies[index] = body;
+        const frame = (delta: object, finish: string | null, usage?: object) =>
+          `data: ${JSON.stringify({
+            id: "chatcmpl-steer",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "test-model",
+            choices: [{ index: 0, delta, finish_reason: finish }],
+            ...(usage ? { usage } : {}),
+          })}\n\n`;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        if (index === 0) {
+          response.write(frame({
+            role: "assistant",
+            tool_calls: [{
+              index: 0,
+              id: "call-steer-read",
+              type: "function",
+              function: { name: "read_file", arguments: JSON.stringify({ path: "README.md" }) },
+            }],
+          }, "tool_calls"));
+          response.write(frame({}, null, { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 }));
+          response.end("data: [DONE]\n\n");
+          markFirstRequest();
+          return;
+        }
+        response.write(frame({ role: "assistant", content: "Done." }, null));
+        response.write(frame({}, "stop", { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22 }));
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+    const config = {
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        blockedUserIds: [], botUsername: "",
+      },
+      storage: {
+        root: temporaryDirectory,
+        database: join(temporaryDirectory, "state.db"),
+        retentionDays: 90,
+        auditRetentionDays: 365,
+      },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        providerName: "Acme Models", apiKey: "test-key", requestTimeout: 2000, sessionTimeout: 10000,
+        maxOutputTokens: 4096, dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [],
+        skillPaths: [], contextWindow: 131_072, maxInputTokens: 0, historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20, compactionReserveTokens: 16_384, compactionKeepRecentTokens: 20_000,
+        summaryEnabled: false,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    } satisfies CorvexConfig;
+    await writeFile(join(temporaryDirectory, "README.md"), "repository content");
+    store = await AppStore.open(":memory:");
+    const steer = createSteerChannel();
+    const running = new PiAgent(config, store).generate(
+      { taskType: "conversation", systemPrompt: "Be concise.", userPrompt: "Original task", steer },
+      temporaryDirectory,
+    );
+    await firstRequest;
+    const disposition = await steer.send("Extra detail: use the other approach.");
+    expect(disposition === "queued" || disposition === "handled").toBe(true);
+    expect((await running).content).toBe("Done.");
+    expect(requestCount).toBe(2);
+    expect(requestBodies[1]).toContain("Extra detail: use the other approach.");
   }, 10_000);
 });
