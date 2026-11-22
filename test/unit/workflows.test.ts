@@ -18,6 +18,8 @@ describe("conversation prompt contracts", () => {
       const prompt = getConversationSystemPrompt(language, "gitlab");
       expect(prompt).toContain("\n## ");
       expect(prompt.split("\n").length).toBeGreaterThan(10);
+      expect(prompt.startsWith("\n")).toBe(false);
+      expect(prompt.endsWith("\n")).toBe(false);
     }
   });
 
