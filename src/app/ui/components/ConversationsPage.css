@@ -1206,6 +1206,20 @@
   flex: 0 0 180px;
 }
 
+/* 加载更多：居中按钮，两侧用横线分隔，明确表示列表到此为止。 */
+.conversation-git-load-more {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 8px;
+}
+
+.conversation-git-load-more-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .conversation-git-legend {
   display: flex;
   flex-wrap: wrap;

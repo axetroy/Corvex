@@ -30,6 +30,17 @@ interface Props {
 
 const pageSize = 100;
 
+/** 找到真正会滚动的容器：图谱本身高度随内容撑开，滚动发生在外层面板。 */
+function findScrollContainer(element: HTMLElement): HTMLElement {
+  let current: HTMLElement | null = element;
+  while (current) {
+    const overflow = getComputedStyle(current).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && current.scrollHeight > current.clientHeight + 4) return current;
+    current = current.parentElement;
+  }
+  return element;
+}
+
 /** 提交图谱：左侧 SVG 泳道 + 右侧 Table 列对齐，点击行就地展开提交详情。 */
 export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [data, setData] = useState<GraphResponse>();
@@ -79,16 +90,17 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
 
   // 滚动到接近底部时自动加载下一页；仍保留「加载更多」按钮作为键盘/辅助操作入口。
   useEffect(() => {
-    const element = graphRef.current;
-    if (!element || !data?.truncated) return;
+    const graph = graphRef.current;
+    if (!graph || !data?.truncated) return;
+    const scroller = findScrollContainer(graph);
     const loadNextPage = () => {
       if (autoLoadingRef.current || loading) return;
-      if (element.scrollHeight - element.scrollTop - element.clientHeight > 240) return;
+      if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 240) return;
       autoLoadingRef.current = true;
       void load(data.nodes.length).finally(() => { autoLoadingRef.current = false; });
     };
-    element.addEventListener("scroll", loadNextPage, { passive: true });
-    return () => element.removeEventListener("scroll", loadNextPage);
+    scroller.addEventListener("scroll", loadNextPage, { passive: true });
+    return () => scroller.removeEventListener("scroll", loadNextPage);
   }, [data, loading, load]);
 
   useEffect(() => {
@@ -412,9 +424,13 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
             </div>
           </div>
           {data.truncated ? (
-            <Button size="small" type="link" loading={loading} onClick={() => void load(data.offset + data.nodes.length)}>
-              {copy.gitGraphLoadMore}
-            </Button>
+            <div className="conversation-git-load-more">
+              <span className="conversation-git-load-more-line" />
+              <Button size="small" type="link" loading={loading} onClick={() => void load(data.offset + data.nodes.length)}>
+                {copy.gitGraphLoadMore}
+              </Button>
+              <span className="conversation-git-load-more-line" />
+            </div>
           ) : null}
         </>
       ) : !loading ? (
