@@ -834,12 +834,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     };
   });
 
-  const turnNavItems = transcriptMessages.flatMap((message, index) => message.role === "user" ? [{
-    id: message.id,
-    index: index + 1,
-    summary: message.content.trim().replace(/\s+/g, " ").slice(0, 120) || copy.none,
-    createdAt: message.createdAt,
-  }] : []);
+  let userTurnNumber = 0;
+  const turnNavItems = transcriptMessages.flatMap((message) => {
+    if (message.role !== "user") return [];
+    userTurnNumber += 1;
+    return [{
+      id: message.id,
+      index: userTurnNumber,
+      summary: message.content.trim().replace(/\s+/g, " ").slice(0, 120) || copy.none,
+      createdAt: message.createdAt,
+    }];
+  });
 
   function handleTranscriptScroll() {
     const pane = transcriptPaneRef.current;
