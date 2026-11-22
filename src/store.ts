@@ -1422,6 +1422,7 @@ export class AppStore {
         this.db.prepare(`DELETE FROM execution_steps WHERE turn_id IN (${placeholders})`).run(...turnIds);
       }
       this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_followups WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_turns WHERE conversation_id=?").run(conversationId);
       return this.db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId).changes === 1;
     });

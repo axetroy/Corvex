@@ -99,6 +99,8 @@ export interface SteerChannel {
   send(text: string): Promise<SteerDisposition>;
   /** 轮次终结时关闭，丢弃尚未投递的缓冲。 */
   close(): void;
+  /** 已投递的文本；上下文超限重试时重新注入新会话，避免补充丢失。 */
+  delivered(): readonly string[];
 }
 
 /** 创建一个与模型会话生命周期解耦的插话通道。 */
@@ -106,13 +108,18 @@ export function createSteerChannel(): SteerChannel {
   let deliver: ((text: string) => Promise<"handled" | "queued">) | undefined;
   let closed = false;
   const buffered: string[] = [];
+  const sent: string[] = [];
+  const deliverText = (steer: (text: string) => Promise<"handled" | "queued">, text: string) => {
+    sent.push(text);
+    return steer(text);
+  };
   return {
     bind(steer) {
       if (closed) return;
       deliver = steer;
       const pending = buffered.splice(0);
       for (const text of pending) {
-        void steer(text).catch((error: unknown) => {
+        void deliverText(steer, text).catch((error: unknown) => {
           console.warn("buffered steer could not be delivered", { error: errorMessage(error) });
         });
       }
@@ -124,7 +131,9 @@ export function createSteerChannel(): SteerChannel {
         return "buffered";
       }
       try {
-        return await deliver(text);
+        const result = await deliver(text);
+        sent.push(text);
+        return result;
       } catch {
         return "unavailable";
       }
@@ -133,6 +142,9 @@ export function createSteerChannel(): SteerChannel {
       closed = true;
       deliver = undefined;
       buffered.length = 0;
+    },
+    delivered() {
+      return sent;
     },
   };
 }
@@ -332,8 +344,15 @@ export class PiAgent {
             });
           }
         }
-        const retry: ModelRequest = request.history?.length
-          ? { ...request, history: [] }
+        // 重试会创建新会话；已投递的插话只存在于旧会话里，必须作为新会话的历史
+        // 重新注入，否则用户的补充会在超限重试后静默丢失。
+        const steered = request.steer?.delivered() ?? [];
+        const retry: ModelRequest = request.history?.length || steered.length
+          ? {
+              ...request,
+              // 原重试会丢掉全部历史；这里仍然丢掉，只保留用户在运行中的补充。
+              history: steered.map((content) => ({ role: "user" as const, content })),
+            }
           : request;
         console.warn("model request exceeded the context window; retrying without history", {
           taskType: request.taskType,

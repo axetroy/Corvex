@@ -36,6 +36,15 @@ describe("conversation steer channel", () => {
     expect(second).toEqual(["after retry"]);
   });
 
+  it("remembers delivered text so an overflow retry can re-inject it", async () => {
+    const channel = createSteerChannel();
+    await channel.send("buffered supplement");
+    channel.bind(async () => "queued");
+    expect(channel.delivered()).toEqual(["buffered supplement"]);
+    expect(await channel.send("second supplement")).toBe("queued");
+    expect(channel.delivered()).toEqual(["buffered supplement", "second supplement"]);
+  });
+
   it("drops buffered messages and rejects new ones after the turn ends", async () => {
     const channel = createSteerChannel();
     expect(await channel.send("too late")).toBe("buffered");

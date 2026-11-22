@@ -204,6 +204,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
   const [followUps, setFollowUps] = useState<ConversationFollowUp[]>([]);
+  const followUpStateRef = useRef<{ conversationId: string; count: number } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -340,6 +341,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   const loadFollowUps = useCallback(async () => {
     if (!selectedConversationId) {
+      followUpStateRef.current = null;
       setFollowUps([]);
       return;
     }
@@ -347,7 +349,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetchJson<{ items: ConversationFollowUp[] }>(
         `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/followups`, copy,
       );
-      setFollowUps(result.items ?? []);
+      const items = result.items ?? [];
+      const previous = followUpStateRef.current;
+      followUpStateRef.current = { conversationId: selectedConversationId, count: items.length };
+      setFollowUps(items);
+      // 排队消息在后台被消费时没有活跃轮次的轮询，主动刷新详情才能发现新轮次。
+      if (previous?.conversationId === selectedConversationId && previous.count !== items.length) {
+        setPollToken((value) => value + 1);
+      }
     } catch {
       setFollowUps([]);
     }

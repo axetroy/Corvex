@@ -749,4 +749,73 @@ describe("PiAgent", () => {
     expect(requestCount).toBe(2);
     expect(requestBodies[1]).toContain("Extra detail: use the other approach.");
   }, 10_000);
+
+  it("keeps steered text when a context overflow forces a fresh session", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-steer-retry-"));
+    const requestBodies: string[] = [];
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        const index = requestCount++;
+        requestBodies[index] = body;
+        if (index === 0) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({
+            error: { message: "This model's maximum context length is 131072 tokens. However, you requested about 999999 tokens." },
+          }));
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const frame = (delta: object, finish: string | null) =>
+          `data: ${JSON.stringify({ id: "chatcmpl-retry", object: "chat.completion.chunk", created: 1, model: "test-model", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+        response.write(frame({ role: "assistant", content: "Recovered." }, null));
+        response.write(frame({}, "stop"));
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+    const config = {
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        blockedUserIds: [], botUsername: "",
+      },
+      storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        providerName: "Acme Models", apiKey: "test-key", requestTimeout: 2000, sessionTimeout: 10000,
+        maxOutputTokens: 4096, dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [],
+        skillPaths: [], contextWindow: 131_072, maxInputTokens: 0, historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20, compactionReserveTokens: 16_384, compactionKeepRecentTokens: 20_000,
+        summaryEnabled: false,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    } satisfies CorvexConfig;
+    store = await AppStore.open(":memory:");
+    const steer = createSteerChannel();
+    // 会话尚未创建时先缓冲，绑定后作为插话投递；随后第一次请求超限触发全新会话重试。
+    expect(await steer.send("supplement survives retry")).toBe("buffered");
+    const result = await new PiAgent(config, store).generate({
+      taskType: "conversation",
+      systemPrompt: "Be concise.",
+      userPrompt: "Original task",
+      history: [{ role: "user", content: "old history" }],
+      steer,
+    }, temporaryDirectory);
+    expect(result.content).toBe("Recovered.");
+    expect(requestCount).toBe(2);
+    expect(requestBodies[1]).toContain("supplement survives retry");
+    expect(requestBodies[1]).not.toContain("old history");
+  }, 10_000);
 });

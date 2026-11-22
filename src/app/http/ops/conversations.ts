@@ -685,7 +685,8 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     try {
       const activeTurnId = ctx.conversations.activeTurnId(conversation.id);
       // 显式排队：写入持久队列，当前轮结束后按 FIFO 用当时的分支快照执行。
-      if (delivery === "queue") {
+      // 若轮次已经结束则没有消费者，直接按普通路径立即开一轮，避免消息永远挂着。
+      if (delivery === "queue" && activeTurnId) {
         const item = ctx.conversations.enqueueFollowUp(conversation.id, message);
         sendJson(reply, 202, { conversationId: conversation.id, queueId: item.id, delivery: "queue" });
         return;

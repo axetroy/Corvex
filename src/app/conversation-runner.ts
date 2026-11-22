@@ -104,7 +104,6 @@ export class ConversationRunner {
     responseLanguage?: ResponseLanguage,
     drainFollowUps = true,
   ): Promise<boolean> {
-    this.shutdownSignal = signal;
     const turn = this.store.claimConversationTurn(turnId);
     if (!turn) return false;
     const controller = new AbortController();
@@ -142,7 +141,14 @@ export class ConversationRunner {
       }
       await this.releaseIdleWorkspaces();
       // 本轮已落库：按 FIFO 启动该对话下一条排队消息；排出来的轮次不再重复触发消费。
-      if (drainFollowUps) void this.drainFollowUps(turn.conversationId, gitlab, responseLanguage);
+      if (drainFollowUps) {
+        void this.drainFollowUps(turn.conversationId, gitlab, responseLanguage).catch((error: unknown) => {
+          console.warn("conversation follow-up queue could not be drained", {
+            conversationId: turn.conversationId,
+            error: errorMessage(error),
+          });
+        });
+      }
     }
     return true;
   }
@@ -498,6 +504,11 @@ export class ConversationRunner {
       if (running.conversationId === conversationId) return true;
     }
     return false;
+  }
+
+  /** 注入 Server 的关闭信号，让启动恢复的排队轮次也能在关闭时中止。 */
+  setShutdownSignal(signal: AbortSignal): void {
+    this.shutdownSignal = signal;
   }
 
   /** 当前正在执行的轮次 ID；排队但未领取的轮次不算，因为没有可插话的会话。 */

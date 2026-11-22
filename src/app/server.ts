@@ -64,6 +64,8 @@ export class CorvexServer {
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
     this.conversations = new ConversationRunner(config, store, gitlab, this.hooks);
+    // 启动恢复的排队轮次没有 HTTP 请求传入信号，统一用 Server 的关闭信号中止。
+    this.conversations.setShutdownSignal(this.conversationAbort.signal);
     // 默认行为也走钩子：认证会话解析与设置热更新都可被插件扩展或替换。
     this.hooks.authResolveUser.tapPromise("session", async (request) => {
       const sessionId = readCookie(request.headers.cookie, sessionCookieName);
