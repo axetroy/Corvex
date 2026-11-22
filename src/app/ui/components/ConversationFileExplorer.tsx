@@ -64,6 +64,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [activeFile, setActiveFile] = useState("");
   const [contents, setContents] = useState<Record<string, CachedContent>>({});
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: FileTreeNode } | null>(null);
   // 确认弹窗要拿到 ConfigProvider 的主题与 CSP nonce，不能用静态 Modal.confirm。
   const [modal, modalContextHolder] = Modal.useModal();
 
@@ -190,6 +191,21 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     });
   }, [modal, copy, deleteNode]);
 
+  const fileMenuItems = (node: FileTreeNode) => [
+    {
+      key: "open",
+      label: node.isLeaf ? copy.fileMenuOpen : copy.fileMenuExpand,
+      onClick: () => {
+        if (node.isLeaf) openFile(node.path);
+        else setExpandedKeys((keys) => keys.includes(node.path) ? keys.filter((key) => key !== node.path) : [...keys, node.path]);
+      },
+    },
+    { key: "copyPath", label: copy.fileMenuCopyPath, onClick: () => void copyText(node.path, copy.fileCopyFailed) },
+    { key: "copyName", label: copy.fileMenuCopyName, onClick: () => void copyText(node.title, copy.fileCopyFailed) },
+    { type: "divider" as const },
+    { key: "delete", label: copy.fileMenuDelete, danger: true, onClick: () => confirmDelete(node) },
+  ];
+
   function handleSplitChanged(layout: Layout, meta: { requestedLayout?: Layout }) {
     saveFileSplitLayout(meta.requestedLayout ?? layout);
   }
@@ -207,38 +223,25 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     return filter(treeData);
   }, [treeData, search]);
 
-  const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => {
-    const menuItems = [
-      {
-        key: "open",
-        label: node.isLeaf ? copy.fileMenuOpen : copy.fileMenuExpand,
-        onClick: () => {
-          if (node.isLeaf) openFile(node.path);
-          else setExpandedKeys((keys) => keys.includes(node.path) ? keys.filter((key) => key !== node.path) : [...keys, node.path]);
-        },
-      },
-      { key: "copyPath", label: copy.fileMenuCopyPath, onClick: () => void copyText(node.path, copy.fileCopyFailed) },
-      { key: "copyName", label: copy.fileMenuCopyName, onClick: () => void copyText(node.title, copy.fileCopyFailed) },
-      { type: "divider" as const },
-      { key: "delete", label: copy.fileMenuDelete, danger: true, onClick: () => confirmDelete(node) },
-    ];
-    return {
-      ...node,
-      title: (
-        <Dropdown
-          trigger={["contextMenu"]}
-          menu={{ items: menuItems }}
-          classNames={{ root: "conversation-file-context-menu" }}
-        >
-          <span className="conversation-file-title">
-            {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
-            <span>{node.title}</span>
-          </span>
-        </Dropdown>
-      ),
-      ...(node.children ? { children: withIcons(node.children as FileTreeNode[]) } : {}),
-    };
-  });
+  const findNode = (nodes: readonly FileTreeNode[], path: string): FileTreeNode | undefined => {
+    for (const node of nodes) {
+      if (node.path === path) return node;
+      const child = node.children ? findNode(node.children as FileTreeNode[], path) : undefined;
+      if (child) return child;
+    }
+    return undefined;
+  };
+
+  const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => ({
+    ...node,
+    title: (
+      <span className="conversation-file-title" data-node-path={node.path}>
+        {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
+        <span>{node.title}</span>
+      </span>
+    ),
+    ...(node.children ? { children: withIcons(node.children as FileTreeNode[]) } : {}),
+  }));
   const renderedTree: TreeDataNode[] = withIcons(filteredTree);
 
   const active = activeFile ? contents[activeFile] : undefined;
@@ -277,7 +280,18 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
               ) : null}
             </div>
             {treeError ? <Typography.Text type="danger" className="conversation-file-error">{treeError}</Typography.Text> : null}
-            <div className="conversation-file-tree">
+            <div
+              className="conversation-file-tree"
+              onContextMenu={(event) => {
+                // rc-tree 只给内容区绑了右键事件；这里在容器上代理整行（含展开箭头与空白）。
+                const row = (event.target as HTMLElement).closest(".ant-tree-treenode");
+                const path = row?.querySelector<HTMLElement>("[data-node-path]")?.dataset.nodePath;
+                if (!path) return;
+                event.preventDefault();
+                const node = findNode(filteredTree, path);
+                if (node) setContextMenu({ x: event.clientX, y: event.clientY, node });
+              }}
+            >
               {loadingRoot ? <Spin size="small" /> : renderedTree.length ? (
                 <Tree
                   blockNode
@@ -349,6 +363,21 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
           </div>
         </Panel>
       </Group>
+      {contextMenu ? (
+        <Dropdown
+          open
+          trigger={[]}
+          placement="bottomLeft"
+          menu={{ items: fileMenuItems(contextMenu.node), onClick: () => setContextMenu(null) }}
+          onOpenChange={(open) => { if (!open) setContextMenu(null); }}
+          classNames={{ root: "conversation-file-context-menu" }}
+        >
+          <span
+            className="conversation-file-context-anchor"
+            style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, width: 0, height: 0 }}
+          />
+        </Dropdown>
+      ) : null}
     </div>
   );
 }
