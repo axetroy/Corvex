@@ -478,9 +478,102 @@
 
 /* 内容较矮时垂直居中；内容高于可视区时 margin:auto 归零，从顶部开始滚动，
    避免 justify-content:center 把顶部内容推到滚动区之外。 */
+.conversation-transcript-pane.has-turn-nav {
+  padding-right: 48px;
+}
+
 .conversation-setup-pane {
   justify-content: flex-start;
   padding-bottom: 210px;
+}
+
+/* 聊天区右侧轮次快捷导航：悬停看摘要，点击跳到该轮用户提问。 */
+.conversation-turn-nav {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 6px;
+  bottom: 220px;
+  display: flex;
+  width: 30px;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.conversation-turn-nav-label {
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1.2;
+  writing-mode: vertical-rl;
+}
+
+.conversation-turn-nav-list {
+  display: flex;
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.conversation-turn-nav-list::-webkit-scrollbar {
+  display: none;
+}
+
+.conversation-turn-nav-dot {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 9px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.conversation-turn-nav-dot:hover,
+.conversation-turn-nav-dot:focus-visible {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.conversation-turn-nav-dot.is-active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--bg-panel);
+  font-weight: 700;
+}
+
+.conversation-turn-nav-tooltip {
+  display: flex;
+  max-width: 260px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conversation-turn-nav-tooltip span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .conversation-turn-nav {
+    display: none;
+  }
+
+  .conversation-transcript-pane.has-turn-nav {
+    padding-right: 20px;
+  }
 }
 
 .conversation-start {

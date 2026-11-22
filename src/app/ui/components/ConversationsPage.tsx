@@ -28,6 +28,7 @@ import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
+import { ConversationTurnNav } from "./ConversationTurnNav.js";
 import type { ProjectOption } from "../projectPicker.js";
 import { Empty, ErrorBanner, ExpandableText } from "./common.js";
 
@@ -130,7 +131,7 @@ function MessageContent({
     code: { copy, copiedLabel: copy.codeCopied, failedLabel: copy.codeCopyFailed },
   }), [copy]);
   if (message.role === "user") {
-    return <div className="conversation-message-text">{message.content}</div>;
+    return <div className="conversation-message-text" data-turn-id={message.id}>{message.content}</div>;
   }
   // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
   const settled = message.status === "completed" || message.status === "failed";
@@ -235,6 +236,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const pinnedToBottom = useRef(true);
   /** 离开底部一段距离后显示「滚动到底部」，避免刚打开对话就弹出按钮。 */
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [activeTurnNavId, setActiveTurnNavId] = useState("");
   // 确认弹窗必须挂在 ConfigProvider 内，否则拿不到主题与 CSP nonce，样式会被浏览器拦掉。
   const [modal, modalContextHolder] = Modal.useModal();
 
@@ -832,12 +834,37 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     };
   });
 
+  const turnNavItems = transcriptMessages.flatMap((message, index) => message.role === "user" ? [{
+    id: message.id,
+    index: index + 1,
+    summary: message.content.trim().replace(/\s+/g, " ").slice(0, 120) || copy.none,
+    createdAt: message.createdAt,
+  }] : []);
+
   function handleTranscriptScroll() {
     const pane = transcriptPaneRef.current;
     if (!pane) return;
     const distance = pane.scrollHeight - pane.scrollTop - pane.clientHeight;
     pinnedToBottom.current = distance < 72;
     setShowScrollBottom(distance > 160);
+    const paneTop = pane.getBoundingClientRect().top;
+    let active = turnNavItems[0]?.id ?? "";
+    for (const item of turnNavItems) {
+      const element = pane.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(item.id)}"]`);
+      if (element && element.getBoundingClientRect().top - paneTop <= 80) active = item.id;
+    }
+    setActiveTurnNavId(active);
+  }
+
+  function scrollToTurn(turnId: string) {
+    const pane = transcriptPaneRef.current;
+    const target = pane?.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`);
+    if (!pane || !target) return;
+    const top = target.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop - 12;
+    pane.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    pinnedToBottom.current = false;
+    setShowScrollBottom(true);
+    setActiveTurnNavId(turnId);
   }
 
   function scrollTranscriptToBottom() {
@@ -847,6 +874,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     pinnedToBottom.current = true;
     setShowScrollBottom(false);
   }
+
+  useEffect(() => {
+    if (!turnNavItems.length) {
+      setActiveTurnNavId("");
+      return;
+    }
+    // 初次进入或新消息到达时先高亮最新一轮，滚动后由 handleTranscriptScroll 修正。
+    setActiveTurnNavId(turnNavItems[turnNavItems.length - 1]?.id ?? "");
+  }, [turnNavItems.length]);
 
   // Bubble.List 关闭内置滚动后由整个对话窗格统一滚动：新消息/新 token 到达时只有
   // 用户还在底部附近才跟随，向上翻阅历史不会被强行拉回。
@@ -1062,7 +1098,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 children: (
                   <div className="conversation-chat">
                     <div
-                      className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : ""}`}
+                      className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : " has-turn-nav"}`}
                       ref={transcriptPaneRef}
                       onScroll={handleTranscriptScroll}
                     >
@@ -1102,6 +1138,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         />
                       ) : <Welcome className="conversation-welcome conversation-welcome-empty" variant="borderless" title={copy.conversationPlaceholder} />}
                     </div>
+                    {!showCreate ? (
+                      <ConversationTurnNav
+                        items={turnNavItems}
+                        activeId={activeTurnNavId}
+                        copy={copy}
+                        locale={locale}
+                        onSelect={scrollToTurn}
+                      />
+                    ) : null}
                     {showScrollBottom ? (
                       <button
                         type="button"
