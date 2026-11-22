@@ -457,6 +457,9 @@ describe("Git workflows", () => {
     await execFile("git", ["init", "-q", workspacePath]);
     await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
     await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    // Windows 默认的 CRLF 转换会让 git status 误判为脏工作区，rebase/cherry-pick 要求干净。
+    await execFile("git", ["-C", workspacePath, "config", "core.autocrlf", "false"]);
+    await execFile("git", ["-C", workspacePath, "config", "core.eol", "lf"]);
     await writeFile(join(workspacePath, "a.txt"), "base\n");
     await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
     await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
