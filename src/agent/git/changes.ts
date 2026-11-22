@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { iidSha, text, type GitToolAdapter } from "./common.js";
+import { branchNameParam, iidSha, text, type GitToolAdapter } from "./common.js";
 
 /** 变更写入：提交、写入会话 ref（push）与回滚，全部限定在当前对话。 */
 export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAPI) => void {
@@ -24,6 +24,15 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       promptSnippet: "git_push: Persist worktree changes to the conversation ref; no remote push.",
       parameters: Type.Object({}),
       execute: async () => text((await git.push()) ?? { saved: false, reason: "no changes in the worktree" }),
+    });
+    pi.registerTool({
+      name: "git_push_branch",
+      label: "Push commit to GitLab branch",
+      executionMode: "sequential",
+      description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Only call this when the user explicitly asks to update or create a GitLab branch; never force-push. Requires a configured GitLab write token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch.",
+      promptSnippet: "git_push_branch: Explicitly publish a commit to a GitLab branch (fast-forward only); use git_push first to save the commit in the mirror, then create or update the MR.",
+      parameters: Type.Object({ sha: iidSha, branch: branchNameParam }),
+      execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),
     });
     pi.registerTool({
       name: "git_revert",

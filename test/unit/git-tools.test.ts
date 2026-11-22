@@ -23,6 +23,7 @@ function fakeAdapter(): GitToolAdapter {
     merge: vi.fn(async () => ({ sha: "b".repeat(40), ref: "main" })),
     commit: vi.fn(async () => ({ sha: "b".repeat(40), paths: ["a.ts"] })),
     push: vi.fn(async () => ({ ref: "refs/conversations/c1", sha: "b".repeat(40) })),
+    pushBranch: vi.fn(async () => ({ branch: "fix/security", sha: "b".repeat(40) })),
     revert: vi.fn(async () => ({ sha: "c".repeat(40), revertedSha: "b".repeat(40) })),
   };
 }
@@ -39,7 +40,7 @@ describe("consolidated Git tools", () => {
     const names = collect(fakeAdapter()).map((tool) => tool.name);
     expect(names.sort()).toEqual([
       "git_branches", "git_checkout", "git_clone", "git_commit", "git_diff", "git_log",
-      "git_merge", "git_pull", "git_push", "git_revert", "git_show", "git_status", "git_branch",
+      "git_merge", "git_pull", "git_push", "git_push_branch", "git_revert", "git_show", "git_status", "git_branch",
     ].sort());
   });
 
@@ -57,6 +58,8 @@ describe("consolidated Git tools", () => {
     expect(adapter.merge).toHaveBeenCalledWith("main");
     await find("git_commit").execute("4", { message: "fix" });
     expect(adapter.commit).toHaveBeenCalledWith("fix");
+    await find("git_push_branch").execute("4b", { sha: "b".repeat(40), branch: "fix/security" });
+    expect(adapter.pushBranch).toHaveBeenCalledWith("b".repeat(40), "fix/security");
     await find("git_revert").execute("5", { sha: "a".repeat(40) });
     expect(adapter.revert).toHaveBeenCalledWith("a".repeat(40));
   });

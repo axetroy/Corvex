@@ -233,6 +233,7 @@ export class ConversationRunner {
         const result = await this.repo.saveConversationChanges(workspace, conversationId, signal);
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
+      pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal),
       revert: (sha) => this.repo.revertWorktreeCommit(workspace, sha, signal),
     };
   }

@@ -445,6 +445,20 @@ describe("Git workflows", () => {
     expect(await manager.gcMirrors(7)).toBe(1);
   });
 
+  it("validates GitLab branch pushes before touching the network", async () => {
+    const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
+    const sha = "a".repeat(40);
+    await expect(manager.pushBranchToGitLab(0, sha, "fix/a")).rejects.toThrow("project ID must be positive");
+    await expect(manager.pushBranchToGitLab(1, "short", "fix/a")).rejects.toThrow("full SHA");
+    await expect(manager.pushBranchToGitLab(1, sha, "../escape")).rejects.toThrow("invalid GitLab branch name");
+    await expect(manager.pushBranchToGitLab(1, sha, "fix/a..b")).rejects.toThrow("invalid GitLab branch name");
+    await expect(manager.pushBranchToGitLab(1, sha, "fix/a.lock")).rejects.toThrow("invalid GitLab branch name");
+    await expect(manager.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("write token is not configured");
+
+    const writable = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read", "write");
+    await expect(writable.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("project mirror is not available");
+  });
+
   it("derives conversation workspace names only from safe identifiers", () => {
     expect(conversationWorkspaceName("abc-123")).toBe("conversation-abc-123");
     expect(() => conversationWorkspaceName("../escape")).toThrow("invalid path characters");

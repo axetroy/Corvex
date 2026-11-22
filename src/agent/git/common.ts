@@ -22,6 +22,8 @@ export interface GitToolAdapter {
   commit(message: string): Promise<{ sha: string; paths: string[] } | undefined>;
   /** 把当前改动写入项目镜像里的会话 ref；没有远端推送或强制更新。 */
   push(): Promise<{ ref: string; sha: string } | undefined>;
+  /** 把镜像中已有的提交快进推到 GitLab 具名分支；需要用户明确要求与写令牌。 */
+  pushBranch(sha: string, branch: string): Promise<{ branch: string; sha: string }>;
   revert(sha: string): Promise<{ sha: string; revertedSha: string }>;
 }
 
