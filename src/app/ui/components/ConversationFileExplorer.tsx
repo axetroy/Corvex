@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Input, Spin, Tree, Typography } from "antd";
+import { Dropdown, Input, Modal, Spin, Tree, Typography } from "antd";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import type { TreeDataNode } from "antd";
@@ -64,6 +64,8 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [activeFile, setActiveFile] = useState("");
   const [contents, setContents] = useState<Record<string, CachedContent>>({});
+  // 确认弹窗要拿到 ConfigProvider 的主题与 CSP nonce，不能用静态 Modal.confirm。
+  const [modal, modalContextHolder] = Modal.useModal();
 
   const loadDirectory = useCallback(async (path: string): Promise<FileListResult> => {
     const query = new URLSearchParams({ path });
@@ -149,6 +151,45 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     });
   }, []);
 
+  const copyText = useCallback(async (value: string, failure: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (cause) {
+      setTreeError(failure || errorMessage(cause));
+    }
+  }, []);
+
+  const deleteNode = useCallback(async (node: FileTreeNode) => {
+    const affected = (path: string) => path === node.path || path.startsWith(`${node.path}/`);
+    try {
+      const query = new URLSearchParams({ path: node.path });
+      const response = await fetch(
+        `/api/ops/conversations/${encodeURIComponent(conversationId)}/files?${query}`,
+        { method: "DELETE", cache: "no-store" },
+      );
+      if (!response.ok) throw new Error((await response.text()).trim() || response.statusText);
+      setOpenFiles((current) => current.filter((path) => !affected(path)));
+      setActiveFile((current) => (affected(current) ? "" : current));
+      setContents((current) => Object.fromEntries(Object.entries(current).filter(([path]) => !affected(path))));
+      const parent = node.path.split("/").slice(0, -1).join("/");
+      await loadDirectory(parent);
+      setTreeError("");
+    } catch (cause) {
+      setTreeError(errorMessage(cause));
+    }
+  }, [conversationId, loadDirectory]);
+
+  const confirmDelete = useCallback((node: FileTreeNode) => {
+    modal.confirm({
+      title: copy.fileMenuDelete,
+      content: copy.fileDeleteConfirmTemplate.replace("{path}", node.path),
+      okText: copy.fileMenuDelete,
+      okButtonProps: { danger: true },
+      cancelText: copy.fileMenuCancel,
+      onOk: () => deleteNode(node),
+    });
+  }, [modal, copy, deleteNode]);
+
   function handleSplitChanged(layout: Layout, meta: { requestedLayout?: Layout }) {
     saveFileSplitLayout(meta.requestedLayout ?? layout);
   }
@@ -166,16 +207,38 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     return filter(treeData);
   }, [treeData, search]);
 
-  const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => ({
-    ...node,
-    title: (
-      <span className="conversation-file-title">
-        {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
-        <span>{node.title}</span>
-      </span>
-    ),
-    ...(node.children ? { children: withIcons(node.children as FileTreeNode[]) } : {}),
-  }));
+  const withIcons = (nodes: readonly FileTreeNode[]): TreeDataNode[] => nodes.map((node) => {
+    const menuItems = [
+      {
+        key: "open",
+        label: node.isLeaf ? copy.fileMenuOpen : copy.fileMenuExpand,
+        onClick: () => {
+          if (node.isLeaf) openFile(node.path);
+          else setExpandedKeys((keys) => keys.includes(node.path) ? keys.filter((key) => key !== node.path) : [...keys, node.path]);
+        },
+      },
+      { key: "copyPath", label: copy.fileMenuCopyPath, onClick: () => void copyText(node.path, copy.fileCopyFailed) },
+      { key: "copyName", label: copy.fileMenuCopyName, onClick: () => void copyText(node.title, copy.fileCopyFailed) },
+      { type: "divider" as const },
+      { key: "delete", label: copy.fileMenuDelete, danger: true, onClick: () => confirmDelete(node) },
+    ];
+    return {
+      ...node,
+      title: (
+        <Dropdown
+          trigger={["contextMenu"]}
+          menu={{ items: menuItems }}
+          classNames={{ root: "conversation-file-context-menu" }}
+        >
+          <span className="conversation-file-title">
+            {renderFileIcon(node.title, node.type, expandedKeys.includes(node.path))}
+            <span>{node.title}</span>
+          </span>
+        </Dropdown>
+      ),
+      ...(node.children ? { children: withIcons(node.children as FileTreeNode[]) } : {}),
+    };
+  });
   const renderedTree: TreeDataNode[] = withIcons(filteredTree);
 
   const active = activeFile ? contents[activeFile] : undefined;
@@ -185,6 +248,7 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
 
   return (
     <div className="conversation-file-explorer">
+      {modalContextHolder}
       <Group
         id="conversation-file-split"
         className="conversation-file-group"

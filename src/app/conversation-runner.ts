@@ -262,6 +262,11 @@ export class ConversationRunner {
     await this.repo.discardConversationChanges(projectId, conversationId);
   }
 
+  /** 控制台文件操作后把 worktree 改动写入会话 ref，避免淘汰 worktree 时丢失。 */
+  async saveConversationChangesById(conversationId: string, projectId: number, expectedSha: string): Promise<void> {
+    await this.repo.saveConversationChangesById(projectId, conversationId, expectedSha);
+  }
+
   pruneConversationChanges(validIds: ReadonlySet<string>) {
     return this.repo.pruneConversationChanges(validIds);
   }

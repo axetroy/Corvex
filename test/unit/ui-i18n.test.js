@@ -50,6 +50,8 @@ describe("operations UI locale", () => {
     expect(en.filePanelSourceTemplate).toBe("Source: {value}");
     expect(zhCN.filePanelSourceLocal).toBe("本地工作区");
     expect(en.scrollToBottom).toBe("Scroll to latest");
+    expect(zhCN.fileMenuCopyPath).toBe("复制路径");
+    expect(en.fileMenuDelete).toBe("Delete");
     expect(zhCN.scrollToBottom).toBe("滚动到最新");
     expect(en.codeCopied).toBe("Copied");
     expect(zhCN.codeCopyFailed).toBe("复制失败");

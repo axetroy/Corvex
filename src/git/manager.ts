@@ -586,6 +586,23 @@ export class GitManager {
     return { sha, paths: status.files.map((file) => file.path) };
   }
 
+  /** 按会话 ID 把当前 worktree 改动写入会话 ref；供控制台文件操作后立即持久化。 */
+  async saveConversationChangesById(
+    projectId: number,
+    conversationId: string,
+    expectedSha: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; paths: string[] } | undefined> {
+    const eventId = conversationWorkspaceName(conversationId);
+    const workspace: Workspace = {
+      projectId,
+      eventId,
+      path: join(this.workspaceRoot, String(projectId), eventId),
+      headSha: expectedSha,
+    };
+    return this.saveConversationChanges(workspace, conversationId, signal);
+  }
+
   private async listConversationChangeEntries(signal?: AbortSignal): Promise<Array<{ projectId: number; conversationId: string; sha: string }>> {
     const entries: Array<{ projectId: number; conversationId: string; sha: string }> = [];
     const mirrors = await readdir(this.mirrorRoot).catch(() => [] as string[]);

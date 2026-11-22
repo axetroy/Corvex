@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { conversationWorkspaceName } from "../../../git/manager.js";
@@ -7,6 +8,8 @@ import { requireUser } from "../../auth/context.js";
 import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
+import { resolveWorktreePath } from "../../../agent/fs-write.js";
+import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
 import type { OpsContext } from "../context.js";
 import {
@@ -286,6 +289,45 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         return;
       }
       sendGitLabReadError(reply, error);
+    }
+  });
+
+  // 文件树右键删除：只作用于当前会话 worktree，并立即写入会话 ref。
+  app.delete("/api/ops/conversations/:id/files", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    if (conversation.messages.some((message) => message.turnStatus === "queued" || message.turnStatus === "running")) {
+      sendJson(reply, 409, { error: "a turn is still running for this conversation" });
+      return;
+    }
+    const path = queryParam(request.query, "path") ?? "";
+    if (!path) {
+      sendJson(reply, 400, { error: "invalid file path" });
+      return;
+    }
+    const sha = ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "";
+    if (!sha) {
+      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
+      return;
+    }
+    const workspacePath = join(
+      ctx.config.storage.root,
+      "workspaces",
+      String(conversation.projectId),
+      conversationWorkspaceName(conversation.id),
+    );
+    try {
+      const { target } = await resolveWorktreePath(workspacePath, path);
+      await rm(target, { recursive: true, force: false });
+      await ctx.conversations.saveConversationChangesById(conversation.id, conversation.projectId, sha);
+      sendJson(reply, 200, { deleted: path });
+    } catch (error) {
+      sendJson(reply, 400, { error: errorMessage(error) });
     }
   });
 
