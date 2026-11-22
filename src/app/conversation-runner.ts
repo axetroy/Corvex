@@ -271,6 +271,10 @@ export class ConversationRunner {
     return this.repo.getCommitGraph(projectId, options);
   }
 
+  showCommitFromMirror(projectId: number, sha: string) {
+    return this.repo.showCommitFromMirror(projectId, sha);
+  }
+
   pruneConversationChanges(validIds: ReadonlySet<string>) {
     return this.repo.pruneConversationChanges(validIds);
   }

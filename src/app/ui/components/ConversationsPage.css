@@ -982,52 +982,143 @@
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 10px 4px 24px;
+  padding: 12px 8px 24px;
 }
 
-.conversation-git-graph-canvas {
-  overflow-x: auto;
+.conversation-git-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
-.conversation-git-node {
+.conversation-git-legend .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.conversation-git-legend .dot.is-pinned { background: var(--primary); }
+.conversation-git-legend .dot.is-local { background: var(--success); }
+.conversation-git-legend .dot.is-branch { background: var(--purple); }
+
+.conversation-git-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 6px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.conversation-git-lanes {
+  flex: 0 0 auto;
+}
+
+.conversation-git-rows {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.conversation-git-row {
+  display: flex;
+  height: 34px;
+  min-width: 0;
+  flex: 0 0 34px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   cursor: pointer;
+  text-align: left;
 }
 
-.conversation-git-node:hover circle,
-.conversation-git-node.is-selected circle {
-  stroke: var(--primary);
-  stroke-width: 2;
+.conversation-git-row:hover {
+  background: var(--bg-hover);
 }
 
-.conversation-git-subject {
-  fill: var(--text);
+.conversation-git-row.is-selected {
+  background: var(--primary-soft);
+}
+
+.conversation-git-row-subject {
+  overflow: hidden;
+  color: var(--text);
   font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-git-meta,
-.conversation-git-refs {
+.conversation-git-row.is-pinned .conversation-git-row-subject {
+  color: var(--primary);
+}
+
+.conversation-git-row-meta {
+  overflow: hidden;
+  color: var(--text-muted);
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-git-meta {
-  fill: var(--text-muted);
-}
-
-.conversation-git-refs {
-  fill: var(--purple);
+.conversation-git-row-refs {
+  overflow: hidden;
+  color: var(--purple);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-git-detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   margin: 12px 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--conversation-border);
   border-radius: 8px;
   background: var(--bg-panel);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.conversation-git-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.conversation-git-detail-parents {
+  color: var(--text-muted);
+}
+
+.conversation-git-patch {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 6px;
+  background: var(--bg-code);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .conversation-message-markdown {

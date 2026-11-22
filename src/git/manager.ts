@@ -1142,6 +1142,32 @@ export class GitManager {
     return { sha, output: result.stdout.toString("utf8"), truncated: result.truncated };
   }
 
+  /**
+   * 从项目镜像读取单个提交的完整信息与补丁；与图谱同源，不依赖易被淘汰的 worktree。
+   */
+  async showCommitFromMirror(
+    projectId: number,
+    sha: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; output: string; truncated: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    if (!shaPattern.test(sha)) throw new Error("commit lookup requires a full commit SHA");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    const result = await this.run(
+      this.mirrorRoot,
+      [
+        "--git-dir", mirror, "show", "--no-ext-diff", "--no-textconv", "--no-renames",
+        "--no-color", "--format=fuller", "--unified=3", sha,
+      ],
+      undefined,
+      256 << 10,
+      signal,
+      { timeoutMs: 10_000, terminateOnOutputLimit: true },
+    );
+    return { sha, output: result.stdout.toString("utf8"), truncated: result.truncated };
+  }
+
   async applyPatch(
     workspace: Workspace,
     patch: string,

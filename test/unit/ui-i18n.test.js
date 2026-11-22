@@ -55,6 +55,8 @@ describe("operations UI locale", () => {
     expect(zhCN.cancelTurning).toBe("中止中…");
     expect(en.conversationTabGit).toBe("Git");
     expect(zhCN.gitGraphEmpty).toBe("暂无可展示的提交。");
+    expect(en.gitGraphPinned).toBe("Pinned revision");
+    expect(zhCN.gitGraphLocalRef).toBe("会话本地改动");
     expect(zhCN.fileMenuCopyPath).toBe("复制路径");
     expect(en.fileMenuDelete).toBe("Delete");
     expect(zhCN.scrollToBottom).toBe("滚动到最新");
