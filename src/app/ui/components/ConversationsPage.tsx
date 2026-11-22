@@ -239,6 +239,22 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
   const transcriptPaneRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
+  /** 记录上一次的对话与标签，用于识别「切换」并在切换时回到最新消息。 */
+  const lastTranscriptNav = useRef({ conversationId: "", tab: "" as ConversationDetailTab });
+  /** 切换导航后等待新 transcript 挂载再强制滚到底部的标记。 */
+  const forceScrollToLatest = useRef(false);
+  /**
+   * 切回 Chat 时 rc-tabs 会先跑 effect、后挂载 pane，普通 effect 看不到节点；
+   * 用 ref 回调在新节点挂载的瞬间消费标记并滚到底部。
+   */
+  const attachTranscriptPane = useCallback((node: HTMLDivElement | null) => {
+    transcriptPaneRef.current = node;
+    if (!node || !forceScrollToLatest.current || detailTab !== "chat") return;
+    forceScrollToLatest.current = false;
+    node.scrollTop = node.scrollHeight;
+    pinnedToBottom.current = true;
+    setShowScrollBottom(false);
+  }, [detailTab]);
   /** 离开底部一段距离后显示「滚动到底部」，避免刚打开对话就弹出按钮。 */
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [activeTurnNavId, setActiveTurnNavId] = useState("");
@@ -1056,11 +1072,34 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   // Bubble.List 关闭内置滚动后由整个对话窗格统一滚动：新消息/新 token 到达时只有
   // 用户还在底部附近才跟随，向上翻阅历史不会被强行拉回。
+  // 切换工作区标签或切换对话时，无论之前是否在上翻历史，都回到最新一条消息。
+  // 这个 effect 不依赖 transcript 节点：切到其它标签时它会被卸载，仍要记下导航变化。
   useEffect(() => {
     // 欢迎页从顶部阅读：分组提示词比旧版更高，自动滚到底会藏掉标题和仓库选择器。
     if (showCreate) return;
+    const switched = lastTranscriptNav.current.conversationId !== selectedConversationId
+      || lastTranscriptNav.current.tab !== detailTab;
+    if (!switched) return;
+    lastTranscriptNav.current = { conversationId: selectedConversationId, tab: detailTab };
+    pinnedToBottom.current = true;
+    forceScrollToLatest.current = true;
+    setShowScrollBottom(false);
+  }, [showCreate, selectedConversationId, detailTab]);
+
+  useEffect(() => {
+    if (showCreate) return;
     const pane = transcriptPaneRef.current;
-    if (!pane || !pinnedToBottom.current) return;
+    // 切到其它标签时 pane 被卸载，标记留到它重新挂载后再消费。
+    if (!pane) return;
+    // 只在 Chat 标签真正挂载时消费：切走的那一帧旧 pane 可能还在，提前消费会丢掉标记。
+    if (forceScrollToLatest.current && detailTab === "chat") {
+      forceScrollToLatest.current = false;
+      pane.scrollTop = pane.scrollHeight;
+      pinnedToBottom.current = true;
+      setShowScrollBottom(false);
+      return;
+    }
+    if (!pinnedToBottom.current) return;
     pane.scrollTop = pane.scrollHeight;
   }, [showCreate, selectedConversationId, detailTab, currentConversation?.messages.length, streamedReply?.text, timelineByTurn]);
 
@@ -1258,7 +1297,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                   <div className="conversation-chat">
                     <div
                       className={`conversation-transcript-pane${showCreate ? " conversation-setup-pane" : " has-turn-nav"}`}
-                      ref={transcriptPaneRef}
+                      ref={attachTranscriptPane}
                       onScroll={handleTranscriptScroll}
                     >
                       {!showCreate && currentConversation?.systemPrompt ? (
