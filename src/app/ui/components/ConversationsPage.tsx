@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
@@ -14,6 +14,7 @@ import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
 import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
+import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
 import { conversationCommands } from "../../conversation-command.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
@@ -205,6 +206,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [project, setProject] = useState<ProjectOption>();
   const [selectedBranch, setSelectedBranch] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const draftBeforeHistory = useRef("");
+  const historyNavigation = useRef(false);
+  const historyKey = `corvex-ops-input-history:${selectedConversationId || "new"}`;
+  useEffect(() => {
+    setInputHistory(readInputHistory(window.localStorage, historyKey));
+    setHistoryIndex(-1);
+    draftBeforeHistory.current = "";
+  }, [historyKey]);
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -595,8 +606,48 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   function submitMessage(message: string) {
+    if (message.trim()) {
+      const next = appendInputHistory(inputHistory, message);
+      setInputHistory(next);
+      writeInputHistory(window.localStorage, historyKey, next);
+    }
+    setHistoryIndex(-1);
+    draftBeforeHistory.current = "";
     if (showCreate) void createConversation(message);
     else void sendReply(message);
+  }
+
+  /** 上下键浏览历史输入；只在光标位于首行/末行时接管，保留多行编辑。 */
+  function handleComposerKeyDown(event: ReactKeyboardEvent) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+    const target = event.target as HTMLTextAreaElement | HTMLInputElement;
+    const value = typeof target.value === "string" ? target.value : "";
+    const cursor = target.selectionStart ?? value.length;
+    if (event.key === "ArrowUp") {
+      if (!inputHistory.length) return;
+      const firstBreak = value.indexOf("\n");
+      if (firstBreak >= 0 && cursor > firstBreak) return;
+      if (historyIndex < 0) draftBeforeHistory.current = draftMessage;
+      const next = Math.min(historyIndex + 1, inputHistory.length - 1);
+      historyNavigation.current = true;
+      setHistoryIndex(next);
+      setDraftMessage(inputHistory[next] ?? "");
+      return false;
+    }
+    if (!inputHistory.length || historyIndex < 0) return;
+    const lastBreak = value.lastIndexOf("\n");
+    if (lastBreak >= 0 && cursor < lastBreak + 1) return;
+    historyNavigation.current = true;
+    if (historyIndex === 0) {
+      setHistoryIndex(-1);
+      setDraftMessage(draftBeforeHistory.current);
+    } else {
+      const next = historyIndex - 1;
+      setHistoryIndex(next);
+      setDraftMessage(inputHistory[next] ?? "");
+    }
+    return false;
   }
 
   // 快捷提示词按类型分组：外层是分类卡片，Prompts 会把 children 渲染成纵向子列表。
@@ -1105,7 +1156,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       placeholder={showCreate ? copy.initialMessagePlaceholder : copy.replyPlaceholder}
                       disabled={busy}
                       autoSize={{ minRows: 3, maxRows: 10 }}
-                      onChange={(value) => setDraftMessage(value.slice(0, 20_000))}
+                      onChange={(value) => {
+                        if (historyNavigation.current) historyNavigation.current = false;
+                        else setHistoryIndex(-1);
+                        setDraftMessage(value.slice(0, 20_000));
+                      }}
+                      onKeyDown={handleComposerKeyDown}
                       onSubmit={submitMessage}
                       footer={<ComposerModelPicker copy={copy} disabled={busy} />}
                       suffix={(_node, { components: { SendButton } }) => (isTurnActive ? (
