@@ -133,8 +133,16 @@ function MessageContent({
   }
   // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
   const settled = message.status === "completed" || message.status === "failed";
+  const awaitingFirstOutput = !settled && !message.content && timeline.length === 0;
   return (
     <div className={`conversation-message-markdown${streaming && message.content ? " is-streaming" : ""}`}>
+      {/* 首个 token 到达前给出明确的进行中反馈，避免用户以为卡住。 */}
+      {awaitingFirstOutput ? (
+        <div className="conversation-pending" role="status" aria-live="polite">
+          <span className="conversation-process-spinner" aria-hidden="true" />
+          <span>{copy.conversationThinkingPending}</span>
+        </div>
+      ) : null}
       {/* 先按发生顺序展示每次思考与工具调用，再展示最终回答。 */}
       <ConversationTimeline segments={timeline} active={Boolean(streaming)} copy={copy} />
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
@@ -767,9 +775,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         </Space>
       ),
       content: <MessageContent message={message} copy={copy} streaming={streaming} timeline={timeline} />,
-      // 有思考、正文或工具记录后改为展示内容，避免 loading 覆盖正在进行的读取过程。
-      loading: message.role === "assistant" && !message.content && timeline.length === 0 &&
-        (message.status === "queued" || message.status === "running"),
+      // 首 token 前的等待提示由 MessageContent 自己渲染，避免与 Bubble 的 loading 重复。
+      loading: false,
       status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
     };
   });

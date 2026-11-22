@@ -784,6 +784,16 @@
   to { transform: rotate(360deg); }
 }
 
+/* 首 token 到达前的等待提示：与过程时间线同一套视觉语言。 */
+.conversation-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--conversation-muted);
+  font-size: 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .conversation-process-spinner { animation: none; }
 }
