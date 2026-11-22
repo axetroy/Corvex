@@ -4,7 +4,7 @@ import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import type { GitGraphNode } from "../../../git/types.js";
-import { buildGitGraphLayout, graphLaneX, graphNodeY } from "../gitGraph.js";
+import { buildGitGraphLayout, graphLaneX, graphPadding, graphRowHeight } from "../gitGraph.js";
 import { highlightCode } from "../codeHighlight.js";
 
 interface GraphResponse {
@@ -26,15 +26,18 @@ interface Props {
 }
 
 const pageSize = 100;
+/** 详情展开但还未测量高度时的估值，测量后会被真实高度替换。 */
+const estimatedDetailHeight = 220;
 
-/** 提交图谱：泳道由纯函数布局，点击节点展开提交详情与补丁。 */
+/** 提交图谱：点击提交行就地展开详情；泳道节点与连线按各行实际高度重新定位。 */
 export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [data, setData] = useState<GraphResponse>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState("");
+  const [expanded, setExpanded] = useState("");
   const [detail, setDetail] = useState<CommitDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailHeights, setDetailHeights] = useState<Record<string, number>>({});
 
   const load = useCallback(async (offset: number) => {
     setLoading(true);
@@ -57,18 +60,19 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
 
   useEffect(() => {
     setData(undefined);
-    setSelected("");
+    setExpanded("");
     setDetail(undefined);
+    setDetailHeights({});
     void load(0);
   }, [load]);
 
-  const selectNode = useCallback(async (sha: string) => {
-    if (selected === sha) {
-      setSelected("");
+  const toggleRow = useCallback(async (sha: string) => {
+    if (expanded === sha) {
+      setExpanded("");
       setDetail(undefined);
       return;
     }
-    setSelected(sha);
+    setExpanded(sha);
     setDetail(undefined);
     setDetailLoading(true);
     try {
@@ -81,10 +85,25 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
     } finally {
       setDetailLoading(false);
     }
-  }, [selected, conversationId, copy]);
+  }, [expanded, conversationId, copy]);
 
   const layout = useMemo(() => buildGitGraphLayout(data?.nodes ?? [], data?.pinnedSha), [data]);
-  const selectedNode = data?.nodes.find((node) => node.sha === selected);
+
+  // 每行顶部位置随上方可展开的详情高度变化；节点与连线都按这个偏移重算。
+  const rowTops = useMemo(() => {
+    const tops: number[] = [];
+    // 行列表没有内边距，节点圆心须与行中心重合，故从 0 开始累加。
+    let top = 0;
+    for (const node of layout.nodes) {
+      tops.push(top);
+      top += expanded === node.sha ? (detailHeights[node.sha] ?? estimatedDetailHeight + graphRowHeight) : graphRowHeight;
+    }
+    return tops;
+  }, [layout.nodes, expanded, detailHeights]);
+  const svgHeight = (rowTops.at(-1) ?? graphPadding) + graphRowHeight + graphPadding;
+  const nodeY = (row: number) => (rowTops[row] ?? 0) + graphRowHeight / 2;
+
+  const expandedNode = layout.nodes.find((node) => node.sha === expanded);
 
   return (
     <div className="conversation-git-graph">
@@ -98,14 +117,14 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       {data && data.nodes.length ? (
         <>
           <div className="conversation-git-board">
-            <svg className="conversation-git-lanes" width={layout.width} height={layout.height} role="img" aria-label={copy.gitGraph}>
+            <svg className="conversation-git-lanes" width={layout.width} height={svgHeight} role="img" aria-label={copy.gitGraph}>
               {layout.edges.map((edge) => {
-                const x1 = graphLaneX(edge.lane);
-                const y1 = graphNodeY(edge.row);
                 const target = layout.nodes.find((node) => node.sha === edge.to);
                 if (!target) return null;
+                const x1 = graphLaneX(edge.lane);
+                const y1 = nodeY(edge.row);
                 const x2 = graphLaneX(edge.targetLane);
-                const y2 = graphNodeY(target.row);
+                const y2 = nodeY(target.row);
                 const mid = (y1 + y2) / 2;
                 return (
                   <path
@@ -118,59 +137,72 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 );
               })}
               {layout.nodes.map((node) => {
-                const x = graphLaneX(node.lane);
-                const y = graphNodeY(node.row);
                 const color = node.isPinned ? "var(--primary)" : node.hasLocalRef ? "var(--success)" : "var(--text-secondary)";
                 return (
                   <circle
                     key={node.sha}
-                    cx={x}
-                    cy={y}
+                    cx={graphLaneX(node.lane)}
+                    cy={nodeY(node.row)}
                     r={node.isPinned ? 6 : 4.5}
-                    fill={selected === node.sha ? "var(--primary)" : color}
+                    fill={expanded === node.sha ? "var(--primary)" : color}
                     stroke="var(--bg-panel)"
                     strokeWidth={1.5}
                   />
                 );
               })}
             </svg>
-            <div className="conversation-git-rows" style={{ height: layout.height }}>
+            <div className="conversation-git-rows">
               {layout.nodes.map((node) => (
-                <button
-                  key={node.sha}
-                  type="button"
-                  className={`conversation-git-row${selected === node.sha ? " is-selected" : ""}${node.isPinned ? " is-pinned" : ""}`}
-                  onClick={() => void selectNode(node.sha)}
-                >
-                  <span className="conversation-git-row-subject">{node.subject || node.sha.slice(0, 12)}</span>
-                  <span className="conversation-git-row-meta">
-                    {`${node.author} · ${node.authoredAt.slice(0, 10)} · ${node.sha.slice(0, 8)}`}
-                  </span>
-                  {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
-                </button>
+                <div key={node.sha} className="conversation-git-item">
+                  <button
+                    type="button"
+                    className={`conversation-git-row${expanded === node.sha ? " is-selected" : ""}${node.isPinned ? " is-pinned" : ""}`}
+                    onClick={() => void toggleRow(node.sha)}
+                    aria-expanded={expanded === node.sha}
+                  >
+                    <span className="conversation-git-row-subject">{node.subject || node.sha.slice(0, 12)}</span>
+                    <span className="conversation-git-row-meta">
+                      {`${node.author} · ${node.authoredAt.slice(0, 10)} · ${node.sha.slice(0, 8)}`}
+                    </span>
+                    {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
+                  </button>
+                  {expanded === node.sha ? (
+                    <div
+                      className="conversation-git-detail"
+                      ref={(element) => {
+                        if (!element) return;
+                        const observer = new ResizeObserver(() => {
+                          // 测量整个条目（含行、详情与间距），使下一行的偏移与页面完全一致。
+                          const item = element.parentElement;
+                          const height = (item ?? element).getBoundingClientRect().height;
+                          setDetailHeights((current) => current[node.sha] === height ? current : { ...current, [node.sha]: height });
+                        });
+                        observer.observe(element);
+                        return () => observer.disconnect();
+                      }}
+                    >
+                      <div className="conversation-git-detail-head">
+                        <Typography.Text strong>{expandedNode?.subject || node.sha}</Typography.Text>
+                        <span>{copy.gitGraphAuthor}: {node.author}</span>
+                        <span>{copy.gitGraphDate}: {node.authoredAt}</span>
+                        <code>{node.sha}</code>
+                      </div>
+                      {detailLoading ? <Spin size="small" /> : detail && expandedNode?.sha === node.sha ? (
+                        <>
+                          <div className="conversation-git-detail-parents">
+                            {copy.gitGraphParents}: {node.parents.map((sha) => sha.slice(0, 8)).join(" · ") || copy.none}
+                            {node.refs.length ? ` · ${copy.gitGraphRefs}: ${node.refs.join(" · ")}` : ""}
+                          </div>
+                          <pre className="conversation-git-patch" dangerouslySetInnerHTML={{ __html: highlightCode(detail.output, "diff") }} />
+                          {detail.truncated ? <Typography.Text type="secondary">{copy.gitGraphTruncated}</Typography.Text> : null}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </div>
-          {selectedNode ? (
-            <div className="conversation-git-detail">
-              <div className="conversation-git-detail-head">
-                <Typography.Text strong>{selectedNode.subject || selectedNode.sha}</Typography.Text>
-                <span>{copy.gitGraphAuthor}: {selectedNode.author}</span>
-                <span>{copy.gitGraphDate}: {selectedNode.authoredAt}</span>
-                <code>{selectedNode.sha}</code>
-              </div>
-              {detailLoading ? <Spin size="small" /> : detail ? (
-                <>
-                  <div className="conversation-git-detail-parents">
-                    {copy.gitGraphParents}: {selectedNode.parents.map((sha) => sha.slice(0, 8)).join(" · ") || copy.none}
-                    {selectedNode.refs.length ? ` · ${copy.gitGraphRefs}: ${selectedNode.refs.join(" · ")}` : ""}
-                  </div>
-                  <pre className="conversation-git-patch" dangerouslySetInnerHTML={{ __html: highlightCode(detail.output, "diff") }} />
-                  {detail.truncated ? <Typography.Text type="secondary">{copy.gitGraphTruncated}</Typography.Text> : null}
-                </>
-              ) : null}
-            </div>
-          ) : null}
           {data.truncated ? (
             <Button size="small" type="link" loading={loading} onClick={() => void load(data.offset + data.nodes.length)}>
               {copy.gitGraphLoadMore}
