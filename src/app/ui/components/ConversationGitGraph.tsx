@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Button, Dropdown, Select, Spin, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { fetchJson } from "../api.js";
+import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import type { GitGraphNode } from "../../../git/types.js";
@@ -13,6 +13,8 @@ interface GraphResponse {
   truncated: boolean;
   offset: number;
   pinnedSha: string;
+  headSha: string;
+  currentBranch: string;
 }
 
 interface CommitDetail {
@@ -41,6 +43,8 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const tableRef = useRef<HTMLDivElement>(null);
   const [rowMetrics, setRowMetrics] = useState<Array<{ top: number; height: number }>>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: GraphLaneNode } | null>(null);
+  const [action, setAction] = useState<"pull" | "push" | "">("");
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async (offset: number) => {
     setLoading(true);
@@ -101,6 +105,25 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       setDetailLoading(false);
     }
   }, [expanded, conversationId, copy]);
+
+  const runAction = useCallback(async (kind: "pull" | "push") => {
+    setAction(kind);
+    setError("");
+    setNotice("");
+    try {
+      const result = await sendJson<{ sha: string; saved?: boolean; fetched?: boolean }>(
+        `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/${kind}`,
+        {}, copy, "POST",
+      );
+      if (kind === "push" && result.saved === false) setNotice(copy.gitGraphNoChanges);
+      else setNotice(kind === "push" ? copy.gitGraphPushDone : copy.gitGraphPullDone);
+      await load(0);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setAction("");
+    }
+  }, [conversationId, copy, load]);
 
   const copyValue = useCallback(async (value: string) => {
     try {
@@ -203,6 +226,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       render: (_value, node) => (
         <span className="conversation-git-cell-title">
           <span>{node.subject || node.sha.slice(0, 12)}</span>
+          {data?.headSha === node.sha ? <span className="conversation-git-row-head">{copy.gitGraphHead}</span> : null}
           {node.tags.length ? <span className="conversation-git-row-tags">{node.tags.join(" · ")}</span> : null}
           {node.refs.length ? <span className="conversation-git-row-refs">{node.refs.join(" · ")}</span> : null}
         </span>
@@ -237,11 +261,28 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   return (
     <div className="conversation-git-graph">
       <div className="conversation-git-toolbar">
-        <div className="conversation-git-legend">
-          <span><i className="dot is-pinned" />{copy.gitGraphPinned}</span>
-          <span><i className="dot is-local" />{copy.gitGraphLocalRef}</span>
-          <span><i className="dot is-branch" />{copy.gitGraphBranch}</span>
-          <span><i className="dot is-tag" />{copy.gitGraphTag}</span>
+        <div className="conversation-git-toolbar-left">
+          <div className="conversation-git-legend">
+            <span><i className="dot is-pinned" />{copy.gitGraphPinned}</span>
+            <span><i className="dot is-head" />{copy.gitGraphHead}</span>
+            <span><i className="dot is-local" />{copy.gitGraphLocalRef}</span>
+            <span><i className="dot is-branch" />{copy.gitGraphBranch}</span>
+            <span><i className="dot is-tag" />{copy.gitGraphTag}</span>
+          </div>
+          {data?.currentBranch ? (
+            <span className="conversation-git-current">
+              {copy.gitGraphCurrentBranch.replace("{branch}", data.currentBranch)}
+              <code>{data.headSha ? data.headSha.slice(0, 8) : ""}</code>
+            </span>
+          ) : null}
+        </div>
+        <div className="conversation-git-actions">
+          <Button size="small" loading={action === "pull"} disabled={Boolean(action) || !data} onClick={() => void runAction("pull")}>
+            {copy.gitGraphPull}
+          </Button>
+          <Button size="small" loading={action === "push"} disabled={Boolean(action) || !data} onClick={() => void runAction("push")}>
+            {copy.gitGraphPush}
+          </Button>
         </div>
         <Select
           className="conversation-git-author-filter"
@@ -256,6 +297,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
         />
       </div>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
+      {notice ? <Typography.Text type="success">{notice}</Typography.Text> : null}
       {loading && !data ? <Spin size="small" /> : null}
       {data && data.nodes.length ? (
         <>
@@ -281,7 +323,8 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 );
               })}
               {layout.nodes.map((node, row) => {
-                const color = node.isPinned ? "var(--primary)"
+                const color = data?.headSha === node.sha ? "var(--purple)"
+                  : node.isPinned ? "var(--primary)"
                   : node.hasLocalRef ? "var(--success)"
                   : node.tags.length ? "var(--warning)"
                   : "var(--text-secondary)";
@@ -308,7 +351,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 tableLayout="fixed"
                 scroll={{ x: "max-content" }}
                 rowClassName={(node) =>
-                  `conversation-git-table-row${node.isPinned ? " is-pinned" : ""}${expanded === node.sha ? " is-selected" : ""}${contextMenu?.node.sha === node.sha ? " is-context-target" : ""}`
+                  `conversation-git-table-row${node.isPinned ? " is-pinned" : ""}${data?.headSha === node.sha ? " is-head" : ""}${expanded === node.sha ? " is-selected" : ""}${contextMenu?.node.sha === node.sha ? " is-context-target" : ""}`
                 }
                 onRow={(node) => ({
                   onClick: () => void toggleRow(node.sha),

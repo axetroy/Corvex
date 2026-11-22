@@ -873,6 +873,18 @@ export class GitManager {
     return { sha: head, pickedSha: sha };
   }
 
+  /** 读出 worktree 当前检出的分支；.detached HEAD 返回空字符串。 */
+  async currentBranch(workspace: Workspace, signal?: AbortSignal): Promise<string> {
+    this.validateWorkspace(workspace);
+    const result = await this.run(
+      workspace.path,
+      ["symbolic-ref", "--short", "--quiet", "HEAD"],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    return result.exitCode === 0 ? result.stdout.toString().trim() : "";
+  }
+
   /** 从已配置的本地镜像抓取对象；worktree 仍固定到当前提交，不自动改变 HEAD。 */
   async fetchFromMirror(workspace: Workspace, signal?: AbortSignal): Promise<{ sha: string; fetched: boolean }> {
     this.validateWorkspace(workspace);

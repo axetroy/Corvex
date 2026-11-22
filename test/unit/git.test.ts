@@ -181,6 +181,9 @@ describe("Git workflows", () => {
     const tracked = await manager.checkoutBranch(workspace, "master");
     expect(tracked.fromRemote).toBe(true);
     expect(await git(workspacePath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("master");
+    expect(await manager.currentBranch(workspace)).toBe("master");
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "--detach", "HEAD"]);
+    expect(await manager.currentBranch(workspace)).toBe("");
     await expect(manager.checkoutBranch(workspace, "missing")).rejects.toThrow("does not exist");
   });
 

@@ -1,5 +1,5 @@
 import { copyFile as copyFileFs, lstat, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
@@ -7,7 +7,7 @@ import { conversationCapabilities, normalizeConversationTitle } from "../model.j
 import type { ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ResponseLanguage } from "../model.js";
 import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
-import { GitManager } from "../git/manager.js";
+import { conversationWorkspaceName, GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { PiAgent, type TraceContext } from "../agent/pi.js";
@@ -275,6 +275,49 @@ export class ConversationRunner {
 
   getCommitGraph(projectId: number, options: { limit: number; offset?: number; author?: string }) {
     return this.repo.getCommitGraph(projectId, options);
+  }
+
+  /** 读取会话 worktree 的当前检出状态，供 Git 图谱标记当前分支。工作区不存在时返回空值。 */
+  async gitWorktreeState(conversationId: string): Promise<{ headSha: string; branch: string }> {
+    const conversation = this.store.getConversation(conversationId);
+    if (!conversation) return { headSha: "", branch: "" };
+    const workspace: Workspace = {
+      projectId: conversation.projectId,
+      workspaceName: conversationWorkspaceName(conversationId),
+      path: join(this.config.storage.root, "workspaces", String(conversation.projectId), conversationWorkspaceName(conversationId)),
+      headSha: this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "",
+    };
+    try {
+      const [status, branch] = await Promise.all([
+        this.repo.getWorkspaceStatus(workspace),
+        this.repo.currentBranch(workspace),
+      ]);
+      return { headSha: status.headSha, branch };
+    } catch {
+      return { headSha: "", branch: "" };
+    }
+  }
+
+  /** 控制台快捷操作：从本地镜像抓取远端更新。 */
+  async gitPull(conversationId: string): Promise<{ sha: string; fetched: boolean }> {
+    const conversation = this.store.getConversation(conversationId);
+    if (!conversation) throw new Error("conversation not found");
+    const workspace: Workspace = {
+      projectId: conversation.projectId,
+      workspaceName: conversationWorkspaceName(conversationId),
+      path: join(this.config.storage.root, "workspaces", String(conversation.projectId), conversationWorkspaceName(conversationId)),
+      headSha: this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "",
+    };
+    return this.repo.fetchFromMirror(workspace);
+  }
+
+  /** 控制台快捷操作：把 worktree 改动保存到会话 ref（不推送 GitLab 分支）。 */
+  async gitPush(conversationId: string): Promise<{ sha: string; saved: boolean }> {
+    const conversation = this.store.getConversation(conversationId);
+    if (!conversation) throw new Error("conversation not found");
+    const expectedSha = this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "";
+    const saved = await this.repo.saveConversationChangesById(conversation.projectId, conversation.id, expectedSha);
+    return saved ? { sha: saved.sha, saved: true } : { sha: expectedSha, saved: false };
   }
 
   listCommitAuthors(projectId: number) {

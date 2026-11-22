@@ -1004,6 +1004,27 @@
   margin-bottom: 10px;
 }
 
+.conversation-git-toolbar-left,
+.conversation-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.conversation-git-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.conversation-git-current code {
+  color: var(--purple);
+  font-size: 10px;
+}
+
 .conversation-git-author-filter {
   width: 180px;
   flex: 0 0 180px;
@@ -1027,6 +1048,7 @@
 }
 
 .conversation-git-legend .dot.is-pinned { background: var(--primary); }
+.conversation-git-legend .dot.is-head { background: var(--purple); }
 .conversation-git-legend .dot.is-local { background: var(--success); }
 .conversation-git-legend .dot.is-branch { background: var(--purple); }
 .conversation-git-legend .dot.is-tag { background: var(--warning); }
@@ -1100,6 +1122,11 @@
   color: var(--primary);
 }
 
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row.is-head .conversation-git-cell-title > span:first-child {
+  color: var(--purple);
+  font-weight: 600;
+}
+
 .conversation-git-cell-title {
   display: flex;
   min-width: 0;
@@ -1124,6 +1151,17 @@
   color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
+}
+
+.conversation-git-row-head {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid var(--purple);
+  border-radius: 3px;
+  color: var(--purple);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .conversation-git-row-tags {

@@ -351,14 +351,42 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       const graph = await ctx.conversations.getCommitGraph(conversation.projectId, {
         limit, offset, ...(author ? { author } : {}),
       });
+      const worktree = await ctx.conversations.gitWorktreeState(conversation.id);
       sendJson(reply, 200, {
         ...graph,
         pinnedSha: ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "",
+        headSha: worktree.headSha,
+        currentBranch: worktree.branch,
       });
     } catch (error) {
       sendJson(reply, 400, { error: errorMessage(error) });
     }
   });
+
+  // Git 图谱快捷操作：只允许在该会话没有在途轮次时执行。
+  for (const [action, run] of [
+    ["pull", (id: string) => ctx.conversations.gitPull(id)],
+    ["push", (id: string) => ctx.conversations.gitPush(id)],
+  ] as const) {
+    app.post(`/api/ops/conversations/:id/git/${action}`, async (request, reply) => {
+      const conversationId = idParam((request.params as { id: string }).id);
+      if (!conversationId) {
+        invalidConversationId(reply);
+        return;
+      }
+      const conversation = ownedConversation(ctx, request, reply, conversationId);
+      if (!conversation) return;
+      if (conversation.messages.some((message) => message.turnStatus === "queued" || message.turnStatus === "running")) {
+        sendJson(reply, 409, { error: "a turn is still running for this conversation" });
+        return;
+      }
+      try {
+        sendJson(reply, 200, await run(conversationId));
+      } catch (error) {
+        sendJson(reply, 400, { error: errorMessage(error) });
+      }
+    });
+  }
 
   app.get("/api/ops/conversations/:id/git/commit/:sha/patch", async (request, reply) => {
     const params = request.params as { id: string; sha: string };
