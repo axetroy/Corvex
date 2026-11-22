@@ -22,6 +22,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+/** macOS 的自然滚动与 Windows/Linux 方向相反，滚轮映射需要按平台区分。 */
+function wheelStep(deltaY: number): number {
+  if (deltaY === 0) return 0;
+  if (typeof navigator === "undefined") return Math.sign(deltaY);
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = nav.userAgentData?.platform ?? nav.platform ?? "";
+  const mac = /mac|iphone|ipad|ipod/i.test(platform);
+  return mac ? -Math.sign(deltaY) : Math.sign(deltaY);
+}
+
 /** 聊天区右侧的轮次快捷导航：悬停看摘要，点击跳到用户该轮提问，滚轮逐轮跳转。 */
 export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }: Props) {
   const navRef = useRef<HTMLElement>(null);
@@ -72,8 +82,7 @@ export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }:
     if (!nav || items.length === 0) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      // 轮次从上到下由旧到新：向下滚轮回看更早的轮次，向上滚轮回到更新的轮次。
-      const step = -Math.sign(event.deltaY);
+      const step = wheelStep(event.deltaY);
       if (step === 0) return;
       const next = clamp(cursorRef.current + step, 0, items.length - 1);
       if (next === cursorRef.current) return;
