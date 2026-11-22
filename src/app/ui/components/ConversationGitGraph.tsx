@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Select, Spin, Table, Typography } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Button, Dropdown, Select, Spin, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -40,6 +40,7 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
   const [author, setAuthor] = useState("");
   const tableRef = useRef<HTMLDivElement>(null);
   const [rowMetrics, setRowMetrics] = useState<Array<{ top: number; height: number }>>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: GraphLaneNode } | null>(null);
 
   const load = useCallback(async (offset: number) => {
     setLoading(true);
@@ -100,6 +101,54 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
       setDetailLoading(false);
     }
   }, [expanded, conversationId, copy]);
+
+  const copyValue = useCallback(async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (cause) {
+      setError(copy.gitMenuCopyFailed || errorMessage(cause));
+    }
+  }, [copy]);
+
+  const copyPatch = useCallback(async (sha: string) => {
+    try {
+      const result = await fetchJson<CommitDetail>(
+        `/api/ops/conversations/${encodeURIComponent(conversationId)}/git/commit/${encodeURIComponent(sha)}`, copy,
+      );
+      await copyValue(result.output);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }, [conversationId, copy, copyValue]);
+
+  // 受控 Dropdown 无 trigger，外部点击与 Escape 需自行关闭。
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".conversation-git-context-menu") || target.closest(".conversation-git-context-anchor")) return;
+      setContextMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
+
+  const contextMenuItems = (node: GraphLaneNode) => [
+    { key: "hash", label: copy.gitMenuCopyHash, onClick: () => void copyValue(node.sha) },
+    { key: "shortHash", label: copy.gitMenuCopyShortHash, onClick: () => void copyValue(node.sha.slice(0, 8)) },
+    { key: "subject", label: copy.gitMenuCopySubject, onClick: () => void copyValue(node.subject) },
+    { key: "author", label: copy.gitMenuCopyAuthor, onClick: () => void copyValue(node.author) },
+    { type: "divider" as const },
+    { key: "patch", label: copy.gitMenuCopyPatch, onClick: () => void copyPatch(node.sha) },
+    { key: "detail", label: copy.gitMenuViewDetail, onClick: () => void toggleRow(node.sha) },
+  ];
 
   // Table 的行高/展开由 antd 控制；读取真实 DOM 位置让泳道节点与连线严格对齐。
   useEffect(() => {
@@ -241,8 +290,16 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
                 pagination={false}
                 tableLayout="fixed"
                 scroll={{ x: "max-content" }}
-                rowClassName={(node) => `conversation-git-table-row${node.isPinned ? " is-pinned" : ""}${expanded === node.sha ? " is-selected" : ""}`}
-                onRow={(node) => ({ onClick: () => void toggleRow(node.sha) })}
+                rowClassName={(node) =>
+                  `conversation-git-table-row${node.isPinned ? " is-pinned" : ""}${expanded === node.sha ? " is-selected" : ""}${contextMenu?.node.sha === node.sha ? " is-context-target" : ""}`
+                }
+                onRow={(node) => ({
+                  onClick: () => void toggleRow(node.sha),
+                  onContextMenu: (event: ReactMouseEvent<HTMLElement>) => {
+                    event.preventDefault();
+                    setContextMenu({ x: event.clientX, y: event.clientY, node });
+                  },
+                })}
                 expandable={{
                   columnWidth: 0,
                   expandedRowKeys: expanded ? [expanded] : [],
@@ -280,6 +337,21 @@ export function ConversationGitGraph({ conversationId, copy }: Props) {
         </>
       ) : !loading ? (
         <Typography.Text type="secondary">{copy.gitGraphEmpty}</Typography.Text>
+      ) : null}
+      {contextMenu ? (
+        <Dropdown
+          open
+          trigger={[]}
+          placement="bottomLeft"
+          menu={{ items: contextMenuItems(contextMenu.node), onClick: () => setContextMenu(null) }}
+          onOpenChange={(open) => { if (!open) setContextMenu(null); }}
+          classNames={{ root: "conversation-git-context-menu" }}
+        >
+          <span
+            className="conversation-git-context-anchor"
+            style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y, width: 1, height: 1 }}
+          />
+        </Dropdown>
       ) : null}
     </div>
   );

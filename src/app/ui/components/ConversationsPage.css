@@ -1081,6 +1081,10 @@
   background: var(--primary-soft);
 }
 
+.conversation-git-table .ant-table-tbody > tr.conversation-git-table-row.is-context-target > td {
+  background: var(--primary-soft);
+}
+
 .conversation-git-table .ant-table-tbody > tr.conversation-git-table-row.is-pinned .conversation-git-cell-title > span:first-child {
   color: var(--primary);
 }
