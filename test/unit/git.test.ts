@@ -58,7 +58,19 @@ describe("Git workflows", () => {
   let directory = "";
 
   afterEach(async () => {
-    if (directory) await rm(directory, { recursive: true, force: true });
+    if (directory) {
+      // Windows 上 git 进程退出后可能短暂持有文件句柄，重试一次再放弃。
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await rm(directory, { recursive: true, force: true });
+          break;
+        } catch (error) {
+          const locked = error instanceof Error && /EBUSY|EPERM/.test(error.message);
+          if (!locked || attempt === 2) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+    }
     directory = "";
   });
 
@@ -474,7 +486,8 @@ describe("Git workflows", () => {
     expect(await manager.pruneConversationChanges(new Set())).toBe(1);
     expect(await manager.listConversationChanges()).toMatchObject(new Map());
     expect(await manager.gcMirrors(7)).toBe(1);
-  });
+    // 这条用例包含多次 mirror/worktree 操作；CI 上比本地慢，默认 5s 不够。
+  }, 30_000);
 
   it("rebases and cherry-picks commits in a bound worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-history-"));

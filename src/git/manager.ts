@@ -140,7 +140,8 @@ export function buildGitEnvironment(root: string, gitlabUrl: URL, authToken: str
     }
   }
   env.GIT_CONFIG_NOSYSTEM = "1";
-  env.GIT_CONFIG_GLOBAL = join(root, ".corvex-no-global-git-config");
+  // Git 把配置路径中的反斜杠当作转义符；Windows 上也统一使用正斜杠。
+  env.GIT_CONFIG_GLOBAL = join(root, ".corvex-no-global-git-config").replaceAll("\\", "/");
   env.GIT_TERMINAL_PROMPT = "0";
   const configs = gitConfigEntries(authToken, gitlabUrl);
   env.GIT_CONFIG_COUNT = String(configs.length);

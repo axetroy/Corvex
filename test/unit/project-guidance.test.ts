@@ -39,7 +39,12 @@ describe("project AGENTS.md guidance", () => {
     try {
       await writeFile(join(directory, "AGENTS.md"), "   \n");
       await writeFile(join(outside, "secret.md"), "outside content");
-      await symlink(join(outside, "secret.md"), join(directory, "AGENTS.override.md"));
+      try {
+        await symlink(join(outside, "secret.md"), join(directory, "AGENTS.override.md"));
+      } catch (error) {
+        // Windows 未开启开发者模式时无法创建符号链接；此时仍验证空文件被跳过。
+        if (!(error instanceof Error && /EPERM|EACCES/.test(error.message))) throw error;
+      }
       const result = await readProjectGuidance(directory, { enabled: true, maxBytes: 32_768, language: "en" });
       expect(result.files).toEqual([]);
     } finally {
