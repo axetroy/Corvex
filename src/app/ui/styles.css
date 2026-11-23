@@ -1199,6 +1199,186 @@ details summary {
   border-right: 1px solid var(--border-soft);
 }
 
+/* 上下文面板：统计、组成、时间线、内容浏览与事件。 */
+.context-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 12px 14px 24px;
+}
+
+.context-panel-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.context-panel-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.context-panel-stats span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.context-panel-stats strong {
+  color: var(--text-strong);
+  font-size: 16px;
+}
+
+.context-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.context-composition-bar,
+.context-timeline-bar {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+}
+
+.context-composition-part,
+.context-timeline-bar i {
+  height: 100%;
+}
+
+.context-composition-part.is-system,
+.context-timeline-bar i.is-system { background: var(--primary); }
+.context-composition-part.is-tools,
+.context-timeline-bar i.is-tools { background: var(--purple); }
+.context-composition-part.is-user,
+.context-timeline-bar i.is-user { background: var(--success); }
+.context-composition-part.is-inject,
+.context-timeline-bar i.is-inject { background: var(--warning); }
+.context-composition-part.is-assistant,
+.context-timeline-bar i.is-assistant { background: var(--blue); }
+.context-composition-part.is-tool,
+.context-timeline-bar i.is-tool { background: var(--orange); }
+
+.context-composition-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.context-composition-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+
+.context-composition-legend i.is-system { background: var(--primary); }
+.context-composition-legend i.is-tools { background: var(--purple); }
+.context-composition-legend i.is-user { background: var(--success); }
+.context-composition-legend i.is-inject { background: var(--warning); }
+.context-composition-legend i.is-assistant { background: var(--blue); }
+.context-composition-legend i.is-tool { background: var(--orange); }
+
+.context-timeline-list,
+.context-event-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.context-timeline-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  text-align: left;
+}
+
+.context-timeline-row.is-selected {
+  background: var(--bg-hover);
+  box-shadow: inset 3px 0 var(--primary);
+}
+
+.context-timeline-seq,
+.context-timeline-tokens {
+  color: var(--text-secondary);
+  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.context-timeline-tokens {
+  text-align: right;
+}
+
+.context-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.context-browser-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-browser-item {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.context-browser-item summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.context-browser-item pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 6px 0;
+  color: var(--text);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.context-event-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 150px;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+}
+
 .trace-pane-heading {
   display: flex;
   align-items: center;

@@ -68,6 +68,14 @@ export class ConversationRunner {
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
     this.agent = new PiAgent(config, store, this.repo, undefined, this.hooks);
+    // 上下文快照的默认消费者：只做有界落库，插件可在同一 hook 上追加分析。
+    this.hooks.contextSnapshot.tapPromise({ name: "store-context-snapshot", stage: 100 }, async (snapshot) => {
+      try {
+        this.store.saveContextSnapshot(snapshot);
+      } catch (error) {
+        console.warn("context snapshot could not be stored", { error: errorMessage(error) });
+      }
+    });
     // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。
     this.hooks.conversationTitleRefine.tapPromise({ name: "llm-summary", stage: 100 }, async (input) => {
       const result = await this.agent.generate(
@@ -896,6 +904,7 @@ export class ConversationRunner {
               conversationMode: turn.mode,
               conversationProjectId: turn.projectId,
               conversationId: turn.conversationId,
+              turnId: turn.turnId,
               gitlab,
               systemPrompt,
               userPrompt,

@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { conversationWorkspaceName } from "../../../git/manager.js";
 import { isConversationMode } from "../../../model.js";
 import type { Conversation, ConversationStreamEvent } from "../../../model.js";
+import type { ContextSnapshotData } from "../../../agent/context-inspect.js";
 import { requireUser } from "../../auth/context.js";
 import { callAsyncHook } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
@@ -502,6 +503,51 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       return;
     }
     sendJson(reply, 200, turns);
+  });
+
+  // 上下文快照：按模型请求保存的组成与逐项预览，供会话的「上下文」面板读取。
+  app.get("/api/ops/conversations/:id/context", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    const snapshots = ctx.store.contextSnapshots(conversationId);
+    sendJson(reply, 200, {
+      conversationId,
+      snapshots: snapshots.map((snapshot) => ({
+        conversationId: snapshot.conversationId,
+        turnId: snapshot.turnId,
+        requestSeq: snapshot.requestSeq,
+        createdAt: snapshot.createdAt,
+        contextWindow: snapshot.contextWindow,
+        reservedOutput: snapshot.reservedOutput,
+        threshold: snapshot.threshold,
+        estimatedTokens: snapshot.estimatedTokens,
+        breakdown: snapshot.breakdown,
+        counts: snapshot.counts,
+        truncated: snapshot.truncated,
+      })),
+      itemTotals: snapshots.map((snapshot) => ({ requestSeq: snapshot.requestSeq, items: snapshot.items.length })),
+    });
+  });
+
+  app.get("/api/ops/conversations/:id/context/:seq", async (request, reply) => {
+    const params = request.params as { id: string; seq: string };
+    const conversationId = idParam(params.id);
+    const seq = Number(params.seq);
+    if (!conversationId || !Number.isSafeInteger(seq) || seq < 1) {
+      sendJson(reply, 400, { error: "invalid conversation ID or request sequence" });
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    const snapshot = ctx.store.contextSnapshot(conversationId, seq);
+    if (!snapshot) {
+      sendJson(reply, 404, { error: "context snapshot not found" });
+      return;
+    }
+    sendJson(reply, 200, snapshot satisfies ContextSnapshotData);
   });
 
   // 单轮对话的流式正文：SSE 推送模型已生成的累计文本，结束后立即关闭连接。

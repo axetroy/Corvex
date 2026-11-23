@@ -36,6 +36,7 @@ import { buildContextSnapshot, createContextObserveExtension, messagesToText } f
 import { createProviderTokenCounter } from "./token-counter.js";
 import { domainSummaryInstructions } from "./domain-summary.js";
 import { createMicrocompactExtension } from "./microcompact.js";
+import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
@@ -208,6 +209,8 @@ export interface ModelRequest {
   conversationProjectId?: number;
   /** 当前对话 ID；用于按对话平滑每轮 token 增长，动态调整压缩阈值。 */
   conversationId?: string;
+  /** 当前对话轮次 ID；上下文快照按轮次归属。 */
+  turnId?: string;
   /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
   gitTools?: GitToolAdapter;
   /**
@@ -704,6 +707,22 @@ export class PiAgent {
             });
           },
         }),
+        // 上下文洞察通过 hook 接入：PiAgent 只产出有界快照，落库由默认 tap 完成。
+        ...(this.hooks && request.conversationId && request.turnId
+          ? [createContextInspectExtension({
+              conversationId: request.conversationId,
+              turnId: request.turnId,
+              contextWindow: config.agent.contextWindow,
+              reservedOutput: config.agent.maxOutputTokens,
+              threshold: activeCompactionTrigger?.threshold ?? selfCompactThreshold,
+              tokenCounter,
+              onSnapshot: (snapshot) => {
+                void callAsyncHook(this.hooks!.contextSnapshot, snapshot).catch((error: unknown) => {
+                  console.warn("context snapshot hook failed", { error: errorMessage(error) });
+                });
+              },
+            })]
+          : []),
       ],
       systemPrompt: request.systemPrompt,
     });

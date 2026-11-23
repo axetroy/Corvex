@@ -805,6 +805,41 @@ describe("AppStore", () => {
     expect(messageColumns.map((column) => column.name)).not.toContain("session_id");
   });
 
+  it("stores bounded context snapshots per request", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-context-snapshots-"));
+    store = await AppStore.open(join(directory, "state.db"));
+    const created = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "context test",
+    });
+    const snapshot = {
+      conversationId: created.conversationId,
+      turnId: created.turnId,
+      requestSeq: 1,
+      createdAt: new Date().toISOString(),
+      contextWindow: 8000,
+      reservedOutput: 1024,
+      threshold: 85,
+      estimatedTokens: 1200,
+      breakdown: { system: 100, tools: 200, user: 300, inject: 0, assistant: 400, tool: 200 },
+      counts: { system: 1, tools: 2, user: 1, inject: 0, assistant: 1, tool: 1 },
+      items: [{ category: "user" as const, name: "token=secret", tokens: 300, preview: "token=secret" }],
+      truncated: false,
+    };
+    store.saveContextSnapshot(snapshot);
+    const listed = store.contextSnapshots(created.conversationId);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.requestSeq).toBe(1);
+    const detail = store.contextSnapshot(created.conversationId, 1);
+    expect(detail?.items).toHaveLength(1);
+    // 字段名 tokens 不能被凭证脱敏规则误伤，必须是数值。
+    expect(detail?.items[0]?.tokens).toBe(300);
+    expect(JSON.stringify(detail)).not.toContain("secret");
+    expect(store.contextSnapshot(created.conversationId, 2)).toBeUndefined();
+    store.deleteConversation(created.conversationId);
+    expect(store.contextSnapshots(created.conversationId)).toEqual([]);
+  });
+
   it("deletes leftover shared GitLab tokens from the database on open", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-token-migration-"));
     const databasePath = join(directory, "state.db");

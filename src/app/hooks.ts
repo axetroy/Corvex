@@ -2,6 +2,7 @@ import type { FastifyRequest } from "fastify";
 import { AsyncSeriesBailHook, AsyncSeriesHook, SyncHook } from "tapable";
 import type { CorvexConfig } from "../config/config.js";
 import type { ModelRequest, ModelResponse } from "../agent/pi.js";
+import type { ContextSnapshotData } from "../agent/context-inspect.js";
 import type { ConversationTurnContext, ResponseLanguage, TraceScope } from "../model.js";
 import { normalizeConversationTitle } from "../model.js";
 import { stripConversationCommand } from "./conversation-command.js";
@@ -93,6 +94,8 @@ export interface CorvexHooks {
   toolBefore: AsyncSeriesHook<[ToolHookContext]>;
   /** 自定义工具返回之后；用于记录调用结果与耗时，参数已按轨迹规则脱敏。 */
   toolAfter: AsyncSeriesHook<[ToolResultHookContext]>;
+  /** 每次模型请求前的上下文快照；默认 tap 负责有界落库，插件可追加分析。 */
+  contextSnapshot: AsyncSeriesHook<[ContextSnapshotData]>;
 }
 
 /**
@@ -131,6 +134,7 @@ export function createCorvexHooks(): CorvexHooks {
     agentAfterModel: new AsyncSeriesHook(["request", "response"]),
     toolBefore: new AsyncSeriesHook(["context"]),
     toolAfter: new AsyncSeriesHook(["context"]),
+    contextSnapshot: new AsyncSeriesHook(["snapshot"]),
   };
   // 默认实现：标题只来自用户消息，不做额外的模型调用。
   // 默认实现放在较低优先级的 stage，插件可以先行返回自定义标题。

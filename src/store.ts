@@ -7,6 +7,7 @@ import {
 } from "node:sqlite";
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
+import type { ContextSnapshotData } from "./agent/context-inspect.js";
 import {
   redactSensitiveText,
   sanitizeSensitiveText,
@@ -134,6 +135,27 @@ function turnDurationMs(createdAt: string, updatedAt: string, isTerminal: boolea
   const end = Date.parse(updatedAt);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
   return end - start;
+}
+
+/**
+ * 上下文条目的字段结构是固定的：只对文本字段做脱敏，保留 tokens 数值。
+ * 不能走 sanitizeSensitiveText 的字段名规则，否则 "tokens" 会被当成凭证字段替换成 [REDACTED]。
+ * 体积按整条裁剪，保证落库后始终是合法 JSON。
+ */
+function serializeContextItems(items: ContextSnapshotData["items"]): string {
+  const maxBytes = 128 * 1024;
+  const clean = items.map((item) => ({
+    category: item.category,
+    name: redactSensitiveText(item.name).slice(0, 120),
+    tokens: item.tokens,
+    preview: redactSensitiveText(item.preview),
+  }));
+  while (clean.length > 0) {
+    const json = JSON.stringify(clean);
+    if (Buffer.byteLength(json) <= maxBytes) return json;
+    clean.pop();
+  }
+  return "[]";
 }
 
 function serializeTraceValue(value: unknown): string | null {
@@ -468,6 +490,88 @@ export class AppStore {
          ON CONFLICT(key) DO UPDATE SET value = value + excluded.value`,
       )
       .run(key, amount);
+  }
+
+  /** 保存一次模型请求前的上下文快照；写入前走与轨迹相同的脱敏与限长路径。 */
+  saveContextSnapshot(snapshot: ContextSnapshotData): void {
+    if (!snapshot.conversationId || !snapshot.turnId) throw new Error("context snapshot requires conversation and turn");
+    if (!Number.isSafeInteger(snapshot.requestSeq) || snapshot.requestSeq < 1) throw new Error("invalid context snapshot sequence");
+    const breakdown = sanitizeTraceString(JSON.stringify(snapshot.breakdown))!;
+    const counts = sanitizeTraceString(JSON.stringify(snapshot.counts))!;
+    const items = serializeContextItems(snapshot.items);
+    // requestSeq 在每次 Pi session 内从 1 重新计数；落库时改成会话内全局递增，
+    // 避免不同轮次出现重复的 #1 并让 /context/:seq 的查询保持唯一。
+    const seqRow = this.db.prepare(
+      "SELECT COALESCE(MAX(request_seq), 0) + 1 AS seq FROM conversation_context_snapshots WHERE conversation_id=?",
+    ).get(snapshot.conversationId) as { seq: number };
+    this.db.prepare(
+      `INSERT INTO conversation_context_snapshots
+         (conversation_id,turn_id,request_seq,created_at,context_window,reserved_output,threshold,estimated_tokens,breakdown,counts,items,truncated)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      snapshot.conversationId, snapshot.turnId, seqRow.seq, snapshot.createdAt,
+      snapshot.contextWindow, snapshot.reservedOutput, snapshot.threshold,
+      snapshot.estimatedTokens, breakdown, counts, items, snapshot.truncated ? 1 : 0,
+    );
+    // 限制单会话快照数量：保留最近的记录，压缩边界点也随轮次保留。
+    this.db.prepare(
+      `DELETE FROM conversation_context_snapshots WHERE conversation_id=? AND id NOT IN
+         (SELECT id FROM conversation_context_snapshots WHERE conversation_id=? ORDER BY id DESC LIMIT 300)`,
+    ).run(snapshot.conversationId, snapshot.conversationId);
+  }
+
+  /** 按请求顺序返回会话的上下文快照（最新在前）。 */
+  contextSnapshots(conversationId: string, limit = 300): ContextSnapshotData[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM conversation_context_snapshots WHERE conversation_id=? ORDER BY request_seq DESC,id DESC LIMIT ?",
+    ).all(conversationId, Math.max(1, Math.min(500, limit))) as Record<string, unknown>[];
+    return rows.map((row) => this.readContextSnapshot(row));
+  }
+
+  contextSnapshot(conversationId: string, requestSeq: number): ContextSnapshotData | undefined {
+    const row = this.db.prepare(
+      "SELECT * FROM conversation_context_snapshots WHERE conversation_id=? AND request_seq=? ORDER BY id DESC LIMIT 1",
+    ).get(conversationId, requestSeq) as Record<string, unknown> | undefined;
+    return row ? this.readContextSnapshot(row) : undefined;
+  }
+
+  private readContextSnapshot(row: Record<string, unknown>): ContextSnapshotData {
+    const parseObject = (value: unknown): Record<string, unknown> => {
+      if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+      if (typeof value !== "string") return {};
+      try {
+        const parsed: unknown = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown> : {};
+      } catch {
+        return {};
+      }
+    };
+    // items 是数组，不能用「对象」解析器（那会把数组误判成空对象）。
+    const parseItems = (value: unknown): ContextSnapshotData["items"] => {
+      if (Array.isArray(value)) return value as ContextSnapshotData["items"];
+      if (typeof value !== "string") return [];
+      try {
+        const parsed: unknown = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed as ContextSnapshotData["items"] : [];
+      } catch {
+        return [];
+      }
+    };
+    return {
+      conversationId: String(row.conversation_id),
+      turnId: String(row.turn_id ?? ""),
+      requestSeq: Number(row.request_seq),
+      createdAt: String(row.created_at),
+      contextWindow: Number(row.context_window),
+      reservedOutput: Number(row.reserved_output),
+      threshold: row.threshold === null || row.threshold === undefined ? null : Number(row.threshold),
+      estimatedTokens: Number(row.estimated_tokens),
+      breakdown: parseObject(row.breakdown) as ContextSnapshotData["breakdown"],
+      counts: parseObject(row.counts) as ContextSnapshotData["counts"],
+      items: parseItems(row.items),
+      truncated: Number(row.truncated) === 1,
+    };
   }
 
   startTrace(
@@ -2215,6 +2319,16 @@ export class AppStore {
       CREATE TABLE IF NOT EXISTS context_metrics (
         key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS conversation_context_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        turn_id TEXT REFERENCES conversation_turns(id) ON DELETE CASCADE,
+        request_seq INTEGER NOT NULL, created_at TEXT NOT NULL,
+        context_window INTEGER NOT NULL, reserved_output INTEGER NOT NULL,
+        threshold INTEGER, estimated_tokens INTEGER NOT NULL,
+        breakdown TEXT NOT NULL, counts TEXT NOT NULL, items TEXT NOT NULL, truncated INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS context_snapshots_conversation_idx ON conversation_context_snapshots(conversation_id,request_seq,id);
     `);
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
     this.migrateLegacyModelProfiles();

@@ -22,6 +22,7 @@ import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
+import { ContextPanel } from "./ContextPanel.js";
 import { ComposerModelPicker } from "./ComposerModelPicker.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
@@ -46,7 +47,7 @@ interface Props {
 }
 
 /** 对话详情右侧的标签：对话流、调用记录、轮次轨迹与用量统计。 */
-type ConversationDetailTab = "chat" | "records" | "trace" | "stats" | "changes" | "git";
+type ConversationDetailTab = "chat" | "records" | "trace" | "context" | "stats" | "changes" | "git";
 
 /** 对话列表每页条数。 */
 const conversationPageSize = 50;
@@ -1518,6 +1519,22 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       refreshToken={refreshToken}
                       onUpdated={onUpdated}
                     />
+                  </div>
+                ),
+              },
+              {
+                key: "context",
+                label: copy.conversationTabContext,
+                children: (
+                  <div className="conversation-tab-pane">
+                    {selectedConversationId ? (
+                      <ContextPanel
+                        conversationId={selectedConversationId}
+                        copy={copy}
+                        locale={locale}
+                        refreshToken={refreshToken}
+                      />
+                    ) : null}
                   </div>
                 ),
               },
