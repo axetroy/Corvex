@@ -1419,6 +1419,41 @@
 
 .conversation-message-markdown .x-markdown {
   font-size: 14px;
+  /* GitHub 风格表格单元格内边距，覆盖 XMarkdown 默认值。 */
+  --td-th-padding: 6px 13px;
+}
+
+/* 表格：对齐 GitHub 的边框、表头底色与斑马纹；选择器优先级需高于 XMarkdown 默认样式。 */
+body .conversation-message-markdown .x-markdown:not(.x-md-disable-table) table:not(pre) {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  border-collapse: collapse;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th,
+body .conversation-message-markdown .x-markdown:not(.x-md-disable-td) td {
+  padding: var(--td-th-padding);
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+
+body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+  text-align: left;
+}
+
+.conversation-message-markdown .x-markdown tbody tr:nth-child(2n) {
+  background: var(--bg-subtle);
+}
+
+.conversation-message-markdown .x-markdown tbody tr:hover {
+  background: var(--primary-soft);
 }
 
 .conversation-message-markdown .x-markdown > :first-child {
@@ -1452,6 +1487,35 @@
   font-size: 12px;
   line-height: 1.6;
   white-space: pre;
+}
+
+/* Mermaid 图表：与代码块一致的边框面板，SVG 按容器宽度自适应并水平居中。 */
+.conversation-diagram {
+  display: block;
+  min-height: 40px;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  overflow-x: auto;
+}
+
+.conversation-diagram-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.conversation-diagram-loading {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conversation-diagram.is-failed {
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .conversation-code-copy {

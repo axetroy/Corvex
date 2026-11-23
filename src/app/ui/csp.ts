@@ -23,4 +23,17 @@ if (nonce && typeof document.head.appendChild === "function") {
     stamp(node);
     return insertBefore(node, reference);
   }) as typeof head.insertBefore;
+
+  // Mermaid 等库会把主题 <style> 插到 SVG 等容器而不是 head，这里统一在任意元素上补 nonce。
+  const elementAppend = Element.prototype.appendChild;
+  Element.prototype.appendChild = function (this: Element, node: Node) {
+    stamp(node);
+    return elementAppend.call(this, node);
+  } as typeof Element.prototype.appendChild;
+
+  const elementInsertBefore = Element.prototype.insertBefore;
+  Element.prototype.insertBefore = function (this: Element, node: Node, reference: Node | null) {
+    stamp(node);
+    return elementInsertBefore.call(this, node, reference);
+  } as typeof Element.prototype.insertBefore;
 }

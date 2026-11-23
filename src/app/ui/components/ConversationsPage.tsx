@@ -131,7 +131,13 @@ function MessageContent({
   timeline: readonly ConversationTimelineSegment[];
 }) {
   const codeComponentsProps = useMemo(() => ({
-    code: { copy, copiedLabel: copy.codeCopied, failedLabel: copy.codeCopyFailed },
+    code: {
+      copy,
+      copiedLabel: copy.codeCopied,
+      failedLabel: copy.codeCopyFailed,
+      diagramLoadingLabel: copy.diagramLoading,
+      diagramFailedLabel: copy.diagramFailed,
+    },
   }), [copy]);
   if (message.role === "user") {
     return <div className="conversation-message-text" data-turn-id={message.id}>{message.content}</div>;

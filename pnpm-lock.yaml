@@ -184,6 +184,9 @@ importers:
       highlight.js:
         specifier: ^11.12.0
         version: 11.12.0
+      mermaid:
+        specifier: ^11.17.2
+        version: 11.17.2
       monaco-editor:
         specifier: ^0.57.0
         version: 0.57.0

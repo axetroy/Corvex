@@ -1,8 +1,11 @@
-import { isValidElement, useEffect, useState, type ReactNode } from "react";
+import { isValidElement, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import type { ComponentProps } from "@ant-design/x-markdown";
 import type { Copy } from "../i18n.js";
 import { highlightCode } from "../codeHighlight.js";
 import { CheckIcon, CopyIcon } from "./icons.js";
+
+/** 图表渲染器按需加载，普通代码块不会引入 Mermaid 的体积。 */
+const MarkdownDiagram = lazy(() => import("./MarkdownDiagram.js"));
 
 /** 从 XMarkdown 传入的已解析 React 子节点里取回纯文本源码。 */
 function nodeText(node: ReactNode): string {
@@ -17,6 +20,8 @@ interface CodeProps extends ComponentProps {
   copy?: Copy;
   copiedLabel?: string;
   failedLabel?: string;
+  diagramLoadingLabel?: string;
+  diagramFailedLabel?: string;
 }
 
 type CopyState = "idle" | "copied" | "failed";
@@ -60,9 +65,23 @@ function CopyButton({ source, copy, copiedLabel, failedLabel }: {
 }
 
 /** 替换 XMarkdown 的 code 节点：块级代码高亮并提供复制，行内代码保持原样。 */
-function MarkdownCode({ children, block, lang, streamStatus, copy, copiedLabel, failedLabel }: CodeProps) {
+function MarkdownCode({ children, block, lang, streamStatus, copy, copiedLabel, failedLabel, diagramLoadingLabel, diagramFailedLabel }: CodeProps) {
   if (!block) return <code>{children}</code>;
   const source = nodeText(children);
+  const language = (lang ?? "").split(/\s+/)[0]?.toLowerCase();
+  if (language === "mermaid" || language === "flowchart") {
+    // 流式生成中的围栏可能不完整，等文本落定再渲染，避免反复报错。
+    if (streamStatus === "loading") return <span className="conversation-diagram pending" />;
+    return (
+      <Suspense fallback={<span className="conversation-diagram pending" />}>
+        <MarkdownDiagram
+          source={source}
+          loadingLabel={diagramLoadingLabel ?? "Rendering diagram…"}
+          failedLabel={diagramFailedLabel ?? "Diagram failed to render"}
+        />
+      </Suspense>
+    );
+  }
   return (
     <span className="conversation-code-block">
       {/* 流式生成中的代码块不完整，不提供复制。 */}
