@@ -21,6 +21,7 @@ describe("microcompact messages", () => {
     expect(result.messages[2]).toBe(messages[2]);
     expect(result.messages[3]).toBe(messages[3]);
     expect(result.savedChars).toBeGreaterThan(0);
+    expect(result.signature).toBe("1");
   });
 
   it("leaves small results untouched", () => {
@@ -47,5 +48,30 @@ describe("microcompact extension", () => {
       | undefined;
     expect(result?.messages).toHaveLength(1);
     expect(onPruned).toHaveBeenCalledOnce();
+  });
+
+  it("notifies only when the pruned set changes across repeated requests", () => {
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    const pi = {
+      on: (event: string, callback: (event: unknown) => unknown) => {
+        handlers.set(event, callback);
+        return () => undefined;
+      },
+    } as unknown as ExtensionAPI;
+    const onPruned = vi.fn();
+    createMicrocompactExtension({ onPruned, keepRecent: 1, maxKeptChars: 10 })(pi);
+    const context = handlers.get("context")!;
+
+    const messages = [toolResult("x".repeat(100), 0), toolResult("y".repeat(100), 1)];
+    context({ messages });
+    context({ messages });
+    context({ messages });
+    expect(onPruned).toHaveBeenCalledTimes(1);
+    expect(onPruned.mock.calls[0]?.[2]).toBe("0");
+
+    // 新增一条工具结果后，最早那条成为新的可裁剪项，集合变化应再次通知。
+    context({ messages: [...messages, toolResult("z".repeat(100), 2)] });
+    expect(onPruned).toHaveBeenCalledTimes(2);
+    expect(onPruned.mock.calls[1]?.[2]).toBe("0,1");
   });
 });

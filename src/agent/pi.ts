@@ -695,11 +695,11 @@ export class PiAgent {
         createMicrocompactExtension({
           keepRecent: 4,
           maxKeptChars: 400,
-          onPruned: (pruned, savedChars) => {
+          onPruned: (pruned, savedChars, signature) => {
             this.store?.recordContextMetric("microcompact", pruned);
             this.store?.recordContextMetric("microcompact_chars", savedChars);
             emitContextStream({
-              id: `microcompact-${Date.now()}-${pruned}-${savedChars}`,
+              id: `microcompact-${signature}`,
               text: microcompactNoticeText(config.agent.responseLanguage, pruned, savedChars),
             });
           },
