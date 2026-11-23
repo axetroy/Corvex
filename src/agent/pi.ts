@@ -21,6 +21,7 @@ import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { estimateTokens, isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
+import { redactSensitiveText } from "../redact.js";
 import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
@@ -795,7 +796,7 @@ export class PiAgent {
         const result = event.result;
         const language = config.agent.responseLanguage;
         const failed = event.aborted || !result;
-        if (!failed && result) lastCompactionSummary = result.summary;
+        if (!failed && result) lastCompactionSummary = redactSensitiveText(result.summary);
         this.store?.recordContextMetric("compaction", 1);
         if (active?.reason === "threshold" || event.reason === "threshold") {
           this.store?.recordContextMetric("compaction_threshold", 1);
@@ -1058,7 +1059,7 @@ export class PiAgent {
             threshold: effectiveThreshold,
           };
           const compaction = await session.compact();
-          lastCompactionSummary = compaction.summary;
+          lastCompactionSummary = redactSensitiveText(compaction.summary);
           activeCompactionTrigger = undefined;
         }
       } catch (error) {

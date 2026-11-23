@@ -1,4 +1,5 @@
 import type { CompactionResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { redactSensitiveText } from "../redact.js";
 
 /** 压缩前上下文里保留的一条消息；只取展示所需的角色与纯文本。 */
 export interface ContextSnapshotMessage {
@@ -23,7 +24,7 @@ function extractMessage(value: unknown): ContextSnapshotMessage | undefined {
   const role = typeof record.role === "string" ? record.role : "";
   if (!textRoles.has(role)) return undefined;
   const content = record.content;
-  if (typeof content === "string") return { role, text: content };
+  if (typeof content === "string") return { role, text: redactSensitiveText(content) };
   if (!Array.isArray(content)) return undefined;
   const parts: string[] = [];
   for (const part of content) {
@@ -34,7 +35,8 @@ function extractMessage(value: unknown): ContextSnapshotMessage | undefined {
       parts.push(item.thinking);
     }
   }
-  return parts.length > 0 ? { role, text: parts.join("\n") } : undefined;
+  // 快照会随压缩轨迹落库并在 Trace 里展示；工具输出属于不可信数据，先脱敏再保留。
+  return parts.length > 0 ? { role, text: redactSensitiveText(parts.join("\n")) } : undefined;
 }
 
 /** 把消息内容展平成纯文本，供真实 token 计数使用（不做截断）。 */

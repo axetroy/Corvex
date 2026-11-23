@@ -409,6 +409,39 @@ describe("AppStore", () => {
     expect(store.getConversationTurn(created.conversationId, "missing-turn")).toBeUndefined();
   });
 
+  it("redacts credentials from trace input and output at the storage boundary", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Check trace redaction",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    const secret = "glpat-abcdefghijklmnopqrstuvwx";
+    const traceId = store.startTrace(
+      { kind: "conversation", turnId: claimed.turnId },
+      claimed.attempt,
+      "context",
+      "context.compact",
+      "",
+      null,
+      { input: JSON.stringify({ before: { messages: [{ text: `token: ${secret}` }] } }) },
+    );
+    store.finishTrace(traceId, "succeeded", 0, undefined, undefined, undefined,
+      JSON.stringify({ after: { summary: `password: hunter2` } }));
+
+    const entries = store.getTraceEntries({ kind: "conversation", turnId: claimed.turnId }, claimed.attempt);
+    const trace = entries.find((entry) => entry.name === "context.compact");
+    expect(trace?.input).not.toContain(secret);
+    expect(trace?.output).not.toContain("hunter2");
+    expect(trace?.input).toContain("[REDACTED]");
+    expect(trace?.output).toContain("[REDACTED]");
+  });
+
   it("merges every turn of a conversation into one ordered timeline", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

@@ -8,6 +8,11 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import {
+  redactSensitiveText,
+  sanitizeSensitiveText,
+  sanitizeSensitiveValue,
+} from "./redact.js";
+import {
   defaultConversationMode,
   isConversationMode,
   isConversationTurnStatus,
@@ -56,8 +61,6 @@ import {
 const terminalConversationTurn = new Set<ConversationTurnStatus>(["completed", "failed", "stale", "cancelled"]);
 /** 单条持久化执行轨迹输入或输出允许保存的最大字节数。 */
 const maxExecutionPayloadBytes = 64 << 10;
-/** 执行轨迹中用于识别并脱敏凭证类字段名的匹配规则。 */
-const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|credential/i;
 /** 对话列表每条助手回复附带展示的工具调用条数上限，超出只保留最早的调用。 */
 const maxConversationToolCalls = 50;
 /** 对话列表工具调用参数展示的最大字节数，避免把整段轨迹负载塞进列表接口。 */
@@ -133,35 +136,9 @@ function turnDurationMs(createdAt: string, updatedAt: string, isTerminal: boolea
   return end - start;
 }
 
-function redactTraceText(value: string): string {
-  return value
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[REDACTED]")
-    .replace(/\b(?:glpat-|glrt-|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{16,}\b/gi, "[REDACTED]")
-    .replace(/\b(token|secret|api[_-]?key|password|authorization|private[_-]?token|client[_-]?secret)\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1$2[REDACTED]")
-    .replace(/([?&](?:access[_-]?token|token|key|secret|password|signature|auth)=)[^&#\s]*/gi, "$1[REDACTED]")
-    .replace(/(https?:\/\/)[^/\s@]+@/gi, "$1[REDACTED]@");
-}
-
-function sanitizeTraceValue(value: unknown, depth = 0): unknown {
-  if (depth > 8) return "[MAX_DEPTH]";
-  if (typeof value === "string") return redactTraceText(value);
-  if (Array.isArray(value)) return value.slice(0, 500).map((item) => sanitizeTraceValue(item, depth + 1));
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).slice(0, 500).map(([key, item]) => [
-        key,
-        sensitiveField.test(key) ? "[REDACTED]" : sanitizeTraceValue(item, depth + 1),
-      ]),
-    );
-  }
-  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
-  if (value === undefined || typeof value === "function" || typeof value === "symbol") return String(value);
-  return value;
-}
-
 function serializeTraceValue(value: unknown): string | null {
   if (value === undefined) return null;
-  const serialized = JSON.stringify(sanitizeTraceValue(value));
+  const serialized = JSON.stringify(sanitizeSensitiveValue(value));
   if (Buffer.byteLength(serialized) <= maxExecutionPayloadBytes) return serialized;
   const bytes = Buffer.from(serialized);
   let previewBytes = maxExecutionPayloadBytes - 1024;
@@ -182,6 +159,18 @@ function serializeTraceValue(value: unknown): string | null {
 }
 
 /**
+ * 清洗调用方预先序列化好的轨迹文本：先按结构/文本脱敏，再做统一限长。
+ * startTrace/finishTrace 的入参都是字符串，若不在这里兜底，敏感字段名的
+ * 键值规则就完全失效（JSON 字符串里的 `"token":"..."` 不是裸 key=value）。
+ */
+function sanitizeTraceString(value: string | null): string | null {
+  if (value === null) return null;
+  const sanitized = sanitizeSensitiveText(value);
+  if (Buffer.byteLength(sanitized) <= maxExecutionPayloadBytes) return sanitized;
+  return serializeTraceValue(sanitized);
+}
+
+/**
  * 净化并限长对话过程条目：与轨迹共用同一套凭证脱敏规则，
  * 工具参数再按字段过滤，避免把密钥或整段文件读进过程快照。
  */
@@ -190,11 +179,11 @@ function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[
     if (entry.kind === "tool") {
       return {
         ...entry,
-        name: redactTraceText(entry.name).slice(0, 512),
-        input: entry.input ? redactTraceText(entry.input).slice(0, maxConversationProcessInputChars) : null,
+        name: redactSensitiveText(entry.name).slice(0, 512),
+        input: entry.input ? redactSensitiveText(entry.input).slice(0, maxConversationProcessInputChars) : null,
       };
     }
-    return { ...entry, text: redactTraceText(entry.text).slice(0, maxConversationProcessTextChars) };
+    return { ...entry, text: redactSensitiveText(entry.text).slice(0, maxConversationProcessTextChars) };
   });
   let serialized = JSON.stringify(clean);
   while (Buffer.byteLength(serialized) > maxConversationProcessBytes && clean.length > 1) {
@@ -518,9 +507,9 @@ export class AppStore {
         "running",
         new Date().toISOString(),
         model || null,
-        details.input ?? null,
-        details.schema ?? null,
-        rawContent,
+        sanitizeTraceString(details.input ?? null),
+        sanitizeTraceString(details.schema ?? null),
+        sanitizeTraceString(rawContent),
       );
     const id = Number(result.lastInsertRowid);
     if (!Number.isSafeInteger(id)) throw new Error("SQLite returned an invalid trace ID");
@@ -567,8 +556,8 @@ export class AppStore {
         Math.floor(durationMs),
         inputTokens ?? null,
         outputTokens ?? null,
-        errorDetail ?? null,
-        output ?? null,
+        sanitizeTraceString(errorDetail ?? null),
+        sanitizeTraceString(output ?? null),
         firstTokenMs === undefined ? null : Math.floor(firstTokenMs),
         generationDurationMs === undefined ? null : Math.floor(generationDurationMs),
         requestStartedAt ?? null,
@@ -633,7 +622,7 @@ export class AppStore {
         new Date().toISOString(),
         Math.floor(durationMs),
         serializeTraceValue(output),
-        errorDetail ? redactTraceText(errorDetail).slice(0, 8192) : null,
+        errorDetail ? redactSensitiveText(errorDetail).slice(0, 8192) : null,
         id,
       );
     if (result.changes !== 1) throw new Error(`execution event "${id}" is not running`);
@@ -1197,7 +1186,8 @@ export class AppStore {
     summary: string,
     summaryMessageId: string | null,
   ): void {
-    const trimmed = summary.trim().slice(0, maxConversationSummaryCharacters);
+    // 摘要由模型从工具输出生成，可能原样带出凭证；写入前按文本规则脱敏。
+    const trimmed = redactSensitiveText(summary).trim().slice(0, maxConversationSummaryCharacters);
     if (!trimmed) return;
     this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM conversations WHERE id=?").get(conversationId) as
