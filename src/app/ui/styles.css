@@ -1104,7 +1104,7 @@ details summary {
 }
 
 .trace-overview-plot-tool {
-  background-color: var(--success-soft);
+  background-color: var(--warning-soft);
 }
 
 .trace-overview-plot-context {
@@ -1128,7 +1128,7 @@ details summary {
 .trace-time-bar-tool {
   top: 9px;
   height: 10px;
-  background: var(--orange);
+  background: var(--warning);
 }
 
 .trace-time-bar-context {
@@ -1285,6 +1285,10 @@ details summary {
   color: var(--warning);
 }
 
+.trace-event-row-context .trace-event-kind {
+  color: var(--blue);
+}
+
 .trace-event-title {
   min-width: 0;
   overflow: hidden;
@@ -1348,6 +1352,10 @@ details summary {
   border-bottom: 2px solid transparent;
   cursor: pointer;
   font-size: 11px;
+}
+
+.trace-inspector-tab:hover {
+  color: var(--text);
 }
 
 .trace-inspector-tab[aria-selected="true"] {
