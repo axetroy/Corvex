@@ -225,6 +225,8 @@ export interface ModelResponse {
   content: string;
   model: string;
   usage: ModelUsage;
+  /** 本轮若发生压缩，SDK 生成的摘要可直接作为下一轮的滚动摘要，避免重复摘要。 */
+  compactionSummary?: string;
 }
 
 export interface TraceContext {
@@ -686,6 +688,7 @@ export class PiAgent {
     // 最终助手消息的错误原因：`session.prompt()` 在服务端报错（如上下文超限）时仍会正常
     // 返回，若不记录就会把上一条历史回复当成本轮成功结果，超限重试也就永远不会触发。
     let lastAssistantError: string | undefined;
+    let lastCompactionSummary: string | undefined;
     // 流式正文、思考与工具调用只做展示，不参与判定；回调异常不能影响模型执行。
     let streamedAssistantText = "";
     let streamedAssistantThinking = "";
@@ -754,6 +757,7 @@ export class PiAgent {
         const result = event.result;
         const language = this.config.agent.responseLanguage;
         const failed = event.aborted || !result;
+        if (!failed && result) lastCompactionSummary = result.summary;
         emitContextStream({
           id: active?.streamId ?? `context-${++contextEventCount}`,
           text: failed
@@ -992,7 +996,8 @@ export class PiAgent {
             window: this.config.agent.contextWindow,
             threshold: selfCompactThreshold,
           };
-          await session.compact();
+          const compaction = await session.compact();
+          lastCompactionSummary = compaction.summary;
           activeCompactionTrigger = undefined;
         }
       } catch (error) {
@@ -1007,6 +1012,7 @@ export class PiAgent {
           outputTokens: usage.output,
           totalTokens: usage.total,
         },
+        ...(lastCompactionSummary ? { compactionSummary: lastCompactionSummary } : {}),
       };
     } catch (error) {
       if (activeModelCall) {

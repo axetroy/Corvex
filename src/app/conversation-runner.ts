@@ -651,9 +651,17 @@ export class ConversationRunner {
     workspacePath: string,
     signal: AbortSignal,
     language: ResponseLanguage,
+    compactionSummary?: string,
   ): Promise<void> {
-    if (!this.config.agent.summaryEnabled || dropped.length === 0) return;
-    if (!dropped.at(-1)?.id) return;
+    if (!this.config.agent.summaryEnabled) return;
+    const boundaryId = dropped.at(-1)?.id ?? turn.history.at(-1)?.id ?? turn.summaryMessageId;
+    if (!boundaryId) return;
+    // SDK 本轮已经压缩过：直接复用它的摘要作为跨轮记忆，避免再调用一次摘要模型。
+    if (compactionSummary) {
+      this.store.saveConversationSummary(turn.conversationId, compactionSummary, boundaryId);
+      return;
+    }
+    if (dropped.length === 0) return;
     // 分块预算：与对话历史预算同源，并给摘要的系统提示预留固定开销。
     const chunkBudget = Math.max(4_000, resolveHistoryBudgetTokens(this.config.agent, 4_000));
     try {
@@ -918,7 +926,7 @@ export class ConversationRunner {
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });
       void this.refineTitle(turn, workspace.path, signal, trace, language);
-      await this.updateSummary(turn, dropped, workspace.path, signal, language);
+      await this.updateSummary(turn, dropped, workspace.path, signal, language, answer.compactionSummary);
     } catch (error) {
       // 失败/取消也保留已发生的思考与工具调用，刷新后仍能看到过程停在哪一步。
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId));
