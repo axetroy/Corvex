@@ -495,6 +495,22 @@ export interface ModelCallMetric {
   outputTokens: number;
 }
 
+/** 上下文治理计数：按事件类型累计，供概览页观察压缩与裁剪成本。 */
+export interface ContextMetric {
+  key: "compaction" | "compaction_threshold" | "compaction_overflow" | "microcompact" | "microcompact_chars" | "token_count_real" | "token_count_fallback";
+  value: number;
+}
+
+export const contextMetricKeys: readonly ContextMetric["key"][] = [
+  "compaction",
+  "compaction_threshold",
+  "compaction_overflow",
+  "microcompact",
+  "microcompact_chars",
+  "token_count_real",
+  "token_count_fallback",
+];
+
 /** 对话轮次创建后返回给调用方的标识。 */
 export interface CreatedConversationTurn {
   conversationId: string;

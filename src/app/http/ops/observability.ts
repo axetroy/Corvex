@@ -19,6 +19,7 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
       ...overview,
       oldestQueueAgeSeconds,
       modelCalls: ctx.store.modelCallMetrics(),
+      contextMetrics: ctx.store.contextMetrics(),
     });
   });
 }

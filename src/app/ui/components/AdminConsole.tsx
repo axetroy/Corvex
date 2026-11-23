@@ -8,6 +8,7 @@ import { ThemeToggle } from "./ThemeToggle.js";
 import { AdminPanel } from "./AdminPanel.js";
 import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
+import { ContextMetricsPanel } from "./ContextMetricsPanel.js";
 import "./AdminConsole.css";
 
 interface Props {
@@ -44,6 +45,7 @@ export function AdminConsole({
 }: Props) {
   const [allowed, setAllowed] = useState<boolean>();
   const usersActive = route === "admin/users";
+  const metricsActive = route === "admin/metrics";
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
 
   useEffect(() => {
@@ -87,6 +89,9 @@ export function AdminConsole({
               {copy[item.labelKey]}
             </Link>
           ))}
+          <Link className={metricsActive ? "active" : ""} to={adminPath("metrics")}>
+            {copy.adminContextMetricsTitle}
+          </Link>
           <a className="admin-console-back" href="/ops">{copy.adminBackToConsole}</a>
         </nav>
       </aside>
@@ -96,6 +101,8 @@ export function AdminConsole({
             <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />
           </>
+        ) : metricsActive ? (
+          <ContextMetricsPanel copy={copy} refreshToken={0} />
         ) : (
           <SettingsPage
             copy={copy}

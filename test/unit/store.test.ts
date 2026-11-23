@@ -108,6 +108,18 @@ describe("AppStore", () => {
     expect(store.getActiveModelForUser("user-1")).toBeUndefined();
   });
 
+  it("累计上下文治理指标", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
+    store = await AppStore.open(join(directory, "state.db"));
+    store.recordContextMetric("compaction", 1);
+    store.recordContextMetric("compaction", 1);
+    store.recordContextMetric("microcompact_chars", 4200);
+    expect(store.contextMetrics()).toEqual(expect.arrayContaining([
+      { key: "compaction", value: 2 },
+      { key: "microcompact_chars", value: 4200 },
+    ]));
+  });
+
   it("记录上下文变化轨迹并纳入对话过程快照", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     store = await AppStore.open(join(directory, "state.db"));

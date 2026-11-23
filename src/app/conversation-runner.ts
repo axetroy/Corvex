@@ -853,7 +853,9 @@ export class ConversationRunner {
       // `agent.max_input_tokens` 约束，使这个配置真正限制单次请求的输入。
       const tokenCounter = createProviderTokenCounter(this.config.agent.baseUrl);
       const fixedText = `${systemPrompt}\n${userPrompt}`;
-      const fixedTokens = await tokenCounter.count(fixedText, signal) ??
+      const countedFixed = await tokenCounter.count(fixedText, signal);
+      this.store.recordContextMetric(countedFixed === undefined ? "token_count_fallback" : "token_count_real", 1);
+      const fixedTokens = countedFixed ??
         estimateConservativeTokens(systemPrompt) + estimateConservativeTokens(userPrompt);
       const historyBudget = resolveHistoryBudgetTokens(this.config.agent, fixedTokens);
       // 真实 token 计数优先；模型服务不支持 /tokenize 时回退到保守字节估算。

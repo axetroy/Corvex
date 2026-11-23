@@ -628,6 +628,8 @@ export class PiAgent {
           keepRecent: 4,
           maxKeptChars: 400,
           onPruned: (pruned, savedChars) => {
+            this.store?.recordContextMetric("microcompact", pruned);
+            this.store?.recordContextMetric("microcompact_chars", savedChars);
             emitContextStream({
               id: `microcompact-${Date.now()}-${pruned}-${savedChars}`,
               text: microcompactNoticeText(config.agent.responseLanguage, pruned, savedChars),
@@ -754,6 +756,12 @@ export class PiAgent {
         const language = config.agent.responseLanguage;
         const failed = event.aborted || !result;
         if (!failed && result) lastCompactionSummary = result.summary;
+        this.store?.recordContextMetric("compaction", 1);
+        if (active?.reason === "threshold" || event.reason === "threshold") {
+          this.store?.recordContextMetric("compaction_threshold", 1);
+        } else if (active?.reason === "overflow" || event.reason === "overflow") {
+          this.store?.recordContextMetric("compaction_overflow", 1);
+        }
         emitContextStream({
           id: active?.streamId ?? `context-${++contextEventCount}`,
           text: failed
@@ -984,7 +992,9 @@ export class PiAgent {
           buildSessionProjection(): { messages: unknown[] };
         }).buildSessionProjection().messages;
         const text = messagesToText(entries);
-        const tokens = await tokenCounter.count(text, signal) ?? estimateTokens(text);
+        const counted = await tokenCounter.count(text, signal);
+        this.store?.recordContextMetric(counted === undefined ? "token_count_fallback" : "token_count_real", 1);
+        const tokens = counted ?? estimateTokens(text);
         if (tokens >= selfCompactThreshold) {
           activeCompactionTrigger = {
             reason: "threshold",

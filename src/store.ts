@@ -44,6 +44,7 @@ import {
   type ProviderModelInput,
   type ConversationTurnTransition,
   type ConversationTurns,
+  type ContextMetric,
   type ModelCallMetric,
   type ModelTaskType,
   type OperationsOverview,
@@ -454,6 +455,30 @@ export class AppStore {
            output_tokens = output_tokens + excluded.output_tokens`,
       )
       .run(taskType, outcome, Math.floor(durationMs), inputTokens, outputTokens);
+  }
+
+  contextMetrics(): ContextMetric[] {
+    return this.db
+      .prepare("SELECT key, value FROM context_metrics ORDER BY key")
+      .all()
+      .map((row) => {
+        const record = row as Record<string, unknown>;
+        const key = String(record.key);
+        const value = Number(record.value);
+        if (!Number.isSafeInteger(value) || value < 0) throw new Error(`invalid context metric for "${key}"`);
+        return { key: key as ContextMetric["key"], value };
+      });
+  }
+
+  /** 累加上下文治理计数；字符数等指标可传大于 1 的增量。 */
+  recordContextMetric(key: ContextMetric["key"], amount = 1): void {
+    if (!Number.isSafeInteger(amount) || amount < 0) throw new Error("context metric amount must be a non-negative integer");
+    this.db
+      .prepare(
+        `INSERT INTO context_metrics (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = value + excluded.value`,
+      )
+      .run(key, amount);
   }
 
   startTrace(
@@ -2196,6 +2221,9 @@ export class AppStore {
         task_type TEXT NOT NULL, outcome TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
         duration_ms INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(task_type,outcome)
+      );
+      CREATE TABLE IF NOT EXISTS context_metrics (
+        key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0
       );
     `);
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。

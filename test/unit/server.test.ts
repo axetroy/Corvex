@@ -225,6 +225,7 @@ describe("CorvexServer", () => {
       const overview = await fetch(`${base}/api/ops/overview`, { headers: authHeaders });
       expect(overview.status).toBe(200);
       expect(overview.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Array.isArray((await overview.json() as { contextMetrics?: unknown }).contextMetrics)).toBe(true);
       const projectsResponse = await fetch(`${base}/api/ops/projects?search=project`, { headers: authHeaders });
       expect(projectsResponse.status).toBe(200);
       expect(await projectsResponse.json()).toMatchObject([{ id: 2, path_with_namespace: "group/project" }]);

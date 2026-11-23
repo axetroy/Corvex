@@ -9,6 +9,7 @@ import type {
   ConversationStreamEvent,
   ConversationStreamTool,
   ConversationSummary,
+  ContextMetric,
   ConversationToolCall,
   ConversationTurn,
   ConversationTurnSegment,
@@ -41,6 +42,7 @@ export type {
   ConversationStreamEvent,
   ConversationStreamTool,
   ConversationSummary,
+  ContextMetric,
   ConversationToolCall,
   ConversationTurn,
   ConversationTurnSegment,
@@ -62,6 +64,7 @@ export interface OverviewResponse extends OperationsOverview {
   generatedAt: string;
   oldestQueueAgeSeconds: number | null;
   modelCalls: ModelCallMetric[];
+  contextMetrics: ContextMetric[];
 }
 
 /** 分页默认单页大小。 */
