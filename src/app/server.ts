@@ -12,7 +12,13 @@ import { createTokenCipher, type TokenCipher } from "../tokens.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { ConversationRunner } from "./conversation-runner.js";
 import { attachOperationsAuth, readCookie, sessionCookieName } from "./http/auth.js";
-import { callAsyncHook, createCorvexHooks, type CorvexHooks, type StorageCleanupContext } from "./hooks.js";
+import {
+  callAsyncHook,
+  createCorvexHooks,
+  type ConversationDeleteContext,
+  type CorvexHooks,
+  type StorageCleanupContext,
+} from "./hooks.js";
 import type { OpsContext } from "./http/context.js";
 import { sendJson, sendText } from "./http/respond.js";
 import { registerRoutes } from "./http/routes.js";
@@ -80,7 +86,28 @@ export class CorvexServer {
     this.hooks.storageCleanup.tapPromise({ name: "prune-history", stage: 100 }, async (context) => {
       if (!context.pruneHistory) return;
       try {
-        this.store.pruneHistory(context.historyBefore, context.auditBefore);
+        const pruned = this.store.pruneHistory(context.historyBefore, context.auditBefore);
+        // 保留策略删除的每个会话都走同一清理 hook，插件可借此释放自己的资源。
+        for (const target of pruned) {
+          const deletion: ConversationDeleteContext = {
+            conversationId: target.conversationId,
+            projectId: target.projectId,
+            reason: "retention",
+            turnIds: target.turnIds,
+            signal: context.signal,
+            errors: [],
+          };
+          try {
+            await callAsyncHook(this.hooks.conversationDelete, deletion);
+          } catch (error) {
+            deletion.errors.push(errorMessage(error));
+          }
+          if (deletion.errors.length > 0) {
+            context.errors.push(
+              `conversation ${target.conversationId} cleanup failed: ${deletion.errors.join("; ")}`,
+            );
+          }
+        }
       } catch (error) {
         context.errors.push(errorMessage(error));
       }

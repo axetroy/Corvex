@@ -31,7 +31,7 @@ GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、
 
 轮次运行期间，Chat 页逐字流式显示助手回复；思考与工具调用排成一条交错时间线（每轮模型调用开始一条思考，随后是该轮的工具调用），并连同中间回复折成脱敏、限长的轮次过程快照写入 SQLite，刷新页面后仍可还原。运行中发送消息会由 `SteerChannel` 转交 Pi SDK 的 `session.steer`，在下一次模型调用前送达，不新建轮次、也不改变固定快照；若轮次刚好结束则自动降级为普通的下一轮，SSE 的 `interjection` 事件让控制台立即刷新出这条补充。显式 `delivery: "queue"` 会把消息写入持久 FIFO 队列（`conversation_followups`），当前轮结束后重新解析分支快照并依次执行，可在输入框上方排序或移除；`delivery: "interrupt"` 则中止当前轮、等待已完成改动落库后立刻用新消息开新一轮。输入框在运行期间同时提供插话、排队、打断与停止四个操作。上下文变化作为第三类轨迹记录（`context.compact` / `context.trim`），在 Chat 过程块中给出本地化提示，并在 Trace 的 Context 检查器中展示有界的压缩前后快照。`record_plan` 工具把 3–6 步计划记入过程快照；过程块在运行期间强制展开，结束后作为整体收起。右侧文件面板默认读取持久工作区，被淘汰时自动回退到 GitLab 文件接口，并标明实际来源；文本使用只读 Monaco 查看器，图片有独立预览器。Git 图谱高亮固定 SHA 与 `refs/conversations/<id>` 提交，支持按作者筛选、展开提交详情、下载可直接 `git apply` 的补丁。
 
-每个对话常驻一个 worktree（`workspaces/<projectId>/conversation-<id>`），跨轮复用：空闲 TTL 与 LRU 上限由运行时设置控制，Server 关闭与启动时都会清理；同一固定 SHA 的追问只重新校验 HEAD，不会重复检出。镜像按需抓取，只有缺失 SHA 时才 fetch。文件改动通过有界的文件工具写入，并由 `saveConversationChanges` 提交到镜像的会话 ref，因此工作区被清理后仍会恢复。淘汰与清理从不触碰有排队或运行中轮次的对话。
+每个对话常驻一个 worktree（`workspaces/<projectId>/conversation-<id>`），跨轮复用：空闲 TTL 与 LRU 上限由运行时设置控制，Server 关闭与启动时都会清理；同一固定 SHA 的追问只重新校验 HEAD，不会重复检出。镜像按需抓取，只有缺失 SHA 时才 fetch。文件改动通过有界的文件工具写入，并由 `saveConversationChanges` 提交到镜像的会话 ref，因此工作区被清理后仍会恢复。淘汰与清理从不触碰有排队或运行中轮次的对话。单个会话的资源清理（Git ref / worktree、缓存的流状态及插件自有资源）统一走 `conversationDelete` 钩子：两个删除路由与保留任务都会带上会话 ID、项目 ID 和轮次 ID 触发它，默认 tap 先释放 Git 资源再清理流状态，所有 tap 成功后才会删除数据库记录。`AppStore.pruneHistory` 会返回被裁剪的会话列表，使保留任务能逐会话触发钩子，而不只是事后扫描孤儿 ref。
 
 ### 上下文预算
 

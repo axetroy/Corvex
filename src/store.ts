@@ -58,6 +58,13 @@ import {
   type TraceScope,
 } from "./model.js";
 
+/** 保留策略裁剪掉的会话摘要；调用方据此逐个触发会话删除 hook 与资源清理。 */
+export interface PrunedConversation {
+  conversationId: string;
+  projectId: number;
+  turnIds: string[];
+}
+
 /** 已结束的对话轮次状态；仅这些轮次的耗时才算已确定。 */
 const terminalConversationTurn = new Set<ConversationTurnStatus>(["completed", "failed", "stale", "cancelled"]);
 /** 单条持久化执行轨迹输入或输出允许保存的最大字节数。 */
@@ -746,24 +753,72 @@ export class AppStore {
     return id;
   }
 
-  pruneHistory(historyBefore: Date, auditBefore: Date): void {
+  /**
+   * 按保留策略裁剪历史，并返回被删掉的会话摘要。
+   * 调用方据此逐个触发会话删除 hook，让插件与 Git 资源也能针对具体会话清理，
+   * 而不是只靠事后的全局孤儿 ref sweep。
+   */
+  pruneHistory(historyBefore: Date, auditBefore: Date): PrunedConversation[] {
     if (Number.isNaN(historyBefore.valueOf()) || Number.isNaN(auditBefore.valueOf())) {
       throw new Error("history and audit retention cutoffs are required");
     }
-    this.transaction(() => {
+    return this.transaction(() => {
       const history = historyBefore.toISOString();
       const audit = auditBefore.toISOString();
-      // 对话消息与轨迹通过外键级联删除；保留仍有排队或运行中轮次的对话。
-      this.db
-        .prepare(
-          `DELETE FROM conversations WHERE updated_at < ?
-           AND id NOT IN (SELECT conversation_id FROM conversation_turns WHERE status IN ('queued','running'))`,
-        )
-        .run(history);
+      // 保留仍有排队或运行中轮次的对话；先记下要删的会话及其轮次，再显式清理各表。
+      const targets = (
+        this.db
+          .prepare(
+            `SELECT c.id AS conversationId, c.project_id AS projectId,
+                    COALESCE(GROUP_CONCAT(t.id), '') AS turnIds
+             FROM conversations c
+             LEFT JOIN conversation_turns t ON t.conversation_id = c.id
+             WHERE c.updated_at < ?
+               AND c.id NOT IN (
+                 SELECT conversation_id FROM conversation_turns WHERE status IN ('queued','running')
+               )
+             GROUP BY c.id`,
+          )
+          .all(history) as { conversationId: string; projectId: number; turnIds: string }[]
+      ).map((row) => ({
+        conversationId: row.conversationId,
+        projectId: row.projectId,
+        turnIds: row.turnIds ? row.turnIds.split(",") : [],
+      }));
+      if (targets.length > 0) {
+        const placeholders = targets.map(() => "?").join(",");
+        const ids = targets.map((target) => target.conversationId);
+        this.db
+          .prepare(
+            `DELETE FROM conversation_trace WHERE turn_id IN
+             (SELECT id FROM conversation_turns WHERE conversation_id IN (${placeholders}))`,
+          )
+          .run(...ids);
+        this.db
+          .prepare(
+            `DELETE FROM execution_steps WHERE turn_id IN
+             (SELECT id FROM conversation_turns WHERE conversation_id IN (${placeholders}))`,
+          )
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_context_snapshots WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_followups WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_messages WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_turns WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db.prepare(`DELETE FROM conversations WHERE id IN (${placeholders})`).run(...ids);
+      }
       this.db
         .prepare("DELETE FROM model_token_usage WHERE day < ?")
         .run(historyBefore.toISOString().slice(0, 10));
       this.db.prepare("DELETE FROM audit_events WHERE created_at < ?").run(audit);
+      return targets;
     });
   }
 
@@ -1530,7 +1585,7 @@ export class AppStore {
     return result.changes === 1;
   }
 
-  /** 删除一个对话及其轮次、消息与轨迹（显式删除，不依赖连接级外键开关）。 */
+  /** 删除一个对话及其轮次、消息、轨迹与上下文快照（显式删除，不依赖连接级外键开关）。 */
   deleteConversation(conversationId: string): boolean {
     return this.transaction(() => {
       const turnIds = (this.db.prepare("SELECT id FROM conversation_turns WHERE conversation_id=?")
@@ -1542,6 +1597,7 @@ export class AppStore {
       }
       this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_followups WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_context_snapshots WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_turns WHERE conversation_id=?").run(conversationId);
       return this.db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId).changes === 1;
     });

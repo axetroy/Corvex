@@ -96,6 +96,27 @@ export interface CorvexHooks {
   toolAfter: AsyncSeriesHook<[ToolResultHookContext]>;
   /** 每次模型请求前的上下文快照；默认 tap 负责有界落库，插件可追加分析。 */
   contextSnapshot: AsyncSeriesHook<[ContextSnapshotData]>;
+  /**
+   * 会话删除或放弃改动时的资源清理入口。
+   * 默认 tap 负责 Git ref/worktree 与内存流状态；插件可在同一节点清理自己的资源。
+   */
+  conversationDelete: AsyncSeriesHook<[ConversationDeleteContext]>;
+}
+
+/**
+ * 会话删除的清理上下文。数据库记录在调用方完成清理后才删除，
+ * 因此这里带着项目 ID 与轮次 ID，插件无需再回查已删除的会话。
+ */
+export interface ConversationDeleteContext {
+  conversationId: string;
+  projectId: number;
+  /** 删除来源：整会话删除、仅放弃改动、保留策略裁剪。 */
+  reason: "delete" | "changes" | "retention";
+  /** 会话的轮次 ID，供按轮次的内存状态与 per-turn ref 清理。 */
+  turnIds: readonly string[];
+  signal?: AbortSignal;
+  /** 各 tap 把自身错误写回这里，默认实现不抛出以阻断后续清理。 */
+  errors: string[];
 }
 
 /**
@@ -135,6 +156,7 @@ export function createCorvexHooks(): CorvexHooks {
     toolBefore: new AsyncSeriesHook(["context"]),
     toolAfter: new AsyncSeriesHook(["context"]),
     contextSnapshot: new AsyncSeriesHook(["snapshot"]),
+    conversationDelete: new AsyncSeriesHook(["context"]),
   };
   // 默认实现：标题只来自用户消息，不做额外的模型调用。
   // 默认实现放在较低优先级的 stage，插件可以先行返回自定义标题。

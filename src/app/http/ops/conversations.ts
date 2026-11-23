@@ -6,7 +6,7 @@ import { isConversationMode } from "../../../model.js";
 import type { Conversation, ConversationStreamEvent } from "../../../model.js";
 import type { ContextSnapshotData } from "../../../agent/context-inspect.js";
 import { requireUser } from "../../auth/context.js";
-import { callAsyncHook } from "../../hooks.js";
+import { callAsyncHook, type ConversationDeleteContext } from "../../hooks.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
 import { resolveWorktreePath } from "../../../agent/fs/index.js";
@@ -46,6 +46,32 @@ function ensureModelSelected(ctx: OpsContext, reply: FastifyReply, userId?: stri
       : "No model is selected. Configure and activate one in Settings > Model first.",
   });
   return false;
+}
+
+/** 经统一 hook 清理会话关联资源；单个 tap 的错误收集在 context.errors，由路由决定状态。 */
+async function cleanupConversationResources(
+  ctx: OpsContext,
+  conversation: Conversation,
+  reason: ConversationDeleteContext["reason"],
+): Promise<ConversationDeleteContext> {
+  const context: ConversationDeleteContext = {
+    conversationId: conversation.id,
+    projectId: conversation.projectId,
+    reason,
+    turnIds: [...new Set(
+      conversation.messages
+        .map((message) => message.turnId)
+        .filter((turnId): turnId is string => typeof turnId === "string" && turnId.length > 0),
+    )],
+    errors: [],
+  };
+  try {
+    await callAsyncHook(ctx.hooks.conversationDelete, context);
+  } catch (error) {
+    // 插件 tap 抛错同样视为清理失败，数据库记录因此保留，避免留下孤儿资源。
+    context.errors.push(errorMessage(error));
+  }
+  return context;
 }
 
 /** 校验会话归属：用户只能访问自己的会话。 */
@@ -156,7 +182,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     sendJson(reply, 200, { conversationId, archived: body.archived });
   });
 
-  // 删除对话：先清理常驻工作区，再删除数据库记录。
+  // 删除对话：先经 hook 清理所有关联资源，成功后才删数据库记录。
   app.delete("/api/ops/conversations/:id", async (request, reply) => {
     const conversationId = idParam((request.params as { id: string }).id);
     if (!conversationId) {
@@ -169,7 +195,11 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 409, { error: "a turn is still running for this conversation" });
       return;
     }
-    await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
+    const cleanup = await cleanupConversationResources(ctx, conversation, "delete");
+    if (cleanup.errors.length > 0) {
+      sendJson(reply, 500, { error: "conversation cleanup failed" });
+      return;
+    }
     ctx.store.deleteConversation(conversationId);
     sendJson(reply, 200, { deleted: true });
   });
@@ -476,14 +506,13 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
-    try {
-      await ctx.conversations.discardConversationChanges(conversationId, conversation.projectId);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("turn is active")) {
-        sendJson(reply, 409, { error: "a turn is still running for this conversation" });
-        return;
-      }
-      throw error;
+    const cleanup = await cleanupConversationResources(ctx, conversation, "changes");
+    if (cleanup.errors.length > 0) {
+      const active = cleanup.errors.some((error) => error.includes("turn is active"));
+      sendJson(reply, active ? 409 : 500, {
+        error: active ? "a turn is still running for this conversation" : "conversation cleanup failed",
+      });
+      return;
     }
     sendJson(reply, 200, { deleted: true });
   });

@@ -76,6 +76,23 @@ export class ConversationRunner {
         console.warn("context snapshot could not be stored", { error: errorMessage(error) });
       }
     });
+    // 会话删除时的默认清理：先释放 Git ref/工作区，再清掉按轮次的内存流状态。
+    // 每个 tap 独立捕获错误写入 context.errors，调用方据此决定 HTTP 状态，
+    // 同时保证一个资源清理失败不会阻断其余 tap（插件同样可追加自己的清理）。
+    this.hooks.conversationDelete.tapPromise({ name: "git-resources", stage: 100 }, async (context) => {
+      try {
+        await this.discardConversationChanges(context.conversationId, context.projectId);
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.conversationDelete.tapPromise({ name: "stream-state", stage: 200 }, async (context) => {
+      this.workspaces.delete(context.conversationId);
+      for (const turnId of context.turnIds) {
+        this.streamSnapshots.delete(turnId);
+        this.streamListeners.delete(turnId);
+      }
+    });
     // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。
     this.hooks.conversationTitleRefine.tapPromise({ name: "llm-summary", stage: 100 }, async (input) => {
       const result = await this.agent.generate(

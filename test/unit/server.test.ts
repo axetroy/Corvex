@@ -156,6 +156,10 @@ describe("CorvexServer", () => {
     });
     const cleanupHook = vi.fn(() => notifyCleanup());
     hooks.storageCleanup.tap({ name: "test-cleanup", stage: 80 }, cleanupHook);
+    const deletedConversations: string[] = [];
+    hooks.conversationDelete.tap("test", (context) => {
+      deletedConversations.push(`${context.conversationId}:${context.reason}`);
+    });
     const application = new CorvexServer(config, store, undefined, hooks);
     const running = application.run(controller.signal);
     try {
@@ -402,6 +406,7 @@ describe("CorvexServer", () => {
       });
       expect(deleteResponse.status).toBe(200);
       expect((await fetch(`${base}/api/ops/conversations/${secondConversation.conversationId}`, { headers: authHeaders })).status).toBe(404);
+      expect(deletedConversations).toContain(`${secondConversation.conversationId}:delete`);
       // 存储清理：预览不删文件，但会留下一条可查询的记录。
       const cleanupPreview = await fetch(`${base}/api/ops/storage/cleanup`, {
         method: "POST",
