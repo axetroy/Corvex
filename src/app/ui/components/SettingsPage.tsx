@@ -130,6 +130,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
   }, [copy, onUpdated, settingsToken]);
 
   const editable = data?.editable ?? false;
+  const serverKeys = new Set(Object.keys(data?.settings ?? {}));
   const dirty = useMemo(
     () => (data ? !sameDraft(draft, data.settings) : false),
     [data, draft],
@@ -149,7 +150,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
       return;
     }
     // 只提交服务端实际管理的键；前端比服务端新时跳过新键，避免 unknown setting。
-    const payload = buildSettingsPayload(settingGroups, draft, new Set(Object.keys(data.settings)));
+    const payload = buildSettingsPayload(settingGroups, draft, serverKeys);
     setSaving(true);
     setNotice("");
     setError("");
@@ -170,7 +171,10 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
   const visibleGroups = settingGroups.filter((group) => sectionGroups[section].includes(group.titleKey));
   const problems = visibleGroups.flatMap((group) =>
     group.fields
-      .map((field) => fieldError(field, draft[field.key], copy))
+      // 与保存负载保持一致：服务端不管理的键（前端较新时）不参与校验，也不能禁用保存。
+      .filter((field) => serverKeys.has(field.key))
+      // 与输入框展示的值保持一致：草稿缺失时用字段默认值，避免产生不可见的校验错误。
+      .map((field) => fieldError(field, draft[field.key] ?? field.defaultValue, copy))
       .filter(Boolean),
   );
 
