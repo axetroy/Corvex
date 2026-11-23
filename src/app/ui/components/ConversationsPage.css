@@ -2586,10 +2586,12 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: 2px;
+  --suggestion-row-height: 25px;
+  --suggestion-gap: 2px;
+  gap: var(--suggestion-gap);
   width: 100%;
-  /* 约 5 行；7 个指令超出后用内部滚动查看，避免把输入框顶得太高。 */
-  max-height: 148px;
+  /* 固定 5 行高度（行 + 间距 + padding 8 + 边框 2）；超出部分内部滚动，不露半行。 */
+  max-height: calc(var(--suggestion-row-height) * 5 + var(--suggestion-gap) * 4 + 10px);
   margin: 4px 0 0;
   padding: 4px;
   overflow-x: hidden;
@@ -2608,6 +2610,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   align-items: center;
   gap: 8px;
   width: 100%;
+  height: var(--suggestion-row-height);
   padding: 4px 8px;
   border: 0;
   border-radius: 5px;
