@@ -3,7 +3,7 @@ import { repositoryCloneUrl, repositoryWebUrl } from "../../../gitlab/client.js"
 import type { OpsContext } from "../context.js";
 import { optionalInteger, queryParam, sendGitLabReadError, sendJson } from "../respond.js";
 
-/** 项目与分支查询：控制台用只读 Token 发现可用的仓库。 */
+/** 项目与分支查询：用当前登录用户的 GitLab 令牌发现可见仓库。 */
 export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): void {
   app.get("/api/ops/projects", async (request, reply) => {
     const page = optionalInteger(queryParam(request.query, "page"), 1, 10_000) ?? 1;

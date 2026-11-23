@@ -155,8 +155,6 @@ describe("PiAgent", () => {
       operations: { username: "", password: "" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -422,8 +420,6 @@ describe("PiAgent", () => {
       operations: { username: "", password: "" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -544,8 +540,6 @@ describe("PiAgent", () => {
       operations: { username: "", password: "" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -629,8 +623,6 @@ describe("PiAgent", () => {
       operations: { username: "", password: "" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [],
         botUsername: "",
       },
@@ -745,7 +737,7 @@ describe("PiAgent", () => {
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
       gitlab: {
-        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        baseUrl: "https://gitlab.example.com",
         blockedUserIds: [], botUsername: "",
       },
       storage: {
@@ -823,7 +815,7 @@ describe("PiAgent", () => {
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
       gitlab: {
-        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        baseUrl: "https://gitlab.example.com",
         blockedUserIds: [], botUsername: "",
       },
       storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
@@ -889,7 +881,7 @@ describe("PiAgent", () => {
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
       gitlab: {
-        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        baseUrl: "https://gitlab.example.com",
         blockedUserIds: [], botUsername: "",
       },
       storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
@@ -941,7 +933,7 @@ describe("PiAgent", () => {
       server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
       operations: { username: "", password: "" },
       gitlab: {
-        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        baseUrl: "https://gitlab.example.com",
         blockedUserIds: [], botUsername: "",
       },
       storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
@@ -967,3 +959,4 @@ describe("PiAgent", () => {
     }, temporaryDirectory)).rejects.toThrow(/No model output/);
   }, 15_000);
 });
+

@@ -15,8 +15,6 @@ function validConfig(): CorvexConfig {
     operations: { username: "", password: "" },
     gitlab: {
       baseUrl: "https://gitlab.example.com",
-      readToken: "read",
-      writeToken: "write",
       oauthClientId: "",
       oauthClientSecret: "",
       oauthRedirectUri: "",
@@ -184,8 +182,6 @@ describe("validateConfig", () => {
 
   it("allows GitLab credentials to be configured later in the console", () => {
     const config = validConfig();
-    config.gitlab.readToken = "";
-    config.gitlab.writeToken = "";
     expect(() => validateConfig(config, "server")).not.toThrow();
   });
 
@@ -259,3 +255,4 @@ describe("validateConfig", () => {
     }
   });
 });
+

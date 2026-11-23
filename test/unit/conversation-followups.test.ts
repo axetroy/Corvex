@@ -7,7 +7,7 @@ import type { GitLabClient } from "../../src/gitlab/client.js";
 
 const config = {
   storage: { root: "data", database: "data/state.db" },
-  gitlab: { baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write" },
+  gitlab: { baseUrl: "https://gitlab.example.com" },
   agent: { responseLanguage: "en", model: "test-model", contextWindow: 131_072 },
 } as unknown as CorvexConfig;
 
@@ -88,4 +88,5 @@ describe("queued conversation follow-ups", () => {
     expect(warning).toHaveBeenCalledWith("queued conversation follow-up could not start", expect.anything());
   });
 });
+
 

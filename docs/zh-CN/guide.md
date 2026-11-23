@@ -35,7 +35,7 @@ pnpm start -- init
 # CORVEX_MODEL_NAME=your-model-name
 ```
 
-启动时不需要 GitLab 凭据或模型 API Key，两者都可在控制台保存。只读令牌用于读取 API 与抓取仓库；写令牌仅在需要对话向 GitLab 写入时配置，并只授予所需权限。所有配置项及边界值请参阅[配置参考](./configuration)。
+启动时不需要 GitLab PAT 或模型 API Key，两者都可在控制台保存。所有 GitLab 访问都使用当前登录用户的 OAuth 令牌，因此权限就是该用户在 GitLab 上的权限。所有配置项及边界值请参阅[配置参考](./configuration)。
 
 ## 2. 启动 Server
 

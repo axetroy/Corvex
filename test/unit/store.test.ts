@@ -804,4 +804,22 @@ describe("AppStore", () => {
     expect(messageColumns.map((column) => column.name)).toContain("conversation_id");
     expect(messageColumns.map((column) => column.name)).not.toContain("session_id");
   });
+
+  it("deletes leftover shared GitLab tokens from the database on open", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-token-migration-"));
+    const databasePath = join(directory, "state.db");
+    store = await AppStore.open(databasePath);
+    store.setRuntimeSetting("gitlab_read_token", "old-read", "test");
+    store.setRuntimeSetting("gitlab_token", "old-write", "test");
+    // 模拟尚未执行过该迁移的旧库。
+    store.setRuntimeSetting("schema:no-shared-gitlab-tokens", null);
+    store.close();
+    store = undefined;
+
+    store = await AppStore.open(databasePath);
+    const keys = store.listRuntimeSettings().map((row) => row.key);
+    expect(keys).not.toContain("gitlab_read_token");
+    expect(keys).not.toContain("gitlab_token");
+    expect(keys).toContain("schema:no-shared-gitlab-tokens");
+  });
 });

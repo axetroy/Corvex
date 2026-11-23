@@ -29,7 +29,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       name: "git_push_branch",
       label: "Push commit to GitLab branch",
       executionMode: "sequential",
-      description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Only call this when the user explicitly asks to update or create a GitLab branch; never force-push. Requires a configured GitLab write token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch.",
+      description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Only call this when the user explicitly asks to update or create a GitLab branch; never force-push. Uses the signed-in user's GitLab token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch.",
       promptSnippet: "git_push_branch: Explicitly publish a commit to a GitLab branch (fast-forward only); use git_push first to save the commit in the mirror, then create or update the MR.",
       parameters: Type.Object({ sha: iidSha, branch: branchNameParam }),
       execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),

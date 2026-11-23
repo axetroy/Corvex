@@ -53,8 +53,6 @@ function settingsConfig(): CorvexConfig {
     },
     gitlab: {
       baseUrl: "https://gitlab.example.com",
-      readToken: "read",
-      writeToken: "write",
     },
   } as CorvexConfig;
 }
@@ -327,3 +325,4 @@ describe("GitLab runtime settings", () => {
     expect(validateRuntimeSettings({ gitlab_base_url: "" })).toEqual([]);
   });
 });
+

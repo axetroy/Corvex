@@ -100,7 +100,7 @@ describe("Git workflows", () => {
     await mkdir(join(root, "mirrors"), { recursive: true });
     await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "9.git")]);
 
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     const graph = await manager.getCommitGraph(9, { limit: 10 });
     expect(graph.nodes).toHaveLength(4);
     expect(graph.truncated).toBe(false);
@@ -142,7 +142,7 @@ describe("Git workflows", () => {
     await mkdir(join(root, "mirrors"), { recursive: true });
     await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "5.git")]);
 
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     const graph = await manager.getCommitGraph(5, { limit: 10 });
     expect(graph.nodes.find((item) => item.sha === first)?.tags).toEqual(["v-light"]);
     const annotated = graph.nodes.find((item) => item.subject === "second");
@@ -173,7 +173,7 @@ describe("Git workflows", () => {
     await mkdir(join(root, "mirrors"), { recursive: true });
     await execFile("git", ["clone", "-q", "--mirror", bare, join(root, "mirrors", "3.git")]);
 
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     const { patch, truncated } = await manager.formatPatchFromMirror(3, head);
     expect(truncated).toBe(false);
     expect(patch).toMatch(/^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001/m);
@@ -214,7 +214,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
     const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
 
     await execFile("git", ["-C", workspacePath, "branch", "local-one", "HEAD"]);
     expect(await manager.checkoutBranch(workspace, "local-one")).toMatchObject({ name: "local-one", fromRemote: false });
@@ -242,7 +242,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "remote", "add", "origin", workspacePath]);
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
     const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
 
     expect(await manager.listBranches(workspace)).toMatchObject({ head: headSha });
     expect(await manager.createBranch(workspace, "corvex/task")).toMatchObject({ name: "corvex/task", sha: headSha });
@@ -277,7 +277,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "add", "a.txt", "b.txt"]);
     await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
     const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     await manager.initialize();
     const workspace: Workspace = {
       projectId: 7,
@@ -317,7 +317,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
     const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
     await writeFile(join(workspacePath, "untracked.ts"), "targetValue\n");
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     await manager.initialize();
     const workspace: Workspace = {
       projectId: 7,
@@ -351,7 +351,7 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspacePath, "commit", "-qam", "tighten validation"]);
     const { stdout } = await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"]);
     const headSha = stdout.trim();
-    const manager = new GitManager(root, "https://gitlab.example.com", "");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     const workspace: Workspace = { projectId: 7, workspaceName: "event-1", path: workspacePath, headSha };
 
     await expect(manager.getCommitLog(workspace, 2, "src/app.ts")).resolves.toMatchObject({
@@ -395,7 +395,7 @@ describe("Git workflows", () => {
     await execFile("git", ["clone", "--mirror", bare, mirror]);
     await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
 
-    const manager = new GitManager(root, "http://127.0.0.1:1", "read-token");
+    const manager = new GitManager(root, "http://127.0.0.1:1");
     await manager.initialize();
     const repositoryUrl = "http://127.0.0.1:1/project.git";
     const conversationId = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
@@ -454,7 +454,7 @@ describe("Git workflows", () => {
     await execFile("git", ["clone", "--mirror", bare, mirror]);
     await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
 
-    const manager = new GitManager(root, "http://127.0.0.1:1", "read-token");
+    const manager = new GitManager(root, "http://127.0.0.1:1");
     await manager.initialize();
     const conversationId = "1f2e3d4c-5b6a-7980-8a9b-0c1d2e3f4a5b";
     const repositoryUrl = "http://127.0.0.1:1/project.git";
@@ -511,7 +511,7 @@ describe("Git workflows", () => {
 
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
     const workspace: Workspace = { projectId: 7, workspaceName: "event-tools", path: workspacePath, headSha };
-    const manager = new GitManager(root, "https://gitlab.example.com", "read-token");
+    const manager = new GitManager(root, "https://gitlab.example.com");
 
     // 在 onto 分支加一个提交，再把当前分支变基到它之上。
     await execFile("git", ["-C", workspacePath, "checkout", "-q", "onto"]);
@@ -555,7 +555,7 @@ describe("Git workflows", () => {
     const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
     const conversationId = "00000000-0000-4000-8000-000000000000";
     const workspace: Workspace = { projectId: 7, workspaceName: `conversation-${conversationId}`, path: workspacePath, headSha };
-    const manager = new GitManager(root, "https://gitlab.example.com", "read", "write");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     await expect(manager.publishToGitLabBranch(7, conversationId, workspace, "fix/a", undefined)).rejects.toThrow(
       "no changes to publish and no saved conversation commit",
     );
@@ -590,7 +590,7 @@ describe("Git workflows", () => {
     await execFile("git", ["--git-dir", mirrorPath, "worktree", "add", "-q", "--detach", workspacePath, headSha]);
     await writeFile(join(workspacePath, "a.txt"), "changed\n");
 
-    const manager = new GitManager(root, "https://gitlab.example.com", "read");
+    const manager = new GitManager(root, "https://gitlab.example.com");
     const saved = await manager.saveConversationChangesById(7, conversationId, headSha);
     expect(saved).toBeDefined();
     const details = await manager.getConversationChangeDetails(7, conversationId);
@@ -627,7 +627,7 @@ describe("Git workflows", () => {
     await mkdir(join(root, "workspaces", "7"), { recursive: true });
     await execFile("git", ["--git-dir", mirrorPath, "worktree", "add", "-q", "--detach", workspacePath, headSha]);
     const workspace: Workspace = { projectId: 7, workspaceName: `conversation-${conversationId}`, path: workspacePath, headSha };
-    const manager = new GitManager(root, "https://gitlab.example.com", "read");
+    const manager = new GitManager(root, "https://gitlab.example.com");
 
     await writeFile(join(workspacePath, "a.txt"), "turn one\n");
     const first = await manager.saveConversationChanges(workspace, conversationId, undefined, undefined, "turn-1");
@@ -651,7 +651,7 @@ describe("Git workflows", () => {
   });
 
   it("validates GitLab branch pushes before touching the network", async () => {
-    const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read");
+    const manager = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com");
     const sha = "a".repeat(40);
     await expect(manager.pushBranchToGitLab(0, sha, "fix/a")).rejects.toThrow("project ID must be positive");
     await expect(manager.pushBranchToGitLab(1, "short", "fix/a")).rejects.toThrow("full SHA");
@@ -660,7 +660,7 @@ describe("Git workflows", () => {
     await expect(manager.pushBranchToGitLab(1, sha, "fix/a.lock")).rejects.toThrow("invalid GitLab branch name");
     await expect(manager.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("logged-in user's GitLab token is required");
 
-    const writable = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read", "write");
+    const writable = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com");
     await expect(writable.pushBranchToGitLab(1, sha, "fix/a", undefined, "user-token")).rejects.toThrow("project mirror is not available");
   });
 
@@ -671,3 +671,4 @@ describe("Git workflows", () => {
     expect(() => conversationWorkspaceName("a/b")).toThrow("invalid path characters");
   });
 });
+

@@ -120,8 +120,6 @@ describe("CorvexServer", () => {
       operations: { username: "", password: "" },
       gitlab: {
         baseUrl: `http://127.0.0.1:${gitlabPort}`,
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [3],
         botUsername: "corvex-bot",
       },
@@ -694,8 +692,6 @@ describe("CorvexServer", () => {
       operations: { username: "operator", password: "a secure password with 16 chars" },
       gitlab: {
         baseUrl: "https://gitlab.example.com",
-        readToken: "read",
-        writeToken: "write",
         blockedUserIds: [],
         botUsername: "corvex",
       },
@@ -764,4 +760,5 @@ describe("CorvexServer", () => {
     }
   });
 });
+
 

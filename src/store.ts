@@ -2320,6 +2320,17 @@ export class AppStore {
         .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
         .run("schema:read-write-conversations", now, now, "migration");
     }
+    // GitLab 读/写 PAT 已移除：清掉数据库里可能残留的长期密钥。
+    const gitlabTokenMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:no-shared-gitlab-tokens'")
+      .get() as { value: string } | undefined;
+    if (!gitlabTokenMigration) {
+      this.db.exec("DELETE FROM runtime_settings WHERE key IN ('gitlab_read_token','gitlab_token')");
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:no-shared-gitlab-tokens", now, now, "migration");
+    }
     this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
     // 早期模型可能把整段回答当作标题；按当前规则收敛已有的长标题。
     for (const row of this.db.prepare("SELECT id,title FROM conversations WHERE title != ''").all() as {

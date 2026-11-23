@@ -41,4 +41,4 @@ pnpm run typecheck
 pnpm run build
 ```
 
-Corvex 使用 GitLab 只读令牌读取 API/仓库，并在用户明确要求时才使用写令牌执行 GitLab 写操作；不可信代码不会被执行。
+Corvex 的所有 GitLab API 与 Git 网络操作都使用当前登录用户的 OAuth 令牌，没有共享的读/写令牌；GitLab 写操作仍需要用户明确要求。不可信代码不会被执行。
