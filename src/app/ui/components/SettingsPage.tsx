@@ -5,6 +5,7 @@ import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, CopyTextKey, Locale } from "../i18n.js";
 import { settingGroups } from "../types.js";
+import { buildSettingsPayload } from "../settingsPayload.js";
 import type { SettingField, SettingValue, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
 import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
@@ -147,14 +148,8 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
       setNotice(copy.settingsNoChanges);
       return;
     }
-    // 提交全部可编辑键：数据库是这些设置的唯一来源，配置文件只提供初始值。
-    const payload: Draft = {};
-    for (const group of settingGroups) {
-      for (const field of group.fields) {
-        const value = draft[field.key];
-        if (value !== undefined) payload[field.key] = value;
-      }
-    }
+    // 只提交服务端实际管理的键；前端比服务端新时跳过新键，避免 unknown setting。
+    const payload = buildSettingsPayload(settingGroups, draft, new Set(Object.keys(data.settings)));
     setSaving(true);
     setNotice("");
     setError("");
@@ -183,7 +178,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
   const renderFields = (fields: readonly SettingField[]) => (
     <div className="settings-fields">
       {fields.map((field) => {
-        const value = draft[field.key];
+        const value = draft[field.key] ?? field.defaultValue;
         const overridden = Boolean(data.overrides[field.key]);
         const meta = data.overrideMeta[field.key];
         const invalid = fieldError(field, value, copy);
