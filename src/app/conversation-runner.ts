@@ -17,6 +17,7 @@ import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { parseConversationCommand } from "./conversation-command.js";
+import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
 interface CachedConversationWorkspace {
@@ -842,11 +843,19 @@ export class ConversationRunner {
       // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
       // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受
       // `agent.max_input_tokens` 约束，使这个配置真正限制单次请求的输入。
-      const historyBudget = resolveHistoryBudgetTokens(
-        this.config.agent,
-        estimateConservativeTokens(systemPrompt) + estimateConservativeTokens(userPrompt),
+      const tokenCounter = createProviderTokenCounter(this.config.agent.baseUrl);
+      const fixedText = `${systemPrompt}\n${userPrompt}`;
+      const fixedTokens = await tokenCounter.count(fixedText, signal) ??
+        estimateConservativeTokens(systemPrompt) + estimateConservativeTokens(userPrompt);
+      const historyBudget = resolveHistoryBudgetTokens(this.config.agent, fixedTokens);
+      // 真实 token 计数优先；模型服务不支持 /tokenize 时回退到保守字节估算。
+      const measured = await Promise.all(turn.history.map((message) => tokenCounter.count(message.content, signal)));
+      const counts = new Map(turn.history.map((message, index) => [message, measured[index]] as const));
+      const { messages: history, dropped } = trimHistory(
+        turn.history,
+        historyBudget,
+        (message) => counts.get(message) ?? estimateConservativeTokens(message.content),
       );
-      const { messages: history, dropped } = trimHistory(turn.history, historyBudget);
       if (dropped.length > 0) {
         console.info("conversation history trimmed to fit the token budget", {
           turnId: turn.turnId,

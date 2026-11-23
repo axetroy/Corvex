@@ -37,6 +37,24 @@ function extractMessage(value: unknown): ContextSnapshotMessage | undefined {
   return parts.length > 0 ? { role, text: parts.join("\n") } : undefined;
 }
 
+/** 把消息内容展平成纯文本，供真实 token 计数使用（不做截断）。 */
+export function messagesToText(messages: readonly unknown[]): string {
+  return messages.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const record = value as Record<string, unknown>;
+    const content = record.content;
+    if (typeof content === "string") return [content];
+    if (!Array.isArray(content)) return [];
+    return content.flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      const item = part as Record<string, unknown>;
+      if (item.type === "text" && typeof item.text === "string") return [item.text];
+      if (item.type === "thinking" && item.redacted !== true && typeof item.thinking === "string") return [item.thinking];
+      return [];
+    });
+  }).join("\n");
+}
+
 /**
  * 把 SDK 的 AgentMessage 列表转成有界的上下文快照，供轨迹展示压缩前的上下文。
  * 只保留最近的若干条消息，并从较早的一端裁剪，避免把整段历史塞进 SQLite。
@@ -109,18 +127,20 @@ export interface ContextObserveCallbacks {
 export function createContextObserveExtension(
   observation: { before?: ContextSnapshot; failures?: number },
   callbacks: ContextObserveCallbacks = {},
+  tokenCounter?: { count(text: string, signal?: AbortSignal): Promise<number | undefined> },
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
-    pi.on("session_before_compact", (event) => {
+    pi.on("session_before_compact", async (event) => {
       const snapshot = buildContextSnapshot(
         event.preparation.messagesToSummarize,
         event.preparation.tokensBefore,
       );
       observation.before = snapshot;
       const settings = event.preparation.settings as { reserveTokens?: number } | undefined;
+      const actualTokens = await tokenCounter?.count(messagesToText(event.preparation.messagesToSummarize), event.signal);
       callbacks.onBeforeCompact?.(snapshot, {
         reason: event.reason,
-        tokens: snapshot.tokens ?? event.preparation.tokensBefore,
+        tokens: actualTokens ?? snapshot.tokens ?? event.preparation.tokensBefore,
         reserveTokens: settings?.reserveTokens,
       });
       observation.failures ??= 0;

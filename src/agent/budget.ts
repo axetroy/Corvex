@@ -107,7 +107,11 @@ export interface TrimmedHistory<T extends HistoryMessage> {
  * 单条消息先按字符上限截断，避免一条超长消息把预算全部吃掉。
  * 最近一条消息即使超出预算也保留（截断后），否则对话无法继续。
  */
-export function trimHistory<T extends HistoryMessage>(history: readonly T[], budgetTokens: number): TrimmedHistory<T> {
+export function trimHistory<T extends HistoryMessage>(
+  history: readonly T[],
+  budgetTokens: number,
+  measure: (message: T) => number = (message) => estimateConservativeTokens(message.content),
+): TrimmedHistory<T> {
   const normalized = history.map((message) => ({
     ...message,
     content: message.content.length > maxHistoryMessageCharacters
@@ -119,7 +123,7 @@ export function trimHistory<T extends HistoryMessage>(history: readonly T[], bud
   let cutIndex = normalized.length;
   for (let index = normalized.length - 1; index >= 0; index -= 1) {
     const message = normalized[index]!;
-    const cost = estimateConservativeTokens(message.content) + 4;
+    const cost = measure(message) + 4;
     if (kept.length > 0 && used + cost > budgetTokens) break;
     kept.unshift(message);
     used += cost;

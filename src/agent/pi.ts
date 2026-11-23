@@ -27,6 +27,7 @@ import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
+import { createProviderTokenCounter } from "./token-counter.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
@@ -520,6 +521,7 @@ export class PiAgent {
       window: number;
       threshold: number;
     } | undefined;
+    const tokenCounter = createProviderTokenCounter(this.config.agent.baseUrl);
     const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -611,7 +613,7 @@ export class PiAgent {
               text: contextNoticeText(this.config.agent.responseLanguage, "failed"),
             });
           },
-        }),
+        }, tokenCounter),
       ],
       systemPrompt: request.systemPrompt,
     });

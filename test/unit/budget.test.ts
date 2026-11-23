@@ -152,6 +152,16 @@ describe("trimHistory", () => {
     expect(result.dropped.map((message) => message.id)).toEqual(["1", "2"]);
   });
 
+  it("支持注入真实 token 计数", () => {
+    const history = [
+      { id: "1", role: "user" as const, content: "long but cheap" },
+      { id: "2", role: "assistant" as const, content: "short but expensive" },
+    ];
+    const result = trimHistory(history, 20, (message) => message.id === "2" ? 20 : 1);
+    expect(result.messages.map((message) => message.id)).toEqual(["2"]);
+    expect(result.dropped.map((message) => message.id)).toEqual(["1"]);
+  });
+
   it("单条超长历史先截断再计入预算", () => {
     const history = [{ id: "1", role: "user" as const, content: "x".repeat(100_000) }];
     const result = trimHistory(history, 100);
