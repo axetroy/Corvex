@@ -24,6 +24,8 @@ const minCallBytes = 4 << 10;
 const worstBytesPerToken = 2;
 /** 压缩预留的固定余量：覆盖 system 提示、转向消息与分帧开销。 */
 const reserveMarginTokens = 4 << 10;
+/** 用户显式配置的预留最多占窗口的比例；防止旧的固定 16K 数值在小窗口里主导阈值。 */
+const maxRequestedReserveShare = 0.25;
 /** 压缩后至少保留的最近 token。 */
 const minKeepRecentTokens = 4 << 10;
 /**
@@ -61,7 +63,8 @@ export function resolveCompactionReserveTokens(
   const window = Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : safe * 2;
   const ceiling = Math.max(1_024, window - minKeepRecentTokens - reserveMarginTokens);
   const requested = Number.isFinite(configured) ? Math.max(0, configured) : 0;
-  return Math.min(ceiling, Math.max(requested, safe));
+  const requestedCap = Math.floor(window * maxRequestedReserveShare);
+  return Math.min(ceiling, Math.max(Math.min(requested, requestedCap), safe));
 }
 
 /** 压缩后保留的最近 token：窗口较小时不允许把窗口全部占满。 */

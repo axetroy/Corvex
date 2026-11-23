@@ -109,7 +109,8 @@ const defaults: CorvexConfig = {
     maxInputTokens: 0,
     historyTokenBudget: 24_000,
     turnToolResultBytes: 256 << 10,
-    compactionReserveTokens: 16_384,
+    // 0 表示完全由窗口与工具预算推导；固定 16K 会让 32K 窗口在 50% 就压缩。
+    compactionReserveTokens: 0,
     compactionKeepRecentTokens: 20_000,
     summaryEnabled: true,
   },

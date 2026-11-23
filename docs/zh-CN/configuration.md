@@ -81,7 +81,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.max_input_tokens` | `0` | 0 ≤ 值 < `context_window` | 单次请求输入 Token 的硬上限。`0` 表示由 `context_window` 减去 `max_output_tokens` 与固定框架开销推导。运行时先扣除系统提示与当前请求，再用剩余额度限制历史注入量。 |
 | `agent.history_token_budget` | `24000` | 0–`context_window` | 对话请求中重新注入历史轮次的 Token 预算；超出后裁剪较早历史，`summary_enabled` 开启时改为压缩成摘要。裁剪使用保守估算（取 chars/4 与 UTF-8 字节数/3 的较大值），避免中文和压缩代码被低估。 |
 | `agent.turn_tool_result_bytes` | `262144` | 0–67,108,864 | 单轮内累计工具输出达到该值时，提示模型先记录已确认的结论并改用更聚焦的读取。它是软检查点而非硬上限，运行时会收敛到四个工具输出轮次（128K 窗口约 256 KiB），确保提醒在压缩之前到达。`0` 表示关闭提醒；单轮工具输出仍会被截断。 |
-| `agent.compaction_reserve_tokens` | `16384` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。运行时会把过小的值提升到安全下限：单轮工具输出最坏 Token 增量 + `max_output_tokens` + 余量。 |
+| `agent.compaction_reserve_tokens` | `0` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。`0` 表示完全由工具输出预算、`max_output_tokens` 与固定余量推导；显式值会提升到安全下限，并受窗口 25% 上限约束，避免小上下文在 50% 就压缩。 |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。若与预留相加超出窗口，运行时会下调。 |
 | `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |
 

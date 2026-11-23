@@ -51,8 +51,16 @@ describe("resolveCompactionReserveTokens", () => {
     expect(resolveCompactionReserveTokens(32_768, 4_096, 0)).toBe(12_288);
   });
 
-  it("用户配置更大时保留用户值", () => {
-    expect(resolveCompactionReserveTokens(131_072, 8_192, 60_000)).toBe(60_000);
+  it("用户配置超过窗口比例时被收敛，避免小窗口仍然 50% 才触发压缩", () => {
+    // 128K 窗口最多允许 25% = 32768，60000 被收敛。
+    expect(resolveCompactionReserveTokens(131_072, 8_192, 60_000)).toBe(32_768);
+    // 32k 窗口默认的 16384 会被收敛到 8192，但安全下限 12288 更高，
+    // 最终阈值 = 32768 - 12288 = 20480（约 62.5%），而不是 50%。
+    expect(resolveCompactionReserveTokens(32_768, 4_096, 16_384)).toBe(12_288);
+  });
+
+  it("用户配置低于安全下限时按安全下限生效", () => {
+    expect(resolveCompactionReserveTokens(131_072, 8_192, 20_000)).toBe(28_672);
   });
 
   it("预留不会吃掉整个窗口", () => {

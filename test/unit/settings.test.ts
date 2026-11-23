@@ -32,7 +32,7 @@ function agentConfig(): CorvexConfig["agent"] {
     maxInputTokens: 0,
     historyTokenBudget: 24_000,
     turnToolResultBytes: 512 << 10,
-    compactionReserveTokens: 16_384,
+    compactionReserveTokens: 0,
     compactionKeepRecentTokens: 20_000,
     summaryEnabled: true,
   };
@@ -234,9 +234,10 @@ describe("runtimeSettingsEffective", () => {
     config.agent.maxInputTokens = 90_000;
     const view = runtimeSettingsEffective(config);
     expect(view.effective.turn_tool_result_bytes).toBe(32 << 10);
-    expect(view.effective.compaction_reserve_tokens).toBe(64 << 10);
+    // 64 KiB 超过 128K 窗口的 25% 上限，会被收敛到 32768。
+    expect(view.effective.compaction_reserve_tokens).toBe(32 << 10);
     expect(view.effective.max_input_tokens).toBe(90_000);
-    expect(view.adjusted).toEqual([]);
+    expect(view.adjusted).toEqual(["compaction_reserve_tokens"]);
   });
 });
 
