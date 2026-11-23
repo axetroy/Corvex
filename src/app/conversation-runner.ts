@@ -569,11 +569,11 @@ export class ConversationRunner {
     conversationId: string,
     gitlab?: GitLabClient,
     responseLanguage?: ResponseLanguage,
+    clientForUser?: (ownerUserId: string) => Promise<GitLabClient | undefined>,
   ): Promise<void> {
     if (this.draining.has(conversationId)) return;
     this.draining.add(conversationId);
     try {
-      const client = gitlab ?? this.gitlab;
       const signal = this.shutdownSignal ?? new AbortController().signal;
       while (!this.hasActiveTurn(conversationId)) {
         const item = this.store.takeNextFollowUp(conversationId);
@@ -582,6 +582,13 @@ export class ConversationRunner {
         try {
           const conversation = this.store.getConversation(conversationId);
           if (!conversation) break;
+          // 启动恢复时没有 HTTP 请求可派生用户凭证：按对话 owner 解析其登录令牌，
+          // 保证排队轮次的 GitLab API 与工具仍然绑定该用户，而不是宿主机/全局账号。
+          const client = gitlab ??
+            (conversation.ownerUserId && clientForUser
+              ? await clientForUser(conversation.ownerUserId)
+              : undefined) ??
+            this.gitlab;
           const headSha = (await client.getBranch(conversation.projectId, conversation.targetBranch, signal)).commit.id;
           const created = this.store.addConversationMessage(conversationId, {
             ownerUserId: conversation.ownerUserId,
@@ -608,10 +615,10 @@ export class ConversationRunner {
     }
   }
 
-  /** 进程启动时恢复尚未执行的排队消息。 */
-  async resumeFollowUps(): Promise<void> {
+  /** 进程启动时恢复尚未执行的排队消息，并用对话所属用户的 GitLab 凭据执行。 */
+  async resumeFollowUps(clientForUser?: (ownerUserId: string) => Promise<GitLabClient | undefined>): Promise<void> {
     for (const conversationId of this.store.conversationsWithFollowUps()) {
-      await this.drainFollowUps(conversationId);
+      await this.drainFollowUps(conversationId, undefined, undefined, clientForUser);
     }
   }
 

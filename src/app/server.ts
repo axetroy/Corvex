@@ -163,7 +163,12 @@ export class CorvexServer {
         console.warn("storage cleanup hook failed", { error: errorMessage(error) });
       }
       // 上次进程留下的排队补充消息没有在途轮次触发，启动时主动消费一次。
-      void this.conversations.resumeFollowUps().catch((error: unknown) => {
+      void this.conversations.resumeFollowUps(async (userId) => {
+        const saved = this.store.readUser(userId, this.cipher);
+        if (!saved) return undefined;
+        const user = await this.oauth.refresh(saved);
+        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken, user.accessToken, 10_000, "bearer");
+      }).catch((error: unknown) => {
         console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
       });
     });
