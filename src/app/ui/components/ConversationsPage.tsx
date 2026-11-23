@@ -222,6 +222,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [draftMessage, setDraftMessage] = useState("");
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const composerRef = useRef<React.ElementRef<typeof Sender>>(null);
   const draftBeforeHistory = useRef("");
   const historyNavigation = useRef(false);
   const historyKey = `corvex-ops-input-history:${selectedConversationId || "new"}`;
@@ -848,7 +849,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }));
   const applyPrompt = (key: string) => {
     const text = welcomePromptText(promptGroups, key);
-    if (text) setDraftMessage(text.slice(0, 20_000));
+    if (text) {
+      setDraftMessage(text.slice(0, 20_000));
+      composerRef.current?.focus();
+    }
   };
   const quickPrompts = activeQuickPrompts(copy);
   // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
@@ -1379,7 +1383,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               className="conversation-quick-prompt"
                               disabled={!canReply}
                               title={prompt.label}
-                              onClick={() => setDraftMessage(prompt.label.slice(0, 20_000))}
+                              onClick={() => {
+                                setDraftMessage(prompt.label.slice(0, 20_000));
+                                composerRef.current?.focus();
+                              }}
                             >
                               {prompt.label.split(/\s+/)[0]}
                             </button>
@@ -1395,7 +1402,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             type="button"
                             className="conversation-command-suggestion"
                             title={description}
-                            onClick={() => setDraftMessage(`/${command} `)}
+                            onClick={() => {
+                              setDraftMessage(`/${command} `);
+                              composerRef.current?.focus();
+                            }}
                           >
                             <code>/{command}</code>
                             <span>{description}</span>
@@ -1423,6 +1433,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       </div>
                     ) : null}
                     <Sender
+                      ref={composerRef}
                       className="conversation-composer"
                       style={{ width: "100%" }}
                       aria-label={copy.initialMessage}
