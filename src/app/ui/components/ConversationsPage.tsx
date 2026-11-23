@@ -869,7 +869,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       label: skill.quickLabel || skill.description,
       title: `/${skill.name} · ${skill.description}`,
       // 直接填入模板展开后的文本；$ARGUMENTS 为空时用户可直接发送或在末尾补参数。
-      insert: skill.content.replaceAll("$ARGUMENTS", "").trim(),
+      insert: skill.content.replaceAll("$ARGUMENTS", "").replace(/ {2,}/g, " ").trim(),
     }));
   // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
   const commandQuery = /^\/[a-z][a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
@@ -1401,7 +1401,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               title={prompt.title}
                               onClick={() => {
                                 // 模板在服务端展开，这里只插入命令名，用户输入参数后即可发送。
-                                setDraftMessage(`/${prompt.key} `);
+                                setDraftMessage(prompt.insert.slice(0, 20_000));
                                 composerRef.current?.focus();
                               }}
                             >

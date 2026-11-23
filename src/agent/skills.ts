@@ -92,7 +92,7 @@ export function expandSkillTemplate(content: string, args: string): string {
 }
 
 /** 系统种子模板版本；升级时刷新旧文档，但保留管理员的停用选择。 */
-export const SKILL_SEED_VERSION = "2";
+export const SKILL_SEED_VERSION = "3";
 
 function buildDocument(input: {
   name: string;
@@ -145,7 +145,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - User wants bugs, regressions, security or quality issues found before merging
 
 ## Workflow
-1. Determine the scope from $ARGUMENTS. If empty, inspect the current conversation's saved changes with git_status / git_diff, or get_merge_request_changes for an MR.
+1. Determine the scope. Use the extra scope below when provided; otherwise inspect the current conversation's saved changes with git_status / git_diff, or get_merge_request_changes for an MR.
 2. Read the affected files with read_file and surrounding context with search_text. Do not review from the diff alone when the surrounding code changes the meaning.
 3. Report only concrete issues you can locate to a specific file and line. For each: severity, location, why it is wrong, and a concrete fix.
 4. Order findings by severity (blocking → major → minor → nit). Separate confirmed problems from speculation.
@@ -157,7 +157,10 @@ export const defaultSkillDocuments: readonly string[] = [
 ## Constraints
 - Never modify files, commit, push or post comments during a review.
 - Do not guess paths or line numbers; open the file first.
-- Keep findings actionable; skip style preferences unless they hide a real defect.`,
+- Keep findings actionable; skip style preferences unless they hide a real defect.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "explain",
@@ -171,7 +174,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - User is onboarding to an unfamiliar repository or preparing to change code
 
 ## Workflow
-1. Identify the target from $ARGUMENTS. If empty, start from the repository root: read_dir / read_file on entry points and AGENTS.md.
+1. Identify the target. Use the extra scope below when provided; otherwise start from the repository root: read_dir / read_file on entry points and AGENTS.md.
 2. Map the overall structure first: main modules, their responsibilities and how control flows between them.
 3. Follow one representative path end to end with search_text / read_file. Name concrete files and symbols.
 4. Explain key implementations layer by layer. State observed facts separately from inference.
@@ -183,7 +186,10 @@ export const defaultSkillDocuments: readonly string[] = [
 ## Constraints
 - Quote paths and identifiers from the repository; never invent them.
 - Do not execute code or tests. Do not edit files.
-- If the codebase is ambiguous, say what you could not confirm.`,
+- If the codebase is ambiguous, say what you could not confirm.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "fix",
@@ -197,7 +203,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - User wants to review a proposed change before it is applied
 
 ## Workflow
-1. Restate the symptom and the expected behavior. Use $ARGUMENTS to narrow the target.
+1. Restate the symptom and the expected behavior. The extra scope below, when provided, narrows the target.
 2. Read the relevant files and trace the cause to a specific file and line. Confirm with evidence; do not guess.
 3. Give the minimal patch as example code with the exact file path.
 4. Explain the impact: what changes, what stays the same, and what could regress.
@@ -208,7 +214,10 @@ export const defaultSkillDocuments: readonly string[] = [
 
 ## Constraints
 - Do not modify files, commit or push. This turn produces a proposal only.
-- If the cause cannot be confirmed, say so and list what evidence is missing.`,
+- If the cause cannot be confirmed, say so and list what evidence is missing.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "test",
@@ -222,7 +231,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - User wants concrete cases and edge conditions before writing tests
 
 ## Workflow
-1. Identify the target from $ARGUMENTS. If empty, use the conversation's saved changes or the file the user last referenced.
+1. Identify the target. Use the extra scope below when provided; otherwise use the conversation's saved changes or the file the user last referenced.
 2. Read the implementation and the existing tests with read_file / search_text. Map behavior branches: happy path, error paths, boundaries and state transitions.
 3. List uncovered branches with file:line and explain why each matters.
 4. For each gap, propose a test case: setup, input, expected result and the edge condition it covers.
@@ -233,7 +242,10 @@ export const defaultSkillDocuments: readonly string[] = [
 
 ## Constraints
 - Do not run test commands or edit files. Suggest tests only.
-- Do not claim a branch is covered without reading the test file.`,
+- Do not claim a branch is covered without reading the test file.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "docs",
@@ -247,7 +259,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - A change introduces behavior that existing docs do not describe
 
 ## Workflow
-1. Determine the target from $ARGUMENTS. If empty, use the conversation's saved changes as the scope.
+1. Determine the target. Use the extra scope below when provided; otherwise use the conversation's saved changes as the scope.
 2. Read the existing documentation first: match its structure, tone and terminology. Reuse established terms instead of inventing new ones.
 3. Read the code being documented so every statement is verifiable.
 4. Write the addition or revision with a concrete example where the docs currently lack one. Keep it short and task-oriented.
@@ -258,7 +270,10 @@ export const defaultSkillDocuments: readonly string[] = [
 
 ## Constraints
 - Do not edit files during this turn. Provide text the user can apply.
-- Do not document behavior you did not verify in the code.`,
+- Do not document behavior you did not verify in the code.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "commit",
@@ -272,7 +287,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - User wants to check whether a change is one logical commit or several
 
 ## Workflow
-1. Inspect the current changes with git_status / git_diff and read the affected files. If $ARGUMENTS adds context, incorporate it.
+1. Inspect the current changes with git_status / git_diff and read the affected files. Incorporate the extra scope below when provided.
 2. Identify the single logical change. If the diff mixes unrelated changes, say so and propose how to split it.
 3. Write a subject line in the imperative mood, under 72 characters, naming what changed and why.
 4. Add a short body: motivation, key decisions and any behavior change users should know about.
@@ -285,7 +300,10 @@ export const defaultSkillDocuments: readonly string[] = [
 
 ## Constraints
 - Do not commit, stage or push. Produce text only.
-- No secrets, tokens or credentials in the message.`,
+- No secrets, tokens or credentials in the message.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
   buildDocument({
     name: "create-mr",
@@ -299,7 +317,7 @@ export const defaultSkillDocuments: readonly string[] = [
 - A change is ready for review and needs context for reviewers
 
 ## Workflow
-1. Inspect the conversation's saved changes with git_diff / git_log and read the affected files. Use $ARGUMENTS for the target branch or extra context.
+1. Inspect the conversation's saved changes with git_diff / git_log and read the affected files. The extra scope below may name a target branch or add context.
 2. Summarize the purpose in one or two sentences: what problem this solves and why.
 3. List the key changes as short bullets tied to concrete files or behavior.
 4. Write a test plan: what was checked and how a reviewer can verify it. Do not claim tests were run.
@@ -310,6 +328,9 @@ export const defaultSkillDocuments: readonly string[] = [
 
 ## Constraints
 - Do not create or update the MR, push branches, or post comments. Produce text only.
-- Do not invent test results or reviewers.`,
+- Do not invent test results or reviewers.
+
+## Extra scope (optional)
+$ARGUMENTS`,
   }),
 ];
