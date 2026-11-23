@@ -68,6 +68,10 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
   { key: "project_agents_md", section: "agent", field: "projectAgentsMd", type: "boolean" },
   { key: "project_agents_md_max_bytes", section: "agent", field: "projectAgentsMdMaxBytes", type: "number", min: 1_024, max: 262_144 },
+  // 上下文洞察：每次模型请求前采集有界快照，默认开启；关闭后不增加请求延迟。
+  { key: "context_inspect_enabled", section: "agent", field: "contextInspectEnabled", type: "boolean" },
+  { key: "context_inspect_max_items", section: "agent", field: "contextInspectMaxItems", type: "number", min: 1, max: 500 },
+  { key: "context_inspect_max_preview_chars", section: "agent", field: "contextInspectMaxPreviewChars", type: "number", min: 128, max: 16_384 },
   // 工具开关与联网白名单
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },

@@ -60,7 +60,9 @@ The workspace fills the viewport and offers several views:
 - **Chat** — the Markdown transcript. Assistant replies fill in token by token while a turn runs, with the model's thinking and each tool call shown separately in a process block above the final reply. The conversation's system prompt appears as a collapsible block above the transcript, and every settled reply shows its copy action, generation speed, duration and producing model.
 - **Activity records** (`records`) — the execution records of the turns in this conversation.
 - **Trace** — one merged timeline of every turn's model, tool and context activity, switchable to a single turn. Context compaction and trimming notices carry bounded before/after snapshots.
+- **Context** — a per-request inspection: window usage, a composition bar for system / tools / user / injected / assistant / tool-result tokens, a request timeline, a per-item browser with redacted previews and context events. Selecting a request updates every section; collection can be disabled in Settings → Budget.
 - **Stats** — model usage and elapsed time for the whole conversation, with a per-turn breakdown.
+- **Changes** — bounded per-file diffs of the conversation ref, with a turn filter and inline Monaco diff viewer.
 - **Git** — a read-only commit graph of the project mirror, with the pinned SHA and saved conversation commits highlighted, expandable commit details and downloadable patches.
 - **File panel** — a toggled side pane that browses the pinned worktree (falling back to GitLab files if the worktree has not been prepared), previews images and opens text files in a read-only code viewer.
 

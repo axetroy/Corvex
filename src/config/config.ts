@@ -79,6 +79,12 @@ export interface CorvexConfig {
     projectAgentsMd: boolean;
     /** 项目指导的最大字节数；超限截断。 */
     projectAgentsMdMaxBytes: number;
+    /** 是否在每次模型请求前采集上下文快照；关闭后不增加请求延迟。 */
+    contextInspectEnabled: boolean;
+    /** 单次快照保留的最大条目数；超出时保留最近的条目。 */
+    contextInspectMaxItems: number;
+    /** 单条预览的最大字符数。 */
+    contextInspectMaxPreviewChars: number;
   };
 }
 
@@ -124,6 +130,9 @@ const defaults: CorvexConfig = {
     summaryEnabled: true,
     projectAgentsMd: true,
     projectAgentsMdMaxBytes: 32 << 10,
+    contextInspectEnabled: true,
+    contextInspectMaxItems: 80,
+    contextInspectMaxPreviewChars: 2_048,
   },
 };
 
@@ -274,6 +283,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
       projectAgentsMd: boolean(agent.project_agents_md, defaults.agent.projectAgentsMd),
       projectAgentsMdMaxBytes: number(agent.project_agents_md_max_bytes, defaults.agent.projectAgentsMdMaxBytes),
+      contextInspectEnabled: boolean(agent.context_inspect_enabled, defaults.agent.contextInspectEnabled),
+      contextInspectMaxItems: number(agent.context_inspect_max_items, defaults.agent.contextInspectMaxItems),
+      contextInspectMaxPreviewChars: number(agent.context_inspect_max_preview_chars, defaults.agent.contextInspectMaxPreviewChars),
     },
   };
 }
@@ -412,6 +424,12 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
       config.agent.compactionKeepRecentTokens > config.agent.contextWindow
     ) {
       problems.push("agent.compaction_keep_recent_tokens must be between 0 and agent.context_window");
+    }
+    if (config.agent.contextInspectMaxItems < 1 || config.agent.contextInspectMaxItems > 500) {
+      problems.push("agent.context_inspect_max_items must be between 1 and 500");
+    }
+    if (config.agent.contextInspectMaxPreviewChars < 128 || config.agent.contextInspectMaxPreviewChars > 16_384) {
+      problems.push("agent.context_inspect_max_preview_chars must be between 128 and 16384");
     }
   }
   if (problems.length > 0) throw new Error(problems.join("; "));

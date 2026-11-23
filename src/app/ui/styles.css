@@ -1239,6 +1239,13 @@ details summary {
   gap: 8px;
 }
 
+.context-truncated {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
+}
+
 .context-composition-bar,
 .context-timeline-bar {
   display: flex;

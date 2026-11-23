@@ -299,6 +299,56 @@ describe("CorvexServer", () => {
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns/missing-turn`,
         { headers: authHeaders },
       )).status).toBe(404);
+      // 上下文快照端点：未采集时返回空列表；写入后概要与详情分别可读，并校验归属与序号。
+      const emptyContext = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/context`,
+        { headers: authHeaders },
+      );
+      expect(emptyContext.status).toBe(200);
+      expect(await emptyContext.json()).toMatchObject({
+        conversationId: createdConversation.conversationId,
+        snapshots: [],
+      });
+      store.saveContextSnapshot({
+        conversationId: createdConversation.conversationId,
+        turnId: createdConversation.turnId,
+        requestSeq: 1,
+        createdAt: new Date().toISOString(),
+        contextWindow: 131_072,
+        reservedOutput: 4_096,
+        threshold: 111_411,
+        estimatedTokens: 1_200,
+        breakdown: { system: 100, tools: 200, user: 300, inject: 0, assistant: 400, tool: 200 },
+        counts: { system: 1, tools: 1, user: 1, inject: 0, assistant: 1, tool: 1 },
+        items: [{ category: "user", name: "user", tokens: 300, preview: "Explain this repository" }],
+        truncated: false,
+      });
+      const contextResponse = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/context`,
+        { headers: authHeaders },
+      );
+      expect(contextResponse.status).toBe(200);
+      const contextBody = await contextResponse.json() as { snapshots: { requestSeq: number; estimatedTokens: number; items?: unknown }[] };
+      expect(contextBody.snapshots).toHaveLength(1);
+      expect(contextBody.snapshots[0]).toMatchObject({ requestSeq: 1, estimatedTokens: 1_200 });
+      expect(contextBody.snapshots[0]?.items).toBeUndefined();
+      const contextDetail = await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/context/1`,
+        { headers: authHeaders },
+      );
+      expect(await contextDetail.json()).toMatchObject({ requestSeq: 1, items: [{ name: "user", tokens: 300 }] });
+      expect((await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/context/2`,
+        { headers: authHeaders },
+      )).status).toBe(404);
+      expect((await fetch(
+        `${base}/api/ops/conversations/${createdConversation.conversationId}/context/abc`,
+        { headers: authHeaders },
+      )).status).toBe(400);
+      expect((await fetch(
+        `${base}/api/ops/conversations/other-conversation/context`,
+        { headers: authHeaders },
+      )).status).toBe(404);
       // 整段对话轨迹端点把全部轮次合并成一条时间线，未知对话返回 404。
       const conversationTurnsResponse = await fetch(
         `${base}/api/ops/conversations/${createdConversation.conversationId}/turns`,

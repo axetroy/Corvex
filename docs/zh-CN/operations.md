@@ -64,6 +64,7 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 | `GET /api/ops/conversations/<id>/turns/<turnId>/stream` | SSE：运行中轮次的累计助手正文（`text`）、思考（`thinking`）、工具执行（`tool`）、上下文变化（`context`）与最终 `done`。 |
 | `POST /api/ops/conversations/<id>/turns/<turnId>/cancel` | 请求取消排队或运行中的轮次。 |
 | `GET /api/ops/conversations/<id>/stats` | 整段对话的用量与耗时汇总，含逐轮明细。 |
+| `GET /api/ops/conversations/<id>/context`、`.../context/<seq>` | 按请求记录的上下文快照概要（不含条目预览）或单次请求的完整有界条目。 |
 | `GET /api/ops/conversations/<id>/files/tree`、`/files/content`、`/files/image` | 文件面板的目录、文本与图片读取；图片响应带 `x-corvex-file-source` 标明来源。 |
 | `GET /api/ops/conversations/<id>/git/graph`、`/git/authors`、`/git/commit/:sha`、`/git/commit/:sha/patch` | Git 图谱、作者筛选、提交详情与补丁下载。 |
 | `GET`/`DELETE /api/ops/conversations/<id>/changes` | 查看或删除会话改动 ref（`refs/conversations/<id>`）。 |
@@ -78,7 +79,7 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 
 运维台接口需要 GitLab OAuth2 会话；API 遇到未登录返回 401 JSON（永不 302），前端据此重定向到登录或安装页。请保护会话并使用 HTTPS。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。不存在 `/webhooks/gitlab` 或 `/api/ops/events` 端点。
 
-控制台以对话为主，默认打开「对话」页，列表按仓库分组展示轮次数与最近一轮状态。外壳铺满视口：左侧为可折叠导航（品牌、语言与主题选择，均提供「跟随系统」及明确选项并保存在 `localStorage`），主区域占据剩余宽度，无页脚。新建对话使用带搜索的仓库与分支选择器；欢迎页提供按意图分组的快捷提示词，点击后填入输入框。每轮固定到服务端解析的分支头 SHA，消息保存在 SQLite，并可用仓库读写工具与项目/Issue/MR 工具，在用户明确要求时向 GitLab 写入。工作区把仓库信息与 **Chat**、**调用记录**、**轨迹**、**统计**、**Git 图谱**、**文件面板** 放在同一行：Chat 流式呈现 Markdown 回复与交错的思考/工具时间线，展示系统提示词，已完成的回复附复制按钮、TPS、耗时与模型标签；轨迹默认合并全部轮次，可聚焦单轮，按轮分段、每段自带标尺，支持缩放与框选；文件面板默认读取本地工作区，必要时回退到 GitLab 接口并显示来源。输入框默认三行，底栏内置模型切换器，选择后立即作用于下一轮；斜杠命令只是本轮模型指令，不创建状态也不发布。系统级概览位于管理后台（`#/admin/overview`）；每个用户还有个人设置页（`#/settings`）管理私有模型。对话列表、Git 图谱与文件面板的布局可在 `localStorage` 中持久化。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发（`ui:dev` 把 `/api` 代理到 `http://127.0.0.1:8080`）。`/ops` 只响应 `GET` 和 `HEAD`。
+控制台以对话为主，默认打开「对话」页，列表按仓库分组展示轮次数与最近一轮状态。外壳铺满视口：左侧为可折叠导航（品牌、语言与主题选择，均提供「跟随系统」及明确选项并保存在 `localStorage`），主区域占据剩余宽度，无页脚。新建对话使用带搜索的仓库与分支选择器；欢迎页提供按意图分组的快捷提示词，点击后填入输入框。每轮固定到服务端解析的分支头 SHA，消息保存在 SQLite，并可用仓库读写工具与项目/Issue/MR 工具，在用户明确要求时向 GitLab 写入。工作区把仓库信息与 **Chat**、**调用记录**、**轨迹**、**上下文**、**统计**、**变更**、**Git 图谱**、**文件面板** 放在同一行：Chat 流式呈现 Markdown 回复与交错的思考/工具时间线，展示系统提示词，已完成的回复附复制按钮、TPS、耗时与模型标签；轨迹默认合并全部轮次，可聚焦单轮，按轮分段、每段自带标尺，支持缩放与框选；「上下文」标签按请求展示窗口占用、组成条、请求时间线、逐项脱敏预览与上下文事件，选中请求后各区块同步更新，采集可在「设置 → 预算」关闭；文件面板默认读取本地工作区，必要时回退到 GitLab 接口并显示来源。输入框默认三行，底栏内置模型切换器，选择后立即作用于下一轮；斜杠命令只是本轮模型指令，不创建状态也不发布。系统级概览位于管理后台（`#/admin/overview`）；每个用户还有个人设置页（`#/settings`）管理私有模型。对话列表、Git 图谱与文件面板的布局可在 `localStorage` 中持久化。控制台是构建阶段打包到 `dist/app/ui` 的 React 应用；本地可用 `pnpm run ui:build` 构建，或用 `pnpm run ui:dev` 连接本地 Server 进行界面开发（`ui:dev` 把 `/api` 代理到 `http://127.0.0.1:8080`）。`/ops` 只响应 `GET` 和 `HEAD`。
 
 界面支持英文和简体中文。首次访问时会选择浏览器语言中受支持的语言；手动切换后会保存在浏览器中，供后续访问使用。
 

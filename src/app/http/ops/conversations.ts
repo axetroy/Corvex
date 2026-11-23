@@ -197,7 +197,10 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const cleanup = await cleanupConversationResources(ctx, conversation, "delete");
     if (cleanup.errors.length > 0) {
-      sendJson(reply, 500, { error: "conversation cleanup failed" });
+      const active = cleanup.errors.some((error) => error.includes("turn is active"));
+      sendJson(reply, active ? 409 : 500, {
+        error: active ? "a turn is still running for this conversation" : "conversation cleanup failed",
+      });
       return;
     }
     ctx.store.deleteConversation(conversationId);
@@ -558,7 +561,6 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         counts: snapshot.counts,
         truncated: snapshot.truncated,
       })),
-      itemTotals: snapshots.map((snapshot) => ({ requestSeq: snapshot.requestSeq, items: snapshot.items.length })),
     });
   });
 

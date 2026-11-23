@@ -7,7 +7,7 @@ Corvex is a self-hosted GitLab agent built as a single TypeScript application po
 Corvex runs persistent conversations in the ops console. Each conversation is bound to one repository branch and a pinned revision, and runs inline in the Server process.
 
 - The console discovers every repository visible to the signed-in user's GitLab token and stores conversations and turns in SQLite.
-- Each turn keeps its own trajectory, execution records and a streaming reply; the workspace includes a read-only Git graph, file browser and conversation records.
+- Each turn keeps its own trajectory, execution records, a streaming reply and bounded per-request context snapshots; the workspace includes Context and Trace inspectors, a read-only Git graph, file browser and conversation records.
 - Conversations may read and, with explicit user intent, write to GitLab through bounded tools; the Git tool set is confined to the conversation worktree and local mirror.
 - Corvex does not execute repository scripts or tests. There is no shell executor by design.
 - Prometheus metrics and a storage cleanup console support operations.

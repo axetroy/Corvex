@@ -39,6 +39,8 @@ export interface ContextInspectOptions {
   threshold: number | null;
   tokenCounter: TokenCounter;
   onSnapshot: (snapshot: ContextSnapshotData) => Promise<void> | void;
+  /** 取消信号：token 计数调用必须可中断，避免轮次取消后仍等待 tokenize。 */
+  signal?: AbortSignal;
   maxItems?: number;
   maxPreviewChars?: number;
 }
@@ -132,7 +134,7 @@ export async function buildContextSnapshotData(
   }
 
   const allText = raw.map((item) => item.text).join("\n");
-  const counted = await options.tokenCounter.count(allText).catch(() => undefined);
+  const counted = await options.tokenCounter.count(allText, options.signal).catch(() => undefined);
   const estimatedTokens = counted ?? estimateConservativeTokens(allText);
   const chars = raw.reduce((sum, item) => sum + item.text.length, 0) || 1;
 
@@ -159,7 +161,8 @@ export async function buildContextSnapshotData(
     estimatedTokens,
     breakdown,
     counts,
-    items: items.slice(0, maxItems),
+    // 消息按时间从旧到新排列；保留尾部才能展示当前请求真正相关的内容。
+    items: items.slice(-maxItems),
     truncated: items.length > maxItems,
   };
 }
@@ -182,6 +185,7 @@ export function createContextInspectExtension(options: ContextInspectOptions): (
           reservedOutput: options.reservedOutput,
           threshold: options.threshold,
           tokenCounter: options.tokenCounter,
+          signal: options.signal,
           maxItems: options.maxItems,
           maxPreviewChars: options.maxPreviewChars,
           requestSeq,

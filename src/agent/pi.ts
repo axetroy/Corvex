@@ -708,7 +708,8 @@ export class PiAgent {
           },
         }),
         // 上下文洞察通过 hook 接入：PiAgent 只产出有界快照，落库由默认 tap 完成。
-        ...(this.hooks && request.conversationId && request.turnId
+        // 关闭时完全不注册扩展，避免每次请求多做一次 token 计数调用。
+        ...(this.hooks && config.agent.contextInspectEnabled && request.conversationId && request.turnId
           ? [createContextInspectExtension({
               conversationId: request.conversationId,
               turnId: request.turnId,
@@ -716,6 +717,9 @@ export class PiAgent {
               reservedOutput: config.agent.maxOutputTokens,
               threshold: activeCompactionTrigger?.threshold ?? selfCompactThreshold,
               tokenCounter,
+              signal,
+              maxItems: config.agent.contextInspectMaxItems,
+              maxPreviewChars: config.agent.contextInspectMaxPreviewChars,
               onSnapshot: (snapshot) => {
                 void callAsyncHook(this.hooks!.contextSnapshot, snapshot).catch((error: unknown) => {
                   console.warn("context snapshot hook failed", { error: errorMessage(error) });

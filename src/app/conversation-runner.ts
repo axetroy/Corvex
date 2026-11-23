@@ -87,10 +87,16 @@ export class ConversationRunner {
       }
     });
     this.hooks.conversationDelete.tapPromise({ name: "stream-state", stage: 200 }, async (context) => {
-      this.workspaces.delete(context.conversationId);
-      for (const turnId of context.turnIds) {
-        this.streamSnapshots.delete(turnId);
-        this.streamListeners.delete(turnId);
+      try {
+        this.workspaces.delete(context.conversationId);
+        // 排队补充消息的消费者也按会话记账；删除后不应继续向已消失的会话投递。
+        this.draining.delete(context.conversationId);
+        for (const turnId of context.turnIds) {
+          this.streamSnapshots.delete(turnId);
+          this.streamListeners.delete(turnId);
+        }
+      } catch (error) {
+        context.errors.push(errorMessage(error));
       }
     });
     // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。

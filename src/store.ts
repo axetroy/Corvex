@@ -160,7 +160,8 @@ function serializeContextItems(items: ContextSnapshotData["items"]): string {
   while (clean.length > 0) {
     const json = JSON.stringify(clean);
     if (Buffer.byteLength(json) <= maxBytes) return json;
-    clean.pop();
+    // 条目按时间从旧到新排列；裁剪时丢掉最旧的，保留当前请求相关的最新内容。
+    clean.shift();
   }
   return "[]";
 }
@@ -2471,6 +2472,8 @@ export class AppStore {
       .prepare("SELECT value FROM runtime_settings WHERE key='schema:user-owned-conversations'")
       .get() as { value: string } | undefined;
     if (!ownerMigration) {
+      // 该迁移早于上下文快照表；即使旧库里意外存在也一并清掉，避免孤儿行。
+      this.db.exec("DELETE FROM conversation_context_snapshots");
       this.db.exec("DELETE FROM conversations");
       const now = new Date().toISOString();
       this.db

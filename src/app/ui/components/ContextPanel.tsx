@@ -5,34 +5,12 @@ import { errorMessage } from "../../../errors.js";
 import { formatDate } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { TraceEntry } from "../types.js";
+// 仅导入类型：采集模块含 Node 侧依赖，不能被打进浏览器包。
+import type { ContextCategory, ContextSnapshotData } from "../../../agent/context-inspect.js";
 
-type Category = "system" | "tools" | "user" | "inject" | "assistant" | "tool";
+type Category = ContextCategory;
 const categories: Category[] = ["system", "tools", "user", "inject", "assistant", "tool"];
-
-interface SnapshotSummary {
-  conversationId: string;
-  turnId: string;
-  requestSeq: number;
-  createdAt: string;
-  contextWindow: number;
-  reservedOutput: number;
-  threshold: number | null;
-  estimatedTokens: number;
-  breakdown: Record<Category, number>;
-  counts: Record<Category, number>;
-  truncated: boolean;
-}
-
-interface ContextItem {
-  category: Category;
-  name: string;
-  tokens: number;
-  preview: string;
-}
-
-interface SnapshotDetail extends SnapshotSummary {
-  items: ContextItem[];
-}
+type SnapshotSummary = Omit<ContextSnapshotData, "items">;
 
 interface Props {
   conversationId: string;
@@ -59,7 +37,7 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
   const [events, setEvents] = useState<TraceEntry[]>([]);
   const [selectedSeq, setSelectedSeq] = useState<number>();
-  const [detail, setDetail] = useState<SnapshotDetail>();
+  const [detail, setDetail] = useState<ContextSnapshotData>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -78,7 +56,8 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       if (!active) return;
       setSnapshots(context.snapshots ?? []);
       setEvents((turns.trajectory ?? []).filter((entry) => entry.kind === "context"));
-      setSelectedSeq((current) => current ?? context.snapshots?.[0]?.requestSeq);
+      // 刷新/切换会话后总是回到最新请求，避免停留在上一轮的旧快照。
+      setSelectedSeq(context.snapshots?.[0]?.requestSeq);
       setError("");
     }).catch((cause: unknown) => {
       if (active) setError(errorMessage(cause));
@@ -94,7 +73,7 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       return;
     }
     let active = true;
-    fetchJson<SnapshotDetail>(
+    fetchJson<ContextSnapshotData>(
       `/api/ops/conversations/${encodeURIComponent(conversationId)}/context/${selectedSeq}`, copy,
     ).then((result) => {
       if (active) setDetail(result);
@@ -104,12 +83,13 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
     return () => { active = false; };
   }, [conversationId, copy, selectedSeq]);
 
-  const latest = snapshots[0];
-  const utilization = latest && latest.contextWindow > 0
-    ? Math.round(latest.estimatedTokens / latest.contextWindow * 1000) / 10
+  // 统计、组成、时间线与内容浏览都跟随同一个选中请求，避免「上面看最新、下面看旧的」。
+  const selected = snapshots.find((snapshot) => snapshot.requestSeq === selectedSeq) ?? snapshots[0];
+  const utilization = selected && selected.contextWindow > 0
+    ? Math.round(selected.estimatedTokens / selected.contextWindow * 1000) / 10
     : null;
-  const thresholdPercent = latest && latest.contextWindow > 0 && latest.threshold
-    ? Math.round(latest.threshold / latest.contextWindow * 1000) / 10
+  const thresholdPercent = selected && selected.contextWindow > 0 && selected.threshold
+    ? Math.round(selected.threshold / selected.contextWindow * 1000) / 10
     : null;
   const bars = useCallback((snapshot: Pick<SnapshotSummary, "breakdown" | "estimatedTokens">) => {
     const total = categories.reduce((sum, key) => sum + (snapshot.breakdown[key] ?? 0), 0) || snapshot.estimatedTokens || 1;
@@ -119,7 +99,7 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       ratio: (snapshot.breakdown[key] ?? 0) / total,
     }));
   }, []);
-  const latestBars = useMemo(() => latest ? bars(latest) : [], [bars, latest]);
+  const selectedBars = useMemo(() => selected ? bars(selected) : [], [bars, selected]);
 
   if (loading && !snapshots.length) return <Spin size="small" />;
   if (!snapshots.length) {
@@ -136,9 +116,9 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       <div className="context-panel-stats">
         <div><span>{copy.contextPanelUtilization}</span><strong>{utilization === null ? copy.none : `${utilization}%`}</strong></div>
-        <div><span>{copy.contextPanelWindow}</span><strong>{latest?.contextWindow ?? 0}</strong></div>
-        <div><span>{copy.contextPanelEstimated}</span><strong>{latest?.estimatedTokens ?? 0}</strong></div>
-        <div title={latest?.threshold ? String(latest.threshold) : undefined}>
+        <div><span>{copy.contextPanelWindow}</span><strong>{selected?.contextWindow ?? 0}</strong></div>
+        <div><span>{copy.contextPanelEstimated}</span><strong>{selected?.estimatedTokens ?? 0}</strong></div>
+        <div title={selected?.threshold ? String(selected.threshold) : undefined}>
           <span>{copy.contextPanelThreshold}</span>
           <strong>{thresholdPercent === null ? copy.none : `${thresholdPercent}%`}</strong>
         </div>
@@ -146,9 +126,12 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       </div>
 
       <section className="context-panel-section">
-        <Typography.Text strong>{copy.contextPanelComposition}</Typography.Text>
+        <Typography.Text strong>
+          {copy.contextPanelComposition}
+          {selected?.truncated ? <em className="context-truncated"> · {copy.contextPanelTruncated}</em> : null}
+        </Typography.Text>
         <div className="context-composition-bar">
-          {latestBars.map((part) => (
+          {selectedBars.map((part) => (
             <span
               key={part.key}
               className={`context-composition-part is-${part.key}`}
@@ -158,7 +141,7 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
           ))}
         </div>
         <div className="context-composition-legend">
-          {latestBars.map((part) => (
+          {selectedBars.map((part) => (
             <span key={part.key}>
               <i className={`is-${part.key}`} />
               {label(copy, part.key)} {part.value}
@@ -174,7 +157,7 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
             <button
               key={snapshot.requestSeq}
               type="button"
-              className={`context-timeline-row${selectedSeq === snapshot.requestSeq ? " is-selected" : ""}`}
+              className={`context-timeline-row${selected?.requestSeq === snapshot.requestSeq ? " is-selected" : ""}`}
               onClick={() => setSelectedSeq(snapshot.requestSeq)}
               title={formatDate(snapshot.createdAt, copy, locale)}
             >
@@ -191,7 +174,9 @@ export function ContextPanel({ conversationId, copy, locale, refreshToken }: Pro
       </section>
 
       <section className="context-panel-section">
-        <Typography.Text strong>{copy.contextPanelBrowser}</Typography.Text>
+        <Typography.Text strong>
+          {copy.contextPanelBrowser} · #{selected?.requestSeq}
+        </Typography.Text>
         {detail ? (
           <div className="context-browser">
             {categories.map((category) => {

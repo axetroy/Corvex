@@ -157,6 +157,9 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "history_token_budget", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsHistoryTokenBudget", hintKey: "settingsHistoryTokenBudgetHint" },
       { key: "turn_tool_result_bytes", kind: "number", min: 0, max: 64 << 20, step: 1024, unit: "byte", labelKey: "settingsTurnToolResultBytes", hintKey: "settingsTurnToolResultBytesHint" },
       { key: "summary_enabled", kind: "boolean", labelKey: "settingsSummaryEnabled", hintKey: "settingsSummaryEnabledHint" },
+      { key: "context_inspect_enabled", kind: "boolean", labelKey: "settingsContextInspectEnabled", hintKey: "settingsContextInspectEnabledHint" },
+      { key: "context_inspect_max_items", kind: "number", min: 1, max: 500, step: 1, labelKey: "settingsContextInspectMaxItems", hintKey: "settingsContextInspectMaxItemsHint" },
+      { key: "context_inspect_max_preview_chars", kind: "number", min: 128, max: 16384, step: 128, unit: "byte", labelKey: "settingsContextInspectMaxPreviewChars", hintKey: "settingsContextInspectMaxPreviewCharsHint" },
     ],
   },
   {

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildContextSnapshotData, createContextInspectExtension } from "../../src/agent/context-inspect.ts";
+import { ConversationRunner } from "../../src/app/conversation-runner.ts";
+import { callAsyncHook, createCorvexHooks } from "../../src/app/hooks.ts";
+import type { CorvexConfig } from "../../src/config/config.ts";
+import { AppStore } from "../../src/store.ts";
 
 const counter = (tokens: number | undefined = 1200) => ({
   available: tokens !== undefined,
@@ -54,6 +58,58 @@ describe("context inspection", () => {
     expect(result.truncated).toBe(true);
     expect(JSON.stringify(result.items)).not.toContain("secret-0");
     expect(result.items[0]?.preview.length).toBeLessThanOrEqual(40);
+  });
+
+  it("keeps the newest items and passes the abort signal to the token counter", async () => {
+    const tokenCounter = counter(5000);
+    const controller = new AbortController();
+    const result = await buildContextSnapshotData(
+      Array.from({ length: 6 }, (_, index) => message("user", `message-${index}`)),
+      {
+        conversationId: "conv-1", turnId: "turn-1", requestSeq: 1,
+        contextWindow: 8000, reservedOutput: 1024, threshold: 85,
+        tokenCounter, maxItems: 2, signal: controller.signal,
+      },
+    );
+    expect(result.items.map((item) => item.preview)).toEqual(["message-4", "message-5"]);
+    expect(result.truncated).toBe(true);
+    expect(tokenCounter.count).toHaveBeenCalledWith(expect.any(String), controller.signal);
+  });
+
+  it("flows from the SDK extension through the hook into the store", async () => {
+    const store = await AppStore.open(":memory:");
+    try {
+      const created = store.createConversation({
+        projectId: 7, projectName: "group/project", targetBranch: "main",
+        headSha: "a".repeat(40), actorId: 0, request: "hook chain",
+      });
+      const hooks = createCorvexHooks();
+      const config = {
+        storage: { root: "data" },
+        gitlab: { baseUrl: "https://gitlab.example.com" },
+        agent: { responseLanguage: "en", model: "test" },
+      } as unknown as CorvexConfig;
+      new ConversationRunner(config, store, hooks);
+
+      let handler: ((event: { messages: unknown[] }) => Promise<void> | void) | undefined;
+      const extension = createContextInspectExtension({
+        conversationId: created.conversationId, turnId: created.turnId,
+        contextWindow: 8000, reservedOutput: 1024, threshold: 85,
+        tokenCounter: counter(),
+        onSnapshot: (snapshot) => callAsyncHook(hooks.contextSnapshot, snapshot),
+      });
+      extension({ on: (name: string, fn: typeof handler) => {
+        if (name === "context_with_system") handler = fn;
+      } } as never);
+      await handler!({ messages: [message("user", "Review the repo")] });
+
+      const snapshots = store.contextSnapshots(created.conversationId);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]?.breakdown.user).toBeGreaterThan(0);
+      expect(store.contextSnapshot(created.conversationId, snapshots[0]!.requestSeq)?.items).toHaveLength(1);
+    } finally {
+      store.close();
+    }
   });
 
   it("falls back to conservative estimation when the provider counter fails", async () => {
