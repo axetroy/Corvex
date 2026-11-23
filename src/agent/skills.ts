@@ -92,7 +92,7 @@ export function expandSkillTemplate(content: string, args: string): string {
 }
 
 /** 系统种子模板版本；升级时刷新旧文档，但保留管理员的停用选择。 */
-export const SKILL_SEED_VERSION = "3";
+export const SKILL_SEED_VERSION = "5";
 
 function buildDocument(input: {
   name: string;
@@ -136,7 +136,7 @@ export const defaultSkillDocuments: readonly string[] = [
   buildDocument({
     name: "review",
     description: "Review code changes for bugs, regressions, security and maintainability issues, with file and line references. Use when the user asks to review, audit or check a diff, branch, merge request or specific files, or wants feedback on code quality.",
-    quickLabel: "Review changes",
+    quickLabel: "Review",
     quickAction: true,
     content: `# Code Review
 
@@ -165,7 +165,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "explain",
     description: "Explain how a repository or feature works: structure, call flow and key implementations, separating facts from inference. Use when the user asks what code does, how a feature works, or wants an architecture overview before changing it.",
-    quickLabel: "Explain code",
+    quickLabel: "Explain",
     quickAction: true,
     content: `# Code Explanation
 
@@ -194,7 +194,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "fix",
     description: "Propose a concrete fix with example code, impact analysis and verification steps, without changing files. Use when the user reports a bug, asks how to fix something, or wants a patch plan before applying it.",
-    quickLabel: "Propose a fix",
+    quickLabel: "Fix",
     quickAction: true,
     content: `# Fix Proposal
 
@@ -222,7 +222,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "test",
     description: "Analyze test coverage gaps and propose concrete test cases and edge conditions. Use when the user asks about tests, wants to know what is untested, or needs a test plan for a change. Never runs test commands.",
-    quickLabel: "Test coverage",
+    quickLabel: "Tests",
     quickAction: true,
     content: `# Test Coverage Analysis
 
@@ -250,7 +250,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "docs",
     description: "Add or improve documentation for code and changes, keeping terminology consistent with existing docs. Use when the user asks to write, update or fix README, API docs, comments or guides for a repository or a specific change.",
-    quickLabel: "Improve docs",
+    quickLabel: "Docs",
     quickAction: true,
     content: `# Documentation
 
@@ -278,7 +278,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "commit",
     description: "Draft a concise commit message from the current changes: subject, body outline and scope. Use when the user asks for a commit message or wants to summarize a diff before committing. Never creates the commit.",
-    quickLabel: "Commit message",
+    quickLabel: "Commit",
     quickAction: true,
     content: `# Commit Message Draft
 
@@ -308,7 +308,7 @@ $ARGUMENTS`,
   buildDocument({
     name: "create-mr",
     description: "Draft a merge request description from the current changes: purpose, key changes, test plan and risks. Use when the user asks for an MR description, PR body or change summary. Never creates the MR.",
-    quickLabel: "MR description",
+    quickLabel: "MR",
     quickAction: true,
     content: `# Merge Request Description
 

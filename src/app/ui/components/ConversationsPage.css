@@ -2601,14 +2601,14 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 .conversation-quick-prompts-list {
   display: flex;
   flex: 1;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
-  gap: 6px;
+  gap: 5px;
 }
 
 .conversation-quick-prompt {
   flex: 0 0 auto;
-  padding: 3px 10px;
+  padding: 3px 8px;
   border: 1px solid var(--conversation-border);
   border-radius: 12px;
   background: var(--bg-panel);
