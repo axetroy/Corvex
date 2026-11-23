@@ -861,23 +861,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       composerRef.current?.focus();
     }
   };
-  // 快捷操作与补全都来自管理员配置的 SKILL.md 技能；技能内容单语言，界面文案才分语言。
-  const quickPrompts = skills
-    .filter((skill) => skill.quickAction)
-    .map((skill) => ({
-      key: skill.id,
-      label: skill.quickLabel || skill.description,
-      title: `/${skill.name} · ${skill.description}`,
-      // 直接填入模板展开后的文本；$ARGUMENTS 为空时用户可直接发送或在末尾补参数。
-      insert: skill.content.replaceAll("$ARGUMENTS", "").replace(/ {2,}/g, " ").trim(),
-    }));
-  // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
-  const commandQuery = /^\/[a-z][a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
+  // 输入 "/" 或 "/abc" 且尚未输入空格时展示技能补全；普通路径文本不会被误判。
+  const commandQuery = /^\/[a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
     ? []
     : skills
       .filter((skill) => skill.name.startsWith(commandQuery))
-      .map((skill) => ({ command: skill.name, description: skill.description }));
+      .map((skill) => ({
+        command: skill.name,
+        description: skill.description.length > 90 ? `${skill.description.slice(0, 90)}…` : skill.description,
+        fullDescription: skill.description,
+      }));
   const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
 
   async function cancelActiveTurn() {
@@ -920,7 +914,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
-  const canReply = Boolean(currentConversation && !isTurnActive);
   // 输入框在任何时候都可编辑（繁忙时除外），只有发送按钮要求仓库/分支与内容齐备。
   const canSend = !busy && (showCreate
     ? Boolean(project && selectedBranch && draftMessage.trim())
@@ -1388,37 +1381,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       </button>
                     ) : null}
                     <div className="conversation-composer-area">
-                    {!showCreate && currentConversation && bubbleItems.length ? (
-                      <div className="conversation-quick-prompts">
-                        <span className="conversation-quick-prompts-label">{copy.conversationQuickPrompts}</span>
-                        <div className="conversation-quick-prompts-list">
-                          {quickPrompts.map((prompt) => (
-                            <button
-                              key={prompt.key}
-                              type="button"
-                              className="conversation-quick-prompt"
-                              disabled={!canReply}
-                              title={prompt.title}
-                              onClick={() => {
-                                // 模板在服务端展开，这里只插入命令名，用户输入参数后即可发送。
-                                setDraftMessage(prompt.insert.slice(0, 20_000));
-                                composerRef.current?.focus();
-                              }}
-                            >
-                              {prompt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                     {commandSuggestions.length ? (
                       <div className="conversation-command-suggestions" aria-label={copy.commandHint}>
-                        {commandSuggestions.map(({ command, description }) => (
+                        {commandSuggestions.map(({ command, description, fullDescription }) => (
                           <button
                             key={command}
                             type="button"
                             className="conversation-command-suggestion"
-                            title={description}
+                            title={fullDescription}
                             onClick={() => {
                               setDraftMessage(`/${command} `);
                               composerRef.current?.focus();
