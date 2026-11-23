@@ -952,11 +952,29 @@ details summary {
   margin-left: auto;
 }
 
-.trace-overview-controls button {
+.trace-overview-controls button,
+.trace-selection-toolbar button {
   min-width: 30px;
   min-height: 28px;
   padding: 3px 7px;
   color: var(--primary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trace-overview-controls button:hover,
+.trace-selection-toolbar button:hover {
+  color: var(--primary-strong);
+  background: var(--bg-hover);
+  border-color: var(--primary);
+}
+
+.trace-overview-controls button:focus-visible,
+.trace-selection-toolbar button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 .trace-overview-controls .trace-zoom-button {

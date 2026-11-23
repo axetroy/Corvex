@@ -212,6 +212,8 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
   const scroll = useRef<HTMLDivElement | null>(null);
   // 滚轮事件必须在非 passive 监听器里 preventDefault，否则页面会跟着滚动。
   const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  const eventListRef = useRef<HTMLDivElement | null>(null);
+  const eventRowsRef = useRef(new Map<number, HTMLButtonElement>());
 
   // 时间轴几何只依赖轨迹内容：用 reduce 而非展开参数，避免超长轨迹触发参数上限。
   const { duration, layout } = useMemo(() => {
@@ -351,6 +353,23 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
   };
 
   const selected = traces.filter((entry) => selection.has(entry.id));
+
+  // 点击概览里的时间条后，把对应的事件行滚到列表中间；只滚动事件列表，
+  // 不用 scrollIntoView，避免连带把整页也滚走。框选多条时定位到最早的一条。
+  useEffect(() => {
+    const list = eventListRef.current;
+    if (!list || selection.size === 0) return;
+    let firstId: number | undefined;
+    for (const id of selection) {
+      if (firstId === undefined || id < firstId) firstId = id;
+    }
+    const row = firstId === undefined ? undefined : eventRowsRef.current.get(firstId);
+    if (!row) return;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const delta = rowRect.top - listRect.top - (listRect.height - rowRect.height) / 2;
+    list.scrollTo({ top: Math.max(0, list.scrollTop + delta), behavior: "smooth" });
+  }, [selection]);
 
   return (
     <div
@@ -517,7 +536,7 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
             <strong>{copy.traceRecords}</strong>
             <span className="trace-event-count">{traces.length}</span>
           </div>
-          <div className="trace-event-list" aria-label={copy.traceRecords}>
+          <div className="trace-event-list" aria-label={copy.traceRecords} ref={eventListRef}>
             {bands.map((band, bandIndex) => (
               <Fragment key={band.key || "single"}>
                 {band.ordinal !== null ? (
@@ -532,6 +551,10 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
                   <button
                     key={entry.id}
                     type="button"
+                    ref={(node) => {
+                      if (node) eventRowsRef.current.set(entry.id, node);
+                      else eventRowsRef.current.delete(entry.id);
+                    }}
                     className={`trace-event-row trace-event-row-${entry.kind}${selection.has(entry.id) ? " is-selected" : ""}`}
                     aria-pressed={selection.has(entry.id)}
                     onClick={() => onSelectionChange(new Set([entry.id]))}
