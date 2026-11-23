@@ -129,3 +129,35 @@ describe("context observe with real token counting", () => {
     );
   });
 });
+
+describe("domain compaction summary", () => {
+  it("prefers the supplied summarizer over the deterministic fallback", async () => {
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    const pi = {
+      on: (event: string, callback: (event: unknown) => unknown) => {
+        handlers.set(event, callback);
+        return () => undefined;
+      },
+    } as unknown as ExtensionAPI;
+    const summarize = vi.fn(async () => ({
+      summary: "domain summary",
+      firstKeptEntryId: "entry-1",
+      tokensBefore: 99,
+      estimatedTokensAfter: 12,
+    }));
+    createContextObserveExtension({}, {}, undefined, summarize)(pi);
+    handlers.get("session_compact_failed")?.({ errorMessage: "first failure" });
+    const result = await handlers.get("session_before_compact")?.({
+      preparation: {
+        firstKeptEntryId: "entry-1",
+        tokensBefore: 99,
+        settings: { reserveTokens: 20 },
+        messagesToSummarize: [message("user", "context")],
+      },
+      reason: "threshold",
+      signal: new AbortController().signal,
+    }) as { compaction?: { summary: string } } | undefined;
+    expect(summarize).toHaveBeenCalledOnce();
+    expect(result?.compaction?.summary).toBe("domain summary");
+  });
+});

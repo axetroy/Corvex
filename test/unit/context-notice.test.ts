@@ -42,3 +42,4 @@ describe("microcompact notices", () => {
     expect(microcompactNoticeText("en", 3, 4200)).toBe("Pruned 3 older tool results (~4200 chars).");
   });
 });
+

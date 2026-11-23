@@ -113,11 +113,30 @@ export interface ContextTriggerDetail {
   reserveTokens?: number;
 }
 
+export interface CompactEventLike {
+  preparation: {
+    messagesToSummarize: unknown[];
+    firstKeptEntryId: string;
+    tokensBefore: number;
+    previousSummary?: string;
+  };
+  reason?: string;
+  signal?: AbortSignal;
+}
+
+export type DomainSummarizer = (
+  event: CompactEventLike,
+  snapshot: ContextSnapshot,
+  signal?: AbortSignal,
+) => Promise<CompactionResult | undefined>;
+
 export interface ContextObserveCallbacks {
   /** 压缩刚开始（SDK 尚未开始摘要）时通知界面。 */
   onBeforeCompact?: (snapshot: ContextSnapshot, trigger: ContextTriggerDetail) => void;
   /** 摘要失败时通知界面。 */
   onFailed?: (error?: string) => void;
+  /** 领域摘要生成失败时通知界面。 */
+  onSummarizeFailed?: (error: Error) => void;
 }
 
 /**
@@ -128,6 +147,7 @@ export function createContextObserveExtension(
   observation: { before?: ContextSnapshot; failures?: number },
   callbacks: ContextObserveCallbacks = {},
   tokenCounter?: { count(text: string, signal?: AbortSignal): Promise<number | undefined> },
+  summarize?: DomainSummarizer,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.on("session_before_compact", async (event) => {
@@ -143,6 +163,14 @@ export function createContextObserveExtension(
         tokens: actualTokens ?? snapshot.tokens ?? event.preparation.tokensBefore,
         reserveTokens: settings?.reserveTokens,
       });
+      if (summarize) {
+        try {
+          const custom = await summarize(event as CompactEventLike, snapshot, event.signal);
+          if (custom) return { compaction: custom };
+        } catch (error) {
+          callbacks.onSummarizeFailed?.(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
       observation.failures ??= 0;
       if (observation.failures < 1) return;
       const summary = buildFallbackSummary(snapshot);

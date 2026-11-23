@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
+import { generateSummaryWithUsage } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -27,6 +28,7 @@ import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension, messagesToText } from "./context-snapshot.js";
 import { createProviderTokenCounter } from "./token-counter.js";
+import { domainSummaryInstructions } from "./domain-summary.js";
 import { createMicrocompactExtension } from "./microcompact.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -623,7 +625,27 @@ export class PiAgent {
               text: contextNoticeText(config.agent.responseLanguage, "failed"),
             });
           },
-        }, tokenCounter),
+        }, tokenCounter, async (event, snapshot, eventSignal) => {
+          const { text, usage } = await generateSummaryWithUsage(
+            event.preparation.messagesToSummarize as never,
+            model,
+            undefined,
+            config.agent.apiKey,
+            undefined,
+            eventSignal,
+            domainSummaryInstructions(config.agent.responseLanguage),
+            event.preparation.previousSummary,
+            undefined,
+            (summaryModel, context, options) => runtime.streamSimple(summaryModel, context, options),
+          );
+          return {
+            summary: text,
+            firstKeptEntryId: event.preparation.firstKeptEntryId,
+            tokensBefore: snapshot.tokens ?? event.preparation.tokensBefore,
+            estimatedTokensAfter: Math.ceil(text.length / 4),
+            usage,
+          };
+        }),
         createMicrocompactExtension({
           keepRecent: 4,
           maxKeptChars: 400,
