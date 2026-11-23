@@ -8,6 +8,7 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
+import { defaultSkillSeeds } from "./agent/skills.js";
 import {
   redactSensitiveText,
   sanitizeSensitiveText,
@@ -22,6 +23,8 @@ import {
   type Conversation,
   type ConversationFollowUp,
   type ConversationMessage,
+  type ConversationSkill,
+  type ConversationSkillInput,
   type ConversationPage,
   type ConversationProcessEntry,
   type ConversationSummary,
@@ -2386,7 +2389,25 @@ export class AppStore {
         breakdown TEXT NOT NULL, counts TEXT NOT NULL, items TEXT NOT NULL, truncated INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS context_snapshots_conversation_idx ON conversation_context_snapshots(conversation_id,request_seq,id);
+      CREATE TABLE IF NOT EXISTS conversation_skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        description_zh TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        content_zh TEXT NOT NULL DEFAULT '',
+        argument_hint TEXT NOT NULL DEFAULT '',
+        license TEXT NOT NULL DEFAULT '',
+        compatibility TEXT NOT NULL DEFAULT '',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        allowed_tools TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        is_system INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
     `);
+    // 系统技能种子：只插入缺失项，管理员对文案/描述/启停的修改不会被升级覆盖。
+    this.seedConversationSkills();
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
     this.migrateLegacyModelProfiles();
     this.migrateLegacyTraceTable();
@@ -2467,6 +2488,18 @@ export class AppStore {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);
       }
     }
+    // 技能表补齐 Agent Skills 规范字段；已创建的表缺列时按定义追加。
+    const skillColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((column) => column.name),
+    );
+    for (const [name, definition] of Object.entries({
+      license: "TEXT NOT NULL DEFAULT ''",
+      compatibility: "TEXT NOT NULL DEFAULT ''",
+      metadata: "TEXT NOT NULL DEFAULT '{}'",
+      allowed_tools: "TEXT NOT NULL DEFAULT ''",
+    })) {
+      if (!skillColumns.has(name)) this.db.exec(`ALTER TABLE conversation_skills ADD COLUMN ${name} ${definition}`);
+    }
     // 用户级会话是全新的数据模型：旧会话没有归属用户，按约定整体丢弃一次。
     const ownerMigration = this.db
       .prepare("SELECT value FROM runtime_settings WHERE key='schema:user-owned-conversations'")
@@ -2520,6 +2553,109 @@ export class AppStore {
     // turn_id 可能由上面的 ALTER 补齐，索引必须等列存在后再创建。
     this.db.exec("CREATE INDEX IF NOT EXISTS conversation_trace_turn_started_idx ON conversation_trace(turn_id,started_at,id)");
     this.db.exec("CREATE INDEX IF NOT EXISTS execution_steps_turn_started_idx ON execution_steps(turn_id,started_at,id)");
+  }
+
+  /** 首次启动写入系统技能；INSERT OR IGNORE 保证管理员的修改不会被升级覆盖。 */
+  private seedConversationSkills(): void {
+    const now = new Date().toISOString();
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO conversation_skills
+         (id,name,description,description_zh,content,content_zh,argument_hint,enabled,is_system,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,1,1,?,?)`,
+    );
+    this.transaction(() => {
+      for (const seed of defaultSkillSeeds) {
+        insert.run(
+          randomUUID(), seed.name, seed.description, seed.descriptionZh,
+          seed.content, seed.contentZh, "", now, now,
+        );
+      }
+    });
+  }
+
+  /** 全部技能，系统技能排在前面；enabledOnly 供运行时与补全菜单使用。 */
+  listConversationSkills(enabledOnly = false): ConversationSkill[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM conversation_skills ${enabledOnly ? "WHERE enabled=1" : ""} ORDER BY is_system DESC,name`,
+    ).all() as Record<string, unknown>[];
+    return rows.map((row) => this.readConversationSkill(row));
+  }
+
+  getConversationSkill(name: string): ConversationSkill | undefined {
+    const row = this.db.prepare("SELECT * FROM conversation_skills WHERE name=?").get(name) as Record<string, unknown> | undefined;
+    return row ? this.readConversationSkill(row) : undefined;
+  }
+
+  createConversationSkill(input: ConversationSkillInput): ConversationSkill {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO conversation_skills
+         (id,name,description,description_zh,content,content_zh,argument_hint,
+          license,compatibility,metadata,allowed_tools,enabled,is_system,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
+    ).run(
+      id, input.name, input.description, input.descriptionZh, input.content,
+      input.contentZh, input.argumentHint, input.license, input.compatibility,
+      JSON.stringify(input.metadata), input.allowedTools, input.enabled ? 1 : 0, now, now,
+    );
+    return this.listConversationSkills().find((skill) => skill.id === id)!;
+  }
+
+  updateConversationSkill(id: string, input: ConversationSkillInput): ConversationSkill | undefined {
+    if (!this.db.prepare("SELECT 1 FROM conversation_skills WHERE id=?").get(id)) return undefined;
+    this.db.prepare(
+      `UPDATE conversation_skills SET name=?,description=?,description_zh=?,content=?,content_zh=?,
+        argument_hint=?,license=?,compatibility=?,metadata=?,allowed_tools=?,enabled=?,updated_at=? WHERE id=?`,
+    ).run(
+      input.name, input.description, input.descriptionZh, input.content,
+      input.contentZh, input.argumentHint, input.license, input.compatibility,
+      JSON.stringify(input.metadata), input.allowedTools, input.enabled ? 1 : 0,
+      new Date().toISOString(), id,
+    );
+    return this.listConversationSkills().find((skill) => skill.id === id);
+  }
+
+  /** 系统技能只能停用，不能删除；返回 false 表示不存在或受保护。 */
+  deleteConversationSkill(id: string): boolean {
+    const row = this.db.prepare("SELECT is_system FROM conversation_skills WHERE id=?").get(id) as { is_system: number } | undefined;
+    if (!row || row.is_system === 1) return false;
+    return this.db.prepare("DELETE FROM conversation_skills WHERE id=?").run(id).changes === 1;
+  }
+
+  /** 元数据是开放的 string→string 映射；损坏的 JSON 按空处理，不让一条脏数据挡住列表。 */
+  private readSkillMetadata(value: unknown): Record<string, string> {
+    const parse = (record: Record<string, unknown>): Record<string, string> =>
+      Object.fromEntries(Object.entries(record).map(([key, item]) => [key, String(item)]));
+    if (value && typeof value === "object" && !Array.isArray(value)) return parse(value as Record<string, unknown>);
+    if (typeof value !== "string") return {};
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parse(parsed as Record<string, unknown>);
+    } catch {
+      // 忽略损坏的元数据。
+    }
+    return {};
+  }
+
+  private readConversationSkill(row: Record<string, unknown>): ConversationSkill {
+    return {
+      id: stringColumn(row, "id"),
+      name: stringColumn(row, "name"),
+      description: stringColumn(row, "description"),
+      descriptionZh: stringColumn(row, "description_zh"),
+      content: stringColumn(row, "content"),
+      contentZh: stringColumn(row, "content_zh"),
+      argumentHint: stringColumn(row, "argument_hint"),
+      license: stringColumn(row, "license"),
+      compatibility: stringColumn(row, "compatibility"),
+      metadata: this.readSkillMetadata(row.metadata),
+      allowedTools: stringColumn(row, "allowed_tools"),
+      enabled: numberColumn(row, "enabled") === 1,
+      isSystem: numberColumn(row, "is_system") === 1,
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    };
   }
 
   /**

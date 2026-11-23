@@ -276,6 +276,49 @@ export interface ModelProviderDetails extends ModelProvider {
   models: ProviderModel[];
 }
 
+/**
+ * 管理员在运维台添加的对话技能：名称即斜杠命令，内容是发送给模型的提示词模板。
+ * 中英文案分别存储，运行时按 agent.response_language 选择，缺省时回退到另一种语言。
+ */
+export interface ConversationSkill {
+  id: string;
+  /** Agent Skills 规范字段：1-64 字符，小写字母/数字/连字符，不能以连字符开头或结尾。 */
+  name: string;
+  /** 规范字段：说明做什么、何时用；中英文各一份。 */
+  description: string;
+  descriptionZh: string;
+  /** 技能正文（SKILL.md body），支持 $ARGUMENTS 占位符。 */
+  content: string;
+  contentZh: string;
+  /** 斜杠命令的参数提示，仅用于界面展示。 */
+  argumentHint: string;
+  /** 规范可选字段。 */
+  license: string;
+  compatibility: string;
+  metadata: Record<string, string>;
+  /** 规范实验字段；Corvex 不据此放宽授权，仅作为提示词上下文保存。 */
+  allowedTools: string;
+  enabled: boolean;
+  /** 系统种子技能：可编辑、可停用，但不可删除。 */
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationSkillInput {
+  name: string;
+  description: string;
+  descriptionZh: string;
+  content: string;
+  contentZh: string;
+  argumentHint: string;
+  license: string;
+  compatibility: string;
+  metadata: Record<string, string>;
+  allowedTools: string;
+  enabled: boolean;
+}
+
 /** 当前使用的模型及其供应商连接参数。 */
 export interface ActiveModel {
   provider: ModelProvider;

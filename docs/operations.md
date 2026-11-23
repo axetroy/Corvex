@@ -79,6 +79,8 @@ Expose the console through HTTPS and keep the GitLab API, database volume, and m
 | `GET` / `PUT /api/ops/settings` | Read the effective runtime settings, or replace them. `PUT` stores the submitted set in SQLite (the source of truth after the first save). |
 | `GET` / `POST /api/ops/me/model-providers` and the `/api/ops/me/...` variants | Per-user providers, models and activation; system providers are read-only there. |
 | `GET /api/ops/admin/users`, `PUT /api/ops/admin/users/<id>` | Administrator-only user list and admin-flag updates. |
+| `GET /api/ops/skills` | Enabled conversation skills (name, description, prompt template) for every signed-in user. |
+| `GET` / `POST /api/ops/admin/skills`, `PUT` / `DELETE /api/ops/admin/skills/<id>` | Administrator CRUD for conversation skills; the seven seeded system skills can be edited or disabled but not deleted. |
 
 The console endpoints require a GitLab OAuth2 session; settings, model providers and storage maintenance are administrator-only. API calls return `401` JSON when unauthenticated, never a redirect, and the console turns that into a client-side redirect to login or setup. Protect operator sessions and use HTTPS. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer. Webhook and event endpoints are deferred; see [ROADMAP.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.md).
 

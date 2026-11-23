@@ -13,11 +13,10 @@ import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationSkill, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
 import type { ConversationFollowUp } from "../../../model.js";
-import { activeQuickPrompts, conversationCommandDescription, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
+import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
-import { conversationCommands } from "../../conversation-command.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
 import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
@@ -222,6 +221,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [draftMessage, setDraftMessage] = useState("");
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [skills, setSkills] = useState<ConversationSkill[]>([]);
   const composerRef = useRef<React.ElementRef<typeof Sender>>(null);
   const draftBeforeHistory = useRef("");
   const historyNavigation = useRef(false);
@@ -231,6 +231,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setHistoryIndex(-1);
     draftBeforeHistory.current = "";
   }, [historyKey]);
+  useEffect(() => {
+    let active = true;
+    fetchJson<{ items: ConversationSkill[] }>("/api/ops/skills", copy)
+      .then((result) => { if (active) setSkills(result.items ?? []); })
+      .catch(() => { if (active) setSkills([]); });
+    return () => { active = false; };
+  }, [copy, refreshToken]);
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -854,14 +861,21 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       composerRef.current?.focus();
     }
   };
-  const quickPrompts = activeQuickPrompts(copy);
+  // 快捷操作与补全都来自管理员配置的技能；描述随界面语言切换。
+  const skillDescription = (skill: ConversationSkill) =>
+    locale === "zh-CN" ? (skill.descriptionZh || skill.description) : (skill.description || skill.descriptionZh);
+  const quickPrompts = skills.map((skill) => ({
+    key: skill.name,
+    label: `/${skill.name}`,
+    title: skillDescription(skill),
+  }));
   // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
   const commandQuery = /^\/[a-z][a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
     ? []
-    : conversationCommands
-      .filter((command) => command.startsWith(commandQuery))
-      .map((command) => ({ command, description: conversationCommandDescription(copy, command) }));
+    : skills
+      .filter((skill) => skill.name.startsWith(commandQuery))
+      .map((skill) => ({ command: skill.name, description: skillDescription(skill) }));
   const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
 
   async function cancelActiveTurn() {
@@ -1382,13 +1396,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               type="button"
                               className="conversation-quick-prompt"
                               disabled={!canReply}
-                              title={prompt.label}
+                              title={prompt.title}
                               onClick={() => {
-                                setDraftMessage(prompt.label.slice(0, 20_000));
+                                // 模板在服务端展开，这里只插入命令名，用户输入参数后即可发送。
+                                setDraftMessage(`/${prompt.key} `);
                                 composerRef.current?.focus();
                               }}
                             >
-                              {prompt.label.split(/\s+/)[0]}
+                              {prompt.label}
                             </button>
                           ))}
                         </div>

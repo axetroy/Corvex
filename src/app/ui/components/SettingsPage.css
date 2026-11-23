@@ -249,3 +249,31 @@
 .model-manager-table .ant-table-cell {
   font-size: 12px;
 }
+
+.skill-manager-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-manager-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.skill-manager-form-switch {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px !important;
+}
+
+.skill-manager-system-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}

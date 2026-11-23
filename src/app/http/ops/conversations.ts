@@ -7,6 +7,7 @@ import type { Conversation, ConversationStreamEvent } from "../../../model.js";
 import type { ContextSnapshotData } from "../../../agent/context-inspect.js";
 import { requireUser } from "../../auth/context.js";
 import { callAsyncHook, type ConversationDeleteContext } from "../../hooks.js";
+import { resolveCommandRequest } from "../../conversation-command.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
 import { resolveWorktreePath } from "../../../agent/fs/index.js";
@@ -147,11 +148,16 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
         ...(mode ? { mode } : {}),
       });
+      const titleLanguage = responseLanguage ?? ctx.config.agent.responseLanguage;
       const title = await callAsyncHook(ctx.hooks.conversationStart, {
         conversationId: created.conversationId,
         turnId: created.turnId,
-        request: message,
-        language: responseLanguage ?? ctx.config.agent.responseLanguage,
+        request: resolveCommandRequest(
+          message,
+          (name) => ctx.store.getConversationSkill(name),
+          titleLanguage,
+        ).titleRequest,
+        language: titleLanguage,
       });
       if (title) ctx.store.saveConversationTitle(created.conversationId, title);
       ctx.startConversationTurn(created.turnId, gitlab, responseLanguage);

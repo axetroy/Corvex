@@ -10,6 +10,7 @@ import type { SettingField, SettingValue, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
 import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
 import { ModelManager } from "./ModelManager.js";
+import { SkillManager } from "./SkillManager.js";
 
 /** 设置元数据里的文案键是普通字符串，查表时收窄为 Copy 的文案键。 */
 function text(copy: Copy, key: string): string {
@@ -32,7 +33,7 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
   return value.toLocaleString("en-US");
 }
 
-export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "advanced";
+export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "skills" | "advanced";
 
 /** 每个设置分组用侧栏同名标签作为页头标题，避免六个页面都显示「Agent 设置」。 */
 const sectionTitleKeys: Record<SettingsSection, CopyTextKey> = {
@@ -41,6 +42,7 @@ const sectionTitleKeys: Record<SettingsSection, CopyTextKey> = {
   gitlab: "settingsTabGitLab",
   workflow: "settingsTabWorkflow",
   storage: "settingsTabStorage",
+  skills: "settingsTabSkills",
   advanced: "settingsTabAdvanced",
 };
 
@@ -51,6 +53,7 @@ const sectionDescriptionKeys: Record<SettingsSection, CopyTextKey> = {
   gitlab: "settingsGroupGitLabHint",
   workflow: "settingsGroupToolsHint",
   storage: "settingsGroupStorageHint",
+  skills: "skillManagerHint",
   advanced: "settingsGroupAdvancedHint",
 };
 
@@ -61,6 +64,7 @@ export const sectionGroups: Record<SettingsSection, readonly string[]> = {
   gitlab: ["settingsGroupGitLab"],
   workflow: ["settingsGroupTools"],
   storage: ["settingsGroupStorage"],
+  skills: [],
   advanced: ["settingsGroupRuntime", "settingsGroupAdvanced"],
 };
 
@@ -390,6 +394,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
           />
         </>
       ) : null}
+      {section === "skills" ? <SkillManager copy={copy} /> : null}
       {section === "advanced" ? (
         <>
           {renderGroup("settingsGroupRuntime")}

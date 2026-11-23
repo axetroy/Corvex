@@ -15,8 +15,8 @@ import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } fro
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
-import { getConversationCommandInstruction, getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
-import { parseConversationCommand } from "./conversation-command.js";
+import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
+import { resolveCommandRequest } from "./conversation-command.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -741,7 +741,11 @@ export class ConversationRunner {
       const title = await callAsyncHook(this.hooks.conversationTitleRefine, {
         conversationId: turn.conversationId,
         turnId: turn.turnId,
-        request: turn.request,
+        request: resolveCommandRequest(
+          turn.request,
+          (name) => this.store.getConversationSkill(name),
+          language,
+        ).titleRequest,
         language,
         workspacePath,
         signal,
@@ -870,10 +874,13 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      const command = parseConversationCommand(turn.request);
-      const systemPrompt = command
-        ? `${getConversationSystemPrompt(language, turn.mode)}\n\n${getConversationCommandInstruction(command.command, language)}`
-        : getConversationSystemPrompt(language, turn.mode);
+      // 斜杠指令按管理员配置的技能模板展开；命令名不进入发给模型的请求。
+      const { effectiveRequest } = resolveCommandRequest(
+        turn.request,
+        (name) => this.store.getConversationSkill(name),
+        language,
+      );
+      const systemPrompt = getConversationSystemPrompt(language, turn.mode);
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -881,7 +888,7 @@ export class ConversationRunner {
           headSha: turn.headSha,
         },
         summary: turn.summary,
-        currentRequest: turn.request,
+        currentRequest: effectiveRequest,
       });
       // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
       // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受

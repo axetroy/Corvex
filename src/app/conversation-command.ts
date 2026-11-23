@@ -1,25 +1,49 @@
+import type { ResponseLanguage } from "../config/config.js";
+import type { ConversationSkill } from "../model.js";
+import { expandSkillTemplate, localizeSkillText } from "../agent/skills.js";
+
 /**
  * 对话斜杠指令只改变当前这一轮的模型指令：不会创建事件、不改状态机、不发布评论。
+ * 具体有哪些指令由管理员在运维台的技能里配置，这里只负责解析格式。
  */
-export const conversationCommands = ["review", "explain", "fix", "test", "docs", "commit", "create-mr"] as const;
-export type ConversationCommand = (typeof conversationCommands)[number];
-
 export interface ParsedConversationCommand {
-  command: ConversationCommand;
+  command: string;
   message: string;
 }
 
-/** 解析消息开头的 `/command`，只对已知指令生效。 */
+/** 解析消息开头的 `/command`，只校验格式；指令是否存在由调用方查技能表决定。 */
 export function parseConversationCommand(text: string): ParsedConversationCommand | undefined {
   const match = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!match) return undefined;
-  const command = match[1] as ConversationCommand;
-  if (!conversationCommands.includes(command)) return undefined;
-  return { command, message: (match[2] ?? "").trim() };
+  return { command: match[1], message: (match[2] ?? "").trim() };
 }
 
 /** 去掉指令前缀，用于标题生成等只需要原始问题的场景。 */
 export function stripConversationCommand(text: string): string {
   const parsed = parseConversationCommand(text);
   return parsed ? parsed.message : text;
+}
+
+/**
+ * 把用户输入的 `/command 参数` 展开成两件事：
+ * `effectiveRequest` 是真正发给模型的提示词（命令名不保留），
+ * `titleRequest` 是用于会话标题的简短文本（优先用户参数，否则用技能描述）。
+ * 命令不存在或被停用时原样返回，不干扰普通文本。
+ */
+export function resolveCommandRequest(
+  request: string,
+  getSkill: (name: string) => ConversationSkill | undefined,
+  language: ResponseLanguage,
+): { effectiveRequest: string; titleRequest: string } {
+  const parsed = parseConversationCommand(request);
+  if (!parsed) return { effectiveRequest: request, titleRequest: request };
+  const skill = getSkill(parsed.command);
+  if (!skill?.enabled) return { effectiveRequest: request, titleRequest: request };
+  return {
+    effectiveRequest: expandSkillTemplate(
+      localizeSkillText(skill.content, skill.contentZh, language),
+      parsed.message,
+    ),
+    titleRequest: parsed.message || localizeSkillText(skill.description, skill.descriptionZh, language),
+  };
 }

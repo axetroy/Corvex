@@ -10,6 +10,7 @@ import { registerModelRoutes } from "./ops/models.js";
 import { registerUserModelRoutes } from "./ops/user-models.js";
 import { registerProjectRoutes } from "./ops/projects.js";
 import { registerSettingsRoutes } from "./ops/settings.js";
+import { registerSkillRoutes } from "./ops/skills.js";
 import { registerStorageRoutes } from "./ops/storage.js";
 import { sendJson, sendText } from "./respond.js";
 import { requireAdmin } from "../auth/context.js";
@@ -49,6 +50,7 @@ export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerModelRoutes(app, ctx);
   registerUserModelRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
+  registerSkillRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
   registerObservabilityRoutes(app, ctx);

@@ -727,6 +727,31 @@ describe("CorvexServer", () => {
         headers: authHeaders,
       })).status).toBe(200);
       expect((await (await fetch(`${base}/api/ops/model-providers`, { headers: authHeaders })).json() as { items: unknown[] }).items).toEqual([]);
+
+      // 管理员技能：种子技能只读可改，自定义技能可增删改，普通用户只读。
+      const skillsResponse = await fetch(`${base}/api/ops/admin/skills`, { headers: authHeaders });
+      expect(skillsResponse.status).toBe(200);
+      const skills = (await skillsResponse.json() as { items: { id: string; name: string; isSystem: boolean }[] }).items;
+      expect(skills).toHaveLength(7);
+      expect(skills.every((skill) => skill.isSystem)).toBe(true);
+      const systemSkill = skills.find((skill) => skill.name === "docs")!;
+      expect((await fetch(`${base}/api/ops/admin/skills/${systemSkill.id}`, {
+        method: "DELETE", headers: authHeaders,
+      })).status).toBe(404);
+      const createSkill = await fetch(`${base}/api/ops/admin/skills`, {
+        method: "POST",
+        headers: { ...authHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "custom", description: "Custom", descriptionZh: "自定义",
+          content: "Do $ARGUMENTS", contentZh: "处理 $ARGUMENTS", argumentHint: "", enabled: true,
+        }),
+      });
+      expect(createSkill.status).toBe(201);
+      const createdSkill = await createSkill.json() as { id: string };
+      expect((await fetch(`${base}/api/ops/skills`, { headers: authHeaders })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/admin/skills/${createdSkill.id}`, {
+        method: "DELETE", headers: authHeaders,
+      })).status).toBe(200);
     } finally {
       controller.abort();
       await running;
