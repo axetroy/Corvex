@@ -13,6 +13,7 @@ import {
   parseTraceValue,
   reconstructLlmInput,
   timelineTickCount,
+  timelineTicksForWidth,
   traceTurnId,
   wheelZoomFactor,
 } from "../trace.js";
@@ -408,29 +409,32 @@ export const TraceDiagram = memo(function TraceDiagram({ traces, turns, copy, lo
             <div className="trace-overview-axis-row">
               <span className="trace-overview-label-spacer" />
               <div className="trace-overview-axis" style={{ width: `${plotWidth}px` }}>
-                {bands.map((band) => (
-                  <div
-                    key={band.key || "single"}
-                    className={`trace-overview-band-axis${band.ordinal === null ? " is-ungrouped" : ""}`}
-                    style={{ left: `${band.offset}px`, width: `${band.width}px` }}
-                  >
-                    {band.ordinal !== null ? (
-                      <span className="trace-overview-band-label" title={band.request ?? undefined}>
-                        {copy.traceTurnLabelTemplate.replace("{turn}", String(band.ordinal))}
-                      </span>
-                    ) : null}
-                    {Array.from({ length: ticks }, (_, index) => (
-                      <span
-                        key={index}
-                        className="trace-overview-tick"
-                        aria-hidden="true"
-                        style={{ left: `${(index / (ticks - 1)) * 100}%` }}
-                      >
-                        {formatTraceDuration(Math.round(band.duration * (index / (ticks - 1))), copy)}
-                      </span>
-                    ))}
-                  </div>
-                ))}
+                {bands.map((band) => {
+                  const bandTicks = timelineTicksForWidth(band.width, ticks);
+                  return (
+                    <div
+                      key={band.key || "single"}
+                      className={`trace-overview-band-axis${band.ordinal === null ? " is-ungrouped" : ""}`}
+                      style={{ left: `${band.offset}px`, width: `${band.width}px` }}
+                    >
+                      {band.ordinal !== null ? (
+                        <span className="trace-overview-band-label" title={band.request ?? undefined}>
+                          {copy.traceTurnLabelTemplate.replace("{turn}", String(band.ordinal))}
+                        </span>
+                      ) : null}
+                      {Array.from({ length: bandTicks }, (_, index) => (
+                        <span
+                          key={index}
+                          className="trace-overview-tick"
+                          aria-hidden="true"
+                          style={{ left: `${(index / (bandTicks - 1)) * 100}%` }}
+                        >
+                          {formatTraceDuration(Math.round(band.duration * (index / (bandTicks - 1))), copy)}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
             </div>
             {(["llm", "tool", "context"] as const).map((kind) => (

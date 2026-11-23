@@ -999,13 +999,14 @@ details summary {
   align-items: center;
 }
 
+/* 轮次标签与刻度分上下两行，避免窄轮次里文字互相压住。 */
 .trace-overview-axis-row {
-  min-height: 25px;
+  min-height: 40px;
 }
 
 .trace-overview-axis {
   position: relative;
-  height: 24px;
+  height: 38px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1023,7 +1024,7 @@ details summary {
 
 .trace-overview-band-label {
   position: absolute;
-  top: 2px;
+  top: 1px;
   left: 4px;
   max-width: calc(100% - 8px);
   overflow: hidden;
@@ -1045,7 +1046,7 @@ details summary {
 
 .trace-overview-tick {
   position: absolute;
-  bottom: 4px;
+  bottom: 2px;
   color: var(--text-muted);
   font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   transform: translateX(-50%);
@@ -1275,7 +1276,8 @@ details summary {
 }
 
 .trace-event-round {
-  grid-column: 2 / -1;
+  grid-column: 2;
+  grid-row: 2;
   overflow: hidden;
   color: var(--text-muted);
   font-size: 10px;

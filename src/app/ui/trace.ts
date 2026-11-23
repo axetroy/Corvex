@@ -26,6 +26,15 @@ export function clampZoom(zoom: number): number {
 }
 
 /**
+ * 单个轮次分段能放下的刻度数：刻度文字约 60px 宽，空间不足时减少刻度，避免相邻
+ * 标签互相重叠。`max` 为整条时间轴在当前缩放下允许的总刻度数。
+ */
+export function timelineTicksForWidth(width: number, max: number): number {
+  if (!Number.isFinite(width) || width <= 0) return Math.min(2, Math.max(2, max));
+  return Math.max(2, Math.min(max, Math.floor(width / 64) + 1));
+}
+
+/**
  * 滚轮事件的缩放系数。触控板在按住修饰键时会把缩放转为 `ctrlKey`，因此两者都按
  * 缩放处理；未按修饰键的 Shift 滚轮用于平移，返回 1 表示不缩放。
  */

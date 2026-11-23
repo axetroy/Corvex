@@ -12,6 +12,7 @@ import {
   clampZoom,
   reconstructLlmInput,
   timelineTickCount,
+  timelineTicksForWidth,
   traceTurnId,
   wheelZoomFactor,
 } from "../../src/app/ui/trace.ts";
@@ -193,6 +194,14 @@ describe("operations UI trace reconstruction", () => {
     expect(timelineTickCount(4)).toBe(33);
     expect(timelineTickCount(32)).toBe(33);
     expect(timelineTickCount(Number.NaN)).toBe(9);
+  });
+
+  it("reduces ticks for narrow turn bands so labels do not overlap", () => {
+    expect(timelineTicksForWidth(320, 9)).toBe(6);
+    expect(timelineTicksForWidth(760, 9)).toBe(9);
+    expect(timelineTicksForWidth(120, 33)).toBe(2);
+    expect(timelineTicksForWidth(320, 2)).toBe(2);
+    expect(timelineTicksForWidth(Number.NaN, 9)).toBe(2);
   });
 
   it("segments a merged conversation trace by turn and compresses idle gaps", () => {
