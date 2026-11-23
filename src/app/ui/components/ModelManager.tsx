@@ -302,30 +302,37 @@ export function ModelManager({
                 rowKey="id"
                 size="small"
                 pagination={false}
+                // 固定列宽：系统供应商与用户供应商各自渲染独立表格，自动布局会按
+                // 其内容分配宽度（操作列按钮有无差异很大），导致两处列不对齐。
+                tableLayout="fixed"
                 dataSource={provider.models}
                 columns={[
-                  { title: copy.modelManagerName, dataIndex: "name", key: "name" },
+                  { title: copy.modelManagerName, dataIndex: "name", key: "name", width: "24%" },
                   {
                     title: copy.settingsContextWindow,
                     dataIndex: "contextWindow",
                     key: "contextWindow",
+                    width: "16%",
                     render: (value: number) => value.toLocaleString("en-US"),
                   },
                   {
                     title: copy.settingsMaxOutputTokens,
                     dataIndex: "maxOutputTokens",
                     key: "maxOutputTokens",
+                    width: "20%",
                     render: (value: number) => value.toLocaleString("en-US"),
                   },
                   {
                     title: copy.modelManagerActive,
                     key: "active",
+                    width: "13%",
                     render: (_: unknown, model: ProviderModel) =>
                       model.active ? <span className="settings-badge">{copy.modelManagerActive}</span> : null,
                   },
                   {
                     title: "",
                     key: "actions",
+                    width: "27%",
                     render: (_: unknown, model: ProviderModel) => (
                       <Space size={4}>
                         {scope === "system" || provider.ownerUserId !== "" ? (
