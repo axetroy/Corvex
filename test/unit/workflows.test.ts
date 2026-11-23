@@ -23,6 +23,20 @@ describe("conversation prompt contracts", () => {
     }
   });
 
+  it("guides real-time lookups, verification and scope without forcing plans on simple questions", () => {
+    const en = getConversationSystemPrompt("en", "gitlab");
+    expect(en).toContain("search with web_search first");
+    expect(en).toContain("re-read with read_file or git_diff");
+    expect(en).toContain("For multi-step tasks");
+    expect(en).toContain("Do only what the user asked");
+
+    const zh = getConversationSystemPrompt("zh-CN", "gitlab");
+    expect(zh).toContain("先用 web_search 搜索");
+    expect(zh).toContain("回读确认改动符合预期");
+    expect(zh).toContain("对于需要多步执行的任务");
+    expect(zh).toContain("只做用户要求的事");
+  });
+
   it("titles a conversation from the first request and keeps the tool budget a soft checkpoint", () => {
     for (const language of ["en", "zh-CN"] as const) {
       const titlePrompt = getConversationTitleSystemPrompt(language);
