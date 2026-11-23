@@ -237,11 +237,9 @@ describe("validateConfig", () => {
     }
   });
 
-  it("ignores the removed GitLab token environment variables", async () => {
+  it("keeps shared GitLab tokens out of the config surface", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-role-"));
     const configPath = join(root, "config.yaml");
-    const names = ["CORVEX_GITLAB_READ_TOKEN", "CORVEX_GITLAB_TOKEN"] as const;
-    const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
       await writeFile(
         configPath,
@@ -251,19 +249,12 @@ describe("validateConfig", () => {
           agent: { model: "test-model" },
         }),
       );
-      process.env.CORVEX_GITLAB_READ_TOKEN = "read";
-      process.env.CORVEX_GITLAB_TOKEN = "write";
       const server = await loadConfig(configPath, "server");
       // GitLab 访问只使用当前登录用户的 OAuth token，配置层不再暴露任何 PAT。
       expect(server.gitlab).not.toHaveProperty("readToken");
       expect(server.gitlab).not.toHaveProperty("writeToken");
       expect(server.agent).toMatchObject({ webEnabled: true, webBlockedHosts: [] });
     } finally {
-      for (const name of names) {
-        const value = original[name];
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
       await rm(root, { recursive: true, force: true });
     }
   });
