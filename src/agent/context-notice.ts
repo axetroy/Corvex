@@ -59,3 +59,10 @@ export function contextNoticeText(
   if (phase === "trim") return "History was too long; retried with trimmed context.";
   return `Context compacted: ${before} → ${after} tokens`;
 }
+
+/** 旧工具结果被裁剪时的通知文本。 */
+export function microcompactNoticeText(language: ResponseLanguage, pruned: number, savedChars: number): string {
+  return language === "zh-CN"
+    ? `已裁剪 ${pruned} 条旧工具结果，节省约 ${savedChars} 字符。`
+    : `Pruned ${pruned} older tool results (~${savedChars} chars).`;
+}

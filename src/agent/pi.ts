@@ -20,7 +20,7 @@ import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
-import { contextNoticeText } from "./context-notice.js";
+import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
@@ -28,6 +28,7 @@ import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
 import { createProviderTokenCounter } from "./token-counter.js";
+import { createMicrocompactExtension } from "./microcompact.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
@@ -614,6 +615,16 @@ export class PiAgent {
             });
           },
         }, tokenCounter),
+        createMicrocompactExtension({
+          keepRecent: 4,
+          maxKeptChars: 400,
+          onPruned: (pruned, savedChars) => {
+            emitContextStream({
+              id: `microcompact-${Date.now()}-${pruned}-${savedChars}`,
+              text: microcompactNoticeText(this.config.agent.responseLanguage, pruned, savedChars),
+            });
+          },
+        }),
       ],
       systemPrompt: request.systemPrompt,
     });

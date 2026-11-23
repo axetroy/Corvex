@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextNoticeText } from "../../src/agent/context-notice.ts";
+import { contextNoticeText, microcompactNoticeText } from "../../src/agent/context-notice.ts";
 
 describe("context change notices", () => {
   it("describes a finished compaction with token counts in both languages", () => {
@@ -33,5 +33,12 @@ describe("context trigger notices", () => {
 
   it("uses a shorter message when the trigger details are unknown", () => {
     expect(contextNoticeText("en", "start", 17_885)).toBe("Compacting context...");
+  });
+});
+
+describe("microcompact notices", () => {
+  it("reports how many old tool results were pruned", () => {
+    expect(microcompactNoticeText("zh-CN", 3, 4200)).toBe("已裁剪 3 条旧工具结果，节省约 4200 字符。");
+    expect(microcompactNoticeText("en", 3, 4200)).toBe("Pruned 3 older tool results (~4200 chars).");
   });
 });
