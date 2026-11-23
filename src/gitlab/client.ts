@@ -397,6 +397,14 @@ export class GitLabClient {
     this.configure(baseUrl, readToken, writeToken, tokenKind);
   }
 
+  /**
+   * 当前登录用户的 Git 凭据，供 GitManager 的 clone/fetch/push 使用。
+   * Git 操作必须与该用户绑定，不能退回运维台/宿主机上的全局令牌。
+   */
+  get gitCredentials(): { read: string; write: string } {
+    return { read: this.readToken, write: this.writeToken };
+  }
+
   /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
   configure(baseUrl: string, readToken: string, writeToken: string, tokenKind: "private" | "bearer" = "private"): void {
     this.tokenKind = tokenKind;

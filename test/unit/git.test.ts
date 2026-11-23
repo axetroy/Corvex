@@ -26,6 +26,16 @@ describe("Git environment", () => {
       .toBe(`Authorization: Basic ${Buffer.from("oauth2:token").toString("base64")}`);
   });
 
+  it("uses the explicitly supplied token in the git auth header", () => {
+    const env = buildGitEnvironment("/tmp/corvex", new URL("https://gitlab.example.com"), "user-oauth-token");
+    const headerKey = Object.keys(env).find((key) => key.startsWith("GIT_CONFIG_KEY_") && env[key] === "http.https://gitlab.example.com/.extraHeader");
+    expect(headerKey).toBeDefined();
+    const index = headerKey!.slice("GIT_CONFIG_KEY_".length);
+    expect(env[`GIT_CONFIG_VALUE_${index}`]).toBe(
+      `Authorization: Basic ${Buffer.from("oauth2:user-oauth-token").toString("base64")}`,
+    );
+  });
+
   it("strips inherited askpass helpers so missing credentials fail fast instead of blocking", () => {
     const previous = process.env.GIT_ASKPASS;
     process.env.GIT_ASKPASS = "/path/to/askpass.sh";
@@ -638,7 +648,7 @@ describe("Git workflows", () => {
     await expect(manager.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("write token is not configured");
 
     const writable = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read", "write");
-    await expect(writable.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("project mirror is not available");
+    await expect(writable.pushBranchToGitLab(1, sha, "fix/a", undefined, "user-token")).rejects.toThrow("project mirror is not available");
   });
 
   it("derives conversation workspace names only from safe identifiers", () => {

@@ -299,6 +299,7 @@ export class GitManager {
     repositoryUrl: string,
     expectedSha: string,
     signal?: AbortSignal,
+    authToken?: string,
   ): Promise<Workspace> {
     if (projectId <= 0) throw new Error("project ID must be positive");
     if (!shaPattern.test(expectedSha)) {
@@ -308,7 +309,7 @@ export class GitManager {
     const canonicalUrl = this.validateRepositoryUrl(repositoryUrl);
     return this.withProjectLock(projectId, async () => {
       const mirror = join(this.mirrorRoot, `${projectId}.git`);
-      await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal);
+      await this.ensureCommit(mirror, canonicalUrl, expectedSha, signal, authToken);
 
       // 若该会话有持久化的本地改动，优先检出它（其父提交必须是 pinned SHA），
       // 于是 worktree 被清理后仍能恢复用户/模型编辑过的文件。
@@ -511,6 +512,7 @@ export class GitManager {
     branch: string,
     message?: string,
     signal?: AbortSignal,
+    authToken?: string,
   ): Promise<{ branch: string; sha: string; committed: boolean }> {
     const saved = await this.saveConversationChanges(workspace, conversationId, signal, message);
     let sha: string;
@@ -535,7 +537,7 @@ export class GitManager {
       sha = resolved.stdout.toString().trim();
       if (!shaPattern.test(sha)) throw new Error("conversation ref contains an invalid commit");
     }
-    const pushed = await this.pushBranchToGitLab(projectId, sha, branch, signal);
+    const pushed = await this.pushBranchToGitLab(projectId, sha, branch, signal, authToken);
     return { ...pushed, committed: Boolean(saved) };
   }
 
@@ -549,6 +551,7 @@ export class GitManager {
     sha: string,
     branch: string,
     signal?: AbortSignal,
+    authToken?: string,
   ): Promise<{ branch: string; sha: string }> {
     if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
     if (!shaPattern.test(sha)) throw new Error("pushed commit must be a full SHA");
@@ -559,7 +562,7 @@ export class GitManager {
     ) {
       throw new Error("invalid GitLab branch name");
     }
-    if (!this.writeEnabled) throw new Error("GitLab write token is not configured");
+    if (!authToken) throw new Error("GitLab write token is not configured");
     const mirror = join(this.mirrorRoot, `${projectId}.git`);
     if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
     const origin = (
@@ -589,13 +592,13 @@ export class GitManager {
       mirror,
       ["--git-dir", mirror, "push", "--porcelain", origin, `${sha}:refs/heads/${branch}`],
       undefined, maxErrorOutput, signal,
-      { authToken: this.writeToken, timeoutMs: 60_000 },
+      { authToken, timeoutMs: 60_000 },
     );
     await this.run(
       mirror,
       ["--git-dir", mirror, "fetch", "--quiet", origin, `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
       undefined, maxErrorOutput, signal,
-      { timeoutMs: 60_000 },
+      { authToken, timeoutMs: 60_000 },
     );
     return { branch, sha };
   }
@@ -1553,7 +1556,7 @@ export class GitManager {
     return repository.toString();
   }
 
-  private async ensureMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal): Promise<void> {
+  private async ensureMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal, authToken?: string): Promise<void> {
     try {
       const info = await lstat(mirror);
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("project mirror path is not a regular directory");
@@ -1584,7 +1587,7 @@ export class GitManager {
     await mkdir(tempRoot, { recursive: true });
     const tempMirror = join(tempRoot, "repository.git");
     try {
-      await this.runWithRetry(this.root, ["clone", "--mirror", "--quiet", repositoryUrl, tempMirror], signal);
+      await this.runWithRetry(this.root, ["clone", "--mirror", "--quiet", repositoryUrl, tempMirror], signal, authToken);
       await rename(tempMirror, mirror);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
@@ -1592,9 +1595,9 @@ export class GitManager {
   }
 
   /** 保证镜像存在且 origin 匹配；只有需要刷新分支指针时才联网。 */
-  private async updateMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal): Promise<void> {
-    await this.ensureMirror(mirror, repositoryUrl, signal);
-    await this.runWithRetry(mirror, ["--git-dir", mirror, "remote", "update", "--prune"], signal);
+  private async updateMirror(mirror: string, repositoryUrl: string, signal?: AbortSignal, authToken?: string): Promise<void> {
+    await this.ensureMirror(mirror, repositoryUrl, signal, authToken);
+    await this.runWithRetry(mirror, ["--git-dir", mirror, "remote", "update", "--prune"], signal, authToken);
   }
 
   /**
@@ -1602,10 +1605,10 @@ export class GitManager {
    * 固定的提交快照是不可变的，因此重复请求同一 SHA（例如同一分支的后续对话轮次）
    * 不需要每次刷新远端。
    */
-  private async ensureCommit(mirror: string, repositoryUrl: string, sha: string, signal?: AbortSignal): Promise<void> {
-    await this.ensureMirror(mirror, repositoryUrl, signal);
+  private async ensureCommit(mirror: string, repositoryUrl: string, sha: string, signal?: AbortSignal, authToken?: string): Promise<void> {
+    await this.ensureMirror(mirror, repositoryUrl, signal, authToken);
     if (await this.hasCommit(mirror, sha, signal)) return;
-    await this.runWithRetry(mirror, ["--git-dir", mirror, "fetch", "--no-tags", "origin", sha], signal);
+    await this.runWithRetry(mirror, ["--git-dir", mirror, "fetch", "--no-tags", "origin", sha], signal, authToken);
     if (!(await this.hasCommit(mirror, sha, signal))) {
       throw new Error(`GitLab did not provide the expected commit ${sha}`);
     }
@@ -1651,11 +1654,11 @@ export class GitManager {
     }
   }
 
-  private async runWithRetry(cwd: string, args: string[], signal?: AbortSignal): Promise<void> {
+  private async runWithRetry(cwd: string, args: string[], signal?: AbortSignal, authToken?: string): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await this.run(cwd, args, undefined, maxOutput, signal);
+        await this.run(cwd, args, undefined, maxOutput, signal, authToken ? { authToken } : undefined);
         return;
       } catch (error) {
         lastError = error;

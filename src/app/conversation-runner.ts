@@ -239,7 +239,7 @@ export class ConversationRunner {
   }
 
   /** 把 Git 工具绑定到当前会话的 worktree、项目镜像与固定快照。 */
-  private gitTools(workspace: Workspace, conversationId: string, turnId: string, headSha: string, signal?: AbortSignal): GitToolAdapter {
+  private gitTools(workspace: Workspace, conversationId: string, turnId: string, headSha: string, signal?: AbortSignal, authToken?: string): GitToolAdapter {
     return {
       status: () => this.repo.getWorkspaceStatus(workspace, signal),
       log: (limit, path) => this.repo.getCommitLog(workspace, limit, path, signal),
@@ -258,9 +258,9 @@ export class ConversationRunner {
         const result = await this.repo.saveConversationChanges(workspace, conversationId, signal, undefined, turnId);
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
-      pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal),
+      pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal, authToken),
       publish: (branch, message) => this.repo.publishToGitLabBranch(
-        workspace.projectId, conversationId, workspace, branch, message, signal,
+        workspace.projectId, conversationId, workspace, branch, message, signal, authToken,
       ),
       rebase: (onto) => this.repo.rebaseWorktree(workspace, onto, signal),
       cherryPick: (sha) => this.repo.cherryPickWorktree(workspace, sha, signal),
@@ -825,6 +825,8 @@ export class ConversationRunner {
           turn.conversationId,
           repositoryCloneUrl(this.config.gitlab.baseUrl, project),
           turn.headSha,
+          signal,
+          gitlab.gitCredentials.read,
         ),
         (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha }),
       );
@@ -906,7 +908,7 @@ export class ConversationRunner {
               steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal, gitlab.gitCredentials.write) }
                 : {}),
             },
             workspace.path,

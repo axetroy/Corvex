@@ -12,6 +12,15 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
   return address.port;
 }
 
+describe("GitLab credentials", () => {
+  it("exposes the logged-in user's tokens for git clone/fetch/push", () => {
+    const client = new GitLabClient("https://gitlab.example.com", "user-read", "user-write", 10_000, "bearer");
+    expect(client.gitCredentials).toEqual({ read: "user-read", write: "user-write" });
+    client.configure("https://gitlab.example.com", "rotated-read", "rotated-write", "bearer");
+    expect(client.gitCredentials).toEqual({ read: "rotated-read", write: "rotated-write" });
+  });
+});
+
 describe("GitLab base URL", () => {
   it("can be configured after startup through the console", async () => {
     const client = new GitLabClient("", "read", "write");
