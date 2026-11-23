@@ -15,7 +15,7 @@ import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
 import type { ConversationFollowUp } from "../../../model.js";
-import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
+import { activeQuickPrompts, conversationCommandDescription, welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
 import { conversationCommands } from "../../conversation-command.js";
 import { ConversationRecordsTab } from "./ConversationRecordsTab.js";
@@ -855,7 +855,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const commandQuery = /^\/[a-z]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
     ? []
-    : conversationCommands.filter((command) => command.startsWith(commandQuery));
+    : conversationCommands
+      .filter((command) => command.startsWith(commandQuery))
+      .map((command) => ({ command, description: conversationCommandDescription(copy, command) }));
   const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
 
   async function cancelActiveTurn() {
@@ -1387,14 +1389,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     ) : null}
                     {commandSuggestions.length ? (
                       <div className="conversation-command-suggestions" aria-label={copy.commandHint}>
-                        {commandSuggestions.map((command) => (
+                        {commandSuggestions.map(({ command, description }) => (
                           <button
                             key={command}
                             type="button"
                             className="conversation-command-suggestion"
+                            title={description}
                             onClick={() => setDraftMessage(`/${command} `)}
                           >
                             <code>/{command}</code>
+                            <span>{description}</span>
                           </button>
                         ))}
                       </div>

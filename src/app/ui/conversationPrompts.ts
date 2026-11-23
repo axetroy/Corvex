@@ -1,4 +1,5 @@
 import type { Copy } from "./i18n.js";
+import type { ConversationCommand } from "../conversation-command.js";
 
 /** 欢迎页快捷提示词，键用于在点击回调中还原完整问题文本。 */
 export interface WelcomePrompt {
@@ -70,6 +71,21 @@ export function activeQuickPrompts(copy: Copy): WelcomePrompt[] {
     { key: "commit", label: copy.quickPromptCommit },
     { key: "mr", label: copy.quickPromptMr },
   ];
+}
+
+/** 指令补全里的一行说明，和主流 agent 的命令菜单一样让 /xxx 可发现。 */
+const commandDescriptionKeys: Record<ConversationCommand, keyof Copy> = {
+  review: "commandDescReview",
+  explain: "commandDescExplain",
+  fix: "commandDescFix",
+  test: "commandDescTest",
+  docs: "commandDescDocs",
+  commit: "commandDescCommit",
+  mr: "commandDescMr",
+};
+
+export function conversationCommandDescription(copy: Copy, command: ConversationCommand): string {
+  return String(copy[commandDescriptionKeys[command]]);
 }
 
 /** 点击提示词时按 key 还原原文，避免依赖 ReactNode 类型的 label。 */

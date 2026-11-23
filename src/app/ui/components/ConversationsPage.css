@@ -2639,7 +2639,10 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-command-suggestion {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
   padding: 2px 8px;
   border: 0;
   border-radius: 5px;
@@ -2649,7 +2652,19 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   font-size: 11px;
 }
 
+.conversation-command-suggestion code {
+  font-weight: 600;
+}
+
+.conversation-command-suggestion span {
+  color: var(--conversation-muted);
+}
+
 .conversation-command-suggestion:hover {
   background: var(--conversation-brand);
+  color: var(--bg-panel);
+}
+
+.conversation-command-suggestion:hover span {
   color: var(--bg-panel);
 }

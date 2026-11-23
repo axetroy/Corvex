@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeQuickPrompts, welcomePromptGroups, welcomePromptText } from "../../src/app/ui/conversationPrompts.ts";
+import { activeQuickPrompts, conversationCommandDescription, welcomePromptGroups, welcomePromptText } from "../../src/app/ui/conversationPrompts.ts";
 import { en, zhCN } from "../../src/app/ui/i18n.ts";
 import { conversationCommands } from "../../src/app/conversation-command.ts";
 
@@ -53,6 +53,16 @@ describe("active conversation quick prompts", () => {
       expect(byCommand.get("/commit")).toContain(copy === en ? "Draft" : "起草");
       expect(byCommand.get("/mr")).toContain(copy === en ? "Draft" : "起草");
       expect(byCommand.get("/fix")).toContain(copy === en ? "Propose" : "给出");
+    }
+  });
+
+  it("gives every command a localized one-line description for the / menu", () => {
+    for (const copy of [en, zhCN]) {
+      for (const command of conversationCommands) {
+        const description = conversationCommandDescription(copy, command);
+        expect(description.length).toBeGreaterThan(0);
+        expect(description).not.toMatch(/^commandDesc/);
+      }
     }
   });
 });
