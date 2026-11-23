@@ -32,6 +32,7 @@ function validConfig(): CorvexConfig {
       apiKey: "",
       requestTimeout: 120000,
       sessionTimeout: 30 * 60_000,
+      responseStallTimeout: 3 * 60_000,
       maxOutputTokens: 4096,
       dailyTokenBudget: 0,
       webEnabled: true,
@@ -49,6 +50,22 @@ function validConfig(): CorvexConfig {
 }
 
 describe("validateConfig", () => {
+  it("defaults the response stall watchdog to three minutes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "corvex-stall-"));
+    const configPath = join(root, "config.yaml");
+    try {
+      await writeFile(configPath, JSON.stringify({
+        gitlab: { base_url: "https://gitlab.example.com" },
+        storage: { root, database: join(root, "state.db") },
+      }));
+      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
+        agent: { responseStallTimeout: 180_000 },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("defaults the per-turn tool result budget to 256 KiB", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-tool-budget-"));
     const configPath = join(root, "config.yaml");

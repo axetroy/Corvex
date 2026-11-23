@@ -1,3 +1,4 @@
+import { Agent as UndiciAgent, fetch as undiciFetch } from "undici";
 import { join, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import { generateSummaryWithUsage } from "@earendil-works/pi-coding-agent";
@@ -24,7 +25,7 @@ import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
 import { getAgentToolAccess } from "./tool-access.js";
 import { createToolCatalogExtension } from "./tool-catalog.js";
 import { redactSensitiveText } from "../redact.js";
-import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
+import { contextNoticeText, microcompactNoticeText, responseWaitNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
@@ -401,10 +402,16 @@ export class PiAgent {
   private async runSession(
     request: ModelRequest,
     workingDirectory: string,
-    signal?: AbortSignal,
+    parentSignal?: AbortSignal,
     trace?: TraceContext,
     config: CorvexConfig = this.config,
   ): Promise<ModelResponse> {
+    // 无响应看门狗独立于上级信号：超时后中止当前会话，让轮次尽快以明确错误收尾，
+    // 而不是在「运行中」状态下空等 SDK 多次重试。
+    const stallController = new AbortController();
+    const signal = parentSignal
+      ? AbortSignal.any([parentSignal, stallController.signal])
+      : stallController.signal;
     const agentDir = resolve(join(config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
     const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
@@ -415,6 +422,18 @@ export class PiAgent {
     const providerLabel = config.agent.providerName || providerId;
     const completionsApi = openAICompletionsApi();
     const requestTimeout = config.agent.requestTimeout;
+    // Node 内置 fetch 的 headersTimeout 固定 300 秒，会让 agent_request_timeout 形同虚设。
+    // 用同包 undici 的 fetch + Agent，让连接/响应头/响应体都遵循运行时配置的超时。
+    const dispatcher = new UndiciAgent({
+      connect: { timeout: Math.min(requestTimeout, 30_000) },
+      headersTimeout: requestTimeout,
+      bodyTimeout: requestTimeout,
+    });
+    const timedFetch: typeof globalThis.fetch = (input, init) =>
+      undiciFetch(input as string | URL, { ...init, dispatcher } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+    // 任意模型活动（响应头、正文、思考、工具调用）都会重置看门狗计时。
+    let lastActivityAt = performance.now();
+    const markActivity = () => { lastActivityAt = performance.now(); };
     let activeModelCall: {
       traceId: number;
       startedAt: number;
@@ -446,7 +465,9 @@ export class PiAgent {
           ? AbortSignal.any([options.signal, timeoutSignal])
           : timeoutSignal,
         timeoutMs: requestTimeout,
+        fetch: timedFetch,
         onResponse: async (response: Parameters<NonNullable<StreamOptions["onResponse"]>>[0], responseModel: Parameters<NonNullable<StreamOptions["onResponse"]>>[1]) => {
+          markActivity();
           const responseHeadersMs = performance.now() - requestStartedAtMono;
           requestTiming.responseHeadersMs ??= responseHeadersMs;
           if (activeModelCall?.requestStartedAtMono === requestStartedAtMono) {
@@ -758,6 +779,12 @@ export class PiAgent {
       before?: ContextSnapshot;
     } | undefined;
     const unsubscribe = session.subscribe((event) => {
+      // 只在真正产出内容时重置看门狗：失败响应与 SDK 重试不算「模型有输出」。
+      if (event.type === "message_update" || event.type === "tool_execution_start" ||
+          event.type === "tool_execution_end" || event.type === "compaction_start" ||
+          event.type === "compaction_end") {
+        markActivity();
+      }
       if (event.type === "compaction_start") {
         const streamId = contextEventId || `context-${++contextEventCount}`;
         contextEventId = streamId;
@@ -1011,12 +1038,40 @@ export class PiAgent {
       void session.abort();
     };
     signal?.addEventListener("abort", abort, { once: true });
+    // 无响应看门狗：等待首响应期间定期推送进度提示，超过阈值直接中止本轮。
+    const stallMs = config.agent.responseStallTimeout;
+    const stallSeconds = Math.round(stallMs / 1000);
+    const waitingId = `waiting-${request.conversationId ?? "turn"}`;
+    let lastNoticeSecond = 0;
+    const stallTimer = stallMs > 0
+      ? setInterval(() => {
+          const idleMs = performance.now() - lastActivityAt;
+          if (idleMs >= stallMs) {
+            stallController.abort(new Error(config.agent.responseLanguage === "zh-CN"
+              ? `模型超过 ${stallSeconds} 秒无输出，已中止本轮`
+              : `No model output for ${stallSeconds}s; the turn was aborted`));
+            return;
+          }
+          const idleSeconds = Math.floor(idleMs / 1000);
+          if (idleSeconds >= 5 && idleSeconds - lastNoticeSecond >= 10) {
+            lastNoticeSecond = idleSeconds;
+            emitContextStream({
+              id: waitingId,
+              text: responseWaitNoticeText(config.agent.responseLanguage, idleSeconds, stallSeconds),
+            });
+          }
+        }, 1_000)
+      : undefined;
     try {
       await session.bindExtensions({});
-      if (signal?.aborted) throw new Error("Pi agent run was aborted");
+      if (signal?.aborted) throw new Error(
+        signal.reason instanceof Error ? signal.reason.message : "Pi agent run was aborted",
+      );
       await session.prompt(request.userPrompt);
       // 外部取消优先：中止后的半截文本不能当作完成结果。
-      if (signal?.aborted) throw new Error("Pi agent run was aborted");
+      if (signal?.aborted) throw new Error(
+        signal.reason instanceof Error ? signal.reason.message : "Pi agent run was aborted",
+      );
       // 服务端报错（含上下文超限）时 `prompt()` 不抛出，必须显式上抛，否则会返回历史回复
       // 并让上层的「去掉历史重试一次」失效。
       if (lastAssistantError) throw new Error(lastAssistantError);
@@ -1099,6 +1154,8 @@ export class PiAgent {
     } finally {
       signal?.removeEventListener("abort", abort);
       unsubscribe();
+      if (stallTimer) clearInterval(stallTimer);
+      void dispatcher.close();
       if (activeModelCall) {
         const endedAt = performance.now();
         const durationMs = endedAt - activeModelCall.startedAt;

@@ -182,6 +182,7 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
       { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
+      { key: "agent_response_stall_timeout", kind: "number", min: 0, max: 3_600, step: 30, unit: "second", labelKey: "settingsResponseStallTimeout", hintKey: "settingsResponseStallTimeoutHint" },
     ],
   },
   {

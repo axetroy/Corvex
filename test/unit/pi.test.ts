@@ -856,4 +856,49 @@ describe("PiAgent", () => {
     expect(requestBodies[1]).toContain("supplement survives retry");
     expect(requestBodies[1]).not.toContain("old history");
   }, 10_000);
+
+  it("aborts a stalled turn with a clear error instead of waiting for SDK retries", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-stall-"));
+    server = createServer((request, response) => {
+      // 故意不发送响应头，模拟模型服务卡住。
+      request.resume();
+      request.on("end", () => {
+        setTimeout(() => { if (!response.destroyed) response.end(); }, 5_000);
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+    const config = {
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        blockedUserIds: [], botUsername: "",
+      },
+      storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        providerName: "Acme Models", apiKey: "test-key", requestTimeout: 10_000, sessionTimeout: 30_000,
+        responseStallTimeout: 800,
+        maxOutputTokens: 4096, dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [],
+        skillPaths: [], contextWindow: 131_072, maxInputTokens: 0, historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20, compactionReserveTokens: 16_384, compactionKeepRecentTokens: 20_000,
+        summaryEnabled: false,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    } satisfies CorvexConfig;
+    store = await AppStore.open(":memory:");
+    await expect(new PiAgent(config, store).generate({
+      taskType: "conversation",
+      systemPrompt: "Be concise.",
+      userPrompt: "hello",
+    }, temporaryDirectory)).rejects.toThrow(/No model output/);
+  }, 15_000);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextNoticeText, microcompactNoticeText } from "../../src/agent/context-notice.ts";
+import { contextNoticeText, microcompactNoticeText, responseWaitNoticeText } from "../../src/agent/context-notice.ts";
 
 describe("context change notices", () => {
   it("describes a finished compaction with token counts in both languages", () => {
@@ -33,6 +33,14 @@ describe("context trigger notices", () => {
 
   it("uses a shorter message when the trigger details are unknown", () => {
     expect(contextNoticeText("en", "start", 17_885)).toBe("Compacting context...");
+  });
+});
+
+describe("response wait notices", () => {
+  it("shows elapsed time and the stall deadline in both languages", () => {
+    expect(responseWaitNoticeText("zh-CN", 30, 180)).toContain("已等待 30 秒");
+    expect(responseWaitNoticeText("en", 30, 180)).toContain("(30s)");
+    expect(responseWaitNoticeText("en", 30, 180)).toContain("180s");
   });
 });
 

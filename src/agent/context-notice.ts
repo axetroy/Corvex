@@ -60,6 +60,13 @@ export function contextNoticeText(
   return `Context compacted: ${before} → ${after} tokens`;
 }
 
+/** 等待模型首响应期间，每隔一段时间显示的进度提示。 */
+export function responseWaitNoticeText(language: ResponseLanguage, waitedSeconds: number, stallSeconds: number): string {
+  return language === "zh-CN"
+    ? `模型响应较慢，已等待 ${waitedSeconds} 秒；超过 ${stallSeconds} 秒无输出将自动中止。`
+    : `The model is taking longer than usual (${waitedSeconds}s); the turn aborts after ${stallSeconds}s without output.`;
+}
+
 /** 旧工具结果被裁剪时的通知文本。 */
 export function microcompactNoticeText(language: ResponseLanguage, pruned: number, savedChars: number): string {
   return language === "zh-CN"

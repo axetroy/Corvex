@@ -69,6 +69,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.auto_context_tune` | `true` | Boolean | On a recognized provider overflow, lower the effective context window for that fresh-session retry only. The stored model configuration is never changed. |
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |
 | `agent.session_timeout` | `30m` | Positive duration when enabled | Maximum time for one complete Pi agent session. |
+| `agent.response_stall_timeout` | `180s` | 0 or positive duration | Abort a turn when the model produces no output (response headers, text, thinking or tool calls) for this long; a waiting notice is streamed to the console while idle. `0` disables the watchdog. Model requests use a matching undici dispatcher so `request_timeout` also covers response headers. |
 | `agent.max_output_tokens` | `4096` | 1–8192 | Maximum requested model output tokens. Each model stores its own value; this is the fallback. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
 | `agent.web_enabled` | `true` | Boolean | Enables the read-only `web_fetch` tool. Set to `false` to disable. |
@@ -121,6 +122,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `web_blocked_hosts` | List of hostnames | Additional exact hosts to block (and their subdomains). |
 | `agent_request_timeout` | 1–3,600 seconds | Model request timeout; entered in seconds, stored in milliseconds. |
 | `agent_session_timeout` | 1–86,400 seconds | Full session timeout; entered in seconds, stored in milliseconds. |
+| `agent_response_stall_timeout` | 0–3,600 seconds | Abort a turn when the model produces no output (headers, text or tool calls) for this long; the console shows a waiting notice while idle. `0` disables the watchdog. Default `180`. |
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
 | `gitlab_base_url` | HTTP(S) URL | GitLab instance root. |
 | `gitlab_read_token` | String | GitLab read token; blank keeps the saved value. |

@@ -70,6 +70,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.auto_context_tune` | `true` | 布尔值 | 服务商报超窗时，只在本次会话的重试中下调有效上下文窗口；不会修改保存的模型配置。 |
 | `agent.request_timeout` | `120s` | 正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |
 | `agent.session_timeout` | `30m` | 正时长 | 单个 Pi Agent Session 的总运行时限。 |
+| `agent.response_stall_timeout` | `180s` | 0 或正时长 | 模型在等待响应头、正文、思考或工具调用期间持续无输出超过该时长时中止本轮；等待期间控制台会显示进度提示。`0` 关闭看门狗。模型请求改用同配置的 undici dispatcher，使 `request_timeout` 也覆盖响应头等待。 |
 | `agent.max_output_tokens` | `4096` | 1–8192 | 请求模型生成的最大输出 Token 数。每个模型各自保存；这里是回退值。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
 | `agent.web_enabled` | `true` | 布尔值 | 启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
@@ -101,7 +102,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 

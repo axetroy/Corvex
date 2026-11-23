@@ -74,6 +74,7 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // 运行时长：秒为界面单位，配置内部仍用毫秒。
   { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
   { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },
+  { key: "agent_response_stall_timeout", section: "agent", field: "responseStallTimeout", type: "number", min: 0, max: 3_600, scale: 1_000 },
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
   // GitLab 连接：Server 每次请求时读取。

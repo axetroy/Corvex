@@ -48,6 +48,8 @@ export interface CorvexConfig {
     apiKey: string;
     requestTimeout: number;
     sessionTimeout: number;
+    /** 等待模型响应期间无任何活动就中止本轮的时长；0 表示关闭。 */
+    responseStallTimeout: number;
     maxOutputTokens: number;
     dailyTokenBudget: number;
     webEnabled: boolean;
@@ -102,6 +104,7 @@ const defaults: CorvexConfig = {
     apiKey: "",
     requestTimeout: 120_000,
     sessionTimeout: 30 * 60_000,
+    responseStallTimeout: 3 * 60_000,
     maxOutputTokens: 4096,
     dailyTokenBudget: 0,
     webEnabled: true,
@@ -246,6 +249,11 @@ function parseConfig(raw: unknown): CorvexConfig {
         agent.session_timeout,
         defaults.agent.sessionTimeout,
         "agent.session_timeout",
+      ),
+      responseStallTimeout: duration(
+        agent.response_stall_timeout,
+        defaults.agent.responseStallTimeout,
+        "agent.response_stall_timeout",
       ),
       maxOutputTokens: number(agent.max_output_tokens, defaults.agent.maxOutputTokens),
       dailyTokenBudget: number(agent.daily_token_budget, defaults.agent.dailyTokenBudget),
