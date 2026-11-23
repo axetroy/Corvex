@@ -46,6 +46,7 @@ import {
   resolveTurnToolResultBytes,
 } from "./tool-budget.js";
 import { createWebReadExtension } from "./web-read.js";
+import { createWebDownloadExtension } from "./web-download.js";
 import { createWebSearchExtension } from "./web-search.js";
 
 export { getAgentToolAccess } from "./tool-access.js";
@@ -597,7 +598,11 @@ export class PiAgent {
             : undefined,
         ),
         ...(toolAccess.webFetch
-          ? [createWebReadExtension(config.agent.webBlockedHosts, signal)]
+          ? [
+              createWebReadExtension(config.agent.webBlockedHosts, signal),
+              // 下载仅在对话 worktree 可用时注册；与 web_fetch 共用 SSRF 防护与 DNS 固定。
+              createWebDownloadExtension(workingDirectory, config.agent.webBlockedHosts, signal),
+            ]
           : []),
         ...(toolAccess.webSearch
           ? [createWebSearchExtension(

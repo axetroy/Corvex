@@ -164,12 +164,56 @@ describe("web page access", () => {
     const unsupported = dependencies([{ status: 200, contentType: "application/octet-stream", body: Buffer.from("x") }]);
     await expect(
       fetchWebPage("https://docs.corp.dev/", { dependencies: unsupported }),
-    ).rejects.toThrow("HTML or plain-text");
+    ).rejects.toThrow("HTML, plain-text, JSON or XML");
 
     const oversized = dependencies([{ status: 200, contentType: "text/plain", body: Buffer.alloc((1 << 20) + 1) }]);
     await expect(
       fetchWebPage("https://docs.corp.dev/", { dependencies: oversized }),
     ).rejects.toThrow("1 MiB response limit");
+  });
+
+  it("fetches and pretty-prints JSON responses, including vendor +json types", async () => {
+    const json = dependencies([
+      {
+        status: 200,
+        contentType: "application/json; charset=utf-8",
+        body: Buffer.from('{"name":"corvex","ok":true}'),
+      },
+    ]);
+    const page = await fetchWebPage("https://api.corp.dev/status", { dependencies: json });
+    expect(page.format).toBe("json");
+    expect(page.text).toContain('"name": "corvex"');
+    expect(page.links).toEqual([]);
+
+    const vendor = dependencies([
+      {
+        status: 200,
+        contentType: "application/vnd.api+json",
+        body: Buffer.from('[1,2]'),
+      },
+    ]);
+    await expect(fetchWebPage("https://api.corp.dev/list", { dependencies: vendor })).resolves.toMatchObject({
+      format: "json",
+    });
+  });
+
+  it("rejects malformed JSON instead of passing it to the model as data", async () => {
+    const broken = dependencies([
+      { status: 200, contentType: "application/json", body: Buffer.from('{"oops":') },
+    ]);
+    await expect(
+      fetchWebPage("https://api.corp.dev/broken", { dependencies: broken }),
+    ).rejects.toThrow("not valid JSON");
+  });
+
+  it("treats XML as text without running the HTML extractor", async () => {
+    const xml = dependencies([
+      { status: 200, contentType: "text/xml", body: Buffer.from("<root><item>value</item></root>") },
+    ]);
+    const page = await fetchWebPage("https://api.corp.dev/feed.xml", { dependencies: xml });
+    expect(page.format).toBe("xml");
+    expect(page.text).toContain("value");
+    expect(page.links).toEqual([]);
   });
 
   it("rejects compressed responses to keep the response size bound meaningful", async () => {
