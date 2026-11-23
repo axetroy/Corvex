@@ -11,7 +11,6 @@ import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
-import { applyActiveModel } from "../config/settings.js";
 import { errorMessage } from "../errors.js";
 import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, TraceEntry, TraceKind, ModelTaskType, TraceScope } from "../model.js";
 import type { AppStore } from "../store.js";
@@ -319,9 +318,20 @@ export class PiAgent {
         // 本地预算估算总有误差（不同分词器差异很大）。服务端仍报超限时收缩一次
         // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
         if (signal?.aborted || !isContextOverflowError(errorMessage(error))) throw error;
-        // 自动调优：按服务端实际可用的上下文下调模型设置，再重试。只降不升，并写审计。
+        // 自动调优只影响本次会话的有效窗口，不写回模型目录、不改全局配置：
+        // 一次偶发的 provider 超限不应该永久缩小所有用户共享的模型设置。
         const nextWindow = nextOverflowRetryContextWindow(this.config.agent.contextWindow);
-        const active = this.config.agent.autoContextTune === false ? undefined : this.store?.getActiveModel();
+        const tuneEnabled = this.config.agent.autoContextTune !== false;
+        const retryConfig = structuredClone(this.config);
+        if (tuneEnabled && nextWindow < retryConfig.agent.contextWindow) {
+          retryConfig.agent.contextWindow = nextWindow;
+          if (retryConfig.agent.maxInputTokens >= nextWindow) retryConfig.agent.maxInputTokens = 0;
+          if (retryConfig.agent.historyTokenBudget > nextWindow) retryConfig.agent.historyTokenBudget = nextWindow;
+          console.warn("context window reduced for this session retry", {
+            from: this.config.agent.contextWindow,
+            to: nextWindow,
+          });
+        }
         try {
           request.onContextDelta?.({ id: `context-trim-${Date.now()}`, text: contextNoticeText(this.config.agent.responseLanguage, "trim") });
         } catch (error) {
@@ -335,21 +345,6 @@ export class PiAgent {
           if (trimTrace !== undefined) {
             this.finishTrace(trimTrace, "succeeded", 0, undefined, undefined, undefined,
               JSON.stringify({ nextWindow, after: { tokens: null, messages: [], summary: "" } }));
-          }
-        }
-        if (active && nextWindow < active.model.contextWindow) {
-          const reduced = this.store!.reduceProviderModelContextWindow(
-            active.model,
-            nextWindow,
-            "context overflow retry",
-          );
-          if (reduced) {
-            applyActiveModel(this.config, { provider: active.provider, model: reduced });
-            console.warn("model context window reduced after overflow", {
-              model: reduced.name,
-              from: active.model.contextWindow,
-              to: reduced.contextWindow,
-            });
           }
         }
         // 重试会创建新会话；已投递的插话只存在于旧会话里，必须作为新会话的历史
@@ -366,7 +361,7 @@ export class PiAgent {
           taskType: request.taskType,
           historyMessages: request.history?.length ?? 0,
         });
-        response = await this.runSession(retry, workingDirectory, sessionSignal, trace);
+        response = await this.runSession(retry, workingDirectory, sessionSignal, trace, retryConfig);
       }
     } catch (error) {
       if (budgetDay) {
@@ -405,17 +400,18 @@ export class PiAgent {
     workingDirectory: string,
     signal?: AbortSignal,
     trace?: TraceContext,
+    config: CorvexConfig = this.config,
   ): Promise<ModelResponse> {
-    const agentDir = resolve(join(this.config.storage.root, "pi-agent"));
+    const agentDir = resolve(join(config.storage.root, "pi-agent"));
     const repositoryRoot = await realpath(workingDirectory);
-    const skillRoots = await Promise.all(this.config.agent.skillPaths.map((path) => realpath(resolve(path))));
+    const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
     // 内部 Provider ID 只用于注册 SDK Provider；展示给用户的名称来自控制台的供应商设置。
-    const providerLabel = this.config.agent.providerName || providerId;
+    const providerLabel = config.agent.providerName || providerId;
     const completionsApi = openAICompletionsApi();
-    const requestTimeout = this.config.agent.requestTimeout;
+    const requestTimeout = config.agent.requestTimeout;
     let activeModelCall: {
       traceId: number;
       startedAt: number;
@@ -460,25 +456,25 @@ export class PiAgent {
     runtime.registerNativeProvider(createProvider({
       id: providerId,
       name: "Corvex OpenAI-compatible provider",
-      baseUrl: this.config.agent.baseUrl.replace(/\/+$/, ""),
+      baseUrl: config.agent.baseUrl.replace(/\/+$/, ""),
       auth: {
         apiKey: {
           name: "Corvex OpenAI-compatible API key",
-          resolve: async () => ({ auth: { apiKey: this.config.agent.apiKey } }),
+          resolve: async () => ({ auth: { apiKey: config.agent.apiKey } }),
         },
       },
       models: [
         {
-          id: this.config.agent.model,
-          name: this.config.agent.model,
+          id: config.agent.model,
+          name: config.agent.model,
           api: "openai-completions",
           provider: providerId,
-          baseUrl: this.config.agent.baseUrl.replace(/\/+$/, ""),
+          baseUrl: config.agent.baseUrl.replace(/\/+$/, ""),
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           reasoning: false,
-          contextWindow: this.config.agent.contextWindow,
-          maxTokens: this.config.agent.maxOutputTokens,
+          contextWindow: config.agent.contextWindow,
+          maxTokens: config.agent.maxOutputTokens,
         },
       ],
       api: {
@@ -490,21 +486,21 @@ export class PiAgent {
         },
       },
     }));
-    const model = runtime.getModel(providerId, this.config.agent.model);
+    const model = runtime.getModel(providerId, config.agent.model);
     if (!model) throw new Error("Pi could not resolve the configured model");
-    const toolAccess = getAgentToolAccess(request.taskType, this.config.agent);
+    const toolAccess = getAgentToolAccess(request.taskType, config.agent);
     const gitlab = request.gitlab ?? this.gitlab;
     const workspace = trace?.workspace;
     // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
     // 预留必须覆盖这段最坏增量加上输出预留，否则估算偏低的请求仍会超窗。
     const compactionReserveTokens = resolveCompactionReserveTokens(
-      this.config.agent.contextWindow,
-      this.config.agent.maxOutputTokens,
-      this.config.agent.compactionReserveTokens,
+      config.agent.contextWindow,
+      config.agent.maxOutputTokens,
+      config.agent.compactionReserveTokens,
     );
     const compactionKeepRecentTokens = resolveCompactionKeepRecentTokens(
-      this.config.agent.contextWindow,
-      this.config.agent.compactionKeepRecentTokens,
+      config.agent.contextWindow,
+      config.agent.compactionKeepRecentTokens,
       compactionReserveTokens,
     );
     // SDK 自身的阈值放到接近窗口，只保留溢出压缩；主动压缩由下面的真实 token 计数在
@@ -514,8 +510,8 @@ export class PiAgent {
     const selfCompactThreshold = Math.max(
       1_024,
       Math.min(
-        Math.floor(this.config.agent.contextWindow * selfCompactRatio),
-        this.config.agent.contextWindow - this.config.agent.maxOutputTokens - 1_024,
+        Math.floor(config.agent.contextWindow * selfCompactRatio),
+        config.agent.contextWindow - config.agent.maxOutputTokens - 1_024,
       ),
     );
 
@@ -535,7 +531,7 @@ export class PiAgent {
       window: number;
       threshold: number;
     } | undefined;
-    const tokenCounter = createProviderTokenCounter(this.config.agent.baseUrl);
+    const tokenCounter = createProviderTokenCounter(config.agent.baseUrl);
     const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
@@ -543,11 +539,11 @@ export class PiAgent {
       noContextFiles: true,
       noThemes: true,
       noPromptTemplates: true,
-      additionalSkillPaths: this.config.agent.skillPaths.map((path) => resolve(path)),
+      additionalSkillPaths: config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
         // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
         // 在 SDK 下一次压缩检查之前把窗口顶爆。
-        createToolResultBudgetExtension(this.config.agent.contextWindow),
+        createToolResultBudgetExtension(config.agent.contextWindow),
         createFsReadExtension(
           allowedRoots,
           workspace && this.git
@@ -558,12 +554,12 @@ export class PiAgent {
             : undefined,
         ),
         ...(toolAccess.webFetch
-          ? [createWebReadExtension(this.config.agent.webBlockedHosts, signal)]
+          ? [createWebReadExtension(config.agent.webBlockedHosts, signal)]
           : []),
         ...(toolAccess.webSearch
           ? [createWebSearchExtension(
-              this.config.agent.webSearchMaxQueries,
-              this.config.agent.webBlockedHosts,
+              config.agent.webSearchMaxQueries,
+              config.agent.webBlockedHosts,
               signal,
             )]
           : []),
@@ -607,7 +603,7 @@ export class PiAgent {
         createContextObserveExtension(contextObservation, {
           onBeforeCompact: (_snapshot, trigger) => {
             if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
-            const window = this.config.agent.contextWindow;
+            const window = config.agent.contextWindow;
             const info = {
               reason: trigger.reason,
               tokens: trigger.tokens,
@@ -617,14 +613,14 @@ export class PiAgent {
             activeCompactionTrigger = info;
             emitContextStream({
               id: contextEventId,
-              text: contextNoticeText(this.config.agent.responseLanguage, "start", info.tokens, undefined, info),
+              text: contextNoticeText(config.agent.responseLanguage, "start", info.tokens, undefined, info),
             });
           },
           onFailed: () => {
             if (!contextEventId) contextEventId = `context-${++contextEventCount}`;
             emitContextStream({
               id: contextEventId,
-              text: contextNoticeText(this.config.agent.responseLanguage, "failed"),
+              text: contextNoticeText(config.agent.responseLanguage, "failed"),
             });
           },
         }, tokenCounter),
@@ -634,7 +630,7 @@ export class PiAgent {
           onPruned: (pruned, savedChars) => {
             emitContextStream({
               id: `microcompact-${Date.now()}-${pruned}-${savedChars}`,
-              text: microcompactNoticeText(this.config.agent.responseLanguage, pruned, savedChars),
+              text: microcompactNoticeText(config.agent.responseLanguage, pruned, savedChars),
             });
           },
         }),
@@ -669,7 +665,7 @@ export class PiAgent {
     }
     // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
     // SDK 的压缩切点也才能在正确的轮次边界上工作。
-    for (const message of seedHistoryMessages(request.history ?? [], providerId, this.config.agent.model)) {
+    for (const message of seedHistoryMessages(request.history ?? [], providerId, config.agent.model)) {
       session.sessionManager.appendMessage(message);
     }
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
@@ -678,8 +674,8 @@ export class PiAgent {
     // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。阈值收敛到
     // 「四个单轮工具预算」，让提醒在压缩发生前就能到达模型。
     const toolResultByteLimit = resolveTurnToolResultBytes(
-      this.config.agent.contextWindow,
-      this.config.agent.turnToolResultBytes,
+      config.agent.contextWindow,
+      config.agent.turnToolResultBytes,
     );
     let toolResultBytes = 0;
     let toolBudgetWarningSent = false;
@@ -726,7 +722,7 @@ export class PiAgent {
         const streamId = contextEventId || `context-${++contextEventCount}`;
         contextEventId = streamId;
         if (!activeCompactionTrigger) {
-          emitContextStream({ id: streamId, text: contextNoticeText(this.config.agent.responseLanguage, "start") });
+          emitContextStream({ id: streamId, text: contextNoticeText(config.agent.responseLanguage, "start") });
         }
         activeCompaction = {
           streamId,
@@ -755,7 +751,7 @@ export class PiAgent {
         const before = active?.before ?? contextObservation.before ?? null;
         contextObservation.before = undefined;
         const result = event.result;
-        const language = this.config.agent.responseLanguage;
+        const language = config.agent.responseLanguage;
         const failed = event.aborted || !result;
         if (!failed && result) lastCompactionSummary = result.summary;
         emitContextStream({
@@ -955,7 +951,7 @@ export class PiAgent {
           if (!toolBudgetWarningSent && toolResultBytes >= toolResultByteLimit * toolBudgetWarningRatio) {
             toolBudgetWarningSent = true;
             void session.steer(getToolBudgetWarningPrompt(
-              this.config.agent.responseLanguage,
+              config.agent.responseLanguage,
               toolResultBytes,
               toolResultByteLimit,
             )).catch((error) => {
@@ -993,7 +989,7 @@ export class PiAgent {
           activeCompactionTrigger = {
             reason: "threshold",
             tokens,
-            window: this.config.agent.contextWindow,
+            window: config.agent.contextWindow,
             threshold: selfCompactThreshold,
           };
           const compaction = await session.compact();

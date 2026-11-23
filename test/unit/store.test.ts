@@ -142,25 +142,6 @@ describe("AppStore", () => {
       .toEqual([{ kind: "context", id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" }]);
   });
 
-  it("自动下调模型上下文窗口时只接受更小值并写审计", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
-    store = await AppStore.open(join(directory, "state.db"));
-    const provider = store.createModelProvider({ name: "example", baseUrl: "https://api.example.com/v1", apiKey: "" });
-    const model = store.createProviderModel(provider.id, {
-      name: "qwen",
-      contextWindow: 131_072,
-      maxOutputTokens: 8_192,
-    })!;
-
-    expect(store.reduceProviderModelContextWindow(model, 131_072, "no change")).toBeUndefined();
-    expect(store.reduceProviderModelContextWindow(model, 327_680, "larger")).toBeUndefined();
-    const reduced = store.reduceProviderModelContextWindow(model, 32_768, "llama.cpp 4 slots");
-    expect(reduced).toMatchObject({ contextWindow: 32_768, maxOutputTokens: 8_192 });
-    expect(store.listAuditEvents(10).some((entry) =>
-      entry.action === "auto_context_tune" && entry.result === "131072->32768:llama.cpp 4 slots",
-    )).toBe(true);
-  });
-
   it("把旧的 model_profiles 表拆分为供应商与模型", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     const databasePath = join(directory, "state.db");

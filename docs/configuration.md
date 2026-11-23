@@ -66,7 +66,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.base_url` | `https://api.openai.com/v1` | HTTP(S) URL without credentials/query/fragment | OpenAI-compatible API root. Corvex appends `/chat/completions`. `CORVEX_MODEL_BASE_URL` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
 | `agent.model` | — | — | Provider model name. `CORVEX_MODEL_NAME` overrides it. Normally managed per provider in the console; this value is the fallback when no model is active. |
 | `agent.api_key` | — | — | Provider API key. Managed in the console on the provider record; it is never returned by the API or written to audit logs. |
-| `agent.auto_context_tune` | `true` | Boolean | On a recognized provider overflow, lower the active model's context window before one fresh-session retry. Reductions only ever go down and are recorded in the audit log. |
+| `agent.auto_context_tune` | `true` | Boolean | On a recognized provider overflow, lower the effective context window for that fresh-session retry only. The stored model configuration is never changed. |
 | `agent.request_timeout` | `120s` | Positive duration when enabled | Maximum time for one model request, including SDK retries. |
 | `agent.session_timeout` | `30m` | Positive duration when enabled | Maximum time for one complete Pi agent session. |
 | `agent.max_output_tokens` | `4096` | 1–8192 | Maximum requested model output tokens. Each model stores its own value; this is the fallback. |
@@ -103,7 +103,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | Key | Type / limits | Description |
 |---|---|---|
 | `response_language` | `en` \| `zh-CN` | Reply language. |
-| `auto_context_tune` | Boolean | Lower the active model's context window after a recognized overflow. |
+| `auto_context_tune` | Boolean | Lower the effective context window for the current session's overflow retry. |
 | `max_input_tokens` | 0–10,000,000 | Hard input cap; `0` derives it from the context window. |
 | `history_token_budget` | 0–10,000,000 | Token budget for earlier turns re-injected into a request. |
 | `turn_tool_result_bytes` | 0–64 MiB | Soft checkpoint for cumulative tool output within a turn. |

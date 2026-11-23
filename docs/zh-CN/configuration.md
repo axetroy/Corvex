@@ -67,7 +67,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.response_language` | `en` | `en` 或 `zh-CN` | 模型生成内容所用语言。JSON 键名、代码、路径和引用证据保持原样。可在控制台运行时修改。 |
 | `agent.base_url` | `https://api.openai.com/v1` | 有效 HTTP(S) URL，不含凭据/查询/片段 | OpenAI 兼容 API 根地址。Corvex 会追加 `/chat/completions`。`CORVEX_MODEL_BASE_URL` 可覆盖。通常按供应商在控制台配置；这里是没有激活模型时的回退值。 |
 | `agent.model` | `your-model-name` | — | 服务商模型名称。`CORVEX_MODEL_NAME` 可覆盖。通常按模型在控制台配置；这里是回退值。 |
-| `agent.auto_context_tune` | `true` | 布尔值 | 服务商报超窗时，自动下调当前模型的上下文窗口后再重试一次。下调只会降低数值，并写入 `auto_context_tune` 审计记录。 |
+| `agent.auto_context_tune` | `true` | 布尔值 | 服务商报超窗时，只在本次会话的重试中下调有效上下文窗口；不会修改保存的模型配置。 |
 | `agent.request_timeout` | `120s` | 正时长 | 单次模型请求（包括 SDK 重试）的最大等待时间。 |
 | `agent.session_timeout` | `30m` | 正时长 | 单个 Pi Agent Session 的总运行时限。 |
 | `agent.max_output_tokens` | `4096` | 1–8192 | 请求模型生成的最大输出 Token 数。每个模型各自保存；这里是回退值。 |
@@ -85,7 +85,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。若与预留相加超出窗口，运行时会下调。 |
 | `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |
 
-这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出，若服务商仍报超窗，会按 `auto_context_tune` 下调窗口并再去掉历史重试一次。工具结果在进入会话历史前按助手轮次硬性截断（128K 窗口下单次约 32 KiB、单轮约 64 KiB），因为 SDK 只能估算「最后一条回复之后新增的」内容；压缩预留也由同一个上界推导。它们也可以在运维台设置页面运行时调整。
+这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出，若服务商仍报超窗，会在 `auto_context_tune` 开启时按更小的有效窗口、并再去掉历史重试一次（不写回模型配置）。工具结果在进入会话历史前按助手轮次硬性截断（128K 窗口下单次约 32 KiB、单轮约 64 KiB），因为 SDK 只能估算「最后一条回复之后新增的」内容；压缩预留也由同一个上界推导。它们也可以在运维台设置页面运行时调整。
 
 调用需要鉴权的服务商时，请在控制台的模型配置中保存 API Key。预算会保守地预留提示词字节数加配置的最大输出 Token 数，再根据服务商用量结算；请求结果不确定时会保留预留量。它是 Token 上限，不是根据价格计算的费用上限。
 
