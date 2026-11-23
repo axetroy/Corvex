@@ -82,6 +82,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.turn_tool_result_bytes` | `262144` | 0–67,108,864 | Cumulative tool-output bytes within one turn before the model is told to record what it has confirmed and continue with more targeted reads. It is a soft checkpoint, not a hard cap, and the runtime caps it at four tool-output rounds so the reminder arrives before compaction. `0` disables the reminder; tool output is still truncated per round. |
 | `agent.compaction_reserve_tokens` | `0` | 0 ≤ value < `context_window` | Tokens held back from `context_window` so SDK compaction output still fits. `0` lets the runtime derive it from the tool-output budget, `max_output_tokens` and a fixed margin; an explicit value is raised to that safe floor and capped at 25% of the window so small contexts do not compact at 50%. |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | Recent tokens the SDK keeps verbatim when it compacts. The runtime lowers it when it would not fit next to the reserve. |
+| `agent.compaction_trigger_percent` | `85` | 50–95 | Share of the context window that triggers proactive compaction after a turn. The effective threshold also reserves the answer tokens. |
 | `agent.summary_enabled` | `true` | Boolean | Compress trimmed conversation history into a stored rolling summary that later turns reuse. |
 
 These context-budget keys are the primary defence against provider `context length exceeded` errors: Corvex trims history and caps tool output before a request leaves the process, and makes one more aggressive retry without history if the provider still reports an overflow. Tool results are hard-truncated per call and per assistant round before they enter session history, because the SDK can only estimate what was added since the last response; the compaction reserve is derived from that same bound. They can also be tuned at runtime from the agent console Settings page without editing the config file.
@@ -109,6 +110,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `turn_tool_result_bytes` | 0–64 MiB | Soft checkpoint for cumulative tool output within a turn. |
 | `compaction_reserve_tokens` | 0–10,000,000 | Tokens reserved for SDK compaction output. |
 | `compaction_keep_recent_tokens` | 0–10,000,000 | Recent tokens kept verbatim through compaction. |
+| `compaction_trigger_percent` | 50–95 | Window percentage that triggers proactive compaction after a turn. |
 | `daily_token_budget` | 0–1,000,000,000 | UTC-day token budget; `0` disables it. |
 | `summary_enabled` | Boolean | Rolling summary for trimmed history. |
 | `web_enabled` | Boolean | Enable the read-only `web_fetch` tool. |

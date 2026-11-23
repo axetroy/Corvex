@@ -61,6 +61,7 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "turn_tool_result_bytes", section: "agent", field: "turnToolResultBytes", type: "number", min: 0, max: 64 << 20 },
   { key: "compaction_reserve_tokens", section: "agent", field: "compactionReserveTokens", type: "number", min: 0, max: 10_000_000 },
   { key: "compaction_keep_recent_tokens", section: "agent", field: "compactionKeepRecentTokens", type: "number", min: 0, max: 10_000_000 },
+  { key: "compaction_trigger_percent", section: "agent", field: "compactionTriggerPercent", type: "number", min: 50, max: 95 },
   { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },

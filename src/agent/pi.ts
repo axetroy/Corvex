@@ -506,7 +506,7 @@ export class PiAgent {
     // SDK 自身的阈值放到接近窗口，只保留溢出压缩；主动压缩由下面的真实 token 计数在
     // 更早、可控的点触发，避免原始会话里的工具结果把 SDK 估算顶到 62.5% 就压缩。
     const sdkReserveTokens = Math.min(compactionReserveTokens, 1_024);
-    const selfCompactRatio = 0.85;
+    const selfCompactRatio = Math.max(0.5, Math.min(0.95, (config.agent.compactionTriggerPercent ?? 85) / 100));
     const selfCompactThreshold = Math.max(
       1_024,
       Math.min(

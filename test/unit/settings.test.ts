@@ -311,6 +311,13 @@ describe("GitLab runtime settings", () => {
     ]));
   });
 
+  it("accepts a compaction trigger percentage within 50-95", () => {
+    expect(validateRuntimeSettings({ compaction_trigger_percent: "85" })).toEqual([]);
+    expect(validateRuntimeSettings({ compaction_trigger_percent: "96" })).toContain(
+      "compaction_trigger_percent must be at most 95",
+    );
+  });
+
   it("validates the GitLab base URL like the model base URL", () => {
     expect(validateRuntimeSettings({ gitlab_base_url: "https://gitlab.example.com" })).toEqual([]);
     expect(validateRuntimeSettings({ gitlab_base_url: "https://user:pass@gitlab.example.com" }))
