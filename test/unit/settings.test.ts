@@ -323,4 +323,9 @@ describe("GitLab runtime settings", () => {
     expect(validateRuntimeSettings({ gitlab_base_url: "https://user:pass@gitlab.example.com" }))
       .toContain("gitlab_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
   });
+
+  it("accepts an empty GitLab base URL as an unconfigured instance", () => {
+    // 全新实例允许 GitLab 未配置，客户端不应因此禁用保存按钮。
+    expect(validateRuntimeSettings({ gitlab_base_url: "" })).toEqual([]);
+  });
 });

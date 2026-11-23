@@ -33,6 +33,16 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
 
 export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "advanced";
 
+/** 每个设置分区实际渲染的字段分组；校验只对当前可见字段生效，避免其他分区的隐藏字段禁用保存按钮。 */
+export const sectionGroups: Record<SettingsSection, readonly string[]> = {
+  basic: ["settingsGroupBudget"],
+  model: ["settingsGroupModel", "settingsGroupQuota"],
+  gitlab: ["settingsGroupGitLab"],
+  workflow: ["settingsGroupTools"],
+  storage: ["settingsGroupStorage"],
+  advanced: ["settingsGroupRuntime", "settingsGroupAdvanced"],
+};
+
 interface Props {
   copy: Copy;
   locale: Locale;
@@ -162,7 +172,8 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
     }
   };
 
-  const problems = settingGroups.flatMap((group) =>
+  const visibleGroups = settingGroups.filter((group) => sectionGroups[section].includes(group.titleKey));
+  const problems = visibleGroups.flatMap((group) =>
     group.fields
       .map((field) => fieldError(field, draft[field.key], copy))
       .filter(Boolean),
@@ -254,7 +265,9 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
                     ? copy.settingsUnitBytes
                     : field.unit === "second"
                       ? copy.settingsUnitSeconds
-                      : copy.settingsUnitTokens}
+                      : field.unit === "%"
+                        ? copy.settingsUnitPercent
+                        : copy.settingsUnitTokens}
                 </span>
               ) : null}
             </div>

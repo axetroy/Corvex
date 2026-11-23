@@ -188,7 +188,7 @@ export const settingGroups: readonly SettingGroup[] = [
     titleKey: "settingsGroupGitLab",
     hintKey: "settingsGroupGitLabHint",
     fields: [
-      { key: "gitlab_base_url", kind: "string", maxLength: 500, labelKey: "settingsGitLabBaseUrl", hintKey: "settingsGitLabBaseUrlHint" },
+      { key: "gitlab_base_url", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsGitLabBaseUrl", hintKey: "settingsGitLabBaseUrlHint" },
       { key: "gitlab_read_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabReadToken", hintKey: "settingsGitLabReadTokenHint" },
       { key: "gitlab_token", kind: "string", maxLength: 2000, secret: true, labelKey: "settingsGitLabToken", hintKey: "settingsGitLabTokenHint" },
       { key: "gitlab_oauth_client_id", kind: "string", maxLength: 500, allowEmpty: true, labelKey: "settingsOAuthClientId", hintKey: "settingsOAuthClientIdHint" },

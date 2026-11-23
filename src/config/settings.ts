@@ -76,7 +76,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
   // GitLab 连接：Server 每次请求时读取。
-  { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500 },
+  // 留空表示尚未配置 GitLab；与 config 层一致，只在非空时校验 URL。
+  { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500, allowEmpty: true },
   { key: "gitlab_read_token", section: "gitlab", field: "readToken", type: "string", maxLength: 2_000, allowEmpty: true },
   { key: "gitlab_token", section: "gitlab", field: "writeToken", type: "string", maxLength: 2_000, allowEmpty: true },
   // GitLab OAuth：由安装页面写入，三者必须同时配置。
@@ -223,7 +224,7 @@ function checkRelations(values: RuntimeSettingValues): string[] {
     }
   }
   const gitlabBaseUrl = values.gitlab_base_url;
-  if (typeof gitlabBaseUrl === "string") {
+  if (typeof gitlabBaseUrl === "string" && gitlabBaseUrl) {
     try {
       const url = new URL(gitlabBaseUrl);
       if (
