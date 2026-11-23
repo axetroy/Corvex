@@ -216,6 +216,7 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "compaction_reserve_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionReserveTokens", hintKey: "settingsCompactionReserveTokensHint" },
       { key: "compaction_keep_recent_tokens", kind: "number", min: 0, max: 10_000_000, step: 1000, unit: "token", labelKey: "settingsCompactionKeepRecentTokens", hintKey: "settingsCompactionKeepRecentTokensHint" },
       { key: "compaction_trigger_percent", kind: "number", min: 50, max: 95, step: 5, unit: "%", labelKey: "settingsCompactionTriggerPercent", hintKey: "settingsCompactionTriggerPercentHint" },
+      { key: "compaction_dynamic_threshold", kind: "boolean", labelKey: "settingsCompactionDynamicThreshold", hintKey: "settingsCompactionDynamicThresholdHint" },
     ],
   },
 ];

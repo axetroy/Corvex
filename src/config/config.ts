@@ -71,6 +71,8 @@ export interface CorvexConfig {
     compactionKeepRecentTokens: number;
     /** 主动压缩触发点，占上下文窗口的百分比。 */
     compactionTriggerPercent?: number;
+    /** 是否按每轮 token 增长动态调整主动压缩阈值。 */
+    compactionDynamicThreshold: boolean;
     /** 是否启用跨轮滚动摘要，把被裁剪的历史压缩成持久化摘要。 */
     summaryEnabled: boolean;
   };
@@ -115,6 +117,7 @@ const defaults: CorvexConfig = {
     compactionReserveTokens: 0,
     compactionKeepRecentTokens: 20_000,
     compactionTriggerPercent: 85,
+    compactionDynamicThreshold: true,
     summaryEnabled: true,
   },
 };
@@ -258,6 +261,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       compactionReserveTokens: number(agent.compaction_reserve_tokens, defaults.agent.compactionReserveTokens),
       compactionKeepRecentTokens: number(agent.compaction_keep_recent_tokens, defaults.agent.compactionKeepRecentTokens),
       compactionTriggerPercent: number(agent.compaction_trigger_percent, defaults.agent.compactionTriggerPercent ?? 85),
+      compactionDynamicThreshold: boolean(agent.compaction_dynamic_threshold, defaults.agent.compactionDynamicThreshold),
       summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
     },
   };

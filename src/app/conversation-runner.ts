@@ -891,6 +891,7 @@ export class ConversationRunner {
               taskType: "conversation",
               conversationMode: turn.mode,
               conversationProjectId: turn.projectId,
+              conversationId: turn.conversationId,
               gitlab,
               systemPrompt,
               userPrompt,

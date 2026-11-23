@@ -20,6 +20,7 @@ import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { estimateTokens, isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
+import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
 import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
@@ -197,6 +198,8 @@ export interface ModelRequest {
   onContextDelta?: (context: ConversationStreamContext) => void;
   /** GitLab 协作模式下当前对话绑定的项目 ID；所有 GitLab 工具都固定到该项目。 */
   conversationProjectId?: number;
+  /** 当前对话 ID；用于按对话平滑每轮 token 增长，动态调整压缩阈值。 */
+  conversationId?: string;
   /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
   gitTools?: GitToolAdapter;
   /**
@@ -278,6 +281,9 @@ export class PiAgent {
     private readonly gitlab?: GitLabClient,
     private readonly hooks?: CorvexHooks,
   ) {}
+
+  /** 每个对话最近几轮的 token 增长样本，用于平滑自适应压缩阈值。 */
+  private readonly growthByConversation = new Map<string, number[]>();
 
   getTraceEntries(scope: TraceScope, attempt: number): TraceEntry[] {
     return this.store?.getTraceEntries(scope, attempt) ?? [];
@@ -509,11 +515,12 @@ export class PiAgent {
     // 更早、可控的点触发，避免原始会话里的工具结果把 SDK 估算顶到 62.5% 就压缩。
     const sdkReserveTokens = Math.min(compactionReserveTokens, 1_024);
     const selfCompactRatio = Math.max(0.5, Math.min(0.95, (config.agent.compactionTriggerPercent ?? 85) / 100));
+    const compactionHardCap = config.agent.contextWindow - config.agent.maxOutputTokens - 1_024;
     const selfCompactThreshold = Math.max(
       1_024,
       Math.min(
         Math.floor(config.agent.contextWindow * selfCompactRatio),
-        config.agent.contextWindow - config.agent.maxOutputTokens - 1_024,
+        compactionHardCap,
       ),
     );
 
@@ -691,6 +698,17 @@ export class PiAgent {
     // SDK 的压缩切点也才能在正确的轮次边界上工作。
     for (const message of seedHistoryMessages(request.history ?? [], providerId, config.agent.model)) {
       session.sessionManager.appendMessage(message);
+    }
+    // 动态阈值需要本轮的真实增量：先记录历史注入后的 token 基线，回合结束时用
+    // 「最终 token − 基线」衡量本轮增长。只记录文本/思考，与结束时的计数口径一致。
+    let baselineTokens: number | undefined;
+    if (config.agent.compactionDynamicThreshold) {
+      const baselineText = messagesToText((session.sessionManager as unknown as {
+        buildSessionProjection(): { messages: unknown[] };
+      }).buildSessionProjection().messages);
+      const countedBaseline = await tokenCounter.count(baselineText, signal);
+      this.store?.recordContextMetric(countedBaseline === undefined ? "token_count_fallback" : "token_count_real", 1);
+      baselineTokens = countedBaseline ?? estimateTokens(baselineText);
     }
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
@@ -1017,12 +1035,27 @@ export class PiAgent {
         const counted = await tokenCounter.count(text, signal);
         this.store?.recordContextMetric(counted === undefined ? "token_count_fallback" : "token_count_real", 1);
         const tokens = counted ?? estimateTokens(text);
-        if (tokens >= selfCompactThreshold) {
+        let effectiveThreshold = selfCompactThreshold;
+        if (config.agent.compactionDynamicThreshold && baselineTokens !== undefined) {
+          const growth = Math.max(0, tokens - baselineTokens);
+          const key = request.conversationId;
+          const previous = key ? this.growthByConversation.get(key) ?? [] : [];
+          const adaptive = resolveAdaptiveCompactionThreshold({
+            window: config.agent.contextWindow,
+            baseThreshold: selfCompactThreshold,
+            capThreshold: compactionHardCap,
+            growth,
+            previous,
+          });
+          effectiveThreshold = adaptive.threshold;
+          if (key) this.growthByConversation.set(key, adaptive.samples);
+        }
+        if (tokens >= effectiveThreshold) {
           activeCompactionTrigger = {
             reason: "threshold",
             tokens,
             window: config.agent.contextWindow,
-            threshold: selfCompactThreshold,
+            threshold: effectiveThreshold,
           };
           const compaction = await session.compact();
           lastCompactionSummary = compaction.summary;

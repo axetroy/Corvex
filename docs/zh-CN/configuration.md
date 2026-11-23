@@ -84,6 +84,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.compaction_reserve_tokens` | `0` | 0 ≤ 值 < `context_window` | 从 `context_window` 中预留的 Token 数，确保 SDK 压缩输出仍能落在窗口内。`0` 表示完全由工具输出预算、`max_output_tokens` 与固定余量推导；显式值会提升到安全下限，并受窗口 25% 上限约束，避免小上下文在 50% 就压缩。 |
 | `agent.compaction_keep_recent_tokens` | `20000` | 0–`context_window` | SDK 压缩时原样保留的最近 Token 数。若与预留相加超出窗口，运行时会下调。 |
 | `agent.compaction_trigger_percent` | `85` | 50–95 | 回合结束后触发主动压缩的窗口占比；实际阈值还会为回答输出预留空间。 |
+| `agent.compaction_dynamic_threshold` | `true` | 布尔 | 按每轮 token 增长调整触发点：增长快则下调阈值提前压缩，增长慢则上调延后。调整幅度限制为窗口的 10%（下调）/ 5%（上调），并用最近四轮增长做平滑；关闭后固定使用上面的静态百分比。 |
 | `agent.summary_enabled` | `true` | 布尔值 | 把被裁剪的对话历史压缩成持久化滚动摘要，供后续轮次复用。 |
 
 这些上下文预算键是应对服务商「context length exceeded」错误的主要手段：Corvex 在请求离开进程前裁剪历史并限制工具输出，若服务商仍报超窗，会在 `auto_context_tune` 开启时按更小的有效窗口、并再去掉历史重试一次（不写回模型配置）。工具结果在进入会话历史前按助手轮次硬性截断（128K 窗口下单次约 32 KiB、单轮约 64 KiB），因为 SDK 只能估算「最后一条回复之后新增的」内容；压缩预留也由同一个上界推导。它们也可以在运维台设置页面运行时调整。
@@ -100,7 +101,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 
