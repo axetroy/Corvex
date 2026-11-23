@@ -66,7 +66,7 @@ The workspace fills the viewport and offers several views:
 - **Git** — a read-only commit graph of the project mirror, with the pinned SHA and saved conversation commits highlighted, expandable commit details and downloadable patches.
 - **File panel** — a toggled side pane that browses the pinned worktree (falling back to GitLab files if the worktree has not been prepared), previews images and opens text files in a read-only code viewer.
 
-The composer completes slash commands (`/review`, `/explain`, `/fix`, `/test`, `/docs`, `/commit`, `/mr`). These are **turn-local instructions to the model only**: they do not create tasks, change conversation state or publish anything to GitLab. A running or queued turn shows a **Stop** button that cancels it. If the branch moves before a queued turn starts, that turn ends as `stale`; send the message again to use the current revision.
+The composer completes slash commands (`/review`, `/explain`, `/fix`, `/test`, `/docs`, `/commit`, `/mr`). These are **turn-local instructions to the model only**: they do not create tasks, change conversation state or publish anything to GitLab. A running or queued turn shows a **Stop** button that cancels it. Below the composer a compact context brief shows the latest request's window usage and token count; click it to open the **Context** tab. If the branch moves before a queued turn starts, that turn ends as `stale`; send the message again to use the current revision.
 
 ## 5. Enable a model
 

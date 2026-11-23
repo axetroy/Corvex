@@ -1988,6 +1988,79 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   transform: translateX(-50%);
 }
 
+/* 输入框下方的上下文简讯：一条紧凑的可点击状态栏，点击后打开完整上下文标签。 */
+.conversation-context-brief {
+  display: flex;
+  width: 100%;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--conversation-border);
+  border-radius: 8px;
+  background: var(--conversation-surface);
+  color: var(--conversation-muted);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.conversation-context-brief:hover {
+  border-color: var(--conversation-brand);
+  color: var(--conversation-ink);
+}
+
+.conversation-context-brief-label {
+  flex: 0 0 auto;
+  color: var(--conversation-brand);
+  font-weight: 600;
+}
+
+.conversation-context-brief-bar {
+  flex: 0 0 64px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--conversation-canvas);
+}
+
+.conversation-context-brief-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--conversation-brand);
+}
+
+.conversation-context-brief-value {
+  flex: 0 0 auto;
+  color: var(--conversation-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation-context-brief-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-context-brief-time {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.conversation-context-brief-open {
+  flex: 0 0 auto;
+  color: var(--conversation-brand);
+  font-size: 10px;
+  opacity: 0;
+}
+
+.conversation-context-brief:hover .conversation-context-brief-open {
+  opacity: 1;
+}
+
 .conversations-layout .conversation-chat .conversation-composer.ant-sender {
   position: static;
   width: 100%;

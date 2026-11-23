@@ -23,6 +23,7 @@ import { ConversationStatsTab } from "./ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "./ConversationTimeline.js";
 import { ConversationTraceTab } from "./ConversationTraceTab.js";
 import { ContextPanel } from "./ContextPanel.js";
+import { ContextBrief } from "./ContextBrief.js";
 import { ComposerModelPicker } from "./ComposerModelPicker.js";
 import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
@@ -1487,6 +1488,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         />
                       ))}
                     />
+                    {!showCreate && selectedConversationId ? (
+                      <ContextBrief
+                        conversationId={selectedConversationId}
+                        copy={copy}
+                        locale={locale}
+                        refreshToken={refreshToken}
+                        onOpen={() => setDetailTab("context")}
+                      />
+                    ) : null}
                     </div>
                   </div>
                 ),
