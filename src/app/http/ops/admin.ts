@@ -2,30 +2,21 @@ import type { FastifyInstance } from "fastify";
 import { requireAdmin } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import { readJsonObject, sendJson } from "../respond.js";
-import { validateSkillInput } from "../../../agent/skills.js";
-import type { ConversationSkillInput } from "../../../model.js";
+import { parseSkillDocument, validateSkillDocument } from "../../../agent/skills.js";
 
-function parseSkillBody(body: Record<string, unknown>): ConversationSkillInput {
-  const text = (key: string): string => typeof body[key] === "string" ? (body[key] as string).trim() : "";
-  const metadata: Record<string, string> = {};
-  if (body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)) {
-    for (const [key, value] of Object.entries(body.metadata as Record<string, unknown>)) {
-      if (typeof value === "string") metadata[key] = value;
-    }
+/** 管理员提交的是完整 SKILL.md；解析与校验失败时返回错误文本。 */
+function parseSkillDocumentBody(body: Record<string, unknown>): { document: string; name: string } | { error: string } {
+  if (typeof body.document !== "string" || !body.document.trim()) {
+    return { error: "document (SKILL.md) is required" };
   }
-  return {
-    name: text("name"),
-    description: text("description"),
-    descriptionZh: text("descriptionZh"),
-    content: text("content"),
-    contentZh: text("contentZh"),
-    argumentHint: text("argumentHint"),
-    license: text("license"),
-    compatibility: text("compatibility"),
-    metadata,
-    allowedTools: text("allowedTools"),
-    enabled: body.enabled !== false,
-  };
+  try {
+    const parsed = parseSkillDocument(body.document);
+    const problems = validateSkillDocument(parsed);
+    if (problems.length > 0) return { error: problems.join("; ") };
+    return { document: body.document.trim(), name: parsed.name };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "invalid SKILL.md" };
+  }
 }
 
 /**
@@ -70,40 +61,37 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
       admin.post("/skills", async (request, reply) => {
         const body = readJsonObject(request, reply);
         if (!body) return;
-        const input = parseSkillBody(body);
-        const problems = validateSkillInput(input);
-        if (problems.length > 0) {
-          sendJson(reply, 400, { error: problems.join("; ") });
+        const parsed = parseSkillDocumentBody(body);
+        if ("error" in parsed) {
+          sendJson(reply, 400, { error: parsed.error });
           return;
         }
-        if (ctx.store.getConversationSkill(input.name)) {
+        if (ctx.store.getConversationSkill(parsed.name)) {
           sendJson(reply, 409, { error: "skill name already exists" });
           return;
         }
-        sendJson(reply, 201, ctx.store.createConversationSkill(input));
+        sendJson(reply, 201, ctx.store.createConversationSkill(parsed.document));
       });
 
       admin.put("/skills/:id", async (request, reply) => {
         const id = (request.params as { id: string }).id;
         const body = readJsonObject(request, reply);
         if (!body) return;
-        const input = parseSkillBody(body);
-        const problems = validateSkillInput(input);
-        if (problems.length > 0) {
-          sendJson(reply, 400, { error: problems.join("; ") });
+        const parsed = parseSkillDocumentBody(body);
+        if ("error" in parsed) {
+          sendJson(reply, 400, { error: parsed.error });
           return;
         }
-        const existing = ctx.store.listConversationSkills().find((skill) => skill.id === id);
-        if (!existing) {
+        if (!ctx.store.listConversationSkills().some((skill) => skill.id === id)) {
           sendJson(reply, 404, { error: "skill not found" });
           return;
         }
-        const clash = ctx.store.getConversationSkill(input.name);
+        const clash = ctx.store.getConversationSkill(parsed.name);
         if (clash && clash.id !== id) {
           sendJson(reply, 409, { error: "skill name already exists" });
           return;
         }
-        sendJson(reply, 200, ctx.store.updateConversationSkill(id, input));
+        sendJson(reply, 200, ctx.store.updateConversationSkill(id, parsed.document));
       });
 
       admin.delete("/skills/:id", async (request, reply) => {

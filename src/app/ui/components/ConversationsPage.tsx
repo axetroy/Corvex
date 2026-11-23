@@ -861,21 +861,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       composerRef.current?.focus();
     }
   };
-  // 快捷操作与补全都来自管理员配置的技能；描述随界面语言切换。
-  const skillDescription = (skill: ConversationSkill) =>
-    locale === "zh-CN" ? (skill.descriptionZh || skill.description) : (skill.description || skill.descriptionZh);
-  const quickPrompts = skills.map((skill) => ({
-    key: skill.name,
-    label: `/${skill.name}`,
-    title: skillDescription(skill),
-  }));
+  // 快捷操作与补全都来自管理员配置的 SKILL.md 技能；技能内容单语言，界面文案才分语言。
+  const quickPrompts = skills
+    .filter((skill) => skill.quickAction)
+    .map((skill) => ({
+      key: skill.id,
+      label: skill.quickLabel || skill.description,
+      title: `/${skill.name} · ${skill.description}`,
+      // 直接填入模板展开后的文本；$ARGUMENTS 为空时用户可直接发送或在末尾补参数。
+      insert: skill.content.replaceAll("$ARGUMENTS", "").trim(),
+    }));
   // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
   const commandQuery = /^\/[a-z][a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
     ? []
     : skills
       .filter((skill) => skill.name.startsWith(commandQuery))
-      .map((skill) => ({ command: skill.name, description: skillDescription(skill) }));
+      .map((skill) => ({ command: skill.name, description: skill.description }));
   const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
 
   async function cancelActiveTurn() {

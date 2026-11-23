@@ -1,61 +1,32 @@
-import { useEffect, useState } from "react";
-import { Button, Input, Modal, Space, Switch, Table, Typography } from "antd";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Button, Modal, Space, Switch, Table, Typography } from "antd";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
-import type { ConversationSkill, ConversationSkillInput } from "../types.js";
+import type { ConversationSkill } from "../types.js";
 
-function emptySkill(): ConversationSkillInput {
-  return {
-    name: "",
-    description: "",
-    descriptionZh: "",
-    content: "",
-    contentZh: "",
-    argumentHint: "",
-    license: "",
-    compatibility: "",
-    metadata: {},
-    allowedTools: "",
-    enabled: true,
-  };
-}
+// Monaco 体积很大，只在打开编辑弹窗时加载。
+const SkillEditor = lazy(() => import("./SkillEditor.js").then((module) => ({ default: module.SkillEditor })));
 
-function toInput(skill: ConversationSkill): ConversationSkillInput {
-  return {
-    name: skill.name,
-    description: skill.description,
-    descriptionZh: skill.descriptionZh,
-    content: skill.content,
-    contentZh: skill.contentZh,
-    argumentHint: skill.argumentHint,
-    license: skill.license,
-    compatibility: skill.compatibility,
-    metadata: skill.metadata,
-    allowedTools: skill.allowedTools,
-    enabled: skill.enabled,
-  };
-}
+/** 技能格式遵循的规范地址，管理端与文档都指向这里。 */
+const AGENT_SKILLS_SPEC_URL = "https://agentskills.io/specification";
 
-function metadataToText(metadata: Record<string, string>): string {
-  return Object.entries(metadata).map(([key, value]) => `${key}=${value}`).join("\n");
-}
+const blankDocument = `---
+name: my-skill
+description: What this skill does and when to use it.
+metadata:
+  corvex-quick-action: "true"
+  corvex-quick-label: "My skill"
+---
 
-function metadataFromText(text: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const index = line.indexOf("=");
-    if (index <= 0) continue;
-    result[line.slice(0, index).trim()] = line.slice(index + 1).trim();
-  }
-  return result;
-}
+Instructions for the model. Use $ARGUMENTS for the user's text.
+`;
 
-/** 管理员维护对话技能：斜杠命令的名称、菜单说明与提示词模板。 */
-export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () => void }) {
+/** 管理员维护对话技能：每个技能就是一份 SKILL.md，用 Monaco 编辑。 */
+export function SkillManager({ copy }: { copy: Copy }) {
   const [skills, setSkills] = useState<ConversationSkill[]>([]);
   const [editing, setEditing] = useState<ConversationSkill | undefined>();
-  const [draft, setDraft] = useState<ConversationSkillInput>(emptySkill());
+  const [document, setDocument] = useState(blankDocument);
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -65,31 +36,23 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
   useEffect(() => {
     let active = true;
     fetchJson<{ items: ConversationSkill[] }>("/api/ops/admin/skills", copy)
-      .then((result) => {
-        if (active) setSkills(result.items ?? []);
-      })
-      .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause));
-      });
+      .then((result) => { if (active) setSkills(result.items ?? []); })
+      .catch((cause: unknown) => { if (active) setError(errorMessage(cause)); });
     return () => { active = false; };
   }, [copy, notice]);
 
   function openCreate() {
     setEditing(undefined);
-    setDraft(emptySkill());
+    setDocument(blankDocument);
     setError("");
     setModalOpen(true);
   }
 
   function openEdit(skill: ConversationSkill) {
     setEditing(skill);
-    setDraft(toInput(skill));
+    setDocument(skill.document);
     setError("");
     setModalOpen(true);
-  }
-
-  function change<K extends keyof ConversationSkillInput>(key: K, value: ConversationSkillInput[K]) {
-    setDraft((current) => ({ ...current, [key]: value }));
   }
 
   async function save() {
@@ -97,13 +60,12 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
     setError("");
     try {
       if (editing) {
-        await sendJson(`/api/ops/admin/skills/${encodeURIComponent(editing.id)}`, draft, copy);
+        await sendJson(`/api/ops/admin/skills/${encodeURIComponent(editing.id)}`, { document }, copy);
       } else {
-        await sendJson("/api/ops/admin/skills", draft, copy, "POST");
+        await sendJson("/api/ops/admin/skills", { document }, copy, "POST");
       }
       setModalOpen(false);
       setNotice(copy.skillManagerSaved);
-      onChanged?.();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -124,7 +86,6 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
         try {
           await sendJson(`/api/ops/admin/skills/${encodeURIComponent(skill.id)}`, {}, copy, "DELETE");
           setNotice(copy.skillManagerSaved);
-          onChanged?.();
         } catch (cause) {
           setError(errorMessage(cause));
         }
@@ -133,13 +94,8 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
   }
 
   const columns = [
-    { title: copy.skillManagerName, dataIndex: "name", width: "20%" },
-    {
-      title: copy.skillManagerDescription,
-      key: "description",
-      width: "28%",
-      render: (_: unknown, skill: ConversationSkill) => skill.description || skill.descriptionZh,
-    },
+    { title: copy.skillManagerName, dataIndex: "name", width: "18%" },
+    { title: copy.skillManagerDescription, dataIndex: "description", width: "32%" },
     {
       title: copy.skillManagerEnabled,
       dataIndex: "enabled",
@@ -150,12 +106,12 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
       title: copy.skillManagerSystem,
       dataIndex: "isSystem",
       width: "12%",
-      render: (system: boolean) => (system ? <TagColor>{copy.skillManagerSystem}</TagColor> : null),
+      render: (system: boolean) => (system ? <span className="skill-manager-system-tag">{copy.skillManagerSystem}</span> : null),
     },
     {
       title: "",
       key: "actions",
-      width: "28%",
+      width: "26%",
       render: (_: unknown, skill: ConversationSkill) => (
         <Space size="small">
           <Button size="small" onClick={() => openEdit(skill)}>{copy.skillManagerEdit}</Button>
@@ -169,7 +125,10 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
     <div className="skill-manager">
       <Typography.Title level={5}>{copy.skillManagerTitle}</Typography.Title>
       <Typography.Paragraph type="secondary">{copy.skillManagerHint}</Typography.Paragraph>
-      <Typography.Paragraph type="secondary">{copy.skillManagerSpecHint}</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">
+        {copy.skillManagerSpecHint}{" "}
+        <a href={AGENT_SKILLS_SPEC_URL} target="_blank" rel="noreferrer">{copy.skillManagerSpecLink}</a>
+      </Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {notice ? <Typography.Text type="success">{notice}</Typography.Text> : null}
       <Button type="primary" onClick={openCreate}>{copy.skillManagerAdd}</Button>
@@ -190,66 +149,14 @@ export function SkillManager({ copy, onChanged }: { copy: Copy; onChanged?: () =
         onOk={() => void save()}
         okText={copy.skillManagerSaved}
         confirmLoading={saving}
-        width={640}
+        width={760}
       >
-        <div className="skill-manager-form">
-          <label>
-            {copy.skillManagerName}
-            <Input value={draft.name} onChange={(event) => change("name", event.target.value)} />
-            <Typography.Text type="secondary">{copy.skillManagerNameHint}</Typography.Text>
-          </label>
-          <label>
-            {copy.skillManagerDescription}
-            <Input value={draft.description} onChange={(event) => change("description", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerDescriptionZh}
-            <Input value={draft.descriptionZh} onChange={(event) => change("descriptionZh", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerArgumentHint}
-            <Input value={draft.argumentHint} onChange={(event) => change("argumentHint", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerContent}
-            <Input.TextArea rows={4} value={draft.content} onChange={(event) => change("content", event.target.value)} />
-            <Typography.Text type="secondary">{copy.skillManagerContentHint}</Typography.Text>
-          </label>
-          <label>
-            {copy.skillManagerContentZh}
-            <Input.TextArea rows={4} value={draft.contentZh} onChange={(event) => change("contentZh", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerLicense}
-            <Input value={draft.license} onChange={(event) => change("license", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerCompatibility}
-            <Input value={draft.compatibility} onChange={(event) => change("compatibility", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerAllowedTools}
-            <Input value={draft.allowedTools} onChange={(event) => change("allowedTools", event.target.value)} />
-          </label>
-          <label>
-            {copy.skillManagerMetadata}
-            <Input.TextArea
-              rows={2}
-              value={metadataToText(draft.metadata)}
-              onChange={(event) => change("metadata", metadataFromText(event.target.value))}
-            />
-          </label>
-          <label className="skill-manager-form-switch">
-            {copy.skillManagerEnabled}
-            <Switch checked={draft.enabled} onChange={(value) => change("enabled", value)} />
-          </label>
-        </div>
+        <Typography.Paragraph type="secondary">{copy.skillManagerDocumentHint}</Typography.Paragraph>
+        <Suspense fallback={<div className="skill-manager-editor-loading">…</div>}>
+          {modalOpen ? <SkillEditor value={document} onChange={setDocument} /> : null}
+        </Suspense>
       </Modal>
       {modalContextHolder}
     </div>
   );
-}
-
-function TagColor({ children }: { children: React.ReactNode }) {
-  return <span className="skill-manager-system-tag">{children}</span>;
 }

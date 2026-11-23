@@ -4,17 +4,17 @@ import type { ConversationSkill } from "../../src/model.ts";
 
 const skill: ConversationSkill = {
   id: "skill-1",
+  document: "---\nname: docs\ndescription: Improve docs\n---\nFocus on documentation. $ARGUMENTS",
   name: "docs",
   description: "Improve docs",
-  descriptionZh: "补充相关文档",
   content: "Focus on documentation. $ARGUMENTS",
-  contentZh: "聚焦文档。$ARGUMENTS",
-  argumentHint: "",
   license: "",
   compatibility: "",
   metadata: {},
   allowedTools: "",
   enabled: true,
+  quickAction: false,
+  quickLabel: "",
   isSystem: true,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -46,24 +46,24 @@ describe("conversation slash commands", () => {
 
   it("expands an enabled skill into the model request and a short title", () => {
     const getSkill = (name: string) => name === "docs" ? skill : undefined;
-    expect(resolveCommandRequest("/docs 给 auth 模块补文档", getSkill, "zh-CN")).toEqual({
-      effectiveRequest: "聚焦文档。给 auth 模块补文档",
-      titleRequest: "给 auth 模块补文档",
+    expect(resolveCommandRequest("/docs add auth docs", getSkill)).toEqual({
+      effectiveRequest: "Focus on documentation. add auth docs",
+      titleRequest: "add auth docs",
     });
     // 裸命令用技能描述作为标题，避免空标题；模板仍然提供完整任务文本。
-    expect(resolveCommandRequest("/docs", getSkill, "zh-CN")).toEqual({
-      effectiveRequest: "聚焦文档。",
-      titleRequest: "补充相关文档",
+    expect(resolveCommandRequest("/docs", getSkill)).toEqual({
+      effectiveRequest: "Focus on documentation.",
+      titleRequest: "Improve docs",
     });
   });
 
   it("leaves unknown and disabled skills untouched", () => {
     const disabled = { ...skill, enabled: false };
-    expect(resolveCommandRequest("/docs 内容", () => undefined, "en")).toEqual({
+    expect(resolveCommandRequest("/docs 内容", () => undefined)).toEqual({
       effectiveRequest: "/docs 内容",
       titleRequest: "/docs 内容",
     });
-    expect(resolveCommandRequest("/docs 内容", () => disabled, "en")).toEqual({
+    expect(resolveCommandRequest("/docs 内容", () => disabled)).toEqual({
       effectiveRequest: "/docs 内容",
       titleRequest: "/docs 内容",
     });

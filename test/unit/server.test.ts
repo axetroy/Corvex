@@ -742,8 +742,7 @@ describe("CorvexServer", () => {
         method: "POST",
         headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
-          name: "custom", description: "Custom", descriptionZh: "自定义",
-          content: "Do $ARGUMENTS", contentZh: "处理 $ARGUMENTS", argumentHint: "", enabled: true,
+          document: "---\nname: custom\ndescription: Custom skill\n---\n\nDo $ARGUMENTS\n",
         }),
       });
       expect(createSkill.status).toBe(201);

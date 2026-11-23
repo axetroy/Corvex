@@ -155,7 +155,6 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: resolveCommandRequest(
           message,
           (name) => ctx.store.getConversationSkill(name),
-          titleLanguage,
         ).titleRequest,
         language: titleLanguage,
       });

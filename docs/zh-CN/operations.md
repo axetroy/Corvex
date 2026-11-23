@@ -76,7 +76,7 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 | `POST /api/ops/model-providers/test`、`POST /api/ops/model-providers/<id>/models/test` | 连接测试；结果不回显密钥。 |
 | `GET`/`POST /api/ops/me/model-providers` 及子路径 | 当前用户私有的模型供应商与激活选择，不影响系统级模型。 |
 | `GET`/`PUT /api/ops/settings` | 读取运行时设置的生效值，或整份替换；首次保存后 SQLite 即为唯一来源，是否提供 `--config` 都可用。 |
-| `GET /api/ops/skills` | 所有登录用户可读的已启用对话技能（名称、描述、提示词模板）。 |
+| `GET /api/ops/skills` | 所有登录用户可读的已启用对话技能（遵循 [agentskills.io/specification](https://agentskills.io/specification) 的 SKILL.md 文档）。 |
 | `GET`/`POST /api/ops/admin/skills`、`PUT`/`DELETE /api/ops/admin/skills/<id>` | 管理员增删改对话技能；七个系统种子技能可编辑或停用，但不可删除。 |
 
 运维台接口需要 GitLab OAuth2 会话；API 遇到未登录返回 401 JSON（永不 302），前端据此重定向到登录或安装页。请保护会话并使用 HTTPS。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。不存在 `/webhooks/gitlab` 或 `/api/ops/events` 端点。

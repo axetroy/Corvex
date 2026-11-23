@@ -8,7 +8,7 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
-import { defaultSkillSeeds } from "./agent/skills.js";
+import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument } from "./agent/skills.js";
 import {
   redactSensitiveText,
   sanitizeSensitiveText,
@@ -24,7 +24,6 @@ import {
   type ConversationFollowUp,
   type ConversationMessage,
   type ConversationSkill,
-  type ConversationSkillInput,
   type ConversationPage,
   type ConversationProcessEntry,
   type ConversationSummary,
@@ -2391,21 +2390,50 @@ export class AppStore {
       CREATE INDEX IF NOT EXISTS context_snapshots_conversation_idx ON conversation_context_snapshots(conversation_id,request_seq,id);
       CREATE TABLE IF NOT EXISTS conversation_skills (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        description TEXT NOT NULL DEFAULT '',
-        description_zh TEXT NOT NULL DEFAULT '',
-        content TEXT NOT NULL DEFAULT '',
-        content_zh TEXT NOT NULL DEFAULT '',
-        argument_hint TEXT NOT NULL DEFAULT '',
-        license TEXT NOT NULL DEFAULT '',
-        compatibility TEXT NOT NULL DEFAULT '',
-        metadata TEXT NOT NULL DEFAULT '{}',
-        allowed_tools TEXT NOT NULL DEFAULT '',
+        document TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1,
         is_system INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name);
     `);
+    // 早期技能表按列存储；必须在写种子之前补 document 列并从旧列生成 SKILL.md。
+    const skillColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!skillColumns.has("document")) {
+      this.db.exec("ALTER TABLE conversation_skills ADD COLUMN document TEXT NOT NULL DEFAULT ''");
+      for (const row of this.db.prepare("SELECT * FROM conversation_skills").all() as Record<string, unknown>[]) {
+        // 旧库可能带全套列，也可能只有简化后的列；只读取实际存在的列。
+        const metadata = skillColumns.has("metadata") ? this.readSkillMetadata(row.metadata) : {};
+        if (skillColumns.has("quick_action") && row.quick_action) metadata["corvex-quick-action"] = "true";
+        if (skillColumns.has("quick_label") && row.quick_label) metadata["corvex-quick-label"] = String(row.quick_label);
+        const metadataLines = Object.entries(metadata).map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`);
+        const document = [
+          "---",
+          `name: ${JSON.stringify(String(row.name ?? ""))}`,
+          `description: ${JSON.stringify(skillColumns.has("description") ? String(row.description ?? "") : "")}`,
+          ...(metadataLines.length ? ["metadata:", ...metadataLines] : []),
+          "---",
+          "",
+          skillColumns.has("content") ? String(row.content ?? "") : "",
+          "",
+        ].join("\n");
+        this.db.prepare("UPDATE conversation_skills SET document=? WHERE id=?").run(document, String(row.id));
+      }
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name)");
+    // 升级前写入的种子文档可能缺少快捷操作标记；只补键，不改正文和其它字段。
+    for (const row of this.db.prepare("SELECT id,document,is_system FROM conversation_skills").all() as {
+      id: string; document: string; is_system: number;
+    }[]) {
+      if (row.is_system !== 1 || !row.document) continue;
+      const enriched = ensureQuickActionMetadata(row.document);
+      if (enriched !== row.document) {
+        this.db.prepare("UPDATE conversation_skills SET document=? WHERE id=?").run(enriched, row.id);
+      }
+    }
     // 系统技能种子：只插入缺失项，管理员对文案/描述/启停的修改不会被升级覆盖。
     this.seedConversationSkills();
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
@@ -2488,18 +2516,6 @@ export class AppStore {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${definition}`);
       }
     }
-    // 技能表补齐 Agent Skills 规范字段；已创建的表缺列时按定义追加。
-    const skillColumns = new Set(
-      (this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((column) => column.name),
-    );
-    for (const [name, definition] of Object.entries({
-      license: "TEXT NOT NULL DEFAULT ''",
-      compatibility: "TEXT NOT NULL DEFAULT ''",
-      metadata: "TEXT NOT NULL DEFAULT '{}'",
-      allowed_tools: "TEXT NOT NULL DEFAULT ''",
-    })) {
-      if (!skillColumns.has(name)) this.db.exec(`ALTER TABLE conversation_skills ADD COLUMN ${name} ${definition}`);
-    }
     // 用户级会话是全新的数据模型：旧会话没有归属用户，按约定整体丢弃一次。
     const ownerMigration = this.db
       .prepare("SELECT value FROM runtime_settings WHERE key='schema:user-owned-conversations'")
@@ -2559,16 +2575,15 @@ export class AppStore {
   private seedConversationSkills(): void {
     const now = new Date().toISOString();
     const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO conversation_skills
-         (id,name,description,description_zh,content,content_zh,argument_hint,enabled,is_system,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,1,1,?,?)`,
+      `INSERT INTO conversation_skills (id,document,name,enabled,is_system,created_at,updated_at)
+       VALUES (?,?,?,1,1,?,?)`,
     );
     this.transaction(() => {
-      for (const seed of defaultSkillSeeds) {
-        insert.run(
-          randomUUID(), seed.name, seed.description, seed.descriptionZh,
-          seed.content, seed.contentZh, "", now, now,
-        );
+      for (const document of defaultSkillDocuments) {
+        const parsed = parseSkillDocument(document);
+        const exists = this.db.prepare("SELECT 1 FROM conversation_skills WHERE name=?").get(parsed.name);
+        if (exists) continue;
+        insert.run(randomUUID(), document, parsed.name, now, now);
       }
     });
   }
@@ -2586,34 +2601,29 @@ export class AppStore {
     return row ? this.readConversationSkill(row) : undefined;
   }
 
-  createConversationSkill(input: ConversationSkillInput): ConversationSkill {
+  createConversationSkill(document: string): ConversationSkill {
+    const parsed = parseSkillDocument(document);
     const id = randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(
-      `INSERT INTO conversation_skills
-         (id,name,description,description_zh,content,content_zh,argument_hint,
-          license,compatibility,metadata,allowed_tools,enabled,is_system,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)`,
-    ).run(
-      id, input.name, input.description, input.descriptionZh, input.content,
-      input.contentZh, input.argumentHint, input.license, input.compatibility,
-      JSON.stringify(input.metadata), input.allowedTools, input.enabled ? 1 : 0, now, now,
-    );
-    return this.listConversationSkills().find((skill) => skill.id === id)!;
+      `INSERT INTO conversation_skills (id,document,name,enabled,is_system,created_at,updated_at)
+       VALUES (?,?,?,?,0,?,?)`,
+    ).run(id, document.trim(), parsed.name, parsed.enabled ? 1 : 0, now, now);
+    return this.getConversationSkillById(id)!;
   }
 
-  updateConversationSkill(id: string, input: ConversationSkillInput): ConversationSkill | undefined {
+  updateConversationSkill(id: string, document: string): ConversationSkill | undefined {
     if (!this.db.prepare("SELECT 1 FROM conversation_skills WHERE id=?").get(id)) return undefined;
+    const parsed = parseSkillDocument(document);
     this.db.prepare(
-      `UPDATE conversation_skills SET name=?,description=?,description_zh=?,content=?,content_zh=?,
-        argument_hint=?,license=?,compatibility=?,metadata=?,allowed_tools=?,enabled=?,updated_at=? WHERE id=?`,
-    ).run(
-      input.name, input.description, input.descriptionZh, input.content,
-      input.contentZh, input.argumentHint, input.license, input.compatibility,
-      JSON.stringify(input.metadata), input.allowedTools, input.enabled ? 1 : 0,
-      new Date().toISOString(), id,
-    );
-    return this.listConversationSkills().find((skill) => skill.id === id);
+      "UPDATE conversation_skills SET document=?,name=?,enabled=?,updated_at=? WHERE id=?",
+    ).run(document.trim(), parsed.name, parsed.enabled ? 1 : 0, new Date().toISOString(), id);
+    return this.getConversationSkillById(id);
+  }
+
+  private getConversationSkillById(id: string): ConversationSkill | undefined {
+    const row = this.db.prepare("SELECT * FROM conversation_skills WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.readConversationSkill(row) : undefined;
   }
 
   /** 系统技能只能停用，不能删除；返回 false 表示不存在或受保护。 */
@@ -2639,19 +2649,12 @@ export class AppStore {
   }
 
   private readConversationSkill(row: Record<string, unknown>): ConversationSkill {
+    const document = stringColumn(row, "document");
+    const parsed = parseSkillDocument(document);
     return {
       id: stringColumn(row, "id"),
-      name: stringColumn(row, "name"),
-      description: stringColumn(row, "description"),
-      descriptionZh: stringColumn(row, "description_zh"),
-      content: stringColumn(row, "content"),
-      contentZh: stringColumn(row, "content_zh"),
-      argumentHint: stringColumn(row, "argument_hint"),
-      license: stringColumn(row, "license"),
-      compatibility: stringColumn(row, "compatibility"),
-      metadata: this.readSkillMetadata(row.metadata),
-      allowedTools: stringColumn(row, "allowed_tools"),
-      enabled: numberColumn(row, "enabled") === 1,
+      document,
+      ...parsed,
       isSystem: numberColumn(row, "is_system") === 1,
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),

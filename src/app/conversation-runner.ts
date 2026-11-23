@@ -744,7 +744,6 @@ export class ConversationRunner {
         request: resolveCommandRequest(
           turn.request,
           (name) => this.store.getConversationSkill(name),
-          language,
         ).titleRequest,
         language,
         workspacePath,
@@ -878,7 +877,6 @@ export class ConversationRunner {
       const { effectiveRequest } = resolveCommandRequest(
         turn.request,
         (name) => this.store.getConversationSkill(name),
-        language,
       );
       const systemPrompt = getConversationSystemPrompt(language, turn.mode);
       const userPrompt = buildConversationPrompt({

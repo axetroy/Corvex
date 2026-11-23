@@ -1,6 +1,5 @@
-import type { ResponseLanguage } from "../config/config.js";
 import type { ConversationSkill } from "../model.js";
-import { expandSkillTemplate, localizeSkillText } from "../agent/skills.js";
+import { expandSkillTemplate } from "../agent/skills.js";
 
 /**
  * 对话斜杠指令只改变当前这一轮的模型指令：不会创建事件、不改状态机、不发布评论。
@@ -33,17 +32,13 @@ export function stripConversationCommand(text: string): string {
 export function resolveCommandRequest(
   request: string,
   getSkill: (name: string) => ConversationSkill | undefined,
-  language: ResponseLanguage,
 ): { effectiveRequest: string; titleRequest: string } {
   const parsed = parseConversationCommand(request);
   if (!parsed) return { effectiveRequest: request, titleRequest: request };
   const skill = getSkill(parsed.command);
   if (!skill?.enabled) return { effectiveRequest: request, titleRequest: request };
   return {
-    effectiveRequest: expandSkillTemplate(
-      localizeSkillText(skill.content, skill.contentZh, language),
-      parsed.message,
-    ),
-    titleRequest: parsed.message || localizeSkillText(skill.description, skill.descriptionZh, language),
+    effectiveRequest: expandSkillTemplate(skill.content, parsed.message),
+    titleRequest: parsed.message || skill.description,
   };
 }
