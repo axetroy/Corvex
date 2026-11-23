@@ -54,15 +54,21 @@ export function welcomePromptGroups(copy: Copy): WelcomePromptGroup[] {
   ];
 }
 
-/** 已发起会话的快捷操作：点击后填入输入框，部分以斜杠指令开头。 */
+/**
+ * 已发起会话的快捷操作：点击后填入输入框，再由用户确认或微调后发送。
+ * 文案与 `getConversationCommandInstruction` 的语义保持一致：起草/提议类指令
+ * 不会真的提交、推送或写文件，提示词里也不暗示会执行这些动作。
+ * 顺序按「理解 → 检查 → 改进 → 协作」排列，覆盖全部斜杠指令。
+ */
 export function activeQuickPrompts(copy: Copy): WelcomePrompt[] {
   return [
+    { key: "explain", label: copy.quickPromptExplain },
     { key: "review", label: copy.quickPromptReview },
+    { key: "coverage", label: copy.quickPromptCoverage },
+    { key: "fix", label: copy.quickPromptFix },
+    { key: "docs", label: copy.quickPromptDocs },
     { key: "commit", label: copy.quickPromptCommit },
     { key: "mr", label: copy.quickPromptMr },
-    { key: "coverage", label: copy.quickPromptCoverage },
-    { key: "explain", label: copy.quickPromptExplain },
-    { key: "docs", label: copy.quickPromptDocs },
   ];
 }
 
