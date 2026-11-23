@@ -260,6 +260,14 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain('"name":"web_search"');
     expect(requestBodies[0]).toContain("Tavily's free keyless mode");
     expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
+    // 自定义 systemPrompt 下 SDK 不会自动生成 tools 段：工具目录必须出现在真实请求里，
+    // 且覆盖所有活跃工具，模型才能在能力类提问中感知它们。
+    expect(requestBodies[0]).toContain("<available_tools>");
+    expect(requestBodies[0]).toContain("Every tool actually available this turn");
+    expect(requestBodies[0]).toContain("- web_fetch:");
+    expect(requestBodies[0]).toContain("- web_search:");
+    expect(requestBodies[0]).toContain("- read_file:");
+    expect(requestBodies[0]).toContain("- record_plan:");
     const trajectory = store.getConversationTurn(event.conversationId, event.id)?.trajectory;
     expect(trajectory).toHaveLength(4);
     expect(trajectory?.find((entry) => entry.kind === "tool" && entry.status === "succeeded")).toMatchObject({

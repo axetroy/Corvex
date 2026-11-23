@@ -21,6 +21,8 @@ import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
 import { estimateTokens, isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
+import { getAgentToolAccess } from "./tool-access.js";
+import { createToolCatalogExtension } from "./tool-catalog.js";
 import { redactSensitiveText } from "../redact.js";
 import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
@@ -43,6 +45,8 @@ import {
 } from "./tool-budget.js";
 import { createWebReadExtension } from "./web-read.js";
 import { createWebSearchExtension } from "./web-search.js";
+
+export { getAgentToolAccess } from "./tool-access.js";
 
 /** 128K-token 窗口下的保守请求字节下限；窗口更大时由 `resolveMaxPromptBytes` 放大。 */
 export const maxAgentPromptBytes = 96 << 10;
@@ -208,16 +212,6 @@ export interface ModelRequest {
    * 其余任务省略即可。
    */
   steer?: SteerChannel;
-}
-
-export function getAgentToolAccess(
-  taskType: ModelTaskType,
-  config: Pick<CorvexConfig["agent"], "webEnabled" | "webSearchEnabled">,
-): { webFetch: boolean; webSearch: boolean } {
-  return {
-    webFetch: taskType === "conversation" && config.webEnabled,
-    webSearch: taskType === "conversation" && config.webEnabled && config.webSearchEnabled,
-  };
 }
 
 export interface ModelUsage {
@@ -551,6 +545,9 @@ export class PiAgent {
       noPromptTemplates: true,
       additionalSkillPaths: config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
+        // 把本轮真实注册的全部工具写进系统提示词：SDK 在自定义 systemPrompt 下不会
+        // 自动生成 tools 段，模型只能看到函数 schema，无法在能力类提问中感知全部工具。
+        createToolCatalogExtension(config.agent.responseLanguage),
         // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
         // 在 SDK 下一次压缩检查之前把窗口顶爆。
         createToolResultBudgetExtension(config.agent.contextWindow),
