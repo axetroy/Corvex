@@ -4,7 +4,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { GitManager, conversationWorkspaceName, gitConfigEntries } from "../../src/git/manager.js";
+import { GitManager, buildGitEnvironment, conversationWorkspaceName, gitConfigEntries } from "../../src/git/manager.js";
 import type { Workspace } from "../../src/git/types.js";
 
 const execFile = promisify(execFileCallback);
@@ -24,6 +24,23 @@ describe("Git environment", () => {
     const withAuth = new Map(gitConfigEntries("token", new URL("https://gitlab.example.com")));
     expect(withAuth.get("http.https://gitlab.example.com/.extraHeader"))
       .toBe(`Authorization: Basic ${Buffer.from("oauth2:token").toString("base64")}`);
+  });
+
+  it("strips inherited askpass helpers so missing credentials fail fast instead of blocking", () => {
+    const previous = process.env.GIT_ASKPASS;
+    process.env.GIT_ASKPASS = "/path/to/askpass.sh";
+    process.env.VSCODE_GIT_ASKPASS_MAIN = "/path/to/askpass-main.js";
+    try {
+      const env = buildGitEnvironment("/tmp/corvex", new URL("https://gitlab.example.com"), "");
+      expect(env.GIT_ASKPASS).toBeUndefined();
+      expect(env.VSCODE_GIT_ASKPASS_MAIN).toBeUndefined();
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      expect(env.GIT_CONFIG_GLOBAL).toBe("/tmp/corvex/.corvex-no-global-git-config");
+    } finally {
+      if (previous === undefined) delete process.env.GIT_ASKPASS;
+      else process.env.GIT_ASKPASS = previous;
+      delete process.env.VSCODE_GIT_ASKPASS_MAIN;
+    }
   });
 });
 

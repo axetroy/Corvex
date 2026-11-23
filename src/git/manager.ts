@@ -112,6 +112,45 @@ export function gitConfigEntries(authToken: string, gitlabUrl: URL): [string, st
   return entries;
 }
 
+/**
+ * 构造 Git 子进程环境。除隔离宿主 Git 配置外，必须移除继承来的 askpass 配置：
+ * 当 GitLab 凭据缺失时，git 会调用 askpass（例如 VS Code 的弹窗脚本）等待用户输入，
+ * `GIT_TERMINAL_PROMPT=0` 只关闭终端提示，无法阻止 askpass，于是 clone/fetch 永久挂起，
+ * 取消信号也因为子进程阻塞而不能及时生效。移除后 git 会立即报认证失败，轮次快速收尾。
+ */
+export function buildGitEnvironment(root: string, gitlabUrl: URL, authToken: string): NodeJS.ProcessEnv {
+  const inheritedAskpassKeys = [
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "VSCODE_GIT_ASKPASS_MAIN",
+    "VSCODE_GIT_ASKPASS_NODE",
+    "VSCODE_GIT_ASKPASS_EXTRA_ARGS",
+  ];
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("GIT_CONFIG_") ||
+      ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CURL_VERBOSE", "GIT_TERMINAL_PROMPT"].includes(key) ||
+      inheritedAskpassKeys.includes(key) ||
+      key.startsWith("GIT_TRACE")
+    ) {
+      delete env[key];
+    }
+  }
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_GLOBAL = join(root, ".corvex-no-global-git-config");
+  env.GIT_TERMINAL_PROMPT = "0";
+  const configs = gitConfigEntries(authToken, gitlabUrl);
+  env.GIT_CONFIG_COUNT = String(configs.length);
+  configs.forEach(([key, value], index) => {
+    env[`GIT_CONFIG_KEY_${index}`] = key;
+    env[`GIT_CONFIG_VALUE_${index}`] = value;
+  });
+  return env;
+}
+
 export class GitManager {
   private readonly root: string;
   private readonly mirrorRoot: string;
@@ -1694,26 +1733,7 @@ export class GitManager {
   }
 
   private gitEnvironment(authToken: string): NodeJS.ProcessEnv {
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) {
-      if (
-        key.startsWith("GIT_CONFIG_") ||
-        ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CURL_VERBOSE", "GIT_TERMINAL_PROMPT"].includes(key) ||
-        key.startsWith("GIT_TRACE")
-      ) {
-        delete env[key];
-      }
-    }
-    env.GIT_CONFIG_NOSYSTEM = "1";
-    env.GIT_CONFIG_GLOBAL = join(this.root, ".corvex-no-global-git-config");
-    env.GIT_TERMINAL_PROMPT = "0";
-    const configs = gitConfigEntries(authToken, this.gitlabUrl);
-    env.GIT_CONFIG_COUNT = String(configs.length);
-    configs.forEach(([key, value], index) => {
-      env[`GIT_CONFIG_KEY_${index}`] = key;
-      env[`GIT_CONFIG_VALUE_${index}`] = value;
-    });
-    return env;
+    return buildGitEnvironment(this.root, this.gitlabUrl, authToken);
   }
 
   private async withProjectLock<T>(projectId: number, fn: () => Promise<T>): Promise<T> {
