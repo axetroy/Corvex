@@ -222,7 +222,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [skills, setSkills] = useState<ConversationSkill[]>([]);
+  const [commandIndex, setCommandIndex] = useState(0);
   const composerRef = useRef<React.ElementRef<typeof Sender>>(null);
+  const commandMenuRef = useRef<HTMLDivElement>(null);
   const draftBeforeHistory = useRef("");
   const historyNavigation = useRef(false);
   const historyKey = `corvex-ops-input-history:${selectedConversationId || "new"}`;
@@ -805,6 +807,31 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   /** 上下键浏览历史输入；只在光标位于首行/末行时接管，保留多行编辑。 */
   function handleComposerKeyDown(event: ReactKeyboardEvent) {
+    // 技能补全打开时优先接管键盘；不改草稿，避免列表因过滤变化而跳动。
+    if (commandSuggestions.length > 0) {
+      const count = commandSuggestions.length;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        setCommandIndex((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + count) % count);
+        return false;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const selected = commandSuggestions[commandIndex] ?? commandSuggestions[0];
+        if (selected) {
+          setDraftMessage(`/${selected.command} `);
+          setCommandIndex(0);
+          composerRef.current?.focus();
+        }
+        return false;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDraftMessage("");
+        setCommandIndex(0);
+        return false;
+      }
+    }
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
     const target = event.target as HTMLTextAreaElement | HTMLInputElement;
@@ -872,6 +899,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         description: skill.description.length > 90 ? `${skill.description.slice(0, 90)}…` : skill.description,
         fullDescription: skill.description,
       }));
+  // 过滤条件变化时回到第一项；选中项超出可视区时只在菜单内部滚动。
+  useEffect(() => { setCommandIndex(0); }, [commandQuery]);
+  useEffect(() => {
+    const list = commandMenuRef.current;
+    const item = list?.querySelector<HTMLElement>(".conversation-command-suggestion.is-selected");
+    if (!list || !item) return;
+    const top = item.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top + item.offsetHeight - list.clientHeight;
+    }
+  }, [commandIndex, commandSuggestions.length]);
   const isTurnActive = hasActiveTurn || pendingReplyConversations.has(selectedConversationId);
 
   async function cancelActiveTurn() {
@@ -1382,15 +1421,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     ) : null}
                     <div className="conversation-composer-area">
                     {commandSuggestions.length ? (
-                      <div className="conversation-command-suggestions" aria-label={copy.commandHint}>
-                        {commandSuggestions.map(({ command, description, fullDescription }) => (
+                      <div ref={commandMenuRef} className="conversation-command-suggestions" aria-label={copy.commandHint}>
+                        {commandSuggestions.map(({ command, description, fullDescription }, index) => (
                           <button
                             key={command}
                             type="button"
-                            className="conversation-command-suggestion"
+                            className={`conversation-command-suggestion${index === commandIndex ? " is-selected" : ""}`}
                             title={fullDescription}
+                            onMouseEnter={() => setCommandIndex(index)}
                             onClick={() => {
                               setDraftMessage(`/${command} `);
+                              setCommandIndex(0);
                               composerRef.current?.focus();
                             }}
                           >

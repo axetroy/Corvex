@@ -2626,11 +2626,15 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   color: var(--conversation-muted);
 }
 
-.conversation-command-suggestion:hover {
+.conversation-command-suggestion:hover,
+.conversation-command-suggestion.is-selected {
   background: var(--conversation-brand);
   color: var(--bg-panel);
 }
 
-.conversation-command-suggestion:hover span {
+.conversation-command-suggestion:hover span,
+.conversation-command-suggestion.is-selected span {
   color: var(--bg-panel);
 }
+
+
