@@ -34,6 +34,26 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
 
 export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "advanced";
 
+/** 每个设置分组用侧栏同名标签作为页头标题，避免六个页面都显示「Agent 设置」。 */
+const sectionTitleKeys: Record<SettingsSection, CopyTextKey> = {
+  basic: "settingsTabBasic",
+  model: "settingsTabModel",
+  gitlab: "settingsTabGitLab",
+  workflow: "settingsTabWorkflow",
+  storage: "settingsTabStorage",
+  advanced: "settingsTabAdvanced",
+};
+
+/** 页头描述复用对应设置分组的说明，避免所有页面都显示同一段上下文预算文案。 */
+const sectionDescriptionKeys: Record<SettingsSection, CopyTextKey> = {
+  basic: "settingsGroupBudgetHint",
+  model: "settingsGroupModelHint",
+  gitlab: "settingsGroupGitLabHint",
+  workflow: "settingsGroupToolsHint",
+  storage: "settingsGroupStorageHint",
+  advanced: "settingsGroupAdvancedHint",
+};
+
 /** 每个设置分区实际渲染的字段分组；校验只对当前可见字段生效，避免其他分区的隐藏字段禁用保存按钮。 */
 export const sectionGroups: Record<SettingsSection, readonly string[]> = {
   basic: ["settingsGroupBudget"],
@@ -322,8 +342,8 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
     <>
       {error ? <ErrorBanner message={error} /> : null}
       <PageHeading
-        title={copy.settingsTitle}
-        description={copy.settingsDescription}
+        title={copy[sectionTitleKeys[section]]}
+        description={copy[sectionDescriptionKeys[section]]}
         actions={(
           <div className="settings-actions">
             <Button type="primary" loading={saving} disabled={!editable || !dirty || problems.length > 0} onClick={() => void save()}>
