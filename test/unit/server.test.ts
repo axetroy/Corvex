@@ -432,6 +432,10 @@ describe("CorvexServer", () => {
       expect((await fetch(`${base}/ops/assets/../index.html`, { headers: authHeaders })).status).toBe(404);
       // 首次安装通过 /api/setup/oauth 写入 OAuth 配置，不需要环境变量。
       expect((await (await fetch(`${base}/api/setup/status`)).json()).configured).toBe(false);
+      // 未登录时 /api/auth/me 的 401 必须带 setupRequired，前端才不会误跳到未配置的 OAuth 登录页。
+      const meBeforeSetup = await fetch(`${base}/api/auth/me`);
+      expect(meBeforeSetup.status).toBe(401);
+      expect(await meBeforeSetup.json()).toMatchObject({ setupRequired: true });
       const setup = await fetch(`${base}/api/setup/oauth`, {
         method: "POST",
         headers: { "content-type": "application/json" },

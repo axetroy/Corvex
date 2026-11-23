@@ -53,7 +53,7 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 | `GET /ops`、`/ops/*` | 运维台；需要 GitLab OAuth2 登录，响应带严格的 Content Security Policy 与 `X-Robots-Tag: noindex`。 |
 | `GET /auth/gitlab`、`GET /auth/gitlab/callback`、`POST /auth/logout` | GitLab OAuth2 登录、回调与登出。 |
 | `GET /api/auth/status` | 公开的 200-only 状态探测，供前端路由守卫判断 `authenticated` / `setupRequired`。 |
-| `GET /api/auth/me` | 当前登录用户信息。 |
+| `GET /api/auth/me` | 当前登录用户信息；OAuth 未配置时返回带 `setupRequired` 的 401 JSON，控制台会跳到 `/setup` 而不是不可用的登录页。 |
 | `GET /api/setup/status`、`POST /api/setup/oauth` | 安装向导；仅在 OAuth 未配置时可写，凭据保存在 SQLite。 |
 | `GET /api/ops/overview` | 概览：对话轮次健康度、最老排队轮次时长、模型调用指标。 |
 | `GET /api/ops/projects`、`GET /api/ops/projects/<id>`、`GET /api/ops/projects/<id>/branches` | 搜索当前用户可见的项目、读取仓库信息（对话上方的信息弹窗）与分支。 |

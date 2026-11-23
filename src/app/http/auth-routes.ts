@@ -82,7 +82,11 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AuthRoutesContext)
   app.get("/api/auth/me", async (request, reply) => {
     const user = currentUser(request);
     if (!user) {
-      sendJson(reply, 401, { error: "authentication required" });
+      // 带上 setupRequired，让前端 401 处理器在未配置 OAuth 时去安装向导而不是登录页。
+      sendJson(reply, 401, {
+        error: "authentication required",
+        setupRequired: !ctx.oauth.configured,
+      });
       return;
     }
     sendJson(reply, 200, {

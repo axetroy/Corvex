@@ -169,6 +169,12 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
+    // 安装未完成时没有会话，不能请求 /api/auth/me：401 会被通用处理器送到 /auth/gitlab，
+    // 而 OAuth 尚未配置，于是用户看到 "GitLab OAuth is not configured" 而不是安装向导。
+    if (!authStatus?.authenticated) {
+      setAccount(undefined);
+      return;
+    }
     let active = true;
     fetchJson<{ username: string; name: string; avatarUrl: string; isAdmin: boolean }>("/api/auth/me", copy)
       .then((user) => active && setAccount(user))
@@ -176,7 +182,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [copy]);
+  }, [authStatus?.authenticated, copy]);
 
   useEffect(() => {
     document.documentElement.lang = locale;

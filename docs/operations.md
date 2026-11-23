@@ -49,7 +49,7 @@ Expose the console through HTTPS and keep the GitLab API, database volume, and m
 | `GET /auth/gitlab/callback` | OAuth callback; sets the session cookie and redirects to `/ops#/conversations`. |
 | `POST /auth/logout` | Clear the session. |
 | `GET /api/auth/status` | Public 200-only status probe used by the console route guard (`authenticated`, `oauthConfigured`, `setupRequired`). |
-| `GET /api/auth/me` | Current signed-in user. |
+| `GET /api/auth/me` | Current signed-in user. Returns 401 JSON with `setupRequired` when OAuth is not configured, so the console redirects to `/setup` rather than the unavailable login page. |
 | `GET /api/setup/status` | Whether OAuth has been configured. |
 | `POST /api/setup/oauth` | First-run setup: GitLab URL and OAuth client ID, secret and callback URL. |
 | `GET /ops` | Agent console; requires GitLab OAuth2 login. |
