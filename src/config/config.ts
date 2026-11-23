@@ -77,6 +77,10 @@ export interface CorvexConfig {
     compactionDynamicThreshold: boolean;
     /** 是否启用跨轮滚动摘要，把被裁剪的历史压缩成持久化摘要。 */
     summaryEnabled: boolean;
+    /** 是否把仓库根目录的 AGENTS.md 作为本轮项目指导注入。 */
+    projectAgentsMd: boolean;
+    /** 项目指导的最大字节数；超限截断。 */
+    projectAgentsMdMaxBytes: number;
   };
 }
 
@@ -122,6 +126,8 @@ const defaults: CorvexConfig = {
     compactionTriggerPercent: 85,
     compactionDynamicThreshold: true,
     summaryEnabled: true,
+    projectAgentsMd: true,
+    projectAgentsMdMaxBytes: 32 << 10,
   },
 };
 
@@ -271,6 +277,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       compactionTriggerPercent: number(agent.compaction_trigger_percent, defaults.agent.compactionTriggerPercent ?? 85),
       compactionDynamicThreshold: boolean(agent.compaction_dynamic_threshold, defaults.agent.compactionDynamicThreshold),
       summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
+      projectAgentsMd: boolean(agent.project_agents_md, defaults.agent.projectAgentsMd),
+      projectAgentsMdMaxBytes: number(agent.project_agents_md_max_bytes, defaults.agent.projectAgentsMdMaxBytes),
     },
   };
 }

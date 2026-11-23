@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextNoticeText, microcompactNoticeText, responseWaitNoticeText } from "../../src/agent/context-notice.ts";
+import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, responseWaitNoticeText } from "../../src/agent/context-notice.ts";
 
 describe("context change notices", () => {
   it("describes a finished compaction with token counts in both languages", () => {
@@ -33,6 +33,13 @@ describe("context trigger notices", () => {
 
   it("uses a shorter message when the trigger details are unknown", () => {
     expect(contextNoticeText("en", "start", 17_885)).toBe("Compacting context...");
+  });
+});
+
+describe("project guidance notices", () => {
+  it("reports the loaded AGENTS.md size and truncation in both languages", () => {
+    expect(projectGuidanceNoticeText("zh-CN", 4096, true)).toContain("已按预算截断");
+    expect(projectGuidanceNoticeText("en", 4096, false)).toContain("4096 bytes");
   });
 });
 

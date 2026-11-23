@@ -25,7 +25,8 @@ import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
 import { getAgentToolAccess } from "./tool-access.js";
 import { createToolCatalogExtension } from "./tool-catalog.js";
 import { redactSensitiveText } from "../redact.js";
-import { contextNoticeText, microcompactNoticeText, responseWaitNoticeText } from "./context-notice.js";
+import { readProjectGuidance } from "./project-guidance.js";
+import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, responseWaitNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
@@ -558,12 +559,26 @@ export class PiAgent {
     } | undefined;
     const tokenCounter = createProviderTokenCounter(config.agent.baseUrl);
     const contextObservation: { before?: ContextSnapshot; failures?: number } = {};
+    // 项目指导每轮从固定 SHA 的 worktree 现读，不缓存；只注入一条最高优先级文件。
+    const projectGuidance = await readProjectGuidance(repositoryRoot, {
+      enabled: config.agent.projectAgentsMd,
+      maxBytes: config.agent.projectAgentsMdMaxBytes,
+      language: config.agent.responseLanguage,
+    });
+    if (projectGuidance.files.length > 0) {
+      emitContextStream({
+        id: `project-guidance-${request.conversationId ?? "turn"}`,
+        text: projectGuidanceNoticeText(config.agent.responseLanguage, projectGuidance.bytes, projectGuidance.truncated),
+      });
+    }
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
       agentDir,
+      // 不自动读取 agent 目录的 context 文件；项目指导完全由下面的 override 提供。
       noContextFiles: true,
       noThemes: true,
       noPromptTemplates: true,
+      agentsFilesOverride: () => ({ agentsFiles: projectGuidance.files }),
       additionalSkillPaths: config.agent.skillPaths.map((path) => resolve(path)),
       extensionFactories: [
         // 把本轮真实注册的全部工具写进系统提示词：SDK 在自定义 systemPrompt 下不会

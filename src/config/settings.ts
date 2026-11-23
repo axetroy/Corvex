@@ -66,6 +66,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
+  { key: "project_agents_md", section: "agent", field: "projectAgentsMd", type: "boolean" },
+  { key: "project_agents_md_max_bytes", section: "agent", field: "projectAgentsMdMaxBytes", type: "number", min: 1_024, max: 262_144 },
   // 工具开关与联网白名单
   { key: "web_enabled", section: "agent", field: "webEnabled", type: "boolean" },
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },

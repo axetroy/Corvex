@@ -86,6 +86,8 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.compaction_trigger_percent` | `85` | 50–95 | Share of the context window that triggers proactive compaction after a turn. The effective threshold also reserves the answer tokens. |
 | `agent.compaction_dynamic_threshold` | `true` | Boolean | Adjust the trigger by each turn's token growth: lower it (compact sooner) when context grows fast, raise it (compact later) when growth is slow. Adjustments are bounded to 10% down / 5% up of the window and smoothed over the last four turns; disable it to keep the static percentage. |
 | `agent.summary_enabled` | `true` | Boolean | Compress trimmed conversation history into a stored rolling summary that later turns reuse. |
+| `agent.project_agents_md` | `true` | Boolean | Read `AGENTS.md` (or `AGENTS.override.md`) from the root of the pinned conversation worktree each turn and inject it as project guidance. It is treated as untrusted repository data and cannot override the system prompt or the current request. |
+| `agent.project_agents_md_max_bytes` | `32768` | 1,024–262,144 | Maximum bytes of project guidance injected per turn; longer files are truncated. |
 
 These context-budget keys are the primary defence against provider `context length exceeded` errors: Corvex trims history and caps tool output before a request leaves the process, and makes one more aggressive retry without history if the provider still reports an overflow. Tool results are hard-truncated per call and per assistant round before they enter session history, because the SDK can only estimate what was added since the last response; the compaction reserve is derived from that same bound. They can also be tuned at runtime from the agent console Settings page without editing the config file.
 
@@ -116,6 +118,8 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `compaction_dynamic_threshold` | Boolean | Adapt the trigger to each turn's token growth. |
 | `daily_token_budget` | 0–1,000,000,000 | UTC-day token budget; `0` disables it. |
 | `summary_enabled` | Boolean | Rolling summary for trimmed history. |
+| `project_agents_md` | Boolean | Load the pinned worktree's root `AGENTS.md` as project guidance. |
+| `project_agents_md_max_bytes` | 1,024–262,144 | Byte budget for injected project guidance. |
 | `web_enabled` | Boolean | Enable the read-only `web_fetch` tool. |
 | `web_search_enabled` | Boolean | Enable `web_search` (Tavily keyless, no API key; queries are sent to Tavily). |
 | `web_search_max_queries` | Number | Max `web_search` calls per turn (1–50). |

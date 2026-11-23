@@ -60,6 +60,16 @@ export function contextNoticeText(
   return `Context compacted: ${before} → ${after} tokens`;
 }
 
+/** 本轮从 worktree 加载项目指导后的可见提示。 */
+export function projectGuidanceNoticeText(language: ResponseLanguage, bytes: number, truncated: boolean): string {
+  const suffix = truncated
+    ? (language === "zh-CN" ? "（已按预算截断）" : " (truncated to the size budget)")
+    : "";
+  return language === "zh-CN"
+    ? `已加载项目 AGENTS.md（${bytes} 字节）作为本轮指导${suffix}。`
+    : `Loaded project AGENTS.md (${bytes} bytes) as guidance for this turn${suffix}.`;
+}
+
 /** 等待模型首响应期间，每隔一段时间显示的进度提示。 */
 export function responseWaitNoticeText(language: ResponseLanguage, waitedSeconds: number, stallSeconds: number): string {
   return language === "zh-CN"

@@ -857,6 +857,71 @@ describe("PiAgent", () => {
     expect(requestBodies[1]).not.toContain("old history");
   }, 10_000);
 
+  it("injects the worktree AGENTS.md as project instructions when enabled", async () => {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-agents-md-"));
+    const requestBodies: string[] = [];
+    server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        requestBodies.push(body);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const frame = (delta: object, finish: string | null) =>
+          `data: ${JSON.stringify({ id: "chatcmpl-agents", object: "chat.completion.chunk", created: 1, model: "test-model", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+        response.write(frame({ role: "assistant", content: "Done." }, null));
+        response.write(frame({}, "stop"));
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+    await writeFile(join(temporaryDirectory, "AGENTS.md"), "Use pnpm test before committing.");
+    const config = {
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: {
+        baseUrl: "https://gitlab.example.com", readToken: "read", writeToken: "write",
+        blockedUserIds: [], botUsername: "",
+      },
+      storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        providerName: "Acme Models", apiKey: "test-key", requestTimeout: 5000, sessionTimeout: 15000,
+        responseStallTimeout: 0,
+        projectAgentsMd: true, projectAgentsMdMaxBytes: 32_768,
+        maxOutputTokens: 4096, dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [],
+        skillPaths: [], contextWindow: 131_072, maxInputTokens: 0, historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20, compactionReserveTokens: 16_384, compactionKeepRecentTokens: 20_000,
+        summaryEnabled: false,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    } satisfies CorvexConfig;
+    store = await AppStore.open(":memory:");
+    const notices: string[] = [];
+    const result = await new PiAgent(config, store).generate({
+      taskType: "conversation",
+      systemPrompt: "Be concise.",
+      userPrompt: "hello",
+      onContextDelta: (context) => notices.push(context.text),
+    }, temporaryDirectory);
+    expect(result.content).toBe("Done.");
+    expect(requestBodies[0]).toContain("<project_instructions");
+    expect(requestBodies[0]).toContain("Use pnpm test before committing.");
+    expect(notices.some((text) => text.includes("AGENTS.md"))).toBe(true);
+  }, 15_000);
+
   it("aborts a stalled turn with a clear error instead of waiting for SDK retries", async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-stall-"));
     server = createServer((request, response) => {

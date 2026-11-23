@@ -173,6 +173,8 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "web_search_enabled", kind: "boolean", labelKey: "settingsWebSearchEnabled", hintKey: "settingsWebSearchEnabledHint" },
       { key: "web_search_max_queries", kind: "number", min: 1, max: 50, step: 1, labelKey: "settingsWebSearchMaxQueries", hintKey: "settingsWebSearchMaxQueriesHint" },
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
+      { key: "project_agents_md", kind: "boolean", labelKey: "settingsProjectAgentsMd", hintKey: "settingsProjectAgentsMdHint" },
+      { key: "project_agents_md_max_bytes", kind: "number", min: 1024, max: 262144, step: 1024, unit: "byte", labelKey: "settingsProjectAgentsMdMaxBytes", hintKey: "settingsProjectAgentsMdMaxBytesHint" },
     ],
   },
   {
