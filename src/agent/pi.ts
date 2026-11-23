@@ -19,14 +19,14 @@ import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 
 import type { Workspace } from "../git/types.js";
 import type { GitManager } from "../git/manager.js";
-import { isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
+import { estimateTokens, isContextOverflowError, nextOverflowRetryContextWindow } from "./budget.js";
 import { contextNoticeText, microcompactNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
 import type { GitLabClient } from "../gitlab/client.js";
-import { buildContextSnapshot, createContextObserveExtension } from "./context-snapshot.js";
+import { buildContextSnapshot, createContextObserveExtension, messagesToText } from "./context-snapshot.js";
 import { createProviderTokenCounter } from "./token-counter.js";
 import { createMicrocompactExtension } from "./microcompact.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
@@ -505,6 +505,17 @@ export class PiAgent {
       this.config.agent.compactionKeepRecentTokens,
       compactionReserveTokens,
     );
+    // SDK 自身的阈值放到接近窗口，只保留溢出压缩；主动压缩由下面的真实 token 计数在
+    // 更早、可控的点触发，避免原始会话里的工具结果把 SDK 估算顶到 62.5% 就压缩。
+    const sdkReserveTokens = Math.min(compactionReserveTokens, 1_024);
+    const selfCompactRatio = 0.85;
+    const selfCompactThreshold = Math.max(
+      1_024,
+      Math.min(
+        Math.floor(this.config.agent.contextWindow * selfCompactRatio),
+        this.config.agent.contextWindow - this.config.agent.maxOutputTokens - 1_024,
+      ),
+    );
 
     const emitContextStream = (context: ConversationStreamContext) => {
       if (!request.onContextDelta) return;
@@ -599,7 +610,7 @@ export class PiAgent {
               reason: trigger.reason,
               tokens: trigger.tokens,
               window,
-              threshold: window - compactionReserveTokens,
+              threshold: activeCompactionTrigger?.threshold ?? selfCompactThreshold,
             };
             activeCompactionTrigger = info;
             emitContextStream({
@@ -641,7 +652,7 @@ export class PiAgent {
       settingsManager: SettingsManager.inMemory({
         compaction: {
           enabled: true,
-          reserveTokens: compactionReserveTokens,
+          reserveTokens: sdkReserveTokens,
           keepRecentTokens: compactionKeepRecentTokens,
         },
       }),
@@ -966,6 +977,28 @@ export class PiAgent {
       const content = session.getLastAssistantText()?.trim();
       if (!content) throw new Error("Pi returned an empty completion");
       const usage = session.getSessionStats().tokens;
+      // 回合结束后按真实 token 数主动压缩，为下一轮留出空间；compact() 会先 abort，
+      // 因此必须在 prompt() 完全结束之后调用，避免打断正在执行的轮次。
+      try {
+        const entries = (session.sessionManager as unknown as {
+          buildSessionProjection(): { messages: unknown[] };
+        }).buildSessionProjection().messages;
+        const text = messagesToText(entries);
+        const tokens = await tokenCounter.count(text, signal) ?? estimateTokens(text);
+        if (tokens >= selfCompactThreshold) {
+          activeCompactionTrigger = {
+            reason: "threshold",
+            tokens,
+            window: this.config.agent.contextWindow,
+            threshold: selfCompactThreshold,
+          };
+          await session.compact();
+          activeCompactionTrigger = undefined;
+        }
+      } catch (error) {
+        activeCompactionTrigger = undefined;
+        console.warn("self-triggered context compaction failed", { error: errorMessage(error) });
+      }
       return {
         content,
         model: `${providerLabel}/${model.id}`,

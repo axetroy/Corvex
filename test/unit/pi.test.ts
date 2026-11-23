@@ -45,6 +45,12 @@ describe("PiAgent", () => {
         requestBody += chunk.toString();
       });
       request.on("end", () => {
+        // token 计数探测不是模型请求，不应污染 requestBodies 的下标。
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
         const currentRequest = requestCount++;
         requestBodies[currentRequest] = requestBody;
         const sendResponse = () => {
@@ -466,6 +472,12 @@ describe("PiAgent", () => {
         body += chunk.toString();
       });
       request.on("end", () => {
+        // token 计数探测不是模型请求，不应污染 requestBodies 的下标。
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
         requestBodies[requestCount] = body;
         const currentRequest = requestCount++;
         response.writeHead(200, { "content-type": "text/event-stream" });
@@ -677,6 +689,12 @@ describe("PiAgent", () => {
       let body = "";
       request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
       request.on("end", () => {
+        // token 计数探测不是模型请求，不应污染 requestBodies 的下标。
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
         const index = requestCount++;
         requestBodies[index] = body;
         const frame = (delta: object, finish: string | null, usage?: object) =>
@@ -764,6 +782,12 @@ describe("PiAgent", () => {
       let body = "";
       request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
       request.on("end", () => {
+        // token 计数探测不是模型请求，不应污染 requestBodies 的下标。
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
         const index = requestCount++;
         requestBodies[index] = body;
         if (index === 0) {
