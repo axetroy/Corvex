@@ -62,7 +62,7 @@ export function getConversationCommandInstruction(command: ConversationCommand, 
       zh: "本轮帮助准备提交信息：基于当前改动生成简洁的提交标题与正文要点，不执行提交。",
       en: "Help prepare a commit message this turn: generate a concise subject and body outline from the current changes; do not commit.",
     },
-    mr: {
+    "create-mr": {
       zh: "本轮帮助准备合并请求：总结改动目的、主要变更、测试方式与风险，给出可直接使用的 MR 描述草稿，不创建 MR。",
       en: "Help prepare a merge request this turn: summarize purpose, key changes, testing and risks, and produce a ready-to-use MR description draft; do not create the MR.",
     },

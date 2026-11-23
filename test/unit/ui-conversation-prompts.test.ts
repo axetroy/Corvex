@@ -37,7 +37,7 @@ describe("active conversation quick prompts", () => {
     for (const copy of [en, zhCN]) {
       const prompts = activeQuickPrompts(copy);
       const commands = prompts.map((prompt) => {
-        const match = /^\/([a-z]+)\s+\S/.exec(prompt.label);
+        const match = /^\/([a-z][a-z-]*)\s+\S/.exec(prompt.label);
         expect(match, `prompt must start with "/command " plus an instruction: ${prompt.label}`).not.toBeNull();
         const command = match![1];
         expect(conversationCommands).toContain(command);
@@ -51,7 +51,7 @@ describe("active conversation quick prompts", () => {
     for (const copy of [en, zhCN]) {
       const byCommand = new Map(activeQuickPrompts(copy).map((prompt) => [prompt.label.split(" ")[0], prompt.label]));
       expect(byCommand.get("/commit")).toContain(copy === en ? "Draft" : "起草");
-      expect(byCommand.get("/mr")).toContain(copy === en ? "Draft" : "起草");
+      expect(byCommand.get("/create-mr")).toContain(copy === en ? "Draft" : "起草");
       expect(byCommand.get("/fix")).toContain(copy === en ? "Propose" : "给出");
     }
   });

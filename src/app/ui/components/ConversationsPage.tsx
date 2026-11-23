@@ -856,7 +856,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   };
   const quickPrompts = activeQuickPrompts(copy);
   // 输入框以 "/" 开头且还没有空格时展示指令补全；普通路径文本不会被误判。
-  const commandQuery = /^\/[a-z]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
+  const commandQuery = /^\/[a-z][a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
     ? []
     : conversationCommands

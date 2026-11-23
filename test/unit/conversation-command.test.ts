@@ -9,6 +9,11 @@ describe("conversation slash commands", () => {
       message: "检查这个文件的错误处理",
     });
     expect(parseConversationCommand("/commit")).toEqual({ command: "commit", message: "" });
+    // 含连字符的命令必须和单段命令一样可解析。
+    expect(parseConversationCommand("/create-mr 准备合并请求")).toEqual({
+      command: "create-mr",
+      message: "准备合并请求",
+    });
   });
 
   it("ignores unknown commands and ordinary text", () => {
@@ -18,12 +23,12 @@ describe("conversation slash commands", () => {
   });
 
   it("strips the command prefix for titles", () => {
-    expect(stripConversationCommand("/mr 准备合并请求")).toBe("准备合并请求");
+    expect(stripConversationCommand("/create-mr 准备合并请求")).toBe("准备合并请求");
     expect(stripConversationCommand("普通问题")).toBe("普通问题");
   });
 
   it("provides localized instructions for every command", () => {
-    for (const command of ["review", "explain", "fix", "test", "docs", "commit", "mr"] as const) {
+    for (const command of ["review", "explain", "fix", "test", "docs", "commit", "create-mr"] as const) {
       expect(getConversationCommandInstruction(command, "en")).toBeTruthy();
       expect(getConversationCommandInstruction(command, "zh-CN")).toBeTruthy();
     }

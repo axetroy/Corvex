@@ -69,7 +69,7 @@ export function activeQuickPrompts(copy: Copy): WelcomePrompt[] {
     { key: "fix", label: copy.quickPromptFix },
     { key: "docs", label: copy.quickPromptDocs },
     { key: "commit", label: copy.quickPromptCommit },
-    { key: "mr", label: copy.quickPromptMr },
+    { key: "create-mr", label: copy.quickPromptCreateMr },
   ];
 }
 
@@ -81,7 +81,7 @@ const commandDescriptionKeys: Record<ConversationCommand, keyof Copy> = {
   test: "commandDescTest",
   docs: "commandDescDocs",
   commit: "commandDescCommit",
-  mr: "commandDescMr",
+  "create-mr": "commandDescCreateMr",
 };
 
 export function conversationCommandDescription(copy: Copy, command: ConversationCommand): string {
