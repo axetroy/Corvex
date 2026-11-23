@@ -8,7 +8,7 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
-import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument } from "./agent/skills.js";
+import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument, SKILL_SEED_VERSION } from "./agent/skills.js";
 import {
   redactSensitiveText,
   sanitizeSensitiveText,
@@ -2581,9 +2581,19 @@ export class AppStore {
     this.transaction(() => {
       for (const document of defaultSkillDocuments) {
         const parsed = parseSkillDocument(document);
-        const exists = this.db.prepare("SELECT 1 FROM conversation_skills WHERE name=?").get(parsed.name);
-        if (exists) continue;
-        insert.run(randomUUID(), document, parsed.name, now, now);
+        const row = this.db.prepare("SELECT id,document,is_system FROM conversation_skills WHERE name=?")
+          .get(parsed.name) as { id: string; document: string; is_system: number } | undefined;
+        if (!row) {
+          insert.run(randomUUID(), document, parsed.name, now, now);
+          continue;
+        }
+        // 系统种子升级：旧版本模板刷新为新内容，但保留管理员的停用选择。
+        if (row.is_system !== 1 || row.document.includes(`corvex-seed-version: "${SKILL_SEED_VERSION}"`)) continue;
+        const previous = parseSkillDocument(row.document);
+        let next = document;
+        if (!previous.enabled) next = next.replace('metadata:\n', 'metadata:\n  corvex-enabled: "false"\n');
+        this.db.prepare("UPDATE conversation_skills SET document=?,enabled=?,updated_at=? WHERE id=?")
+          .run(next, previous.enabled ? 1 : 0, now, row.id);
       }
     });
   }

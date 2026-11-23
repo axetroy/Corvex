@@ -51,6 +51,22 @@ describe("SKILL.md skills", () => {
     }
   });
 
+  it("follows the mainstream bundled-skill structure", () => {
+    for (const document of defaultSkillDocuments) {
+      const parsed = parseSkillDocument(document);
+      // description 说明做什么 + 何时用，便于自动触发与菜单展示。
+      expect(parsed.description).toMatch(/Use when/i);
+      expect(parsed.quickLabel.length).toBeGreaterThan(0);
+      // 正文是可执行的工作流，而不是一句笼统指令。
+      expect(parsed.content).toMatch(/^# /);
+      expect(parsed.content).toMatch(/## When to use this skill/);
+      expect(parsed.content).toMatch(/## Workflow/);
+      expect(parsed.content).toMatch(/## Constraints/);
+      expect(parsed.content).toContain("$ARGUMENTS");
+      expect(parsed.content.length).toBeGreaterThan(500);
+    }
+  });
+
   it("validates names against the specification", () => {
     expect(isValidSkillName("create-mr")).toBe(true);
     expect(isValidSkillName("a")).toBe(true);

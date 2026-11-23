@@ -95,7 +95,14 @@ export function SkillManager({ copy }: { copy: Copy }) {
 
   const columns = [
     { title: copy.skillManagerName, dataIndex: "name", width: "18%" },
-    { title: copy.skillManagerDescription, dataIndex: "description", width: "32%" },
+    {
+      title: copy.skillManagerDescription,
+      dataIndex: "description",
+      width: "32%",
+      render: (value: string) => (
+        <span title={value}>{value.length > 90 ? `${value.slice(0, 90)}…` : value}</span>
+      ),
+    },
     {
       title: copy.skillManagerEnabled,
       dataIndex: "enabled",

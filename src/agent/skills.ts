@@ -91,6 +91,9 @@ export function expandSkillTemplate(content: string, args: string): string {
   return argument ? `${template}\n\n${argument}` : template;
 }
 
+/** 系统种子模板版本；升级时刷新旧文档，但保留管理员的停用选择。 */
+export const SKILL_SEED_VERSION = "2";
+
 function buildDocument(input: {
   name: string;
   description: string;
@@ -99,6 +102,7 @@ function buildDocument(input: {
   quickLabel?: string;
 }): string {
   const metadata = {
+    "corvex-seed-version": SKILL_SEED_VERSION,
     ...(input.quickAction ? { "corvex-quick-action": "true" } : {}),
     ...(input.quickLabel ? { "corvex-quick-label": input.quickLabel } : {}),
   };
@@ -123,48 +127,189 @@ export function ensureQuickActionMetadata(document: string): string {
   return `${document.slice(0, end)}\nmetadata:\n  corvex-quick-action: "true"${document.slice(end)}`;
 }
 
-/** 首次启动写入的系统技能：旧的七个斜杠命令，全部作为可编辑的 SKILL.md。 */
+/**
+ * 首次启动写入的系统技能。写法对齐主流 Agent 的 bundled skills：
+ * description 说明「做什么 + 何时用」并带触发关键词；正文按 When / Workflow /
+ * Output / Constraints 分节，给出可执行的步骤与边界，而不是一句笼统的指令。
+ */
 export const defaultSkillDocuments: readonly string[] = [
   buildDocument({
     name: "review",
-    description: "Review the current changes and report concrete issues",
-    content: "Answer as a code review this turn: read the relevant changes first, report only issues you can locate to a specific file or line, order them by severity, and give concrete suggestions. Say so explicitly when nothing is wrong.",
+    description: "Review code changes for bugs, regressions, security and maintainability issues, with file and line references. Use when the user asks to review, audit or check a diff, branch, merge request or specific files, or wants feedback on code quality.",
+    quickLabel: "Review changes",
     quickAction: true,
+    content: `# Code Review
+
+## When to use this skill
+- User asks to review, audit or check changes, a branch, an MR, or named files
+- User wants bugs, regressions, security or quality issues found before merging
+
+## Workflow
+1. Determine the scope from $ARGUMENTS. If empty, inspect the current conversation's saved changes with git_status / git_diff, or get_merge_request_changes for an MR.
+2. Read the affected files with read_file and surrounding context with search_text. Do not review from the diff alone when the surrounding code changes the meaning.
+3. Report only concrete issues you can locate to a specific file and line. For each: severity, location, why it is wrong, and a concrete fix.
+4. Order findings by severity (blocking → major → minor → nit). Separate confirmed problems from speculation.
+5. If nothing is wrong, say so explicitly and list what you checked.
+
+## Output format
+\`[severity] path:line — problem — suggested fix\`
+
+## Constraints
+- Never modify files, commit, push or post comments during a review.
+- Do not guess paths or line numbers; open the file first.
+- Keep findings actionable; skip style preferences unless they hide a real defect.`,
   }),
   buildDocument({
     name: "explain",
-    description: "Explain the repository structure and call flow",
-    content: "Answer as a code explanation this turn: describe the overall structure and call flow first, then explain key implementations layer by layer, separating facts from inference.",
+    description: "Explain how a repository or feature works: structure, call flow and key implementations, separating facts from inference. Use when the user asks what code does, how a feature works, or wants an architecture overview before changing it.",
+    quickLabel: "Explain code",
     quickAction: true,
+    content: `# Code Explanation
+
+## When to use this skill
+- User asks how something works, what a module does, or for an architecture overview
+- User is onboarding to an unfamiliar repository or preparing to change code
+
+## Workflow
+1. Identify the target from $ARGUMENTS. If empty, start from the repository root: read_dir / read_file on entry points and AGENTS.md.
+2. Map the overall structure first: main modules, their responsibilities and how control flows between them.
+3. Follow one representative path end to end with search_text / read_file. Name concrete files and symbols.
+4. Explain key implementations layer by layer. State observed facts separately from inference.
+5. End with the shortest path a newcomer should read to understand the feature.
+
+## Output format
+- Overview → call flow (numbered) → key files and symbols → inferred vs confirmed → suggested reading order.
+
+## Constraints
+- Quote paths and identifiers from the repository; never invent them.
+- Do not execute code or tests. Do not edit files.
+- If the codebase is ambiguous, say what you could not confirm.`,
   }),
   buildDocument({
     name: "fix",
-    description: "Propose a fix with impact and verification steps",
-    content: "Give a fix proposal and example code this turn only: do not modify repository files, commit or push; explain the impact and how to verify.",
+    description: "Propose a concrete fix with example code, impact analysis and verification steps, without changing files. Use when the user reports a bug, asks how to fix something, or wants a patch plan before applying it.",
+    quickLabel: "Propose a fix",
     quickAction: true,
+    content: `# Fix Proposal
+
+## When to use this skill
+- User reports a bug or failing behavior and asks for a fix
+- User wants to review a proposed change before it is applied
+
+## Workflow
+1. Restate the symptom and the expected behavior. Use $ARGUMENTS to narrow the target.
+2. Read the relevant files and trace the cause to a specific file and line. Confirm with evidence; do not guess.
+3. Give the minimal patch as example code with the exact file path.
+4. Explain the impact: what changes, what stays the same, and what could regress.
+5. Describe how to verify the fix using repository-relative reads or a narrow check. Never run test commands.
+
+## Output format
+- Root cause → proposed patch (code block) → impact → verification steps.
+
+## Constraints
+- Do not modify files, commit or push. This turn produces a proposal only.
+- If the cause cannot be confirmed, say so and list what evidence is missing.`,
   }),
   buildDocument({
     name: "test",
-    description: "Find coverage gaps and suggest test cases",
-    content: "Focus on tests this turn: point out coverage gaps and suggest concrete test cases and edge conditions; do not run test commands.",
+    description: "Analyze test coverage gaps and propose concrete test cases and edge conditions. Use when the user asks about tests, wants to know what is untested, or needs a test plan for a change. Never runs test commands.",
+    quickLabel: "Test coverage",
     quickAction: true,
+    content: `# Test Coverage Analysis
+
+## When to use this skill
+- User asks what is untested or wants a test plan for a feature or change
+- User wants concrete cases and edge conditions before writing tests
+
+## Workflow
+1. Identify the target from $ARGUMENTS. If empty, use the conversation's saved changes or the file the user last referenced.
+2. Read the implementation and the existing tests with read_file / search_text. Map behavior branches: happy path, error paths, boundaries and state transitions.
+3. List uncovered branches with file:line and explain why each matters.
+4. For each gap, propose a test case: setup, input, expected result and the edge condition it covers.
+5. Prioritize by risk: correctness and security first, then boundary and formatting cases.
+
+## Output format
+- Coverage gaps (file:line) → proposed cases with expected results → priority order.
+
+## Constraints
+- Do not run test commands or edit files. Suggest tests only.
+- Do not claim a branch is covered without reading the test file.`,
   }),
   buildDocument({
     name: "docs",
-    description: "Add or improve documentation for the relevant code",
-    content: "Focus on documentation this turn: add or improve explanations for the relevant code, keeping terminology consistent with existing docs.",
+    description: "Add or improve documentation for code and changes, keeping terminology consistent with existing docs. Use when the user asks to write, update or fix README, API docs, comments or guides for a repository or a specific change.",
+    quickLabel: "Improve docs",
     quickAction: true,
+    content: `# Documentation
+
+## When to use this skill
+- User asks to write or update README, guides, API docs or comments
+- A change introduces behavior that existing docs do not describe
+
+## Workflow
+1. Determine the target from $ARGUMENTS. If empty, use the conversation's saved changes as the scope.
+2. Read the existing documentation first: match its structure, tone and terminology. Reuse established terms instead of inventing new ones.
+3. Read the code being documented so every statement is verifiable.
+4. Write the addition or revision with a concrete example where the docs currently lack one. Keep it short and task-oriented.
+5. Point out any stale statements you found nearby, even if you did not change them.
+
+## Output format
+- Target file/section → proposed text → stale statements found.
+
+## Constraints
+- Do not edit files during this turn. Provide text the user can apply.
+- Do not document behavior you did not verify in the code.`,
   }),
   buildDocument({
     name: "commit",
-    description: "Draft a commit message from the current changes",
-    content: "Help prepare a commit message this turn: generate a concise subject and body outline from the current changes; do not commit.",
+    description: "Draft a concise commit message from the current changes: subject, body outline and scope. Use when the user asks for a commit message or wants to summarize a diff before committing. Never creates the commit.",
+    quickLabel: "Commit message",
     quickAction: true,
+    content: `# Commit Message Draft
+
+## When to use this skill
+- User asks for a commit message or wants a diff summarized for a commit
+- User wants to check whether a change is one logical commit or several
+
+## Workflow
+1. Inspect the current changes with git_status / git_diff and read the affected files. If $ARGUMENTS adds context, incorporate it.
+2. Identify the single logical change. If the diff mixes unrelated changes, say so and propose how to split it.
+3. Write a subject line in the imperative mood, under 72 characters, naming what changed and why.
+4. Add a short body: motivation, key decisions and any behavior change users should know about.
+5. Verify every claim against the diff. Do not mention files or behavior you did not see.
+
+## Output format
+\`subject\`
+
+\`body outline (2-5 bullets)\`
+
+## Constraints
+- Do not commit, stage or push. Produce text only.
+- No secrets, tokens or credentials in the message.`,
   }),
   buildDocument({
     name: "create-mr",
-    description: "Draft a merge request description from the current changes",
-    content: "Help prepare a merge request this turn: summarize purpose, key changes, testing and risks, and produce a ready-to-use MR description draft; do not create the MR.",
+    description: "Draft a merge request description from the current changes: purpose, key changes, test plan and risks. Use when the user asks for an MR description, PR body or change summary. Never creates the MR.",
+    quickLabel: "MR description",
     quickAction: true,
+    content: `# Merge Request Description
+
+## When to use this skill
+- User asks for an MR/PR description or wants to summarize a branch for review
+- A change is ready for review and needs context for reviewers
+
+## Workflow
+1. Inspect the conversation's saved changes with git_diff / git_log and read the affected files. Use $ARGUMENTS for the target branch or extra context.
+2. Summarize the purpose in one or two sentences: what problem this solves and why.
+3. List the key changes as short bullets tied to concrete files or behavior.
+4. Write a test plan: what was checked and how a reviewer can verify it. Do not claim tests were run.
+5. Call out risks, breaking changes, follow-ups and anything the reviewer should look at closely.
+
+## Output format
+- Purpose → key changes → test plan → risks / follow-ups.
+
+## Constraints
+- Do not create or update the MR, push branches, or post comments. Produce text only.
+- Do not invent test results or reviewers.`,
   }),
 ];
