@@ -2585,20 +2585,23 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 .conversation-quick-prompts {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 6px 14px 0;
-  overflow-x: auto;
 }
 
 .conversation-quick-prompts-label {
   flex: 0 0 auto;
+  padding-top: 5px;
   color: var(--conversation-muted);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .conversation-quick-prompts-list {
   display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   min-width: 0;
   gap: 6px;
 }
