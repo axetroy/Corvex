@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Popover, Typography } from "antd";
+import { SiGitlab } from "react-icons/si";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -101,7 +102,13 @@ export function RepositoryInfoPopover({
             ) : null}
           </dl>
           {webUrl ? (
-            <Button type="primary" href={webUrl} target="_blank" rel="noopener noreferrer">
+            <Button
+              type="primary"
+              href={webUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              icon={<SiGitlab aria-hidden="true" />}
+            >
               {copy.conversationRepositoryOpen}
             </Button>
           ) : null}
