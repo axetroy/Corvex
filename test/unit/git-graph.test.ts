@@ -27,6 +27,27 @@ describe("git graph layout", () => {
     expect(layout.laneCount).toBe(2);
   });
 
+  it("keeps the busiest branch continuous through a convergence", () => {
+    const layout = buildGitGraphLayout([
+      node("side2", ["side1"]),
+      node("side1", ["join"]),
+      node("main3", ["main2"]),
+      node("main2", ["main1"]),
+      node("main1", ["join"]),
+      node("join", ["root"]),
+      node("root"),
+    ]);
+    const bySha = new Map(layout.nodes.map((item) => [item.sha, item]));
+    // 主线在汇合点保持同一条泳道，并且排在最左侧。
+    expect(bySha.get("main3")?.lane).toBe(0);
+    expect(bySha.get("main1")?.lane).toBe(0);
+    expect(bySha.get("join")?.lane).toBe(0);
+    expect(bySha.get("root")?.lane).toBe(0);
+    // 先出现但较短的侧支移到右侧，汇入主线。
+    expect(bySha.get("side1")?.lane).toBe(1);
+    expect(layout.edges).toContainEqual({ from: "side1", to: "join", lane: 1, targetLane: 0, row: 1 });
+  });
+
   it("marks the pinned snapshot and conversation-only refs", () => {
     const layout = buildGitGraphLayout([
       node("a".repeat(40), [], ["conversations/c1"]),

@@ -30,25 +30,44 @@ export interface GitGraphLayout {
 }
 
 /**
- * 提交图谱布局：按 rev-list 给出的拓扑顺序分配泳道。
- * 当前节点复用已分配泳道，第一父提交继承该泳道，其余父提交分配新泳道；
- * 不在本页的节点不连线，由上层分页继续获取。
+ * 提交图谱布局：按 rev-list 的拓扑顺序分配泳道。
+ *
+ * 一个提交可能同时被多条分支当作父提交；先遇到的分支会先给它分配泳道，这会让
+ * 侧支「抢走」主线的延续，视觉上表现为汇合点处主线跳到旁边、侧支反而留在中间。
+ * 因此这里记录每条分支已落位的提交数作为权重：提交数更多的分支在争夺同一个父
+ * 提交时获胜，保证主线连续。最后按权重重排泳道编号，让主线始终排在最左侧。
  */
 export function buildGitGraphLayout(nodes: readonly GitGraphNode[], pinnedSha = ""): GitGraphLayout {
   const present = new Set(nodes.map((node) => node.sha));
   const laneOf = new Map<string, number>();
+  const claimWeight = new Map<string, number>();
+  const laneWeight: number[] = [];
   let nextLane = 0;
+  const newLane = () => {
+    const lane = nextLane++;
+    laneWeight[lane] = 0;
+    return lane;
+  };
 
   const laidOut = nodes.map((node, row) => {
     let lane = laneOf.get(node.sha);
-    if (lane === undefined) {
-      lane = nextLane++;
-      laneOf.set(node.sha, lane);
-    }
+    if (lane === undefined) lane = newLane();
+    laneWeight[lane] = (laneWeight[lane] ?? 0) + 1;
+    const ownWeight = laneWeight[lane];
+
     node.parents.forEach((parent, index) => {
-      if (!present.has(parent) || laneOf.has(parent)) return;
-      laneOf.set(parent, index === 0 ? lane! : nextLane++);
+      if (!present.has(parent)) return;
+      // 第二父提交已有泳道时沿用，不另开泳道。
+      if (index > 0 && laneOf.has(parent)) return;
+      const proposed = index === 0 ? lane! : newLane();
+      const weight = index === 0 ? ownWeight : 0;
+      const previous = claimWeight.get(parent);
+      if (previous === undefined || weight > previous) {
+        laneOf.set(parent, proposed);
+        claimWeight.set(parent, weight);
+      }
     });
+
     return {
       ...node,
       lane: lane!,
@@ -58,14 +77,26 @@ export function buildGitGraphLayout(nodes: readonly GitGraphNode[], pinnedSha = 
     };
   });
 
+  // 主线（权重最高的泳道）排在最左，侧支依次向右。
+  const orderedLanes = laneWeight
+    .map((weight, lane) => ({ lane, weight }))
+    .sort((a, b) => b.weight - a.weight || a.lane - b.lane)
+    .map(({ lane }) => lane);
+  const laneIndex = new Map(orderedLanes.map((lane, index) => [lane, index]));
+  const remap = (lane: number) => laneIndex.get(lane) ?? lane;
+  for (const node of laidOut) node.lane = remap(node.lane);
+
   const edges: GraphEdge[] = [];
   for (const node of laidOut) {
     const visibleParents = node.parents.filter((parent) => laneOf.has(parent));
     if (visibleParents.length) {
       for (const parent of visibleParents) {
         edges.push({
-          from: node.sha, to: parent, lane: node.lane,
-          targetLane: laneOf.get(parent)!, row: node.row,
+          from: node.sha,
+          to: parent,
+          lane: node.lane,
+          targetLane: remap(laneOf.get(parent)!),
+          row: node.row,
         });
       }
       continue;
@@ -74,17 +105,22 @@ export function buildGitGraphLayout(nodes: readonly GitGraphNode[], pinnedSha = 
     const next = laidOut[node.row + 1];
     if (next) {
       edges.push({
-        from: node.sha, to: next.sha, lane: node.lane,
-        targetLane: next.lane, row: node.row, implicit: true,
+        from: node.sha,
+        to: next.sha,
+        lane: node.lane,
+        targetLane: next.lane,
+        row: node.row,
+        implicit: true,
       });
     }
   }
 
+  const laneCount = Math.max(1, orderedLanes.length);
   return {
     nodes: laidOut,
     edges,
-    laneCount: Math.max(1, nextLane),
-    width: graphPadding * 2 + Math.max(1, nextLane) * graphLaneWidth,
+    laneCount,
+    width: graphPadding * 2 + laneCount * graphLaneWidth,
     height: graphPadding * 2 + nodes.length * graphRowHeight,
   };
 }
