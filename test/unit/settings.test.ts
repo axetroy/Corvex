@@ -303,12 +303,10 @@ describe("设置页与服务端设置键的一致性", () => {
 });
 
 describe("GitLab runtime settings", () => {
-  it("treats GitLab tokens as redacted settings", () => {
-    expect([...secretRuntimeSettingKeys]).toEqual(expect.arrayContaining([
-      "model_api_key",
-      "gitlab_read_token",
-      "gitlab_token",
-    ]));
+  it("keeps the OAuth client secret redacted and no longer stores PATs", () => {
+    expect([...secretRuntimeSettingKeys]).toContain("gitlab_oauth_client_secret");
+    expect([...secretRuntimeSettingKeys]).not.toContain("gitlab_read_token");
+    expect([...secretRuntimeSettingKeys]).not.toContain("gitlab_token");
   });
 
   it("accepts a compaction trigger percentage within 50-95", () => {

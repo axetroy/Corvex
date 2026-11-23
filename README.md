@@ -41,4 +41,4 @@ pnpm run typecheck
 pnpm run build
 ```
 
-Corvex uses a GitLab read token for API/repository reads and a write token when a user explicitly requests GitLab writes. No untrusted-code executor is included.
+Corvex performs every GitLab API and Git network operation with the signed-in user's OAuth token; it has no shared read/write PAT. GitLab write tools still require explicit user intent. No untrusted-code executor is included.

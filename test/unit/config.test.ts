@@ -212,18 +212,11 @@ describe("validateConfig", () => {
   it("applies the documented listener and GitLab URL environment overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-"));
     const configPath = join(root, "config.yaml");
-    const names = [
-      "CORVEX_LISTEN",
-      "CORVEX_GITLAB_BASE_URL",
-      "CORVEX_GITLAB_READ_TOKEN",
-      "CORVEX_GITLAB_TOKEN",
-    ] as const;
+    const names = ["CORVEX_LISTEN", "CORVEX_GITLAB_BASE_URL"] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
       process.env.CORVEX_LISTEN = "127.0.0.1:9090";
       process.env.CORVEX_GITLAB_BASE_URL = "https://gitlab.override.example";
-      process.env.CORVEX_GITLAB_READ_TOKEN = "read";
-      process.env.CORVEX_GITLAB_TOKEN = "write";
       await writeFile(
         configPath,
         JSON.stringify({
@@ -244,42 +237,27 @@ describe("validateConfig", () => {
     }
   });
 
-  it("loads optional credential fallbacks from the environment", async () => {
+  it("ignores the removed GitLab token environment variables", async () => {
     const root = await mkdtemp(join(tmpdir(), "corvex-config-role-"));
     const configPath = join(root, "config.yaml");
-    const names = [
-      "CORVEX_GITLAB_READ_TOKEN",
-      "CORVEX_GITLAB_TOKEN",
-    ] as const;
+    const names = ["CORVEX_GITLAB_READ_TOKEN", "CORVEX_GITLAB_TOKEN"] as const;
     const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     try {
       await writeFile(
         configPath,
         JSON.stringify({
-          gitlab: {
-            base_url: "https://gitlab.example.com",
-          },
+          gitlab: { base_url: "https://gitlab.example.com" },
           storage: { root, database: join(root, "state.db") },
           agent: { model: "test-model" },
         }),
       );
-      process.env.CORVEX_GITLAB_READ_TOKEN = "";
-      process.env.CORVEX_GITLAB_TOKEN = "write";
-      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "", writeToken: "write" },
-      });
-
       process.env.CORVEX_GITLAB_READ_TOKEN = "read";
-      await expect(loadConfig(configPath, "server")).resolves.toMatchObject({
-        gitlab: { readToken: "read", writeToken: "write" },
-        agent: { webEnabled: true, webBlockedHosts: [] },
-      });
-
-      process.env.CORVEX_GITLAB_READ_TOKEN = "";
-      process.env.CORVEX_GITLAB_TOKEN = "";
-      await expect(loadConfig(configPath, "storage")).resolves.toMatchObject({
-        gitlab: { readToken: "", writeToken: "" },
-      });
+      process.env.CORVEX_GITLAB_TOKEN = "write";
+      const server = await loadConfig(configPath, "server");
+      // GitLab 访问只使用当前登录用户的 OAuth token，配置层不再暴露任何 PAT。
+      expect(server.gitlab).not.toHaveProperty("readToken");
+      expect(server.gitlab).not.toHaveProperty("writeToken");
+      expect(server.agent).toMatchObject({ webEnabled: true, webBlockedHosts: [] });
     } finally {
       for (const name of names) {
         const value = original[name];

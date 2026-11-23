@@ -157,23 +157,19 @@ export class GitManager {
   private readonly mirrorRoot: string;
   private readonly workspaceRoot: string;
   private gitlabUrl: URL;
-  private token: string;
-  private writeToken: string;
   private readonly projectLocks = new Map<number, Promise<void>>();
 
-  constructor(root: string, gitlabBaseUrl: string, token: string, writeToken = "") {
+  constructor(root: string, gitlabBaseUrl: string) {
     if (!root.trim()) throw new Error("Git storage root is required");
     this.root = resolve(root);
     this.mirrorRoot = join(this.root, "mirrors");
     this.workspaceRoot = join(this.root, "workspaces");
     this.gitlabUrl = new URL("http://localhost");
-    this.token = "";
-    this.writeToken = "";
-    this.reconfigureGitLab(gitlabBaseUrl, token, writeToken);
+    this.reconfigureGitLab(gitlabBaseUrl);
   }
 
-  /** 运维台修改 GitLab 连接设置后更新镜像来源校验与凭据；现有镜像在下次使用时重新校验来源。 */
-  reconfigureGitLab(gitlabBaseUrl: string, token: string, writeToken: string): void {
+  /** 运维台修改 GitLab 地址后更新镜像来源校验；现有镜像在下次使用时重新校验来源。 */
+  reconfigureGitLab(gitlabBaseUrl: string): void {
     // 地址可在运维台设置；尚未配置时保留占位 URL，不会用它发起网络请求。
     if (gitlabBaseUrl.trim()) {
       let url: URL;
@@ -189,12 +185,6 @@ export class GitManager {
     } else {
       this.gitlabUrl = new URL("http://localhost");
     }
-    this.token = token;
-    this.writeToken = writeToken;
-  }
-
-  get writeEnabled(): boolean {
-    return this.writeToken.length > 0;
   }
 
   async initialize(): Promise<void> {
@@ -563,7 +553,7 @@ export class GitManager {
     ) {
       throw new Error("invalid GitLab branch name");
     }
-    if (!authToken) throw new Error("GitLab write token is not configured");
+    if (!authToken) throw new Error("the logged-in user's GitLab token is required");
     const mirror = join(this.mirrorRoot, `${projectId}.git`);
     if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
     const origin = (
@@ -977,10 +967,19 @@ export class GitManager {
   }
 
   /** 从已配置的本地镜像抓取对象；worktree 仍固定到当前提交，不自动改变 HEAD。 */
-  async fetchFromMirror(workspace: Workspace, signal?: AbortSignal): Promise<{ sha: string; fetched: boolean }> {
+  async fetchFromMirror(
+    workspace: Workspace,
+    signal?: AbortSignal,
+    authToken?: string,
+  ): Promise<{ sha: string; fetched: boolean }> {
     this.validateWorkspace(workspace);
     const before = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
-    await this.run(workspace.path, ["fetch", "--no-tags", "origin"], undefined, maxErrorOutput, signal, { timeoutMs: 30_000 });
+    await this.run(
+      workspace.path,
+      ["fetch", "--no-tags", "origin"],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 30_000, ...(authToken ? { authToken } : {}) },
+    );
     return { sha: before, fetched: true };
   }
 
@@ -1678,7 +1677,7 @@ export class GitManager {
     signal?: AbortSignal,
     options: GitRunOptions = {},
   ): Promise<GitResult> {
-    const env = this.gitEnvironment(options.authToken ?? this.token);
+    const env = this.gitEnvironment(options.authToken ?? "");
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error("git command timed out")),

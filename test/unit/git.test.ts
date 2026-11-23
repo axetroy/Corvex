@@ -658,7 +658,7 @@ describe("Git workflows", () => {
     await expect(manager.pushBranchToGitLab(1, sha, "../escape")).rejects.toThrow("invalid GitLab branch name");
     await expect(manager.pushBranchToGitLab(1, sha, "fix/a..b")).rejects.toThrow("invalid GitLab branch name");
     await expect(manager.pushBranchToGitLab(1, sha, "fix/a.lock")).rejects.toThrow("invalid GitLab branch name");
-    await expect(manager.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("write token is not configured");
+    await expect(manager.pushBranchToGitLab(1, sha, "fix/a")).rejects.toThrow("logged-in user's GitLab token is required");
 
     const writable = new GitManager(join(tmpdir(), "corvex-push-validation"), "https://gitlab.example.com", "read", "write");
     await expect(writable.pushBranchToGitLab(1, sha, "fix/a", undefined, "user-token")).rejects.toThrow("project mirror is not available");

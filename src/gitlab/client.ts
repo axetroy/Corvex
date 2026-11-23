@@ -378,41 +378,27 @@ function optionalString(source: Record<string, unknown>, key: string, maxLength:
 
 export class GitLabClient {
   private baseUrl: string;
-  private readToken: string;
-  private writeToken: string;
-  /** OAuth access token 必须用 Bearer；个人访问令牌沿用 PRIVATE-TOKEN。 */
-  private tokenKind: "private" | "bearer" = "private";
+  /** 当前登录用户的 OAuth access token；所有 GitLab 请求都必须带上它。 */
+  private token: string;
 
-  constructor(
-    baseUrl: string,
-    readToken: string,
-    writeToken: string,
-    private readonly requestTimeoutMs = 10_000,
-    tokenKind: "private" | "bearer" = "private",
-  ) {
+  constructor(baseUrl: string, token: string, private readonly requestTimeoutMs = 10_000) {
     if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = "";
-    this.readToken = "";
-    this.writeToken = "";
-    this.configure(baseUrl, readToken, writeToken, tokenKind);
+    this.token = "";
+    this.configure(baseUrl, token);
   }
 
-  /**
-   * 当前登录用户的 Git 凭据，供 GitManager 的 clone/fetch/push 使用。
-   * Git 操作必须与该用户绑定，不能退回运维台/宿主机上的全局令牌。
-   */
-  get gitCredentials(): { read: string; write: string } {
-    return { read: this.readToken, write: this.writeToken };
+  /** 当前登录用户的令牌，供 GitManager 的 clone/fetch/push 使用。 */
+  get authToken(): string {
+    return this.token;
   }
 
-  /** 运维台修改 GitLab 连接设置后立即生效；下一次请求使用新地址与凭据。 */
-  configure(baseUrl: string, readToken: string, writeToken: string, tokenKind: "private" | "bearer" = "private"): void {
-    this.tokenKind = tokenKind;
+  /** 运维台修改 GitLab 地址后立即生效；下一次请求使用新地址。 */
+  configure(baseUrl: string, token: string): void {
     if (!baseUrl.trim()) {
       // 地址可以在运维台设置：启动时尚未配置时保留空值，调用 API 会给出明确错误。
       this.baseUrl = "";
-      this.readToken = readToken;
-      this.writeToken = writeToken;
+      this.token = token;
       return;
     }
     let parsed: URL;
@@ -431,8 +417,7 @@ export class GitLabClient {
       throw new Error(`invalid GitLab base URL "${baseUrl}"`);
     }
     this.baseUrl = baseUrl.replace(/\/+$/, "");
-    this.readToken = readToken;
-    this.writeToken = writeToken;
+    this.token = token;
   }
 
   /** 所有 GitLab 请求都要求先配置根地址。 */
@@ -776,7 +761,7 @@ export class GitLabClient {
       });
       const response = await this.request(
         `/projects/${projectId}/merge_requests/${mrIid}/notes?${query}`,
-        this.readToken,
+        this.token,
         "GET",
         signal,
       );
@@ -841,7 +826,7 @@ export class GitLabClient {
     const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
     const response = await this.request(
       `/projects/${projectId}/merge_requests/${mrIid}/commits?${query}`,
-      this.readToken,
+      this.token,
       "GET",
       signal,
     );
@@ -905,7 +890,7 @@ export class GitLabClient {
       });
       const response = await this.request(
         `/projects/${projectId}/issues/${issueIid}/notes?${query}`,
-        this.readToken,
+        this.token,
         "GET",
         signal,
       );
@@ -1075,7 +1060,7 @@ export class GitLabClient {
   ): Promise<CreatedIssue> {
     let response: Response;
     try {
-      response = await this.request(path, this.writeToken, "POST", signal, form);
+      response = await this.request(path, this.token, "POST", signal, form);
     } catch (error) {
       throw new GitLabWriteError(`GitLab resource creation outcome is unknown: ${String(error)}`, error);
     }
@@ -1271,7 +1256,7 @@ export class GitLabClient {
   }
 
   private async getJson(path: string, signal?: AbortSignal): Promise<unknown> {
-    const response = await this.request(path, this.readToken, "GET", signal);
+    const response = await this.request(path, this.token, "GET", signal);
     const body = await this.successBody(response);
     try {
       return JSON.parse(new TextDecoder().decode(body)) as unknown;
@@ -1288,7 +1273,7 @@ export class GitLabClient {
   ): Promise<GitLabWriteReceipt> {
     let response: Response;
     try {
-      response = await this.request(path, this.writeToken, method, signal, form);
+      response = await this.request(path, this.token, method, signal, form);
     } catch (error) {
       throw new GitLabWriteError(`GitLab write outcome is unknown: ${String(error)}`, error);
     }
@@ -1325,9 +1310,7 @@ export class GitLabClient {
         response = await fetch(`${baseUrl}/api/v4${path}`, {
           method,
           headers: {
-            ...(this.tokenKind === "bearer"
-              ? { authorization: `Bearer ${token}` }
-              : { "PRIVATE-TOKEN": token }),
+            authorization: `Bearer ${token}`,
             ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}),
           },
           body: form,

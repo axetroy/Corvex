@@ -13,20 +13,20 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 }
 
 describe("GitLab credentials", () => {
-  it("exposes the logged-in user's tokens for git clone/fetch/push", () => {
-    const client = new GitLabClient("https://gitlab.example.com", "user-read", "user-write", 10_000, "bearer");
-    expect(client.gitCredentials).toEqual({ read: "user-read", write: "user-write" });
-    client.configure("https://gitlab.example.com", "rotated-read", "rotated-write", "bearer");
-    expect(client.gitCredentials).toEqual({ read: "rotated-read", write: "rotated-write" });
+  it("exposes only the logged-in user's token for git clone/fetch/push", () => {
+    const client = new GitLabClient("https://gitlab.example.com", "user-token");
+    expect(client.authToken).toBe("user-token");
+    client.configure("https://gitlab.example.com", "rotated-token");
+    expect(client.authToken).toBe("rotated-token");
   });
 });
 
 describe("GitLab base URL", () => {
   it("can be configured after startup through the console", async () => {
-    const client = new GitLabClient("", "read", "write");
+    const client = new GitLabClient("", "read");
     await expect(client.listProjects("", 1)).rejects.toThrow("GitLab base URL is not configured");
-    expect(() => client.configure("https://gitlab.example.com", "read", "write")).not.toThrow();
-    expect(() => new GitLabClient("", "", "")).not.toThrow();
+    expect(() => client.configure("https://gitlab.example.com", "read")).not.toThrow();
+    expect(() => new GitLabClient("", "")).not.toThrow();
   });
 });
 
@@ -51,7 +51,7 @@ describe("GitLab authentication modes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "oauth-token", "oauth-token", 10_000, "bearer");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "oauth-token");
       await expect(client.listProjects("", 1)).resolves.toEqual([]);
       expect(authorization).toBe("Bearer oauth-token");
       expect(privateToken).toBe("");
@@ -78,7 +78,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.listProjects("Corvex", 2)).resolves.toEqual([{
         id: 5,
         name: "Corvex",
@@ -105,7 +105,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.getBranch(5, "feature/topic")).resolves.toEqual({
         name: "feature/topic",
         commit: { id: "a".repeat(40) },
@@ -136,7 +136,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       // 提交元数据按类型收窄后透传；空白标题等无效值被丢弃。
       await expect(client.listBranches(5, "ma", 2)).resolves.toEqual([
         {
@@ -181,7 +181,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.getIssueComments(5, 9, 2)).resolves.toEqual([
         { id: 2, author: "alice", createdAt: "2026-01-02", body: "newest", truncated: false },
         { id: 3, author: "bob", createdAt: "2026-01-01", body: "older", truncated: false },
@@ -204,7 +204,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const comments = await client.getIssueComments(5, 9, 1);
       expect(comments[0]).toMatchObject({ body: "x".repeat(4000), truncated: true });
     } finally {
@@ -221,7 +221,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.postIssueNote(5, 9, "Issue acknowledgement")).resolves.toEqual({
         status: 201,
         resourceId: 43,
@@ -239,7 +239,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.postNote(1, 2, "comment text")).resolves.toEqual({
         status: 201,
         resourceId: 42,
@@ -279,7 +279,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await client.updateMergeRequest(5, 9, { title: "Retitled" });
       expect(requests).toEqual([
         "GET /api/v4/projects/5/merge_requests/9",
@@ -323,7 +323,7 @@ describe("GitLab write receipts", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.updateMergeRequest(5, 9, { title: "Retitled" })).resolves.toEqual({
         status: 200,
         resourceId: 42,
@@ -340,7 +340,7 @@ describe("GitLab write receipts", () => {
   });
 
   it("rejects empty or invalid metadata updates before making a request", async () => {
-    const client = new GitLabClient("https://gitlab.example.com", "read", "write-token");
+    const client = new GitLabClient("https://gitlab.example.com", "read");
     await expect(client.updateMergeRequest(5, 9, {})).rejects.toThrow("at least one");
     await expect(client.updateMergeRequest(5, 9, { title: "   " })).rejects.toThrow("title must contain");
     await expect(client.updateMergeRequest(5, 9, { title: "x".repeat(256) })).rejects.toThrow("title must contain");
@@ -352,7 +352,7 @@ describe("GitLab write receipts", () => {
     const server = createServer((request) => request.socket.destroy());
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.postNote(1, 2, "comment text")).rejects.toBeInstanceOf(GitLabWriteError);
       await expect(client.postNote(1, 2, "comment text")).rejects.toMatchObject({ outcomeUnknown: true });
     } finally {
@@ -367,7 +367,7 @@ describe("GitLab read retries", () => {
     let requestToken = "";
     const server = createServer((request, response) => {
       requestUrl = request.url ?? "";
-      requestToken = request.headers["private-token"] ?? "";
+      requestToken = String(request.headers.authorization ?? "");
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify([
         {
@@ -395,7 +395,7 @@ describe("GitLab read retries", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read-token", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read-token");
       await expect(client.getMergeRequestComments(5, 9, 2)).resolves.toMatchObject([
         { id: 8, body: "Latest reply", author: "reviewer" },
         { id: 6, body: "Earlier question", author: "author" },
@@ -403,7 +403,7 @@ describe("GitLab read retries", () => {
       expect(requestUrl).toContain("/projects/5/merge_requests/9/notes?");
       expect(requestUrl).toContain("order_by=created_at");
       expect(requestUrl).toContain("sort=desc");
-      expect(requestToken).toBe("read-token");
+      expect(requestToken).toBe("Bearer read-token");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
@@ -422,7 +422,7 @@ describe("GitLab read retries", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.getProject(1)).resolves.toMatchObject({ id: 1 });
       expect(attempts).toBe(2);
     } finally {
@@ -444,7 +444,7 @@ describe("GitLab read retries", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.getProject(1)).resolves.toMatchObject({ id: 1 });
       expect(attempts).toBe(2);
     } finally {
@@ -461,7 +461,7 @@ describe("GitLab read retries", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const request = client.getProject(1);
       await expect(request).rejects.toBeInstanceOf(GitLabApiError);
       await expect(request).rejects.toMatchObject({
@@ -498,7 +498,7 @@ describe("GitLab read retries", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write-token");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.postNote(1, 2, "comment text")).rejects.toThrow("GitLab API returned 503");
       expect(attempts).toBe(1);
       await expect(client.updateMergeRequest(1, 2, { title: "Retitled" })).rejects.toThrow("GitLab API returned 503");
@@ -534,16 +534,16 @@ describe("GitLabClient runtime reconfiguration", () => {
   it("uses the configured base URL and token on the next request", async () => {
     let authorization = "";
     const server = createServer((request, response) => {
-      authorization = String(request.headers["private-token"] ?? "");
+      authorization = String(request.headers.authorization ?? "");
       response.writeHead(200, { "content-type": "application/json" });
       response.end("[]");
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient("https://gitlab.example.com", "read", "write");
-      client.configure(`http://127.0.0.1:${port}`, "new-read", "new-write");
+      const client = new GitLabClient("https://gitlab.example.com", "read");
+      client.configure(`http://127.0.0.1:${port}`, "new-read");
       await expect(client.listProjects("anything", 1)).resolves.toEqual([]);
-      expect(authorization).toBe("new-read");
+      expect(authorization).toBe("Bearer new-read");
     } finally {
       server.close();
     }
@@ -568,7 +568,7 @@ describe("GitLab issue and MR state updates", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await client.updateMergeRequest(7, 3, { stateEvent: "close" });
       await client.updateIssue(7, 9, { title: "New title", stateEvent: "close" });
       expect(calls).toHaveLength(2);
@@ -599,7 +599,7 @@ describe("GitLab MR commit pagination", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const page = await client.getMergeRequestCommits(7, 3, 1, 2);
       expect(url).toContain("/api/v4/projects/7/merge_requests/3/commits");
       expect(url).toContain("per_page=2");
@@ -613,7 +613,7 @@ describe("GitLab MR commit pagination", () => {
   });
 
   it("rejects an oversized page size before calling GitLab", async () => {
-    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    const client = new GitLabClient("https://gitlab.example.com", "read");
     await expect(client.getMergeRequestCommits(7, 3, 1, 21)).rejects.toThrow("page size must be between 1 and 20");
   });
 });
@@ -645,7 +645,7 @@ describe("GitLab discovery and MR changes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const issues = await client.listIssues(7, { state: "all", search: "parser", page: 2, perPage: 10 });
       expect(issuesUrl).toContain("/api/v4/projects/7/issues?");
       expect(issuesUrl).toContain("state=all");
@@ -682,7 +682,7 @@ describe("GitLab discovery and MR changes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const changes = await client.getMergeRequestChanges(7, 3);
       expect(changes.changes).toHaveLength(3);
       expect(changes.truncated).toBe(false);
@@ -693,7 +693,7 @@ describe("GitLab discovery and MR changes", () => {
   });
 
   it("rejects invalid discovery parameters before calling GitLab", async () => {
-    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    const client = new GitLabClient("https://gitlab.example.com", "read");
     await expect(client.listIssues(7, { perPage: 21 })).rejects.toThrow("page size must be between 1 and 20");
     await expect(client.listMergeRequests(7, { page: 0 })).rejects.toThrow("page must be between 1 and 10000");
     await expect(client.getMergeRequestChanges(0, 3)).rejects.toThrow("must be positive");
@@ -712,7 +712,7 @@ describe("GitLab repository tree and file reads", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const result = await client.listRepositoryTree(7, { path: "", ref: "a".repeat(40), perPage: 20 });
       expect(url).toContain(`/api/v4/projects/7/repository/tree?`);
       expect(url).toContain(`ref=${"a".repeat(40)}`);
@@ -734,7 +734,7 @@ describe("GitLab repository tree and file reads", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       const file = await client.getRepositoryFile(7, "src/a.ts", "b".repeat(40));
       expect(url).toContain("/api/v4/projects/7/repository/files/src%2Fa.ts?");
       expect(url).toContain(`ref=${"b".repeat(40)}`);
@@ -745,7 +745,7 @@ describe("GitLab repository tree and file reads", () => {
   });
 
   it("rejects unsafe repository paths", async () => {
-    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    const client = new GitLabClient("https://gitlab.example.com", "read");
     await expect(client.getRepositoryFile(7, "../secret", "a".repeat(40))).rejects.toThrow("invalid repository-relative path");
     await expect(client.getRepositoryFile(7, "", "a".repeat(40))).rejects.toThrow("path is required");
   });
@@ -769,7 +769,7 @@ describe("GitLab issue and MR lifecycle writes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.createIssue(7, {
         title: "Bug", description: "details", labels: ["bug", "p1"], assigneeIds: [5], milestoneId: 9,
       })).resolves.toEqual({ iid: 11, webUrl: "http://gitlab.test/issues/11" });
@@ -797,7 +797,7 @@ describe("GitLab issue and MR lifecycle writes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await client.deleteIssue(7, 9);
       await client.deleteMergeRequest(7, 3);
       await client.mergeMergeRequest(7, 3, { squash: true, shouldRemoveSourceBranch: false });
@@ -827,7 +827,7 @@ describe("GitLab issue and MR lifecycle writes", () => {
     });
     const port = await listen(server);
     try {
-      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read", "write");
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
       await expect(client.listMergeRequestDiscussions(7, 3)).resolves.toEqual({
         discussions: [
           { id: "abc", resolved: false, body: "Please fix", author: "reviewer" },
@@ -841,9 +841,10 @@ describe("GitLab issue and MR lifecycle writes", () => {
   });
 
   it("validates create inputs", async () => {
-    const client = new GitLabClient("https://gitlab.example.com", "read", "write");
+    const client = new GitLabClient("https://gitlab.example.com", "read");
     await expect(client.createIssue(7, { title: "" })).rejects.toThrow("title");
     await expect(client.createIssue(7, { title: "ok", labels: ["bad\nlabel"] })).rejects.toThrow("labels");
     await expect(client.createMergeRequest(7, { title: "ok", sourceBranch: "feat", targetBranch: "main", labels: ["x".repeat(101)] })).rejects.toThrow("labels");
   });
 });
+

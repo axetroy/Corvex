@@ -29,8 +29,6 @@ The `operations` section is retained only for backward compatibility. Console au
 | YAML key | Example | Required / limits | Description |
 |---|---|---|---|
 | `gitlab.base_url` | — | Optional bootstrap fallback | GitLab instance root. `CORVEX_GITLAB_BASE_URL` provides a startup fallback; the value shown in the console Settings page is the effective one after the first save. |
-| `gitlab.read_token` | — | Optional | GitLab read token, supplied through `CORVEX_GITLAB_READ_TOKEN` and normally saved in the console Settings page. Used for API reads, project discovery and authenticated Git fetches. |
-| `gitlab.write_token` | — | Optional | GitLab write token, supplied through `CORVEX_GITLAB_TOKEN` and normally saved in the console Settings page. Used only by explicit GitLab write tools. |
 | `gitlab.oauth_client_id` | — | Optional | OAuth application client ID, entered on the first-run `/setup` page. |
 | `gitlab.oauth_client_secret` | — | Optional | OAuth application client secret, entered on `/setup` and stored encrypted in SQLite. |
 | `gitlab.oauth_redirect_uri` | — | Optional | OAuth callback URL, entered on `/setup`; must point back to the console (for example `https://corvex.example.com/auth/gitlab/callback`). |
@@ -129,8 +127,6 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `agent_response_stall_timeout` | 0–3,600 seconds | Abort a turn when the model produces no output (headers, text or tool calls) for this long; the console shows a waiting notice while idle. `0` disables the watchdog. Default `180`. |
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
 | `gitlab_base_url` | HTTP(S) URL | GitLab instance root. |
-| `gitlab_read_token` | String | GitLab read token; blank keeps the saved value. |
-| `gitlab_token` | String | GitLab write token; blank keeps the saved value. |
 | `gitlab_oauth_client_id` | String | OAuth client ID. |
 | `gitlab_oauth_client_secret` | String | OAuth client secret; blank keeps the saved value. |
 | `gitlab_oauth_redirect_uri` | HTTP(S) URL | OAuth callback URL. |
@@ -139,7 +135,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `conversation_workspace_ttl_minutes` | 1–14,400 | Idle worktree TTL. |
 | `conversation_workspace_max` | 1–200 | Cached worktree limit. |
 
-The model name, connection URL, API key, context window and output cap are managed in Settings → Model rather than as editable setting keys; older stored overrides (`model`, `model_base_url`, `model_api_key`, `context_window`, `max_output_tokens`) are read for upgrade compatibility but hidden from the console.
+There are no shared GitLab read/write token settings: every GitLab API and Git network operation uses the signed-in user's OAuth token. The model name, connection URL, API key, context window and output cap are managed in Settings → Model rather than as editable setting keys; older stored overrides (`model`, `model_base_url`, `model_api_key`, `context_window`, `max_output_tokens`) are read for upgrade compatibility but hidden from the console.
 
 Only bootstrap settings remain file/environment-only: `server.listen`/`read_timeout`/`shutdown_timeout`, `storage.root`, `storage.database`, and the fallback model connection values. Each field shows its effective value when the runtime adjusted it: the runtime derives `max_input_tokens`, clamps the tool-result checkpoint to four tool-output rounds, and raises the compaction reserve to its safe floor, so an entered value may intentionally differ from what the process uses.
 
@@ -149,8 +145,6 @@ Only bootstrap settings remain file/environment-only: `server.listen`/`read_time
 |---|---|
 | `CORVEX_LISTEN` | Overrides `server.listen` |
 | `CORVEX_GITLAB_BASE_URL` | Overrides `gitlab.base_url` |
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab read token; optional startup fallback, normally saved in console Settings |
-| `CORVEX_GITLAB_TOKEN` | GitLab write token; optional startup fallback, normally saved in console Settings |
 | `CORVEX_MODEL_BASE_URL` | Overrides `agent.base_url` |
 | `CORVEX_MODEL_NAME` | Overrides `agent.model` |
 | `CORVEX_DATABASE` | Overrides `storage.database` |

@@ -11,7 +11,7 @@ Persistent conversations are the only execution path. See [Architecture](./archi
 
 - Node.js 26.12.1 and pnpm 12.4.1 to run from source. Install the locked dependencies with `pnpm install --frozen-lockfile`.
 - A GitLab instance and an OAuth2 application so users can sign in to the console. Each user only sees projects visible to their own GitLab account.
-- A GitLab read token for API reads and authenticated repository fetches, and (optionally) a write token for the GitLab write tools. Both are saved in the console Settings page.
+- GitLab OAuth2 credentials for console sign-in. All GitLab API and Git network operations run as the signed-in user, using that user's token; the service has no shared PAT.
 - The `git` executable on the Server host. The supplied Docker image includes it.
 - An OpenAI-compatible Chat Completions endpoint and an API key for a provider that needs one. Pi SDK provides the agent runtime; model providers and keys are managed in the console.
 - Persistent writable storage for the SQLite database, Git mirrors and conversation worktrees. Keep it across restarts.
@@ -27,16 +27,14 @@ pnpm run build
 pnpm start -- init
 ```
 
-Copy `configs/config.example.yaml` to `configs/config.yaml`. The template is intentionally small: it contains only the listener and storage paths. The GitLab base URL, read/write tokens, model providers, budgets, tool switches and retention values are managed in the console and stored in SQLite; the config file supplies their initial values only.
+Copy `configs/config.example.yaml` to `configs/config.yaml`. The template is intentionally small: it contains only the listener and storage paths. The GitLab base URL, OAuth application, model providers, budgets, tool switches and retention values are managed in the console and stored in SQLite; the config file supplies their initial values only.
 
 ```sh
-# Optional startup fallbacks; prefer saving these in the console Settings page.
+# Optional startup fallback; the effective value comes from console Settings.
 # CORVEX_GITLAB_BASE_URL=https://gitlab.example.com
-# CORVEX_GITLAB_READ_TOKEN=your-read-token
-# CORVEX_GITLAB_TOKEN=your-write-token
 ```
 
-No GitLab credentials, OAuth credentials or model API key are required at startup. Use a read token with only the permissions you need and a separate write token only if you want the agent to perform GitLab writes. Refer to the [configuration reference](./configuration) for every setting and its limits.
+No GitLab PAT, OAuth credentials or model API key are required at startup. GitLab access is always performed with the token of the user signed in to the console, so permissions are exactly that user's GitLab permissions. Refer to the [configuration reference](./configuration) for every setting and its limits.
 
 ## 2. Start the server
 

@@ -35,7 +35,7 @@ describe("queued conversation follow-ups", () => {
     store.finishConversationTurn(created.turnId, "Original answer", "test-model");
     store.enqueueFollowUp(created.conversationId, "first follow-up");
     store.enqueueFollowUp(created.conversationId, "second follow-up");
-    const runner = new ConversationRunner(config, store, {} as GitLabClient, createCorvexHooks());
+    const runner = new ConversationRunner(config, store, createCorvexHooks());
     const db = store;
     const started: string[] = [];
     const runTurn = vi.spyOn(runner, "runTurn").mockImplementation(async (turnId) => {
@@ -74,7 +74,7 @@ describe("queued conversation follow-ups", () => {
       request: "Original turn",
     });
     store.enqueueFollowUp(created.conversationId, "retry me");
-    const runner = new ConversationRunner(config, store, {} as GitLabClient, createCorvexHooks());
+    const runner = new ConversationRunner(config, store, createCorvexHooks());
     const runTurn = vi.spyOn(runner, "runTurn").mockResolvedValue(true);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const gitlab = {
@@ -88,3 +88,4 @@ describe("queued conversation follow-ups", () => {
     expect(warning).toHaveBeenCalledWith("queued conversation follow-up could not start", expect.anything());
   });
 });
+

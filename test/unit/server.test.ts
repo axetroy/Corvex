@@ -8,7 +8,6 @@ import { ConversationRunner } from "../../src/app/conversation-runner.js";
 
 import type { CorvexConfig } from "../../src/config/config.js";
 import { AppStore } from "../../src/store.js";
-import { GitLabClient } from "../../src/gitlab/client.js";
 import { createTokenCipher } from "../../src/tokens.js";
 import { createCorvexHooks } from "../../src/app/hooks.js";
 
@@ -159,13 +158,7 @@ describe("CorvexServer", () => {
     });
     const cleanupHook = vi.fn(() => notifyCleanup());
     hooks.storageCleanup.tap({ name: "test-cleanup", stage: 80 }, cleanupHook);
-    const application = new CorvexServer(
-      config,
-      store,
-      new GitLabClient(config.gitlab.baseUrl, "read", "write"),
-      undefined,
-      hooks,
-    );
+    const application = new CorvexServer(config, store, undefined, hooks);
     const running = application.run(controller.signal);
     try {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -466,9 +459,6 @@ describe("CorvexServer", () => {
   it("exposes and updates runtime context settings over the operations API", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // 令牌可以用环境变量兜底，测试用 stubEnv 注入并在结束时还原。
-    vi.stubEnv("CORVEX_GITLAB_READ_TOKEN", "read");
-    vi.stubEnv("CORVEX_GITLAB_TOKEN", "write");
     const root = await mkdtemp(join(tmpdir(), "corvex-settings-"));
     const configPath = join(root, "config.yaml");
     // 模型密钥在控制台保存；保存设置时按 Server 角色校验。
@@ -486,12 +476,7 @@ describe("CorvexServer", () => {
     const store = await AppStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
     const controller = new AbortController();
-    const application = new CorvexServer(
-      config,
-      store,
-      new GitLabClient(config.gitlab.baseUrl, "read", "write"),
-      configPath,
-    );
+    const application = new CorvexServer(config, store, configPath);
     const running = application.run(controller.signal);
     try {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -564,41 +549,18 @@ describe("CorvexServer", () => {
       expect(keepSecret.status).toBe(200);
       expect(config.agent.apiKey).toBe("super-secret-key");
 
-      // GitLab 令牌同样只在 Web 保存；留空表示保留已保存值。
-      const credentialsWrite = await fetch(`${base}/api/ops/settings`, {
+      // 已移除的 GitLab PAT 字段即使被提交也只会被忽略，不再进入配置或审计。
+      const removedTokens = await fetch(`${base}/api/ops/settings`, {
         method: "PUT",
         headers: { ...authHeaders, "content-type": "application/json" },
         body: JSON.stringify({
-          settings: {
-            gitlab_read_token: "read-from-console",
-            gitlab_token: "write-from-console",
-          },
+          settings: { gitlab_read_token: "read-from-console", gitlab_token: "write-from-console" },
         }),
       });
-      expect(credentialsWrite.status).toBe(200);
-      const credentialsBody = await credentialsWrite.json() as typeof initialBody;
-      expect(credentialsBody.overrides.gitlab_read_token).toBe("••••••");
-      expect(config.gitlab.readToken).toBe("read-from-console");
-      expect(config.gitlab.writeToken).toBe("write-from-console");
-
-      // 显式留空的敏感字段不会覆盖已保存值。
-      const blankCredentials = await fetch(`${base}/api/ops/settings`, {
-        method: "PUT",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({
-          settings: { gitlab_read_token: "", gitlab_token: "" },
-        }),
-      });
-      expect(blankCredentials.status).toBe(200);
-      expect(config.gitlab.readToken).toBe("read-from-console");
-
-      const keepCredentials = await fetch(`${base}/api/ops/settings`, {
-        method: "PUT",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ settings: { context_window: 200_000 } }),
-      });
-      expect(keepCredentials.status).toBe(200);
-      expect(config.gitlab.readToken).toBe("read-from-console");
+      expect(removedTokens.status).toBe(400);
+      expect((await removedTokens.json() as { error: string }).error).toContain("unknown setting");
+      expect(config.gitlab).not.toHaveProperty("readToken");
+      expect(config.gitlab).not.toHaveProperty("writeToken");
 
       // 覆盖项是整份替换：显式提交空对象时，未提交的键回退到配置文件的初始值。
       const reset = await fetch(`${base}/api/ops/settings`, {
@@ -610,11 +572,7 @@ describe("CorvexServer", () => {
       const resetBody = await reset.json() as typeof initialBody;
       // 密钥留空始终沿用已保存值，其它覆盖项被清空。
       expect(resetBody.overrides).toMatchObject({ model_api_key: "••••••" });
-      expect(Object.keys(resetBody.overrides).filter((key) => ![
-        "model_api_key",
-        "gitlab_read_token",
-        "gitlab_token",
-      ].includes(key))).toEqual([]);
+      expect(Object.keys(resetBody.overrides).filter((key) => key !== "model_api_key")).toEqual([]);
       expect(resetBody.settings).toMatchObject({ context_window: 131_072, summary_enabled: true });
       expect(config.agent.contextWindow).toBe(131_072);
 
@@ -764,7 +722,7 @@ describe("CorvexServer", () => {
       },
     };
     const controller = new AbortController();
-    const application = new CorvexServer(config, store, new GitLabClient(config.gitlab.baseUrl, "read", "write"));
+    const application = new CorvexServer(config, store);
     const running = application.run(controller.signal);
     try {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -806,3 +764,4 @@ describe("CorvexServer", () => {
     }
   });
 });
+

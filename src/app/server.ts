@@ -54,7 +54,6 @@ export class CorvexServer {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store: AppStore,
-    private readonly gitlab: GitLabClient,
     /** 配置文件路径；提供时 Agent 控制台可在运行时覆盖上下文设置并持久化。 */
     configPath?: string,
     hooks: CorvexHooks = createCorvexHooks(),
@@ -63,7 +62,7 @@ export class CorvexServer {
     this.address = parseListenAddress(config.server.listen);
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
-    this.conversations = new ConversationRunner(config, store, gitlab, this.hooks);
+    this.conversations = new ConversationRunner(config, store, this.hooks);
     // 启动恢复的排队轮次没有 HTTP 请求传入信号，统一用 Server 的关闭信号中止。
     this.conversations.setShutdownSignal(this.conversationAbort.signal);
     // 默认行为也走钩子：认证会话解析与设置热更新都可被插件扩展或替换。
@@ -74,11 +73,7 @@ export class CorvexServer {
       return user ? this.oauth.refresh(user) : undefined;
     });
     this.hooks.settingsApplied.tap("runners", (applied) => {
-      this.conversations.reconfigureGitLab(
-        applied.gitlab.baseUrl,
-        applied.gitlab.readToken,
-        applied.gitlab.writeToken,
-      );
+      this.conversations.reconfigureGitLab(applied.gitlab.baseUrl);
     });
     // 默认清理步骤全部通过钩子接入，插件可在任意 stage 追加自己的清理。
     // 每个步骤自行捕获错误写入 context.errors，避免一个失败阻断后续步骤。
@@ -167,7 +162,7 @@ export class CorvexServer {
         const saved = this.store.readUser(userId, this.cipher);
         if (!saved) return undefined;
         const user = await this.oauth.refresh(saved);
-        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken, user.accessToken, 10_000, "bearer");
+        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken);
       }).catch((error: unknown) => {
         console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
       });
@@ -212,15 +207,15 @@ export class CorvexServer {
     return {
       config: this.config,
       store: this.store,
-      gitlab: this.gitlab,
       conversations: this.conversations,
       oauth: this.oauth,
       hooks: this.hooks,
       settings: this.settings,
       gitlabForRequest: (request: FastifyRequest) => {
         const user = currentUser(request);
-        if (!user) return this.gitlab;
-        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken, user.accessToken, 10_000, "bearer");
+        // 受保护路由已经校验登录态；这里再兜一层，确保绝不产生无用户凭据的 GitLab 请求。
+        if (!user) throw new Error("a signed-in user is required for GitLab access");
+        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken);
       },
       conversationStreams: this.conversationStreams,
       startConversationTurn: (turnId, gitlab, responseLanguage) => {

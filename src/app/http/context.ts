@@ -16,7 +16,6 @@ import type { SettingsService } from "../settings-service.js";
 export interface OpsContext {
   readonly config: CorvexConfig;
   readonly store: AppStore;
-  readonly gitlab: GitLabClient;
   readonly conversations: ConversationRunner;
   readonly settings: SettingsService;
   /** GitLab OAuth 服务；用于当前用户信息与登录态。 */

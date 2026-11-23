@@ -19,7 +19,7 @@ The default config path is `configs/config.yaml`; pass `--config /path/to/config
 
 ## Docker Compose
 
-1. Copy `.env.example` to `.env` only for optional startup fallbacks (GitLab read/write tokens). Prefer saving GitLab credentials in the console Settings page. Keep this file private and do not commit it. OAuth credentials and model API keys are configured in the console, not in `.env`.
+1. Copy `.env.example` to `.env` only for optional bootstrap values (listener, storage, GitLab base URL). Keep this file private and do not commit it. There are no shared GitLab tokens: OAuth credentials and model API keys are configured in the console, and every GitLab call uses the signed-in user's token.
 2. Copy `configs/config.example.yaml` to `configs/config.yaml`. The template only contains the listener and storage paths; set the GitLab base URL, tokens, model providers and OAuth application in the console. The console searches every project visible to the signed-in user's GitLab token.
 3. Start the Server:
 
@@ -102,7 +102,7 @@ The Server logs OAuth sign-ins, conversation creation, turn start and completion
 | A user sees no projects | Project search uses that user's GitLab token; check the token's scopes and project visibility. |
 | A turn fails immediately | Confirm a model provider and model are configured and activated, and that the API key and Base URL are valid. |
 | A turn becomes `stale` | The branch moved or the pinned snapshot changed; send the message again to use the current revision. |
-| The Server cannot clone a project | Check GitLab network access, read token permissions, project visibility, and that the Server host has Git installed. |
+| The Server cannot clone a project | Check GitLab network access, the signed-in user's token permissions, project visibility, and that the Server host has Git installed. |
 | `readyz` returns `503` | Check the database path, persistent volume mount, and filesystem permissions. |
 
 ## Git storage cleanup

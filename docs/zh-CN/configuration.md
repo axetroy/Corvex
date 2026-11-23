@@ -34,12 +34,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `gitlab.oauth_client_secret` | 对应的 Secret；接口不回显，留空表示保留已保存值。 |
 | `gitlab.oauth_redirect_uri` | 回调地址，例如 `https://corvex.example.com/auth/gitlab/callback`，须与 GitLab 应用登记一致。 |
 
-以下凭据是可选的启动兜底；建议在设置页保存。密钥字段不会通过接口回显，留空表示保留已保存值。
-
-| 变量 | 用途 |
-|---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | 可选启动兜底。GitLab API 读取、项目/分支发现和 Git 仓库抓取。 |
-| `CORVEX_GITLAB_TOKEN` | 可选启动兜底。系统级 GitLab 写入连接；对话的写入由登录用户自己的令牌执行。 |
+不再提供共享的 GitLab 读/写 Token：所有 GitLab API 请求与 Git 网络操作都使用当前登录用户的 OAuth 令牌。OAuth 凭据在设置页保存；密钥字段不会通过接口回显，留空表示保留已保存值。
 
 ## 按用户 GitLab 登录
 
@@ -104,7 +99,7 @@ Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_read_token`、`gitlab_token`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 
@@ -114,8 +109,6 @@ Pi Session 不开放内建 shell、编辑或写入工具。`read_file` 只读取
 
 | 变量 | 对应配置或用途 |
 |---|---|
-| `CORVEX_GITLAB_READ_TOKEN` | GitLab 读取令牌，可选启动兜底，通常在设置页保存 |
-| `CORVEX_GITLAB_TOKEN` | GitLab 写入令牌，可选启动兜底，通常在设置页保存 |
 | `CORVEX_GITLAB_BASE_URL` | 覆盖 `gitlab.base_url` |
 | `CORVEX_MODEL_BASE_URL` | 覆盖 `agent.base_url` |
 | `CORVEX_MODEL_NAME` | 覆盖 `agent.model` |

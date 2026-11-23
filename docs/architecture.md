@@ -61,7 +61,7 @@ SQLite uses WAL mode, a single open connection, and a 5-second busy timeout. Kee
 ## Security boundaries and limitations
 
 - Authorization lives in Corvex code: GitLab OAuth2 login, per-user GitLab tokens for console calls, and explicit user intent for every GitLab write. The console's project scope comes from the logged-in user's GitLab token, not a static allowlist.
-- Use a read token for API/repository reads and a separate write token only if the conversation needs GitLab writes. Do not give the service an administrator token.
+- Every GitLab API and Git network call uses the signed-in user's OAuth token; the service has no shared read/write PAT. Grants come from that user's GitLab permissions.
 - Every turn pins the branch head SHA and re-verifies it before worktree preparation and GitLab writes. Repository content, filenames and model output are untrusted; validation is not a substitute for human review.
 - There is no shell, test runner or automatic application of changes to a GitLab branch. Model prompts may contain source code; review the model provider's data handling and your organization's policies before enabling it.
 - The service implements no webhook surface: it does not accept Note Hooks, push hooks or merge-request lifecycle events.

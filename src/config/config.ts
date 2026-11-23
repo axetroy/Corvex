@@ -20,8 +20,6 @@ export interface CorvexConfig {
   };
   gitlab: {
     baseUrl: string;
-    readToken: string;
-    writeToken: string;
     /** GitLab OAuth Application；留空时登录入口不可用，但站点仍可启动。 */
     oauthClientId: string;
     oauthClientSecret: string;
@@ -93,8 +91,6 @@ const defaults: CorvexConfig = {
   operations: { username: "", password: "" },
   gitlab: {
     baseUrl: "",
-    readToken: "",
-    writeToken: "",
     oauthClientId: "",
     oauthClientSecret: "",
     oauthRedirectUri: "",
@@ -215,8 +211,7 @@ function parseConfig(raw: unknown): CorvexConfig {
     gitlab: {
       baseUrl:
         process.env.CORVEX_GITLAB_BASE_URL ?? string(gitlab.base_url, defaults.gitlab.baseUrl),
-      readToken: process.env.CORVEX_GITLAB_READ_TOKEN ?? "",
-      writeToken: process.env.CORVEX_GITLAB_TOKEN ?? "",
+      // GitLab 访问只使用当前登录用户的 OAuth token，不再读取运维台/环境变量中的 PAT。
       oauthClientId: "",
       oauthClientSecret: "",
       oauthRedirectUri: "",

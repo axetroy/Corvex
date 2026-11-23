@@ -88,8 +88,6 @@ jobs:
             --publish 127.0.0.1:8080:8080 \
             --mount "type=volume,source=$volume,target=/data/corvex" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/test/fixtures/server-smoke.yaml,target=/etc/corvex/config.yaml,readonly" \
-            --env CORVEX_GITLAB_TOKEN=ci-write-token \
-            --env CORVEX_GITLAB_READ_TOKEN=ci-read-token \
             --env CORVEX_STORAGE_ROOT=/data/corvex \
             --env CORVEX_DATABASE=/data/corvex/state/corvex.db \
             corvex-smoke --config /etc/corvex/config.yaml server

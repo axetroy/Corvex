@@ -3,7 +3,6 @@ import { applyRuntimeSettingRows } from "./config/settings.js";
 import { CorvexServer } from "./app/server.js";
 import { AppStore } from "./store.js";
 import { errorMessage } from "./errors.js";
-import { GitLabClient } from "./gitlab/client.js";
 import { GitManager } from "./git/manager.js";
 
 interface CliOptions {
@@ -131,11 +130,7 @@ async function runStorageCleanup(args: string[]): Promise<void> {
   try {
     // 控制台里改过的运行时设置存在同一个 SQLite 里，CLI 也要遵守。
     applyRuntimeSettingRows(config, store.listRuntimeSettings());
-    const manager = new GitManager(
-      config.storage.root,
-      config.gitlab.baseUrl,
-      config.gitlab.readToken,
-    );
+    const manager = new GitManager(config.storage.root, config.gitlab.baseUrl);
     const startedAt = new Date().toISOString();
     const plan = await manager.cleanupStorage(
       store.pendingProjectIds(),
@@ -185,17 +180,12 @@ async function run(): Promise<void> {
     return;
   }
   const store = await AppStore.open(config.storage.database);
-  const gitlab = new GitLabClient(
-    config.gitlab.baseUrl,
-    config.gitlab.readToken,
-    config.gitlab.writeToken,
-  );
   const controller = new AbortController();
   const onSignal = () => controller.abort();
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    await new CorvexServer(config, store, gitlab, options.configPath).run(controller.signal);
+    await new CorvexServer(config, store, options.configPath).run(controller.signal);
   } finally {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);

@@ -26,13 +26,11 @@ pnpm run build
 pnpm start -- init
 ```
 
-复制 `configs/config.example.yaml` 为 `configs/config.yaml`。配置文件只需填写启动必需项（监听地址、存储路径）；GitLab 地址、OAuth 凭据、读/写令牌和模型都在安装页或运维台设置页写入 SQLite。可选的环境变量兜底：
+复制 `configs/config.example.yaml` 为 `configs/config.yaml`。配置文件只需填写启动必需项（监听地址、存储路径）；GitLab 地址、OAuth 凭据和模型都在安装页或运维台设置页写入 SQLite。不再需要共享 GitLab 读/写令牌：所有 GitLab 操作都使用当前登录用户的 OAuth 令牌。可选的环境变量兜底：
 
 ```sh
 # 可选启动兜底；设置页保存的值优先。
 # CORVEX_GITLAB_BASE_URL=https://gitlab.example.com
-# CORVEX_GITLAB_READ_TOKEN=读取令牌
-# CORVEX_GITLAB_TOKEN=写入令牌
 # CORVEX_MODEL_BASE_URL=https://api.openai.com/v1
 # CORVEX_MODEL_NAME=your-model-name
 ```

@@ -14,10 +14,9 @@ describe("CLI environment file", () => {
         gitlab: { base_url: "https://gitlab.example.com" },
         storage: { root, database: join(root, "state.db") },
       }));
-      await writeFile(envPath, "CORVEX_GITLAB_READ_TOKEN=from-file\nCORVEX_GITLAB_TOKEN=from-file\n");
+      await writeFile(envPath, "CORVEX_LISTEN=127.0.0.1:9090\n");
       const env = { ...process.env };
-      delete env.CORVEX_GITLAB_READ_TOKEN;
-      delete env.CORVEX_GITLAB_TOKEN;
+      delete env.CORVEX_LISTEN;
       const output = execFileSync(
         process.execPath,
         [

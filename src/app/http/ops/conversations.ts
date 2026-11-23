@@ -365,8 +365,12 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
 
   // Git 图谱快捷操作：只允许在该会话没有在途轮次时执行。
   for (const [action, run] of [
-    ["pull", (id: string) => ctx.conversations.gitPull(id)],
-    ["push", (id: string) => ctx.conversations.gitPush(id)],
+    ["pull", (id: string, token: string) => ctx.conversations.gitPull(id, token)],
+    ["push", (id: string, token: string) => {
+      // 推送到会话 ref 是纯本地镜像操作，但仍要求已登录用户才能进入该路由。
+      void token;
+      return ctx.conversations.gitPush(id);
+    }],
   ] as const) {
     app.post(`/api/ops/conversations/:id/git/${action}`, async (request, reply) => {
       const conversationId = idParam((request.params as { id: string }).id);
@@ -381,7 +385,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         return;
       }
       try {
-        sendJson(reply, 200, await run(conversationId));
+        sendJson(reply, 200, await run(conversationId, ctx.gitlabForRequest(request).authToken));
       } catch (error) {
         sendJson(reply, 400, { error: errorMessage(error) });
       }

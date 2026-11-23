@@ -82,8 +82,6 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   // GitLab 连接：Server 每次请求时读取。
   // 留空表示尚未配置 GitLab；与 config 层一致，只在非空时校验 URL。
   { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500, allowEmpty: true },
-  { key: "gitlab_read_token", section: "gitlab", field: "readToken", type: "string", maxLength: 2_000, allowEmpty: true },
-  { key: "gitlab_token", section: "gitlab", field: "writeToken", type: "string", maxLength: 2_000, allowEmpty: true },
   // GitLab OAuth：由安装页面写入，三者必须同时配置。
   { key: "gitlab_oauth_client_id", section: "gitlab", field: "oauthClientId", type: "string", maxLength: 500, allowEmpty: true },
   { key: "gitlab_oauth_client_secret", section: "gitlab", field: "oauthClientSecret", type: "string", maxLength: 2_000, allowEmpty: true },
@@ -100,8 +98,6 @@ const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [
 /** 写入 SQLite 但绝不回显或写入审计日志的设置键。 */
 export const secretRuntimeSettingKeys = new Set([
   "model_api_key",
-  "gitlab_read_token",
-  "gitlab_token",
   "gitlab_oauth_client_secret",
 ]);
 

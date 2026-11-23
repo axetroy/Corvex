@@ -62,18 +62,12 @@ export class ConversationRunner {
   constructor(
     private readonly config: CorvexConfig,
     private readonly store: AppStore,
-    private readonly gitlab: GitLabClient,
     private readonly hooks: CorvexHooks,
   ) {
-    this.repo = new GitManager(
-      config.storage.root,
-      config.gitlab.baseUrl,
-      config.gitlab.readToken,
-      config.gitlab.writeToken,
-    );
+    this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl);
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
-    this.agent = new PiAgent(config, store, this.repo, gitlab, this.hooks);
+    this.agent = new PiAgent(config, store, this.repo, undefined, this.hooks);
     // LLM 精炼标题是默认实现；插件可用更高优先级的 tap 覆盖。
     this.hooks.conversationTitleRefine.tapPromise({ name: "llm-summary", stage: 100 }, async (input) => {
       const result = await this.agent.generate(
@@ -91,17 +85,16 @@ export class ConversationRunner {
     });
   }
 
-  /** 运维台修改 GitLab 连接设置后同步重建对话侧 Git 客户端。 */
-  reconfigureGitLab(baseUrl: string, readToken: string, writeToken: string): void {
-    this.gitlab.configure(baseUrl, readToken, writeToken);
-    this.repo.reconfigureGitLab(baseUrl, readToken, writeToken);
+  /** 运维台修改 GitLab 地址后同步更新镜像来源校验；认证始终使用当前用户 token。 */
+  reconfigureGitLab(baseUrl: string): void {
+    this.repo.reconfigureGitLab(baseUrl);
   }
 
   /** 领取并执行一轮对话；轮次已被领取或不存在时返回 false。 */
   async runTurn(
     turnId: string,
     signal: AbortSignal,
-    gitlab?: GitLabClient,
+    gitlab: GitLabClient,
     responseLanguage?: ResponseLanguage,
     drainFollowUps = true,
   ): Promise<boolean> {
@@ -122,9 +115,9 @@ export class ConversationRunner {
       if (active) {
         const config = structuredClone(this.config);
         applyActiveModel(config, active);
-        agent = new PiAgent(config, this.store, this.repo, gitlab ?? this.gitlab, this.hooks);
+        agent = new PiAgent(config, this.store, this.repo, gitlab, this.hooks);
       }
-      await this.execute(turn, controller.signal, gitlab ?? this.gitlab, language, agent, steer);
+      await this.execute(turn, controller.signal, gitlab, language, agent, steer);
       await callAsyncHook(this.hooks.conversationAfterTurn, turn);
     } finally {
       steer.close();
@@ -251,7 +244,7 @@ export class ConversationRunner {
       createBranch: (name) => this.repo.createBranch(workspace, name, signal),
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
       checkout: (name) => this.repo.checkoutBranch(workspace, name, signal),
-      pull: () => this.repo.fetchFromMirror(workspace, signal),
+      pull: () => this.repo.fetchFromMirror(workspace, signal, authToken),
       merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
       commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message, turnId),
       push: async () => {
@@ -324,7 +317,7 @@ export class ConversationRunner {
   }
 
   /** 控制台快捷操作：从本地镜像抓取远端更新。 */
-  async gitPull(conversationId: string): Promise<{ sha: string; fetched: boolean }> {
+  async gitPull(conversationId: string, authToken: string): Promise<{ sha: string; fetched: boolean }> {
     const conversation = this.store.getConversation(conversationId);
     if (!conversation) throw new Error("conversation not found");
     const workspace: Workspace = {
@@ -333,7 +326,8 @@ export class ConversationRunner {
       path: join(this.config.storage.root, "workspaces", String(conversation.projectId), conversationWorkspaceName(conversationId)),
       headSha: this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "",
     };
-    return this.repo.fetchFromMirror(workspace);
+    if (!authToken) throw new Error("the logged-in user's GitLab token is required");
+    return this.repo.fetchFromMirror(workspace, undefined, authToken);
   }
 
   /** 控制台快捷操作：把 worktree 改动保存到会话 ref（不推送 GitLab 分支）。 */
@@ -587,8 +581,9 @@ export class ConversationRunner {
           const client = gitlab ??
             (conversation.ownerUserId && clientForUser
               ? await clientForUser(conversation.ownerUserId)
-              : undefined) ??
-            this.gitlab;
+              : undefined);
+          // 不允许回退到全局凭据：拿不到当前用户令牌时保留队列项，等下次再试。
+          if (!client) throw new Error("the conversation owner's GitLab token is unavailable");
           const headSha = (await client.getBranch(conversation.projectId, conversation.targetBranch, signal)).commit.id;
           const created = this.store.addConversationMessage(conversationId, {
             ownerUserId: conversation.ownerUserId,
@@ -833,7 +828,7 @@ export class ConversationRunner {
           repositoryCloneUrl(this.config.gitlab.baseUrl, project),
           turn.headSha,
           signal,
-          gitlab.gitCredentials.read,
+          gitlab.authToken,
         ),
         (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha }),
       );
@@ -915,7 +910,7 @@ export class ConversationRunner {
               steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal, gitlab.gitCredentials.write) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal, gitlab.authToken) }
                 : {}),
             },
             workspace.path,
