@@ -773,6 +773,28 @@ export class GitManager {
     });
   }
 
+  /**
+   * 只删除会话改动 ref，保留轮次 ref 与 worktree。
+   * publish 成功后改动已进入 GitLab，不再是「未发布改动」，Changes 视图应回到空状态。
+   */
+  async clearConversationChangesRef(
+    projectId: number,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) return;
+    await this.run(
+      this.mirrorRoot,
+      ["--git-dir", mirror, "update-ref", "-d", conversationChangesRef(conversationId)],
+      undefined,
+      maxErrorOutput,
+      signal,
+      { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+  }
+
   /** 删除一个对话的常驻 worktree；目录不存在时视为已清理。 */
   async removeConversationWorkspace(workspace: Workspace, signal?: AbortSignal): Promise<void> {
     if (workspace.projectId <= 0 || !conversationWorkspacePattern.test(workspace.workspaceName)) {

@@ -220,6 +220,25 @@ describe("AppStore", () => {
     expect(() => store.setUserAdmin(second.id, false)).toThrow("at least one administrator");
   });
 
+  it("persists the conversation sync base independently of the turn snapshot", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First turn",
+    });
+    expect(store.getConversation(created.conversationId)?.baseSha).toBe("");
+    const updated = "f".repeat(40);
+    store.setConversationBaseSha(created.conversationId, updated);
+    expect(store.getConversation(created.conversationId)?.baseSha).toBe(updated);
+    // 推进基线不应改变轮次快照，也不应把对话排到列表最前。
+    expect(store.getConversation(created.conversationId)?.messages[0]?.headSha).toBe("a".repeat(40));
+    expect(() => store.setConversationBaseSha(created.conversationId, "short")).toThrow("base SHA is invalid");
+  });
+
   it("serializes conversation turns and reflects retry and cancellation states", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

@@ -130,4 +130,56 @@ describe("Git push recovery", () => {
     await expect(manager.pushBranchToGitLab(7, rebased, "fix/asar", undefined, "token"))
       .resolves.toMatchObject({ branch: "fix/asar", sha: rebased });
   }, 30_000);
+
+  it("allows a second publish in the same turn once the sync base advances", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "corvex-base-advance-"));
+    const reposRoot = join(dir, "repos");
+    const root = join(dir, "storage");
+    await mkdir(reposRoot, { recursive: true });
+    const remote = join(reposRoot, "project.git");
+    await run("git", ["init", "-q", "--bare", remote]);
+    await run("git", ["--git-dir", remote, "config", "http.receivepack", "true"]);
+    const { port, close } = await startGitHttp(reposRoot);
+    cleanup.push(close);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const url = `${baseUrl}/project.git`;
+
+    const seed = join(dir, "seed");
+    await run("git", ["clone", "-q", url, seed]);
+    await run("git", ["-C", seed, "config", "user.email", "test@example.com"]);
+    await run("git", ["-C", seed, "config", "user.name", "test"]);
+    const baseSha = await commitAll(seed, "a.txt", "base\n");
+    await run("git", ["-C", seed, "push", "-q", "origin", "master"]);
+
+    const manager = new GitManager(root, baseUrl);
+    await manager.initialize();
+    const conversationId = "c3333333-3333-4333-8333-333333333333";
+    const workspace = await manager.prepareConversationWorkspace(7, conversationId, url, baseSha);
+    await run("git", ["-C", workspace.path, "config", "user.email", "test@example.com"]);
+    await run("git", ["-C", workspace.path, "config", "user.name", "test"]);
+
+    // 第一次「写测试 → commit → publish」。
+    await writeFile(join(workspace.path, "first.test.ts"), "first\n");
+    const first = await manager.saveConversationChanges(workspace, conversationId, undefined, "add first tests");
+    expect(first).toBeDefined();
+    await expect(manager.pushBranchToGitLab(7, first!.sha, "master", undefined, "token"))
+      .resolves.toMatchObject({ branch: "master", sha: first!.sha });
+
+    // 模拟 Runner 的 publish 成功后推进基线：基线前进 + 清掉会话 ref。
+    workspace.headSha = first!.sha;
+    await manager.clearConversationChangesRef(7, conversationId);
+
+    // 第二次写入必须以新基线为父提交，否则 push 会与第一次的提交分叉而被拒。
+    await writeFile(join(workspace.path, "second.test.ts"), "second\n");
+    const second = await manager.saveConversationChanges(workspace, conversationId, undefined, "add second tests");
+    expect(second).toBeDefined();
+    const parent = (await run("git", ["-C", workspace.path, "rev-parse", `${second!.sha}^`], { encoding: "utf8" })).stdout.trim();
+    expect(parent).toBe(first!.sha);
+    await expect(manager.pushBranchToGitLab(7, second!.sha, "master", undefined, "token"))
+      .resolves.toMatchObject({ branch: "master", sha: second!.sha });
+
+    // 远端最终停在第二个提交，整轮无需 sync/rebase。
+    const remoteHead = (await run("git", [`--git-dir=${remote}`, "rev-parse", "refs/heads/master"], { encoding: "utf8" })).stdout.trim();
+    expect(remoteHead).toBe(second!.sha);
+  }, 30_000);
 });

@@ -84,6 +84,11 @@ export interface ConversationSummary {
   targetBranch: string;
   /** 该对话的模式；决定允许的能力（当前统一为可读可写的 `gitlab`）。 */
   mode: ConversationMode;
+  /**
+   * 会话当前与远端同步到的提交，也是本地未发布改动的基线。
+   * 只 commit 时保持不变（改动仍处于「未发布」状态）；成功 publish 到目标分支后前进到该提交。
+   */
+  baseSha: string;
   createdAt: string;
   updatedAt: string;
   /** 该对话的轮次总数（每条助手回复对应一轮）。 */

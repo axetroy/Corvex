@@ -15,6 +15,7 @@ import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } fro
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { withGitToolBudget } from "../agent/git/budget.js";
+import { resolveTurnBaseSha } from "./conversation-base.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
@@ -263,15 +264,42 @@ export class ConversationRunner {
     return { writeFile, editFile, deleteFile, moveFile, copyFile };
   }
 
-  /** 把 Git 工具绑定到当前会话的 worktree、项目镜像与固定快照。 */
-  private gitTools(workspace: Workspace, conversationId: string, turnId: string, headSha: string, signal?: AbortSignal, authToken?: string): GitToolAdapter {
+  /**
+   * 把 Git 工具绑定到当前会话的 worktree、项目镜像与同步基线。
+   *
+   * publish 成功后把基线推进到已发布的提交：本轮后续 commit 才会以它为父提交并保持快进，
+   * 否则同一轮内第二次 push 必然非快进。只有推送到会话目标分支才推进，且失败不影响发布结果。
+   */
+  private gitTools(
+    workspace: Workspace,
+    conversationId: string,
+    turnId: string,
+    targetBranch: string,
+    signal?: AbortSignal,
+    authToken?: string,
+  ): GitToolAdapter {
+    const onPublished = async (sha: string, branch: string): Promise<void> => {
+      if (branch !== targetBranch) return;
+      try {
+        this.store.setConversationBaseSha(conversationId, sha);
+        // worktree 的父提交基线同步前进；本轮后续 saveConversationChanges 以它为父提交。
+        workspace.headSha = sha;
+        // 改动已经进入 GitLab，不再是未发布改动：清掉会话 ref，Changes 视图回到空状态。
+        await this.repo.clearConversationChangesRef(workspace.projectId, conversationId, signal);
+      } catch (error) {
+        // 发布本身已经成功，基线同步失败只记日志，不把成功报成失败。
+        console.warn("advance conversation base SHA failed", {
+          conversationId, branch, sha, error: errorMessage(error),
+        });
+      }
+    };
     const adapter: GitToolAdapter = {
       status: () => this.repo.getWorkspaceStatus(workspace, signal),
       log: (limit, path) => this.repo.getCommitLog(workspace, limit, path, signal),
       show: (sha, path) => this.repo.showCommit(workspace, sha, path, signal),
       diff: (path) => this.repo.getWorkspaceDiff(workspace, path, signal),
-      // worktree 已由 Runner 准备到固定快照；这里只返回当前位置，不克隆任意 URL。
-      clone: async () => ({ path: workspace.path, headSha }),
+      // worktree 已由 Runner 准备到同步基线；这里只返回当前位置，不克隆任意 URL。
+      clone: async () => ({ path: workspace.path, headSha: workspace.headSha }),
       branches: () => this.repo.listBranches(workspace, signal),
       createBranch: (name) => this.repo.createBranch(workspace, name, signal),
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
@@ -284,10 +312,18 @@ export class ConversationRunner {
         const result = await this.repo.saveConversationChanges(workspace, conversationId, signal, undefined, turnId);
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
-      pushBranch: (sha, branch) => this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal, authToken),
-      publish: (branch, message) => this.repo.publishToGitLabBranch(
-        workspace.projectId, conversationId, workspace, branch, message, signal, authToken,
-      ),
+      pushBranch: async (sha, branch) => {
+        const result = await this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal, authToken);
+        await onPublished(result.sha, branch);
+        return result;
+      },
+      publish: async (branch, message) => {
+        const result = await this.repo.publishToGitLabBranch(
+          workspace.projectId, conversationId, workspace, branch, message, signal, authToken,
+        );
+        await onPublished(result.sha, branch);
+        return result;
+      },
       rebase: (onto) => this.repo.rebaseWorktree(workspace, onto, signal),
       cherryPick: (sha) => this.repo.cherryPickWorktree(workspace, sha, signal),
       revert: (sha) => this.repo.revertWorktreeCommit(workspace, sha, signal),
@@ -338,7 +374,7 @@ export class ConversationRunner {
       projectId: conversation.projectId,
       workspaceName: conversationWorkspaceName(conversationId),
       path: join(this.config.storage.root, "workspaces", String(conversation.projectId), conversationWorkspaceName(conversationId)),
-      headSha: this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "",
+      headSha: conversation.baseSha || this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha || "",
     };
     try {
       const [status, branch] = await Promise.all([
@@ -359,7 +395,7 @@ export class ConversationRunner {
       projectId: conversation.projectId,
       workspaceName: conversationWorkspaceName(conversationId),
       path: join(this.config.storage.root, "workspaces", String(conversation.projectId), conversationWorkspaceName(conversationId)),
-      headSha: this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "",
+      headSha: conversation.baseSha || this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha || "",
     };
     if (!authToken) throw new Error("the logged-in user's GitLab token is required");
     return this.repo.fetchFromMirror(workspace, undefined, authToken);
@@ -369,7 +405,7 @@ export class ConversationRunner {
   async gitPush(conversationId: string): Promise<{ sha: string; saved: boolean }> {
     const conversation = this.store.getConversation(conversationId);
     if (!conversation) throw new Error("conversation not found");
-    const expectedSha = this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha ?? "";
+    const expectedSha = conversation.baseSha || this.store.getConversationTurns(conversationId)?.turns.at(-1)?.headSha || "";
     const saved = await this.repo.saveConversationChangesById(conversation.projectId, conversation.id, expectedSha);
     return saved ? { sha: saved.sha, saved: true } : { sha: expectedSha, saved: false };
   }
@@ -847,6 +883,16 @@ export class ConversationRunner {
         );
         return;
       }
+      // 基线是「本地未发布改动的父提交」，与只用于过期检测的轮次快照分开维护：
+      // 没有未发布改动时，远端快照就是新基线；有改动时保留原基线，直到成功 publish 才前进。
+      const conversation = this.store.getConversation(turn.conversationId);
+      if (!conversation) {
+        this.store.failConversationTurn(turn.turnId, "stale", "The conversation no longer exists.");
+        return;
+      }
+      const unpublished = await this.repo.getConversationChanges(turn.projectId, turn.conversationId, signal);
+      const baseSha = resolveTurnBaseSha(conversation.baseSha, turn.headSha, Boolean(unpublished));
+      if (baseSha !== conversation.baseSha) this.store.setConversationBaseSha(turn.conversationId, baseSha);
       const project = await traceExecutionStep(
         this.store,
         stepContext,
@@ -859,12 +905,12 @@ export class ConversationRunner {
         this.store,
         stepContext,
         "git.prepare_conversation_workspace",
-        { projectId: turn.projectId, conversationId: turn.conversationId, expectedHeadSha: turn.headSha },
+        { projectId: turn.projectId, conversationId: turn.conversationId, expectedHeadSha: baseSha },
         () => this.repo.prepareConversationWorkspace(
           turn.projectId,
           turn.conversationId,
           repositoryCloneUrl(this.config.gitlab.baseUrl, project),
-          turn.headSha,
+          baseSha,
           signal,
           gitlab.authToken,
         ),
@@ -951,7 +997,7 @@ export class ConversationRunner {
               steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.headSha, signal, gitlab.authToken) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, signal, gitlab.authToken) }
                 : {}),
             },
             workspace.path,

@@ -598,6 +598,40 @@ describe("Git workflows", () => {
     expect(await git(restored.path, "rev-parse", "HEAD")).toBe(rebased.sha);
   }, 30_000);
 
+  it("clears only the conversation ref on publish, keeping turn history and the worktree", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-clear-ref-"));
+    const root = join(directory, "storage");
+    const source = join(directory, "source");
+    await mkdir(source);
+    await git(source, "init", "--initial-branch=main");
+    await git(source, "config", "user.name", "Corvex Test");
+    await git(source, "config", "user.email", "corvex@example.test");
+    await writeFile(join(source, "a.txt"), "original\n");
+    await git(source, "add", "a.txt");
+    await git(source, "commit", "-m", "base");
+    const baseSha = await git(source, "rev-parse", "HEAD");
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "--mirror", source, mirror]);
+    await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "https://gitlab.example.com/g/p.git"]);
+
+    const manager = new GitManager(root, "https://gitlab.example.com");
+    const conversationId = "3c4d5e6f-7081-492a-b3c4-d5e6f708192a";
+    const workspace = await manager.prepareConversationWorkspace(7, conversationId, "https://gitlab.example.com/g/p.git", baseSha);
+    await writeFile(join(workspace.path, "a.txt"), "edited\n");
+    const saved = await manager.saveConversationChanges(workspace, conversationId, undefined, "edit", "turn-1");
+    expect(saved).toBeDefined();
+
+    await manager.clearConversationChangesRef(7, conversationId);
+    expect(await manager.getConversationChanges(7, conversationId)).toBeUndefined();
+    // 轮次 ref 是历史记录，不能随会话 ref 一起清掉。
+    expect((await manager.getConversationTurnChanges(7, conversationId, "turn-1")).files[0]?.patch).toContain("+edited");
+    // worktree 仍在保存的提交上，下一轮直接用新基线准备即可。
+    expect(await git(workspace.path, "rev-parse", "HEAD")).toBe(saved!.sha);
+    const restored = await manager.prepareConversationWorkspace(7, conversationId, "https://gitlab.example.com/g/p.git", saved!.sha);
+    expect(await readFile(join(restored.path, "a.txt"), "utf8")).toBe("edited\n");
+  });
+
   it("rebases and cherry-picks commits in a bound worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-history-"));
     const root = join(directory, "storage");

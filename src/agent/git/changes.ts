@@ -32,7 +32,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       name: "git_push_branch",
       label: "Push commit to GitLab branch",
       executionMode: "sequential",
-      description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Never force-push. Uses the signed-in user's GitLab token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch.",
+      description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Never force-push. Uses the signed-in user's GitLab token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch. A successful push to this conversation's target branch advances the sync baseline: later commits in this turn are based on the published commit, and already-published changes stop appearing as local changes.",
       promptSnippet: "git_push_branch: Explicitly publish a commit to a GitLab branch (fast-forward only); use git_push first to save the commit in the mirror, then create or update the MR.",
       parameters: Type.Object({ sha: iidSha, branch: branchNameParam }),
       execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),
@@ -41,7 +41,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       name: "git_publish",
       label: "Publish changes to a GitLab branch",
       executionMode: "sequential",
-      description: "Save the current worktree changes and fast-forward them to a GitLab branch in one step, so a merge request can show a real diff. Prefer this over git_commit + git_push_branch: it returns the exact commit SHA and never requires you to remember or guess one. No force push is ever performed.",
+      description: "Save the current worktree changes and fast-forward them to a GitLab branch in one step, so a merge request can show a real diff. Prefer this over git_commit + git_push_branch: it returns the exact commit SHA and never requires you to remember or guess one. No force push is ever performed. A successful push to this conversation's target branch advances the sync baseline, so you can safely commit and publish again in the same turn without rebasing.",
       promptSnippet: "git_publish: Commit current changes and push them to a named GitLab branch in one call; use for MR updates.",
       parameters: Type.Object({
         branch: branchNameParam,

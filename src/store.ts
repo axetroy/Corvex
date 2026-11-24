@@ -1374,6 +1374,15 @@ export class AppStore {
   }
 
   /**
+   * 推进会话的同步基线。只在值变化时写入，且不改 updated_at（发布动作不应把对话排到列表最前）。
+   * 调用方负责保证顺序：仅在成功 publish 到目标分支或新轮次确认远端快照后推进。
+   */
+  setConversationBaseSha(conversationId: string, sha: string): void {
+    if (!/^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(sha)) throw new Error("conversation base SHA is invalid");
+    this.db.prepare("UPDATE conversations SET base_sha=? WHERE id=? AND base_sha<>?").run(sha, conversationId, sha);
+  }
+
+  /**
    * 保存模型生成的对话标题。只写入一次：已有标题时忽略，避免后续轮次把标题改掉，
    * 也避免与并发的首轮生成相互覆盖。
    */
@@ -1732,6 +1741,7 @@ export class AppStore {
       projectName: stringColumn(row, "project_name"),
       targetBranch: stringColumn(row, "target_branch"),
       mode,
+      baseSha: stringColumn(row, "base_sha"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
       turnCount: numberColumn(row, "turn_count"),
@@ -2293,6 +2303,8 @@ export class AppStore {
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'gitlab',
+        -- 与远端同步到的基线：本地提交未发布时不变，publish 成功后前进。
+        base_sha TEXT NOT NULL DEFAULT '',
         owner_user_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -2522,6 +2534,8 @@ export class AppStore {
       summary_message_id: "TEXT NOT NULL DEFAULT ''",
       // 对话模式：统一为可读可写，旧库补齐时直接落在 gitlab 模式。
       mode: "TEXT NOT NULL DEFAULT 'gitlab'",
+      // 同步基线：旧库由下面的回填逻辑从最近一轮的 head_sha 补齐。
+      base_sha: "TEXT NOT NULL DEFAULT ''",
       // 模型生成的标题：旧库留空，首次生成后写入。
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
@@ -2547,6 +2561,19 @@ export class AppStore {
         .run("schema:user-owned-conversations", now, now, "migration");
       // 旧的控制台 Basic 凭据不再使用。
       this.db.exec("DELETE FROM runtime_settings WHERE key IN ('operations_username','operations_password')");
+    }
+    // 同步基线：旧库没有该列，按最近一轮的轮次快照回填；新建会话在首轮开始时补齐。
+    const baseShaMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:conversation-base-sha'")
+      .get() as { value: string } | undefined;
+    if (!baseShaMigration) {
+      this.db.exec(
+        "UPDATE conversations SET base_sha = COALESCE((SELECT head_sha FROM conversation_turns WHERE conversation_id=conversations.id AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1), '') WHERE base_sha=''",
+      );
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:conversation-base-sha", now, now, "migration");
     }
     // 对话不再区分只读/可写：把所有旧模式统一迁移到可读可写的 gitlab 模式。
     const modeMigration = this.db
