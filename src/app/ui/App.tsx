@@ -364,16 +364,6 @@ export function App() {
             <NotificationToggle copy={copy} className="sidebar-notifications" />
             <button
               type="button"
-              className="sidebar-settings"
-              aria-label={copy.navSettings}
-              aria-current={pageKind === "settings" ? "page" : undefined}
-              title={copy.navSettings}
-              onClick={() => navigate("/settings")}
-            >
-              <SettingsIcon />
-            </button>
-            <button
-              type="button"
               className="sidebar-toggle"
               onClick={toggleNavigation}
               aria-label={copy.toggleNavigation}
@@ -383,15 +373,29 @@ export function App() {
               {navigationCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
             </button>
           </div>
-          {/* 会话列表就是主导航；设置入口在侧栏头部的齿轮按钮。 */}
-          <ConversationNavList
-            conversationId={routeId}
-            copy={copy}
-            locale={locale}
-            refreshToken={refreshToken}
-            onConversationChange={updateConversationRoute}
-            onRefresh={refresh}
-          />
+          {/* 会话列表就是主导航；收起侧栏时完全隐藏，避免挤成一条。 */}
+          <div className={`sidebar-conversation-nav${navigationCollapsed ? " is-hidden" : ""}`}>
+            <ConversationNavList
+              conversationId={routeId}
+              copy={copy}
+              locale={locale}
+              refreshToken={refreshToken}
+              onConversationChange={updateConversationRoute}
+              onRefresh={refresh}
+            />
+          </div>
+          {/* 设置入口单独成行放在账号上方，展开时带文字，收起时只留图标。 */}
+          <button
+            type="button"
+            className={`sidebar-settings-nav${navigationCollapsed ? " is-collapsed" : ""}`}
+            aria-label={copy.navSettings}
+            aria-current={pageKind === "settings" ? "page" : undefined}
+            title={copy.navSettings}
+            onClick={() => navigate("/settings")}
+          >
+            <SettingsIcon />
+            {navigationCollapsed ? null : <span>{copy.navSettings}</span>}
+          </button>
           {account ? (
             <div className="sidebar-account-panel">
               <UserAvatar

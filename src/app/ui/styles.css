@@ -157,7 +157,6 @@ a:hover {
 /* 语言、主题入口与侧边栏收起按钮共用同一图标按钮外观，置于顶栏右侧。 */
 .sidebar-language,
 .sidebar-theme,
-.sidebar-settings,
 .sidebar-toggle {
   display: grid;
   width: 30px;
@@ -171,9 +170,51 @@ a:hover {
   cursor: pointer;
 }
 
-.sidebar-settings[aria-current="page"] {
-  color: var(--primary);
+/* 会话列表占满侧栏剩余高度；收起侧栏时整块隐藏。 */
+.sidebar-conversation-nav {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-conversation-nav.is-hidden {
+  display: none;
+}
+
+/* 设置入口：展开时是带文字的整行，收起时只留一个居中图标。 */
+.sidebar-settings-nav {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 8px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.sidebar-settings-nav:hover {
   background: var(--primary-soft);
+  color: var(--text);
+}
+
+.sidebar-settings-nav[aria-current="page"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.sidebar-settings-nav.is-collapsed {
+  justify-content: center;
+  padding: 0;
+  margin: 4px auto;
+  width: 40px;
 }
 
 /* 侧栏底部的当前 GitLab 账号：头像、用户名与登出操作。 */
