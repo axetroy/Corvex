@@ -1080,6 +1080,16 @@
   font-weight: 700;
 }
 
+.conversation-context-notice-count {
+  flex: none;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--conversation-brand-soft);
+  color: var(--conversation-brand);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 中间回复按正文直接展示，与最终回答保持同一套排版。 */
 .conversation-process-text {
   color: var(--conversation-ink);

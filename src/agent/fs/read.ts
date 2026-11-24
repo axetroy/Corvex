@@ -596,10 +596,13 @@ export function createFsReadExtension(
   allowedRoots: string[],
   gitGrep?: GitGrep,
   gitDiff?: (path?: string) => Promise<{ diff: string; truncated: boolean }>,
+  repeatReadHintAfter = 5,
 ): (pi: ExtensionAPI) => void {
   const roots = allowedRoots.map((root) => resolve(root));
   return (pi) => {
     const fileCursors = new Map<string, ReadFileCursor>();
+    /** 同一轮内按规范化路径累计读取次数，避免模型因上下文裁剪反复重读同一文件。 */
+    const readCounts = new Map<string, number>();
     pi.registerTool({
       name: "read_file",
       label: "Read file",
@@ -630,8 +633,14 @@ export function createFsReadExtension(
         } else {
           fileCursors.delete(path);
         }
+        const count = (readCounts.get(path) ?? 0) + 1;
+        readCounts.set(path, count);
+        // 只追加短提示，不截断结果本身：模型仍能看到所需内容，但会被引导换更窄的范围。
+        const hint = repeatReadHintAfter > 0 && count >= repeatReadHintAfter
+          ? `\n\n[Corvex: "${params.path}" has been read ${count} times in this turn. If the needed content is already in context, use a narrower startLine/maxLines range or search_text instead of re-reading the whole file.]`
+          : "";
         return {
-          content: [{ type: "text", text: result.text }],
+          content: [{ type: "text", text: `${result.text}${hint}` }],
           details: {},
         };
       },

@@ -35,7 +35,8 @@ import type { GitLabClient } from "../gitlab/client.js";
 import { buildContextSnapshot, createContextObserveExtension, messagesToText } from "./context-snapshot.js";
 import { createProviderTokenCounter } from "./token-counter.js";
 import { domainSummaryInstructions } from "./domain-summary.js";
-import { createMicrocompactExtension } from "./microcompact.js";
+import { createMicrocompactExtension, resolveMicrocompactPolicy } from "./microcompact.js";
+import { estimateConservativeTokens } from "./budget.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -696,8 +697,8 @@ export class PiAgent {
           };
         }),
         createMicrocompactExtension({
-          keepRecent: 4,
-          maxKeptChars: 400,
+          ...resolveMicrocompactPolicy(config.agent.contextWindow, config.agent.compactionTriggerPercent),
+          estimateTokens: (messages) => estimateConservativeTokens(messagesToText(messages)),
           onPruned: (pruned, savedChars, signature) => {
             this.store?.recordContextMetric("microcompact", pruned);
             this.store?.recordContextMetric("microcompact_chars", savedChars);

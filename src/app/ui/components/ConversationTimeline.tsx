@@ -16,7 +16,7 @@ import type { ConversationToolCall } from "../types.js";
 export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "text"; key: string; text: string }
-  | { kind: "context"; key: string; text: string }
+  | { kind: "context"; key: string; text: string; count?: number }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
 
 /** 工具描述很长时按实际字宽均分开头与结尾，中间用省略号；完整文本留在 title。 */
@@ -124,6 +124,11 @@ export const ConversationTimeline = memo(function ConversationTimeline({
           <div className="conversation-context-notice" key={segment.key} role="status">
             <span className="conversation-context-notice-icon" aria-hidden="true">↻</span>
             <span>{segment.text}</span>
+            {segment.count && segment.count > 1 ? (
+              <span className="conversation-context-notice-count" title={copy.conversationNoticeRepeatCount}>
+                ×{segment.count}
+              </span>
+            ) : null}
           </div>
         ) : segment.kind === "tool" && segment.call.name === "record_plan" ? (
           <div className="conversation-plan" key={segment.key}>

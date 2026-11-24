@@ -165,6 +165,26 @@ describe("readAllowedFile", () => {
     expect(second).toMatchObject({ content: [{ text: expect.stringContaining("line 4\nline 5\nline 6") }] });
   });
 
+  it("hints after repeated reads of the same file in one turn", async () => {
+    await writeFile(join(root, "same.txt"), "content\n");
+    let readFileTool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+    createFsReadExtension([root], undefined, undefined, 3)({
+      registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+        if (tool.name === "read_file") readFileTool = tool;
+      },
+    } as unknown as ExtensionAPI);
+    if (!readFileTool) throw new Error("read_file tool was not registered");
+
+    const first = await readFileTool.execute("call-1", { path: "same.txt" });
+    expect(first).toMatchObject({ content: [{ text: "content\n" }] });
+    let result: { content: { text: string }[] } | undefined;
+    for (let index = 0; index < 2; index += 1) {
+      result = await readFileTool.execute(`call-${index + 2}`, { path: "same.txt" }) as typeof result;
+    }
+    expect(result?.content[0]?.text).toContain("has been read 3 times");
+    expect(result?.content[0]?.text).toContain("content");
+  });
+
   it("registers read_dir and stat as agent tools", () => {
     const registered = new Map<string, string | undefined>();
     const extension = createFsReadExtension([root]);

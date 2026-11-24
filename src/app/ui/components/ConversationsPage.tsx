@@ -10,6 +10,7 @@ import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../conversationWaiting.js";
+import { mergeContextNotice } from "../conversationTimelineMerge.js";
 import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
@@ -488,10 +489,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       schedule();
     };
     const onContext = (notice: ConversationStreamContext) => {
-      const key = `context-${notice.id}`;
-      const existing = segments.find((segment) => segment.kind === "context" && segment.key === key);
-      if (existing?.kind === "context") existing.text = notice.text;
-      else segments.push({ kind: "context", key, text: notice.text });
+      mergeContextNotice(segments, notice.id, notice.text, (key, text): ConversationTimelineSegment => ({ kind: "context", key, text }));
       schedule();
     };
     const onTool = (tool: ConversationStreamTool) => {
@@ -1081,26 +1079,35 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       streamedReply?.turnId === message.turnId;
     const streamedSegments = message.turnId ? timelineByTurn[message.turnId] ?? [] : [];
     // 刷新后用落库的过程快照还原每次思考、中间回复与工具调用；旧数据回退到工具摘要。
-    const persistedSegments: ConversationTimelineSegment[] = message.process.length
-      ? message.process.map((entry, index) => entry.kind === "tool"
-          ? {
-              kind: "tool",
-              key: `persisted-${index}`,
-              id: entry.id ?? `persisted-${index}`,
-              call: {
-                name: entry.name,
-                input: entry.input,
-                status: entry.status,
-                durationMs: entry.durationMs,
-              },
-            }
-          : { kind: entry.kind, key: `persisted-${index}`, text: entry.text })
-      : message.toolCalls.map((call, index) => ({
-          kind: "tool",
-          key: `legacy-${index}`,
-          id: `legacy-${index}`,
-          call,
-        }));
+    const persistedSegments: ConversationTimelineSegment[] = [];
+    if (message.process.length) {
+      message.process.forEach((entry, index) => {
+        if (entry.kind === "tool") {
+          persistedSegments.push({
+            kind: "tool",
+            key: `persisted-${index}`,
+            id: entry.id ?? `persisted-${index}`,
+            call: {
+              name: entry.name,
+              input: entry.input,
+              status: entry.status,
+              durationMs: entry.durationMs,
+            },
+          });
+        } else if (entry.kind === "context") {
+          mergeContextNotice(persistedSegments, entry.id, entry.text, (key, text): ConversationTimelineSegment => ({ kind: "context", key, text }));
+        } else {
+          persistedSegments.push({ kind: entry.kind, key: `persisted-${index}`, text: entry.text });
+        }
+      });
+    } else {
+      message.toolCalls.forEach((call, index) => persistedSegments.push({
+        kind: "tool",
+        key: `legacy-${index}`,
+        id: `legacy-${index}`,
+        call,
+      }));
+    }
     const timeline = (streamedSegments.length ? streamedSegments : persistedSegments)
       .filter((segment) => {
         if (segment.kind === "tool") return true;
