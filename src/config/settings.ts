@@ -79,6 +79,7 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "web_search_max_queries", section: "agent", field: "webSearchMaxQueries", type: "number", min: 1, max: 50 },
   { key: "git_tool_call_limit", section: "agent", field: "gitToolCallLimit", type: "number", min: 0, max: 200 },
   { key: "auto_create_merge_request", section: "agent", field: "autoCreateMergeRequest", type: "boolean" },
+  { key: "reasoning_enabled", section: "agent", field: "reasoningEnabled", type: "boolean" },
   // 运行时长：秒为界面单位，配置内部仍用毫秒。
   { key: "agent_request_timeout", section: "agent", field: "requestTimeout", type: "number", min: 1, max: 3_600, scale: 1_000 },
   { key: "agent_session_timeout", section: "agent", field: "sessionTimeout", type: "number", min: 1, max: 86_400, scale: 1_000 },

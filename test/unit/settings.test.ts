@@ -83,6 +83,8 @@ describe("validateRuntimeSettings", () => {
 
   it("拒绝非布尔值", () => {
     expect(validateRuntimeSettings({ summary_enabled: "yes" })).toEqual(['summary_enabled must be "true" or "false"']);
+    expect(validateRuntimeSettings({ reasoning_enabled: "yes" })).toEqual(['reasoning_enabled must be "true" or "false"']);
+    expect(validateRuntimeSettings({ reasoning_enabled: "false" })).toEqual([]);
   });
 
   it("校验字符串类型的枚举与长度", () => {

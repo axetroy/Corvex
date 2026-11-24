@@ -60,6 +60,8 @@ export interface CorvexConfig {
     gitToolCallLimit: number;
     /** 首次 publish 到功能分支后是否自动创建（或复用）合并请求。 */
     autoCreateMergeRequest: boolean;
+    /** 是否请求模型输出推理过程；不支持推理的模型会忽略或由运行时关闭。 */
+    reasoningEnabled: boolean;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -123,6 +125,7 @@ const defaults: CorvexConfig = {
     webSearchMaxQueries: 5,
     gitToolCallLimit: 40,
     autoCreateMergeRequest: true,
+    reasoningEnabled: true,
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -279,6 +282,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
+      reasoningEnabled: boolean(agent.reasoning_enabled, defaults.agent.reasoningEnabled),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),

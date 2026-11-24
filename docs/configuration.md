@@ -75,6 +75,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.web_search_max_queries` | `5` | Number | Maximum `web_search` calls per turn (1–50). |
 | `agent.git_tool_call_limit` | `40` | 0–200 | Maximum Git tool calls per turn (failed calls count too). Once exhausted the agent stops using Git tools and reports progress; `0` disables the limit. |
 | `agent.auto_create_merge_request` | `true` | Boolean | After the first successful publish to a feature branch, reuse an open MR or create one automatically with the signed-in user token (source = published branch, target = conversation branch). |
+| `agent.reasoning_enabled` | `true` | Boolean | Request reasoning/thinking from the model between tool calls; disable only for models that do not support it. |
 | `agent.web_blocked_hosts` | `[]` | Array of DNS hostnames (max 100) | Optional exact hostnames to block, including their subdomains. Private, reserved, and special-use IP ranges/hostnames are always blocked. |
 | `agent.skill_paths` | `[]` | Array of paths | Additional trusted Pi Skill directories. These paths are also permitted roots for the bounded read-only `read_file` tool. |
 | `agent.context_window` | `131072` | 1,024–10,000,000 | Total token window of the model. It drives prompt budgets and the SDK compaction threshold; it must match what the provider serves. Each model stores its own window; this is the fallback when no model is active. |
@@ -125,6 +126,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `web_search_max_queries` | Number | Max `web_search` calls per turn (1–50). |
 | `git_tool_call_limit` | 0–200 | Max Git tool calls per turn (failed calls count too); `0` disables the limit. |
 | `auto_create_merge_request` | Boolean | Reuse or create an MR after the first publish to a feature branch. |
+| `reasoning_enabled` | Boolean | Let the model reason between tool calls; default on. |
 | `web_blocked_hosts` | List of hostnames | Additional exact hosts to block (and their subdomains). |
 | `agent_request_timeout` | 1–3,600 seconds | Model request timeout; entered in seconds, stored in milliseconds. |
 | `agent_session_timeout` | 1–86,400 seconds | Full session timeout; entered in seconds, stored in milliseconds. |

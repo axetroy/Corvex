@@ -73,6 +73,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.web_search_max_queries` | `5` | 数字 | 每轮最多调用 `web_search` 的次数（1–50）。 |
 | `agent.git_tool_call_limit` | `40` | 0–200 | 每轮最多调用 Git 工具的次数（失败也计入）。用尽后 Agent 停止 Git 操作并汇报进展；`0` 表示不限制。 |
 | `agent.auto_create_merge_request` | `true` | 布尔值 | 首次成功发布到功能分支后，用当前登录用户令牌复用已打开的 MR 或自动创建：源分支为发布的分支，目标分支为本对话的分支。 |
+| `agent.reasoning_enabled` | `true` | 布尔值 | 让模型在工具调用之间进行推理思考；仅在模型不支持推理时关闭。 |
 | `agent.web_blocked_hosts` | `[]` | DNS 主机名数组（最多 100 个） | 可选的精确主机名黑名单，同时拦截其子域名。私网、保留用途 IP 段和特殊用途主机名始终被拦截。 |
 | `agent.skill_paths` | `[]` | 路径数组 | 额外的可信 Pi Skill 目录；这些路径也可作为只读文件工具的允许根目录。 |
 | `agent.context_window` | `131072` | 1,024–10,000,000 | 模型的总 Token 窗口。决定提示词预算与 SDK 压缩阈值，必须与服务商实际能力一致。每个模型各自保存；这里是回退值。 |
@@ -101,7 +102,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`git_tool_call_limit`、`auto_create_merge_request`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`git_tool_call_limit`、`auto_create_merge_request`、`reasoning_enabled`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 
