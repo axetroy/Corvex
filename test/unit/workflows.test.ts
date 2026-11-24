@@ -47,6 +47,20 @@ describe("conversation prompt contracts", () => {
     expect(zh).toContain("用户的请求就是授权");
   });
 
+  it("requires tool verification for claims about past actions and URLs from tool results", () => {
+    const en = getConversationSystemPrompt("en", "gitlab");
+    expect(en).toContain("Conversation history carries only text previously spoken");
+    expect(en).toContain("call the matching read tool first");
+    expect(en).toContain("never construct one from a project path or domain");
+    expect(en).toContain("Answer simple questions directly");
+
+    const zh = getConversationSystemPrompt("zh-CN", "gitlab");
+    expect(zh).toContain("对话历史只传递已说过的文本");
+    expect(zh).toContain("先用对应的读取工具确认");
+    expect(zh).toContain("禁止根据项目路径或域名自行拼接");
+    expect(zh).toContain("简单问答直接回答");
+  });
+
   it("titles a conversation from the first request and keeps the tool budget a soft checkpoint", () => {
     for (const language of ["en", "zh-CN"] as const) {
       const titlePrompt = getConversationTitleSystemPrompt(language);
