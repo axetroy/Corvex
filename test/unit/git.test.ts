@@ -543,6 +543,61 @@ describe("Git workflows", () => {
     // 这条用例包含多次 mirror/worktree 操作；CI 上比本地慢，默认 5s 不够。
   }, 30_000);
 
+  it("keeps the worktree clean after saving so rebase works and its result survives", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-save-align-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "remote.git");
+    const source = join(directory, "source");
+    await mkdir(source);
+    await git(source, "init", "--initial-branch=main");
+    await git(source, "config", "user.name", "Corvex Test");
+    await git(source, "config", "user.email", "corvex@example.test");
+    await writeFile(join(source, "a.txt"), "original\n");
+    await git(source, "add", "a.txt");
+    await git(source, "commit", "-m", "base");
+    const baseSha = await git(source, "rev-parse", "HEAD");
+    await execFile("git", ["init", "--bare", bare]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "origin", "main"]);
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "--mirror", bare, mirror]);
+    await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
+
+    const manager = new GitManager(root, "http://127.0.0.1:1");
+    await manager.initialize();
+    const conversationId = "9f8e7d6c-5b4a-4321-8f0e-1d2c3b4a5f6e";
+    const workspace = await manager.prepareConversationWorkspace(7, conversationId, "http://127.0.0.1:1/project.git", baseSha);
+
+    // 本地分支作为变基目标。
+    await git(workspace.path, "branch", "fix");
+    await writeFile(join(workspace.path, "ours.txt"), "ours\n");
+    const saved = await manager.saveConversationChanges(workspace, conversationId, undefined, "add ours");
+    expect(saved).toBeDefined();
+    // 关键：保存后工作区立即干净，HEAD 指向保存的提交。
+    expect(await manager.getWorkspaceStatus(workspace)).toMatchObject({ clean: true, headSha: saved!.sha });
+    expect(await git(workspace.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
+
+    // 变基目标前进。
+    await execFile("git", ["-C", workspace.path, "checkout", "-q", "fix"]);
+    await writeFile(join(workspace.path, "theirs.txt"), "theirs\n");
+    await execFile("git", ["-C", workspace.path, "add", "theirs.txt"]);
+    await execFile("git", ["-C", workspace.path, "commit", "-q", "-m", "theirs"]);
+    await execFile("git", ["-C", workspace.path, "checkout", "-q", "--detach", saved!.sha]);
+
+    // 旧实现在这里会因「工作区不干净」失败；现在保存已让工作区干净。
+    const rebased = await manager.rebaseWorktree(workspace, "fix");
+    expect(rebased.sha).not.toBe(saved!.sha);
+    expect(await readFile(join(workspace.path, "theirs.txt"), "utf8")).toBe("theirs\n");
+
+    // 轮末再保存时把会话 ref 同步到变基后的 HEAD，避免下一轮按旧 ref 重建而丢失结果。
+    await manager.saveConversationChanges(workspace, conversationId);
+    expect(await manager.getConversationChanges(7, conversationId)).toMatchObject({ sha: rebased.sha });
+    // 下一轮按同一基线准备时仍保留变基结果。
+    const restored = await manager.prepareConversationWorkspace(7, conversationId, "http://127.0.0.1:1/project.git", baseSha);
+    expect(await git(restored.path, "rev-parse", "HEAD")).toBe(rebased.sha);
+  }, 30_000);
+
   it("rebases and cherry-picks commits in a bound worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-git-history-"));
     const root = join(directory, "storage");

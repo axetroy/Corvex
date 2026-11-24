@@ -56,6 +56,8 @@ export interface CorvexConfig {
     webSearchEnabled: boolean;
     /** 每个对话轮次最多执行的搜索次数。 */
     webSearchMaxQueries: number;
+    /** 每个对话轮次最多调用的 Git 工具次数；0 表示不限制。 */
+    gitToolCallLimit: number;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -117,6 +119,7 @@ const defaults: CorvexConfig = {
     webBlockedHosts: [],
     webSearchEnabled: true,
     webSearchMaxQueries: 5,
+    gitToolCallLimit: 40,
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -271,6 +274,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
       webSearchEnabled: boolean(agent.web_search_enabled, defaults.agent.webSearchEnabled),
       webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
+      gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),
@@ -386,6 +390,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.agent.webSearchMaxQueries < 1 || config.agent.webSearchMaxQueries > 50) {
     problems.push("agent.web_search_max_queries must be between 1 and 50");
+  }
+  if (config.agent.gitToolCallLimit < 0 || config.agent.gitToolCallLimit > 200) {
+    problems.push("agent.git_tool_call_limit must be between 0 and 200");
   }
   if (role !== "storage") {
     // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），

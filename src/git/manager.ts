@@ -431,7 +431,35 @@ export class GitManager {
   ): Promise<{ sha: string; paths: string[] } | undefined> {
     this.validateWorkspace(workspace);
     const status = await this.getWorkspaceStatus(workspace, signal);
-    if (status.clean) return undefined;
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+    if (status.clean) {
+      // 工作区干净但 HEAD 已因 rebase/merge/cherry-pick 前进时，把会话 ref 同步到 HEAD。
+      // 否则下一轮 prepareConversationWorkspace 会按旧 ref 重建 worktree，丢掉这些操作的结果。
+      // 只处理 detached HEAD：检出到本地分支时 HEAD 代表分支而不是本会话的工作，不能覆盖 ref。
+      const branch = await this.currentBranch(workspace, signal);
+      const existing = await this.run(
+        mirror,
+        ["--git-dir", mirror, "rev-parse", "--verify", "--quiet", ref],
+        undefined, maxErrorOutput, signal,
+        { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (!branch && existing.exitCode === 0 && status.headSha !== existing.stdout.toString().trim()) {
+        await this.run(mirror, ["--git-dir", mirror, "update-ref", ref, status.headSha], undefined, maxErrorOutput, signal, {
+          timeoutMs: 10_000,
+        });
+        if (turnId) {
+          await this.run(
+            mirror,
+            ["--git-dir", mirror, "update-ref", conversationTurnRef(conversationId, turnId), status.headSha],
+            undefined, maxErrorOutput, signal,
+            { timeoutMs: 10_000 },
+          );
+        }
+        return { sha: status.headSha, paths: [] };
+      }
+      return undefined;
+    }
     await this.run(workspace.path, ["add", "-A", "--"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
     const treeResult = await this.run(workspace.path, ["write-tree"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
     const tree = treeResult.stdout.toString().trim();
@@ -449,8 +477,6 @@ export class GitManager {
     );
     const sha = commitResult.stdout.toString().trim();
     if (!shaPattern.test(sha)) throw new Error("git commit-tree returned an invalid object id");
-    const ref = conversationChangesRef(conversationId);
-    const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
     await this.run(
       this.mirrorRoot,
       ["--git-dir", mirror, "update-ref", ref, sha],
@@ -469,8 +495,11 @@ export class GitManager {
         { timeoutMs: 10_000 },
       );
     }
-    // 工作区文件保留实际改动，只把暂存区对齐到新 ref，避免后续状态重复上报。
-    await this.run(workspace.path, ["read-tree", sha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    // 把 detached HEAD 指向新提交：提交树正是由当前 worktree 生成的，内容不会丢失。
+    // 这样 worktree 立即变干净，rebase/merge/cherry-pick 的干净工作区检查才能通过，
+    // 也避免下一次 save 对同一批改动重复生成提交。用 checkout --detach 而非 reset --hard，
+    // 是为了绝不改写模型可能检出的本地分支。
+    await this.run(workspace.path, ["checkout", "--detach", sha], undefined, maxErrorOutput, signal, { timeoutMs: 30_000 });
     return { sha, paths: status.files.map((file) => file.path) };
   }
 

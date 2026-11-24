@@ -14,6 +14,7 @@ import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
 import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } from "../agent/pi.js";
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
+import { withGitToolBudget } from "../agent/git/budget.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
@@ -264,7 +265,7 @@ export class ConversationRunner {
 
   /** 把 Git 工具绑定到当前会话的 worktree、项目镜像与固定快照。 */
   private gitTools(workspace: Workspace, conversationId: string, turnId: string, headSha: string, signal?: AbortSignal, authToken?: string): GitToolAdapter {
-    return {
+    const adapter: GitToolAdapter = {
       status: () => this.repo.getWorkspaceStatus(workspace, signal),
       log: (limit, path) => this.repo.getCommitLog(workspace, limit, path, signal),
       show: (sha, path) => this.repo.showCommit(workspace, sha, path, signal),
@@ -291,6 +292,8 @@ export class ConversationRunner {
       cherryPick: (sha) => this.repo.cherryPickWorktree(workspace, sha, signal),
       revert: (sha) => this.repo.revertWorktreeCommit(workspace, sha, signal),
     };
+    // 预算只约束模型主动调用的 Git 工具；轮末由 Runner 自己调用的 persistChanges 不走这里。
+    return withGitToolBudget(adapter, this.config.agent.gitToolCallLimit);
   }
 
   private async persistChanges(workspace: Workspace, conversationId: string, turnId: string, signal?: AbortSignal): Promise<void> {

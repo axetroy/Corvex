@@ -26,6 +26,8 @@ function agentConfig(): CorvexConfig["agent"] {
     maxOutputTokens: 4_096,
     dailyTokenBudget: 0,
     webEnabled: true,
+    webSearchMaxQueries: 5,
+    gitToolCallLimit: 40,
     webBlockedHosts: [],
     skillPaths: [],
     contextWindow: 131_072,
@@ -75,6 +77,8 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ context_window: "10" })).toEqual(["context_window must be at least 1024"]);
     expect(validateRuntimeSettings({ context_window: "1.5" })).toEqual(["context_window must be an integer"]);
     expect(validateRuntimeSettings({ max_output_tokens: "999999" })).toEqual(["max_output_tokens must be at most 8192"]);
+    expect(validateRuntimeSettings({ git_tool_call_limit: "300" })).toEqual(["git_tool_call_limit must be at most 200"]);
+    expect(validateRuntimeSettings({ git_tool_call_limit: "0" })).toEqual([]);
   });
 
   it("拒绝非布尔值", () => {

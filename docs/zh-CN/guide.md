@@ -81,7 +81,7 @@ pnpm start -- --config configs/config.yaml server
 
 Pi 会话不开放内建 shell、edit 或 write 工具。仓库文件读取通过有界的 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，仓库路径必须使用相对路径（只有可信 Skill 根目录允许绝对路径）。Skill 从 `agent.skill_paths` 加载，属于指令而非访问控制。
 
-- **Git 工具**限定在对话的 worktree 和本地项目镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_merge`、`git_commit`、`git_push`、`git_revert`。不接受任意 URL、远端或强制推送参数；`git_push` 只写镜像中的 `refs/conversations/<id>`，**绝不推送 GitLab 分支**。分支、合并与回滚都经过校验，不会重写历史。
+- **Git 工具**限定在对话的 worktree 和本地项目镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_sync`、`git_merge`、`git_commit`、`git_push`、`git_publish`、`git_push_branch`、`git_rebase`、`git_cherry_pick`、`git_revert`。不接受任意 URL、远端或强制推送参数；`git_push` 只写镜像中的 `refs/conversations/<id>`，明确要求发布时 `git_publish` 一步保存改动并快进推到 GitLab 具名分支，`git_push_branch` 则是已知完整 SHA 时的底层变体。保存改动后 worktree 会 detached 到保存的提交，因此 `git_rebase` / `git_merge` 面对的是干净工作区，变基/合并结果在轮末同步回会话 ref。推送被拒（非快进）时按 `git_sync` → `git_pull` → `git_rebase` 到 `origin/<branch>` 的顺序恢复，绝不强制推送；每轮 Git 调用次数有上限（`agent.git_tool_call_limit`），失败也计入，超限后停止操作并汇报，避免陷入试错循环。
 - **GitLab 工具**固定绑定到对话的项目：项目与分支发现、读取 Issue/MR 及其变更与讨论，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。所有写操作都需要用户明确意图；删除、合并、批准等不可逆或公开动作在工具描述中明确标注。
 - **文件修改**只在工作树中进行，并通过有界的 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成；改动保存到项目镜像的会话 ref，工作区被清理后仍会恢复，且永不 commit 到 GitLab 分支。删除对话或会话改动会移除该 ref。
 - Corvex 不执行仓库代码、脚本或测试；所有 Agent 输出均视为不可信，写入 GitLab 前再次校验授权、取消状态与固定版本。

@@ -31,6 +31,7 @@ ${relativePaths["zh-CN"]}
 Git 工具集绑定当前 worktree 与本地镜像：git_status / git_log / git_show / git_diff / git_branches 用于查看，git_clone / git_branch / git_pull / git_merge 管理本地 worktree，git_commit / git_push / git_revert / git_rebase / git_cherry_pick 按任务需要调用（工具已绑定当前 worktree 与镜像，不接受任意远端）；git_push 只写入会话 ref；变基与 cherry-pick 要求工作区干净、冲突会自动中止。
 需要把改动发布到 GitLab 分支时，直接调用 git_publish 并传入目标分支名：它会一步保存改动并把提交快进推到该分支（仅快进、不强制、不接受任意远端），不需要你记住或拼接 SHA；随后用 create_merge_request 创建或更新 MR。只有在你手头已经有确切完整 SHA 时才用 git_push_branch。
 推送被拒（非快进）时按固定顺序恢复：git_sync 刷新 GitLab 分支 → git_pull 拉取到 worktree → git_rebase 到 origin/<branch> → 重试推送；不要反复 push、频繁切分支或重复提交试错。git_show 提示提交不可达时，改用 get_merge_request_changes 读取 MR 补丁，不要尝试用内网地址去抓 GitLab API。
+git_commit / git_push 保存改动后 worktree 会立即变干净（HEAD 指向保存的提交），因此不要再为同一批改动重复提交；变基/合并后的结果也会在轮末自动保存到会话 ref。每轮 Git 工具调用次数有上限，用尽后工具会报错，此时必须停止 Git 操作并向用户汇报当前状态，而不是继续尝试。
 不得执行仓库代码。
 
 ## 工具与能力
@@ -70,6 +71,7 @@ The Git tool set is bound to this worktree and the local project mirror: git_sta
 Rebase and cherry-pick require a clean worktree and abort automatically on conflicts.
 When changes need to be published to a GitLab branch, call git_publish with the target branch name: it saves the changes and fast-forwards the commit to that branch in one step (no force, no arbitrary remote), without requiring you to remember or guess any SHA. Then use create_merge_request to create or update the MR. Use git_push_branch only when you already have an exact full SHA.
 If a push is rejected as non-fast-forward, recover in this order: git_sync to refresh GitLab branch tips, git_pull to bring them into the worktree, git_rebase onto origin/<branch>, then retry the push. Do not keep retrying pushes, switching branches, or re-committing the same changes. When git_show says a commit is unreachable, read the MR patch with get_merge_request_changes instead of trying to fetch the internal GitLab API over HTTP.
+git_commit / git_push leave the worktree clean immediately (HEAD points at the saved commit), so never re-commit the same changes; rebase/merge results are also saved to the conversation ref at the end of the turn. Git tool calls are capped per turn; once the budget is exhausted the tools return an error — stop using Git tools and report the current state to the user instead of retrying.
 Repository code is never executed.
 
 ## Tools and capabilities
