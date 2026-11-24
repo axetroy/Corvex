@@ -38,6 +38,7 @@ import { createProviderTokenCounter } from "./token-counter.js";
 import { domainSummaryInstructions } from "./domain-summary.js";
 import { createMicrocompactExtension, resolveMicrocompactPolicy } from "./microcompact.js";
 import { estimateConservativeTokens } from "./budget.js";
+import { boundSessionEntries } from "./session-persistence.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -1201,13 +1202,27 @@ export class PiAgent {
         try {
           const manager = session.sessionManager;
           const header = manager.getHeader();
-          const payload = JSON.stringify(header ? [header, ...manager.getEntries()] : manager.getEntries());
-          if (Buffer.byteLength(payload) <= maxPersistedSessionBytes) {
-            this.store?.saveConversationSessionEntries(sessionKey, payload);
-          } else {
-            console.warn("conversation session exceeds persistence limit", {
-              conversationId: sessionKey, bytes: Buffer.byteLength(payload),
-            });
+          if (header) {
+            // 只持久化活动分支；超限时保留压缩点与最近消息链，而不是放弃整个会话。
+            const bounded = boundSessionEntries(
+              header as unknown as Parameters<typeof boundSessionEntries>[0],
+              manager.getBranch() as unknown as Parameters<typeof boundSessionEntries>[1],
+              maxPersistedSessionBytes,
+            );
+            if (bounded.entries.length > 0) {
+              this.store?.saveConversationSessionEntries(sessionKey, JSON.stringify(bounded.entries));
+              if (bounded.truncated) {
+                console.warn("conversation session bounded to persistence limit", {
+                  conversationId: sessionKey,
+                  dropped: bounded.dropped,
+                  maxBytes: maxPersistedSessionBytes,
+                });
+              }
+            } else {
+              console.warn("conversation session entry exceeds persistence limit", {
+                conversationId: sessionKey, maxBytes: maxPersistedSessionBytes,
+              });
+            }
           }
         } catch (error) {
           console.warn("persist conversation session failed", {
