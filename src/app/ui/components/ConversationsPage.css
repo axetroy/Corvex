@@ -399,19 +399,6 @@
   font-size: 12px;
 }
 
-.conversation-branch-tag.ant-tag {
-  flex: 0 1 auto;
-  max-width: 240px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-color: var(--conversation-border-strong);
-  background: var(--bg-subtle);
-  color: var(--text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-}
-
 .conversation-changes-tag.ant-tag {
   flex: 0 0 auto;
   margin: 0;
@@ -440,22 +427,6 @@
 .conversation-discard-download.ant-btn {
   height: auto;
   padding: 0;
-  font-size: 12px;
-}
-
-.conversation-pinned {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--conversation-muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-pinned code {
-  color: var(--text-secondary);
   font-size: 12px;
 }
 

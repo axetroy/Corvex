@@ -1089,13 +1089,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                           </Typography.Text>
                         </button>
                       </RepositoryInfoPopover>
-                      <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
-                      <Typography.Text type="secondary" className="conversation-pinned">
-                        {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
-                      </Typography.Text>
-                      <Typography.Text type="secondary" className="conversation-pinned" title={currentConversation.baseSha || undefined}>
-                        {copy.syncBaseline}: <code>{currentConversation.baseSha?.slice(0, 12) ?? copy.none}</code>
-                      </Typography.Text>
                       {hasActiveTurn ? <Tag color="processing">{copy.statuses.running}</Tag> : null}
                       {changePaths.length ? (
                         <>
@@ -1325,33 +1318,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 ),
               },
               {
-                key: "records",
-                label: copy.traceRecords,
+                key: "changes",
+                label: copy.conversationTabChanges,
                 children: (
                   <div className="conversation-tab-pane">
-                    <ConversationRecordsTab
-                      conversationId={selectedConversationId}
-                      copy={copy}
-                      locale={locale}
-                      refreshToken={refreshToken}
-                      onUpdated={onUpdated}
-                    />
-                  </div>
-                ),
-              },
-              {
-                key: "trace",
-                label: copy.conversationTabTrace,
-                children: (
-                  <div className="conversation-tab-pane conversation-trace-pane">
-                    <ConversationTraceTab
-                      conversationId={selectedConversationId}
-                      messages={currentConversation?.messages ?? []}
-                      copy={copy}
-                      locale={locale}
-                      refreshToken={refreshToken}
-                      onUpdated={onUpdated}
-                    />
+                    {selectedConversationId ? <ConversationGitChanges conversationId={selectedConversationId} copy={copy} /> : null}
                   </div>
                 ),
               },
@@ -1372,6 +1343,31 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 ),
               },
               {
+                key: "trace",
+                label: copy.conversationTabTrace,
+                children: (
+                  <div className="conversation-tab-pane conversation-trace-pane">
+                    <ConversationTraceTab
+                      conversationId={selectedConversationId}
+                      messages={currentConversation?.messages ?? []}
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={onUpdated}
+                    />
+                  </div>
+                ),
+              },
+              {
+                key: "git",
+                label: copy.conversationTabGit,
+                children: (
+                  <div className="conversation-tab-pane">
+                    {selectedConversationId ? <ConversationGitGraph conversationId={selectedConversationId} copy={copy} /> : null}
+                  </div>
+                ),
+              },
+              {
                 key: "stats",
                 label: copy.conversationTabStats,
                 children: (
@@ -1387,20 +1383,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 ),
               },
               {
-                key: "changes",
-                label: copy.conversationTabChanges,
+                key: "records",
+                label: copy.traceRecords,
                 children: (
                   <div className="conversation-tab-pane">
-                    {selectedConversationId ? <ConversationGitChanges conversationId={selectedConversationId} copy={copy} /> : null}
-                  </div>
-                ),
-              },
-              {
-                key: "git",
-                label: copy.conversationTabGit,
-                children: (
-                  <div className="conversation-tab-pane">
-                    {selectedConversationId ? <ConversationGitGraph conversationId={selectedConversationId} copy={copy} /> : null}
+                    <ConversationRecordsTab
+                      conversationId={selectedConversationId}
+                      copy={copy}
+                      locale={locale}
+                      refreshToken={refreshToken}
+                      onUpdated={onUpdated}
+                    />
                   </div>
                 ),
               },
