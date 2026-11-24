@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requireUser } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
-import type { ModelProviderDetails } from "../../../model.js";
+import { isThinkingLevel, type ModelProviderDetails } from "../../../model.js";
 import { idParam, readJsonObject, secretSettingPlaceholder, sendJson } from "../respond.js";
 import { testModelConnection, testProviderConnection } from "./model-test.js";
 
@@ -73,7 +73,28 @@ export function registerUserModelRoutes(app: FastifyInstance, ctx: OpsContext): 
       me.get("/model-providers", async (request, reply) => {
         const user = requireUser(request, reply);
         if (!user) return;
-        sendJson(reply, 200, { items: visible(user.id).map((provider) => redactProvider(provider)) });
+        sendJson(reply, 200, {
+          items: visible(user.id).map((provider) => redactProvider(provider)),
+          thinkingLevel: ctx.store.getUserThinkingLevel(user.id) ?? ctx.config.agent.thinkingLevel,
+          reasoningEnabled: ctx.config.agent.reasoningEnabled,
+        });
+      });
+
+      me.post("/thinking-level", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
+        const body = readJsonObject(request, reply);
+        if (!body) return;
+        const level = body.thinkingLevel;
+        if (!isThinkingLevel(level)) {
+          sendJson(reply, 400, { error: "invalid thinking level" });
+          return;
+        }
+        if (!ctx.store.setUserThinkingLevel(user.id, level)) {
+          sendJson(reply, 400, { error: "invalid thinking level" });
+          return;
+        }
+        sendJson(reply, 200, { thinkingLevel: level });
       });
 
       me.post("/model-providers/test", async (request, reply) => {

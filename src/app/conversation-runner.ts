@@ -148,9 +148,11 @@ export class ConversationRunner {
       let agent = this.agent;
       const ownerUserId = this.store.getConversation(turn.conversationId)?.ownerUserId;
       const active = ownerUserId ? this.store.getActiveModelForUser(ownerUserId) : undefined;
-      if (active) {
+      const userThinking = ownerUserId ? this.store.getUserThinkingLevel(ownerUserId) : undefined;
+      if (active || userThinking) {
         const config = structuredClone(this.config);
-        applyActiveModel(config, active);
+        if (active) applyActiveModel(config, active);
+        if (userThinking) config.agent.thinkingLevel = userThinking;
         agent = new PiAgent(config, this.store, this.repo, gitlab, this.hooks);
       }
       await this.execute(turn, controller.signal, gitlab, language, agent, steer);

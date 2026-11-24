@@ -1,5 +1,16 @@
 import type { ModelProviderDetails, ProviderModel } from "./types.js";
 
+/** 思考等级下拉项：值是与 Pi SDK 一致的稳定标识，文案 key 直接写在源码便于 i18n 完整性检查。 */
+export const thinkingLevelOptions = [
+  { value: "off", labelKey: "thinkingLevelOff" },
+  { value: "minimal", labelKey: "thinkingLevelMinimal" },
+  { value: "low", labelKey: "thinkingLevelLow" },
+  { value: "medium", labelKey: "thinkingLevelMedium" },
+  { value: "high", labelKey: "thinkingLevelHigh" },
+  { value: "xhigh", labelKey: "thinkingLevelXhigh" },
+  { value: "max", labelKey: "thinkingLevelMax" },
+] as const;
+
 /** 输入框模型选择项的取值：`<供应商 ID>/<模型 ID>`，两者都是服务端生成的 UUID。 */
 export function modelOptionValue(providerId: string, modelId: string): string {
   return `${providerId}/${modelId}`;

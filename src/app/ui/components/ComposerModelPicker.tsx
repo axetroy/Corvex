@@ -11,6 +11,7 @@ import {
   formatContextWindowK,
   modelOptionValue,
   modelSelectGroups,
+  thinkingLevelOptions,
 } from "../modelPicker.js";
 
 interface Props {
@@ -27,6 +28,9 @@ interface Props {
  */
 export function ComposerModelPicker({ copy, disabled }: Props) {
   const [providers, setProviders] = useState<ModelProviderDetails[]>([]);
+  const [thinkingLevel, setThinkingLevel] = useState<string>("medium");
+  const [reasoningEnabled, setReasoningEnabled] = useState(true);
+  const [switchingThinking, setSwitchingThinking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState("");
@@ -35,10 +39,12 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetchJson<{ items: ModelProviderDetails[] }>("/api/ops/me/model-providers", copy)
+    fetchJson<{ items: ModelProviderDetails[]; thinkingLevel?: string; reasoningEnabled?: boolean }>("/api/ops/me/model-providers", copy)
       .then((response) => {
         if (!active) return;
         setProviders(response.items);
+        setThinkingLevel(response.thinkingLevel ?? "medium");
+        setReasoningEnabled(response.reasoningEnabled ?? true);
         setError("");
       })
       .catch((cause: unknown) => {
@@ -86,6 +92,21 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
     </span>
   ) : copy.composerModelEmpty;
 
+  async function switchThinking(value: string) {
+    const previous = thinkingLevel;
+    setThinkingLevel(value);
+    setSwitchingThinking(true);
+    setError("");
+    try {
+      await sendJson("/api/ops/me/thinking-level", { thinkingLevel: value }, copy, "POST");
+    } catch (cause) {
+      setThinkingLevel(previous);
+      setError(errorMessage(cause));
+    } finally {
+      setSwitchingThinking(false);
+    }
+  }
+
   async function switchModel(value: string) {
     const target = findModelSelection(providers, value);
     if (!target || target.model.active) return;
@@ -130,6 +151,20 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
         disabled={disabled || switching || !hasModels}
         labelRender={() => activeLabel}
         onChange={(value) => void switchModel(value)}
+      />
+      <Tooltip title={reasoningEnabled ? copy.composerThinkingHint : copy.composerThinkingDisabled}>
+        <span className="conversation-composer-model-label">{copy.composerThinking}</span>
+      </Tooltip>
+      <Select<string>
+        className="conversation-composer-thinking-select"
+        aria-label={copy.composerThinking}
+        variant="borderless"
+        size="small"
+        value={thinkingLevel}
+        options={thinkingLevelOptions.map((option) => ({ value: option.value, label: copy[option.labelKey] }))}
+        loading={switchingThinking}
+        disabled={disabled || switchingThinking || !reasoningEnabled}
+        onChange={(value) => void switchThinking(value)}
       />
       {error ? (
         <Typography.Text type="danger" ellipsis className="conversation-composer-model-error" title={error}>

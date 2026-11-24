@@ -4,7 +4,7 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import type { ResponseLanguage } from "../model.js";
+import type { ResponseLanguage, ThinkingLevel } from "../model.js";
 
 export type { ResponseLanguage };
 
@@ -62,6 +62,8 @@ export interface CorvexConfig {
     autoCreateMergeRequest: boolean;
     /** 是否请求模型输出推理过程；不支持推理的模型会忽略或由运行时关闭。 */
     reasoningEnabled: boolean;
+    /** 本轮使用的思考等级；用户可在输入框旁覆盖。 */
+    thinkingLevel: ThinkingLevel;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -126,6 +128,7 @@ const defaults: CorvexConfig = {
     gitToolCallLimit: 40,
     autoCreateMergeRequest: true,
     reasoningEnabled: true,
+    thinkingLevel: "medium",
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -179,6 +182,17 @@ function boolean(value: unknown, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   if (typeof value !== "boolean") throw new Error("configuration value must be a boolean");
   return value;
+}
+
+function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value === "string" &&
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)
+  ) {
+    return value as ThinkingLevel;
+  }
+  throw new Error("configuration value must be a valid thinking level");
 }
 
 function stringArray(value: unknown, fallback: string[]): string[] {
@@ -282,6 +296,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
+      thinkingLevel: parseThinkingLevel(agent.thinking_level) ?? defaults.agent.thinkingLevel,
       reasoningEnabled: boolean(agent.reasoning_enabled, defaults.agent.reasoningEnabled),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),

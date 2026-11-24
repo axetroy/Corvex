@@ -530,8 +530,8 @@ export class PiAgent {
           input: ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           // 推理默认开启：关闭会让模型在工具调用之间跳过思考，容易凭对话文本臆测而不是核实。
-          // 不支持推理的服务商可在运维台关闭；SDK 会把 thinkingLevel 收敛到模型能力。
-          reasoning: config.agent.reasoningEnabled,
+          // 不支持推理的服务商可在运维台关闭；用户可在输入框旁单独调整思考等级。
+          reasoning: config.agent.reasoningEnabled && config.agent.thinkingLevel !== "off",
           contextWindow: config.agent.contextWindow,
           maxTokens: config.agent.maxOutputTokens,
         },
@@ -781,8 +781,8 @@ export class PiAgent {
         ? SessionManager.inMemory(agentDir, undefined, restoredEntries)
         : SessionManager.inMemory(),
       noTools: request.noTools ? "all" : "builtin",
-      // SDK 默认 thinkingLevel 由 settings 决定；显式给出安全默认值，避免被默认值关掉。
-      thinkingLevel: config.agent.reasoningEnabled ? "medium" : "off",
+      // 显式使用当前生效等级；全局关闭推理时统一为 off。
+      thinkingLevel: config.agent.reasoningEnabled ? config.agent.thinkingLevel : "off",
     });
     // 插话在会话就绪后才可投递：一次边界把积压的补充消息一起交给模型，避免
     // 逐条拆散到多次模型调用里，让用户误以为补充只被看见一半。

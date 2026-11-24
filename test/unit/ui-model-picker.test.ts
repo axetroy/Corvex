@@ -6,6 +6,7 @@ import {
   modelOptionValue,
   modelSelections,
   modelSelectGroups,
+  thinkingLevelOptions,
 } from "../../src/app/ui/modelPicker.ts";
 import type { ModelProviderDetails, ProviderModel } from "../../src/app/ui/types.ts";
 
@@ -89,5 +90,14 @@ describe("operations UI model picker", () => {
     expect(formatContextWindowK(200_000)).toBe("195.3K");
     expect(formatContextWindowK(512)).toBe("512");
     expect(formatContextWindowK(0)).toBe("-");
+  });
+});
+
+describe("thinking level options", () => {
+  it("exposes every Pi thinking level with a stable value and copy key", () => {
+    expect(thinkingLevelOptions.map((option) => option.value)).toEqual([
+      "off", "minimal", "low", "medium", "high", "xhigh", "max",
+    ]);
+    expect(new Set(thinkingLevelOptions.map((option) => option.labelKey)).size).toBe(thinkingLevelOptions.length);
   });
 });

@@ -2214,6 +2214,13 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   font-size: 12px;
 }
 
+.conversation-composer-thinking-select.ant-select {
+  min-width: 0;
+  max-width: 84px;
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
 .conversation-composer-model-value {
   display: inline-block;
   max-width: 100%;

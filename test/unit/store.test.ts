@@ -17,6 +17,20 @@ describe("AppStore", () => {
     directory = "";
   });
 
+  it("持久化用户思考等级并拒绝非法值", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "first",
+    });
+    void created;
+    expect(store.getUserThinkingLevel("user-1")).toBeUndefined();
+    expect(store.setUserThinkingLevel("user-1", "high")).toBe(true);
+    expect(store.getUserThinkingLevel("user-1")).toBe("high");
+    expect(store.setUserThinkingLevel("user-1", "extreme" as never)).toBe(false);
+    expect(store.getUserThinkingLevel("user-1")).toBe("high");
+  });
+
   it("持久化并清理会话的完整 Pi 会话条目", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

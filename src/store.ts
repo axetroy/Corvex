@@ -44,6 +44,8 @@ import {
   type ConversationTurnSegment,
   type StorageCleanupRecord,
   type ActiveModel,
+  isThinkingLevel,
+  type ThinkingLevel,
   type ResponseLanguage,
   type ModelProvider,
   type ModelProviderDetails,
@@ -2148,6 +2150,25 @@ export class AppStore {
     return true;
   }
 
+  /** 用户选择的思考等级；未选择时返回 undefined，由调用方回退到默认。 */
+  getUserThinkingLevel(userId: string): ThinkingLevel | undefined {
+    const row = this.db.prepare(
+      "SELECT thinking_level FROM user_thinking_levels WHERE user_id=?",
+    ).get(userId) as { thinking_level: string } | undefined;
+    const value = row?.thinking_level;
+    return isThinkingLevel(value) ? value : undefined;
+  }
+
+  /** 设置用户思考等级；非法取值返回 false。 */
+  setUserThinkingLevel(userId: string, level: ThinkingLevel): boolean {
+    if (!userId || !isThinkingLevel(level)) return false;
+    this.db.prepare(
+      `INSERT INTO user_thinking_levels (user_id,thinking_level,updated_at) VALUES (?,?,?)
+       ON CONFLICT(user_id) DO UPDATE SET thinking_level=excluded.thinking_level, updated_at=excluded.updated_at`,
+    ).run(userId, level, new Date().toISOString());
+    return true;
+  }
+
   /** 用户当前生效的模型：优先用户选择，否则回退到系统当前模型。 */
   getActiveModelForUser(userId: string): ActiveModel | undefined {
     const selection = this.getUserModelSelection(userId);
@@ -2421,6 +2442,9 @@ export class AppStore {
       CREATE TABLE IF NOT EXISTS user_model_selections (
         user_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, model_id TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_thinking_levels (
+        user_id TEXT PRIMARY KEY, thinking_level TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS provider_models (
         id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
