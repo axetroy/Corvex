@@ -3,6 +3,7 @@ import { Button, Dropdown, Modal, Typography } from "antd";
 import { Conversations } from "@ant-design/x";
 import type { ConversationItemType } from "@ant-design/x";
 import { fetchJson, handleUnauthorized } from "../api.js";
+import { ArchiveIcon } from "./icons.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, Locale } from "../i18n.js";
 import type { ConversationPage, ConversationSummary } from "../types.js";
@@ -208,14 +209,15 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
           className={`conversation-archived-toggle${showArchived ? " is-active" : ""}`}
           type="text"
           size="small"
+          icon={<ArchiveIcon />}
+          aria-label={showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
           aria-pressed={showArchived}
+          title={showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
           onClick={() => {
             setShowArchived((value) => !value);
             setOffset(0);
           }}
-        >
-          {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
-        </Button>
+        />
       </div>
       <div className="conversation-sidebar-list" ref={listRef}>
         {items.length ? (

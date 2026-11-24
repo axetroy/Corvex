@@ -62,10 +62,11 @@
 
 /* 与右侧标签栏保持一致的高度：两侧内容从同一条水平线开始，不会因按钮更高而错位。 */
 .conversation-sidebar-heading {
+  position: relative;
   display: flex;
-  min-height: 41px;
+  min-height: 50px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--conversation-border);
@@ -93,31 +94,32 @@
   color: var(--conversation-muted);
 }
 
-.conversation-archived-toggle {
-  &.ant-btn {
-    padding: 0 4px;
-    color: var(--conversation-muted);
-    font-size: 11px;
-  }
+.conversation-archived-toggle.ant-btn {
+  position: absolute;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--conversation-muted);
 
-  &.ant-btn.is-active {
+  &.is-active {
     color: var(--conversation-brand);
-    font-weight: 600;
   }
 }
 
 .conversation-new-button {
   &.ant-btn {
     display: flex;
-    height: 29px;
+    width: 200px;
+    height: 34px;
     align-items: center;
     justify-content: center;
-    gap: 5px;
-    padding: 0 12px;
-    border-radius: 7px;
+    gap: 6px;
+    padding: 0 16px;
+    border-radius: 8px;
     box-shadow: 0 2px 7px rgb(23 105 170 / 18%);
-    font-size: 13px;
-    font-weight: 550;
+    font-size: 14px;
+    font-weight: 600;
   }
 
   & > span[aria-hidden="true"] {

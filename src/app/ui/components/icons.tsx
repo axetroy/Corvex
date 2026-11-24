@@ -17,6 +17,17 @@ function iconProps(props: SVGProps<SVGSVGElement>): SVGProps<SVGSVGElement> {
   };
 }
 
+/** 归档图标：带盖的盒子，用于显示/隐藏已归档对话。 */
+export function ArchiveIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <rect x="2.2" y="4" width="11.6" height="9" rx="1.4" />
+      <path d="M1.8 4h12.4" />
+      <path d="M6 7h4" />
+    </svg>
+  );
+}
+
 /** 通知图标：铃铛，用于侧边栏桌面通知开关。 */
 export function BellIcon(props: SVGProps<SVGSVGElement>) {
   return (
