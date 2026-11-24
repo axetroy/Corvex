@@ -11,6 +11,7 @@ import {
   renderDirectoryTree,
   requireRelativeRepoPath,
   searchAllowedFiles,
+  findAllowedFiles,
   statAllowedPath,
 } from "../../src/agent/fs/index.js";
 
@@ -203,7 +204,44 @@ describe("readAllowedFile", () => {
       ["tree", "parallel"],
       ["stat", "parallel"],
       ["search_text", "parallel"],
+      ["glob", "parallel"],
     ]));
+  });
+
+  it("matches regular expressions only when explicitly enabled and with bounded input", async () => {
+    await writeFile(join(root, "code.ts"), "const a = pause();\nconst pauseX = 1;\n");
+    const literal = await searchAllowedFiles("pause\\(\\)", ".", [root], true);
+    expect(literal.matches).toEqual([]);
+
+    const regex = await searchAllowedFiles("pause\\(\\)", ".", [root], { regex: true });
+    expect(regex.matches).toHaveLength(1);
+    expect(regex.matches[0]).toMatchObject({ line: 1 });
+
+    // 中文/大小写不敏感由 gi 标志处理；过长与非法模式在执行前被拒。
+    await expect(searchAllowedFiles("x".repeat(201), ".", [root], { regex: true })).rejects.toThrow("at most 200");
+    await expect(searchAllowedFiles("[", ".", [root], { regex: true })).rejects.toThrow("invalid regular expression");
+  });
+
+  it("finds files by bounded glob patterns without reading content", async () => {
+    await mkdir(join(root, "src", "nested"), { recursive: true });
+    await mkdir(join(root, "node_modules"));
+    await writeFile(join(root, "src", "a.test.ts"), "secret content");
+    await writeFile(join(root, "src", "nested", "b.test.ts"), "secret content");
+    await writeFile(join(root, "src", "index.ts"), "export {}");
+    await writeFile(join(root, "node_modules", "ignored.test.ts"), "test");
+
+    const tests = await findAllowedFiles(".", [root], "*.test.ts");
+    expect(tests.matches).toEqual(["src/a.test.ts", "src/nested/b.test.ts"]);
+    expect(tests.truncated).toBe(false);
+
+    const all = await findAllowedFiles("src", [root], "**/*.ts");
+    expect(all.matches).toContain("src/index.ts");
+    expect(all.matches).toContain("src/nested/b.test.ts");
+    // 输出里不含任何文件内容。
+    expect(JSON.stringify(all)).not.toContain("secret content");
+
+    await expect(findAllowedFiles(".", [root], "")).rejects.toThrow("glob pattern must contain");
+    await expect(findAllowedFiles("../outside", [root], "*")).rejects.toThrow("outside");
   });
 
   it("builds a bounded tree without following symlinks or entering ignored directories", async () => {

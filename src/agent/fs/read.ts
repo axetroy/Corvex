@@ -2,6 +2,7 @@ import { opendir, open, realpath, stat, type FileHandle } from "node:fs/promises
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { errorMessage } from "../../errors.js";
 
 /** 目录树默认最大深度；只展示骨架，避免把整个仓库铺进上下文。 */
 const maxTreeDepth = 4;
@@ -33,6 +34,15 @@ const maxSearchTotalBytes = 16 << 20;
 const maxSearchResults = 50;
 /** search_text 每条匹配结果最多保留的行文本字符数。 */
 const maxSearchLineCharacters = 400;
+/** 正则模式最大长度；过长的模式既难读也放大回溯风险。 */
+const maxRegexPatternCharacters = 200;
+/** 正则匹配时每行参与匹配的最大字符数，限制灾难性回溯的成本。 */
+const maxRegexLineCharacters = 2_048;
+/** glob 模式最大长度。 */
+const maxGlobPatternCharacters = 200;
+/** glob 最多返回的文件数与输出字节。 */
+const maxGlobResults = 200;
+const maxGlobBytes = 24 << 10;
 /** search_text 递归搜索时跳过的 Git、依赖和生成目录。 */
 const ignoredSearchDirectories = new Set([".git", ".next", ".turbo", "coverage", "dist", "node_modules"]);
 
@@ -271,15 +281,33 @@ export interface GitGrepResult {
 
 export type GitGrep = (query: string, path: string) => Promise<GitGrepResult>;
 
+export interface SearchOptions {
+  caseSensitive?: boolean;
+  /** Opt-in 正则；默认字面量，避免模型随手写的可信度不明的模式造成灾难性回溯。 */
+  regex?: boolean;
+}
+
 export async function searchAllowedFiles(
   query: string,
   requestedPath: string,
   allowedRoots: string[],
-  caseSensitive = false,
+  options: SearchOptions | boolean = {},
 ): Promise<SearchResult> {
+  const { caseSensitive = false, regex = false } = typeof options === "boolean" ? { caseSensitive: options } : options;
   const searchTerm = query.trim();
   if (!searchTerm || searchTerm.includes("\0") || searchTerm.length > maxSearchQueryCharacters) {
     throw new Error(`search query must contain 1 to ${maxSearchQueryCharacters} characters`);
+  }
+  let matcher: RegExp | undefined;
+  if (regex) {
+    if (searchTerm.length > maxRegexPatternCharacters) {
+      throw new Error(`regex pattern must be at most ${maxRegexPatternCharacters} characters`);
+    }
+    try {
+      matcher = new RegExp(searchTerm, caseSensitive ? "g" : "gi");
+    } catch (error) {
+      throw new Error(`invalid regular expression: ${errorMessage(error)}`, { cause: error });
+    }
   }
 
   const start = await resolveAllowedPath(requestedPath, allowedRoots);
@@ -340,8 +368,14 @@ export async function searchAllowedFiles(
     const lines = text.split("\n");
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index]!.replace(/\r$/, "");
-      const haystack = caseSensitive ? line : line.toLowerCase();
-      if (!haystack.includes(needle)) continue;
+      if (matcher) {
+        // 只让每行前 2 KiB 参与匹配，给不可信模式的回溯成本加上界。
+        matcher.lastIndex = 0;
+        if (!matcher.test(line.slice(0, maxRegexLineCharacters))) continue;
+      } else {
+        const haystack = caseSensitive ? line : line.toLowerCase();
+        if (!haystack.includes(needle)) continue;
+      }
       if (matches.length >= maxSearchResults) {
         truncated = true;
         return false;
@@ -404,6 +438,103 @@ export async function searchAllowedFiles(
   }
 
   return { matches, scannedFiles, truncated };
+}
+
+/** 把有限的 glob 语法转成正则：`*` 不跨目录，`**` 跨目录，`?` 匹配单字符。 */
+function globToRegExp(pattern: string): RegExp {
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]!;
+    if (character === "*") {
+      if (pattern[index + 1] === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else if (character === "?") {
+      source += "[^/]";
+    } else {
+      source += character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${source}$`);
+}
+
+export interface GlobResult {
+  path: string;
+  matches: string[];
+  truncated: boolean;
+}
+
+/**
+ * 按文件名模式查找文件，只读路径不读内容。与 search_text 共用目录边界与忽略集，
+ * 深度/条目/结果/字节全部有界，不跟随符号链接。
+ */
+export async function findAllowedFiles(
+  requestedPath: string,
+  allowedRoots: string[],
+  pattern: string,
+): Promise<GlobResult> {
+  const trimmed = pattern.trim();
+  if (!trimmed || trimmed.includes("\0") || trimmed.length > maxGlobPatternCharacters) {
+    throw new Error(`glob pattern must contain 1 to ${maxGlobPatternCharacters} characters`);
+  }
+  const matcher = globToRegExp(trimmed);
+  const matchBasenameOnly = !trimmed.includes("/");
+  const start = await resolveAllowedPath(requestedPath, allowedRoots);
+  const info = await stat(start.path);
+  if (!info.isDirectory()) throw new Error("glob path must be a directory");
+
+  const matches: string[] = [];
+  let bytes = 0;
+  let truncated = false;
+  let entriesVisited = 0;
+  const directories = [start.path];
+  while (directories.length > 0) {
+    const current = directories.shift()!;
+    const directory = await opendir(current);
+    const entries: Array<{ name: string; path: string; type: "directory" | "file" }> = [];
+    for await (const entry of directory) {
+      entriesVisited += 1;
+      if (entriesVisited > maxSearchDirectoryEntries) {
+        truncated = true;
+        break;
+      }
+      if (entry.isDirectory()) {
+        if (!ignoredSearchDirectories.has(entry.name)) {
+          entries.push({ name: entry.name, path: resolve(current, entry.name), type: "directory" });
+        }
+      } else if (entry.isFile()) {
+        entries.push({ name: entry.name, path: resolve(current, entry.name), type: "file" });
+      }
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.type === "directory") {
+        directories.push(entry.path);
+        continue;
+      }
+      const relativePath = toForwardSlashPath(relative(start.root, entry.path) || ".");
+      const candidate = matchBasenameOnly ? entry.name : relativePath;
+      if (!matcher.test(candidate)) continue;
+      const line = `${relativePath}\n`;
+      const size = Buffer.byteLength(line);
+      if (matches.length >= maxGlobResults || bytes + size > maxGlobBytes) {
+        truncated = true;
+        break;
+      }
+      matches.push(relativePath);
+      bytes += size;
+    }
+    if (truncated) break;
+  }
+  matches.sort((left, right) => left.localeCompare(right));
+  return {
+    path: toForwardSlashPath(relative(start.root, start.path) || "."),
+    matches,
+    truncated,
+  };
 }
 
 async function readLineRange(
@@ -793,17 +924,43 @@ export function createFsReadExtension(
       name: "search_text",
       label: "Search repository text",
       executionMode: "parallel",
-      description: `Search for a literal text string in UTF-8 files under the fixed repository worktree or trusted skill roots. Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use path to narrow the search and treat truncated results as incomplete.`,
-      promptSnippet: "search_text: Find a literal string in bounded repository files; narrow with path and inspect matching files with read_file.",
+      description: `Search for text in UTF-8 files under the fixed repository worktree or trusted skill roots. By default the query is a LITERAL string: parentheses, dots and backslashes have no special meaning, so search for "pause(" rather than "pause\\(\\)". Set regex to true only when you need a pattern (max ${maxRegexPatternCharacters} chars, matched against the first 2 KiB of each line). Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use path to narrow the search and treat truncated results as incomplete.`,
+      promptSnippet: "search_text: Find text in bounded repository files; literal by default, regex:true for patterns, narrow with path.",
       parameters: Type.Object({
         query: Type.String({ minLength: 1, maxLength: maxSearchQueryCharacters }),
         path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
         caseSensitive: Type.Optional(Type.Boolean()),
+        regex: Type.Optional(Type.Boolean()),
       }),
       execute: async (_toolCallId, params) => ({
         content: [{
           type: "text",
-          text: JSON.stringify(await searchAllowedFiles(params.query, await requireRelativeRepoPath(params.path ?? ".", roots), roots, params.caseSensitive)),
+          text: JSON.stringify(await searchAllowedFiles(
+            params.query,
+            await requireRelativeRepoPath(params.path ?? ".", roots),
+            roots,
+            { caseSensitive: params.caseSensitive, regex: params.regex },
+          )),
+        }],
+        details: {},
+      }),
+    });
+    pi.registerTool({
+      name: "glob",
+      label: "Find files by name pattern",
+      executionMode: "parallel",
+      description: `Find files by a bounded glob pattern under a repository-relative directory. Use * for a single path segment, ** for any depth, and ? for one character; patterns without "/" match file names anywhere below the starting directory. Only paths are returned, never file contents, and results are capped at ${maxGlobResults} entries / ${maxGlobBytes} bytes. .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are not followed.`,
+      promptSnippet: "glob: Find files by name pattern (*, **, ?) without reading their contents; use a path to narrow.",
+      parameters: Type.Object({
+        pattern: Type.String({ minLength: 1, maxLength: maxGlobPatternCharacters }),
+        path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+      }),
+      execute: async (_toolCallId, params) => ({
+        content: [{
+          type: "text",
+          text: JSON.stringify(await findAllowedFiles(
+            await requireRelativeRepoPath(params.path ?? ".", roots), roots, params.pattern,
+          )),
         }],
         details: {},
       }),
