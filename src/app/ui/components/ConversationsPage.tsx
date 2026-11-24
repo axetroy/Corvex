@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
-import { Button, Modal, Space, Tabs, Tag, Typography } from "antd";
+import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
 import { Actions, Bubble, Prompts, Sender, Welcome } from "@ant-design/x";
 import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
@@ -30,7 +30,7 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, InterjectIcon, InterruptIcon, QueueIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
@@ -1263,28 +1263,39 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             <InterjectIcon />
                             <span>{copy.interject}</span>
                           </button>
-                          <button
-                            type="button"
-                            className="conversation-queue-button"
-                            aria-label={copy.queue}
-                            title={copy.queueHint}
-                            disabled={!canSend}
-                            onClick={() => submitMessage(draftMessage, "queue")}
+                          <Dropdown
+                            trigger={["click"]}
+                            placement="topRight"
+                            menu={{
+                              items: [
+                                {
+                                  key: "queue",
+                                  label: copy.queue,
+                                  title: copy.queueHint,
+                                  disabled: !canSend,
+                                },
+                                {
+                                  key: "interrupt",
+                                  label: copy.interrupt,
+                                  title: copy.interruptHint,
+                                  disabled: !canSend || !activeTurnId,
+                                },
+                              ],
+                              onClick: ({ key }) => {
+                                if (key === "queue") submitMessage(draftMessage, "queue");
+                                else if (key === "interrupt") submitMessage(draftMessage, "interrupt");
+                              },
+                            }}
                           >
-                            <QueueIcon />
-                            <span>{copy.queue}</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="conversation-interrupt-button"
-                            aria-label={copy.interrupt}
-                            title={copy.interruptHint}
-                            disabled={!canSend || !activeTurnId}
-                            onClick={() => submitMessage(draftMessage, "interrupt")}
-                          >
-                            <InterruptIcon />
-                            <span>{copy.interrupt}</span>
-                          </button>
+                            <button
+                              type="button"
+                              className="conversation-active-more"
+                              aria-label={copy.moreActions}
+                              title={copy.moreActions}
+                            >
+                              <MoreIcon />
+                            </button>
+                          </Dropdown>
                           <button
                             type="button"
                             className="conversation-stop-button"
@@ -1294,7 +1305,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                             onClick={() => void cancelActiveTurn()}
                           >
                             <StopIcon />
-                            <span>{cancelling ? copy.cancelTurning : copy.cancelTurn}</span>
                           </button>
                         </div>
                       ) : (

@@ -1941,18 +1941,32 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 /* 输入框：与正文列对齐，不贴边。Ant Design 运行时样式的选择器带三个类名，
    这里用四个类名覆盖宽度、边框与圆角，否则会退回默认的 100% 宽。 */
 /* 输入框与快捷操作一起锚定在底部，面板本身不再绝对定位。 */
-.conversation-stop-button {
+.conversation-stop-button,
+.conversation-active-more {
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  width: 32px;
   height: 32px;
-  padding: 0 12px;
-  color: var(--danger);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   background: var(--bg-panel);
-  border: 1px solid var(--danger);
+  border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+}
+
+.conversation-stop-button {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.conversation-active-more {
+  color: var(--text-secondary);
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
 }
 
 .conversation-stop-button:hover:not(:disabled) {
@@ -1991,37 +2005,6 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-interject-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.conversation-queue-button,
-.conversation-interrupt-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 10px;
-  color: var(--text-secondary);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.conversation-queue-button:hover:not(:disabled),
-.conversation-interrupt-button:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.conversation-interrupt-button {
-  color: var(--warning, var(--text-secondary));
-}
-
-.conversation-queue-button:disabled,
-.conversation-interrupt-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
