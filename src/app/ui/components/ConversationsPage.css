@@ -883,18 +883,70 @@
   to { transform: rotate(360deg); }
 }
 
-/* 首 token 到达前的等待提示：与过程时间线同一套视觉语言。 */
+/* 每次模型调用的等待反馈：脉冲圆点 + 已等待秒数 + 底部扫光进度条。 */
 .conversation-pending {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 10px;
-  color: var(--conversation-muted);
+  padding: 8px 12px 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
+.conversation-pending::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--conversation-brand), transparent);
+  background-size: 40% 100%;
+  animation: conversation-pending-sweep 1.6s ease-in-out infinite;
+  content: "";
+}
+
+.conversation-pending-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.conversation-pending-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--conversation-brand);
+  animation: conversation-pending-pulse 1.2s ease-in-out infinite;
+}
+
+.conversation-pending-dots i:nth-child(2) { animation-delay: 0.2s; }
+.conversation-pending-dots i:nth-child(3) { animation-delay: 0.4s; }
+
+.conversation-pending-elapsed {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes conversation-pending-pulse {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@keyframes conversation-pending-sweep {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .conversation-process-spinner { animation: none; }
+  .conversation-process-spinner,
+  .conversation-pending::after,
+  .conversation-pending-dots i { animation: none; }
 }
 
 .conversation-process-body {

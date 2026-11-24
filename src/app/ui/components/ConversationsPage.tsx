@@ -9,6 +9,7 @@ import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
+import { resolveWaitingSince } from "../conversationWaiting.js";
 import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
@@ -120,16 +121,38 @@ function conversationGroupColor(key: string): string {
 }
 
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
+/** 等待模型首个输出时的动态反馈：脉冲圆点 + 已等待秒数，避免静默带来的卡顿错觉。 */
+function ModelWaiting({ since, copy }: { since: number; copy: Copy }) {
+  const [seconds, setSeconds] = useState(() => Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+  useEffect(() => {
+    setSeconds(Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+    const timer = window.setInterval(() => {
+      setSeconds(Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [since]);
+  return (
+    <div className="conversation-pending" role="status">
+      <span className="conversation-pending-dots" aria-hidden="true"><i /><i /><i /></span>
+      <span aria-live="polite">{copy.conversationThinkingPending}</span>
+      {/* 秒数每秒变化，不进入无障碍播报，避免反复朗读。 */}
+      <span className="conversation-pending-elapsed" aria-hidden="true">{seconds}s</span>
+    </div>
+  );
+}
+
 function MessageContent({
   message,
   copy,
   streaming,
   timeline,
+  waitingSince,
 }: {
   message: ConversationMessage;
   copy: Copy;
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
+  waitingSince?: number | null;
 }) {
   const codeComponentsProps = useMemo(() => ({
     code: {
@@ -145,18 +168,14 @@ function MessageContent({
   }
   // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
   const settled = message.status === "completed" || message.status === "failed";
-  const awaitingFirstOutput = !settled && !message.content && timeline.length === 0;
   return (
     <div className={`conversation-message-markdown${streaming && message.content ? " is-streaming" : ""}`}>
-      {/* 首个 token 到达前给出明确的进行中反馈，避免用户以为卡住。 */}
-      {awaitingFirstOutput ? (
-        <div className="conversation-pending" role="status" aria-live="polite">
-          <span className="conversation-process-spinner" aria-hidden="true" />
-          <span>{copy.conversationThinkingPending}</span>
-        </div>
-      ) : null}
       {/* 先按发生顺序展示每次思考与工具调用，再展示最终回答。 */}
       <ConversationTimeline segments={timeline} active={Boolean(streaming)} copy={copy} />
+      {/* 放在过程块之后，长过程滚动时仍贴近屏幕底部；每次模型调用都会重新出现。 */}
+      {streaming && waitingSince !== null && waitingSince !== undefined ? (
+        <ModelWaiting since={waitingSince} copy={copy} />
+      ) : null}
       {/* 模型输出不可信：转义原始 HTML，并把链接放到新标签打开。 */}
       {message.content ? (
         <XMarkdown
@@ -352,6 +371,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   const [changePaths, setChangePaths] = useState<string[]>([]);
   const [changeSha, setChangeSha] = useState("");
+  /** 当前轮正在等待模型输出；null 表示已有内容/工具在执行/轮次结束。 */
+  const [waitingSince, setWaitingSince] = useState<number | null>(null);
   useEffect(() => {
     let active = true;
     if (!selectedConversationId) {
@@ -417,6 +438,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   useEffect(() => {
     if (!selectedConversationId || !activeTurnId) {
       setStreamedReply(undefined);
+      setWaitingSince(null);
       return;
     }
     const controller = new AbortController();
@@ -449,8 +471,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       if (reset) {
         // 新一轮模型输出：新增一条思考；工具事件会插在它后面。
         segments.push({ kind: "thinking", key: `thinking-${segments.length}`, text });
+        setWaitingSince((current) => resolveWaitingSince(current, { type: "start" }, Date.now()));
       } else {
         updateLast("thinking", text);
+        if (text.trim()) setWaitingSince((current) => resolveWaitingSince(current, { type: "content" }, Date.now()));
       }
       schedule();
     };
@@ -466,9 +490,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const existing = segments.find((segment) => segment.kind === "tool" && segment.id === tool.id);
       if (existing?.kind === "tool") existing.call = call;
       else segments.push({ kind: "tool", key: `tool-${tool.id}`, id: tool.id, call });
+      // 工具执行中不算等待模型；工具结束后模型会被再次调用，重新进入等待。
+      setWaitingSince((current) => resolveWaitingSince(
+        current,
+        { type: tool.status === "running" ? "toolRunning" : "toolSettled" },
+        Date.now(),
+      ));
       schedule();
     };
     setStreamedReply({ turnId: activeTurnId, text: "" });
+    setWaitingSince(Date.now());
     void streamConversationTurn(
       selectedConversationId,
       activeTurnId,
@@ -476,8 +507,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onText: (text, reset) => {
           latestText = reset ? "" : text;
           // 工具调用之间的中间回复也算过程的一部分，按轮次单独成条。
-          if (reset) segments.push({ kind: "text", key: `text-${segments.length}`, text });
-          else updateLast("text", text);
+          if (reset) {
+            segments.push({ kind: "text", key: `text-${segments.length}`, text });
+            setWaitingSince((current) => resolveWaitingSince(current, { type: "start" }, Date.now()));
+          } else {
+            updateLast("text", text);
+            if (text.trim()) setWaitingSince((current) => resolveWaitingSince(current, { type: "content" }, Date.now()));
+          }
           schedule();
         },
         onThinking,
@@ -488,6 +524,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onDone: (status) => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
           flushTimer = undefined;
+          setWaitingSince((current) => resolveWaitingSince(current, { type: "done" }, Date.now()));
           flush();
           setPollToken((value) => value + 1);
           const userMessages = currentConversation?.messages ?? [];
@@ -513,6 +550,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }).finally(() => {
       if (flushTimer !== undefined) window.clearTimeout(flushTimer);
       flushTimer = undefined;
+      // 流断开后由轮询接管，不再显示「等待模型」。
+      setWaitingSince(null);
     });
     return () => {
       closed = true;
@@ -1070,7 +1109,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           {messageStatus(message, copy) ? <Tag>{messageStatus(message, copy)}</Tag> : null}
         </Space>
       ),
-      content: <MessageContent message={message} copy={copy} streaming={streaming} timeline={timeline} />,
+      content: <MessageContent
+        message={message}
+        copy={copy}
+        streaming={streaming}
+        timeline={timeline}
+        waitingSince={streaming ? waitingSince : null}
+      />,
       // 首 token 前的等待提示由 MessageContent 自己渲染，避免与 Bubble 的 loading 重复。
       loading: false,
       status: message.status === "failed" ? "error" : message.status === "completed" ? "success" : undefined,
