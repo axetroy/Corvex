@@ -125,7 +125,7 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
           <div
             className={`conversation-summary-label${item.archived ? " is-archived" : ""}`}
             data-conversation-id={item.id}
-            title={item.archived ? copy.conversationArchived : undefined}
+            title={item.title || item.projectName}
           >
             <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
             {running ? <span className="conversation-summary-active" aria-label={copy.statuses.running} /> : null}
@@ -224,16 +224,19 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
             activeKey={conversationId || undefined}
             onActiveChange={(key) => { if (key) onConversationChange(key); }}
             groupable={{
-              label: (group) => (
-                <span className="conversation-group-label">
-                  <span
-                    className="conversation-group-dot"
-                    style={{ backgroundColor: conversationGroupColor(String(group)) }}
-                    aria-hidden="true"
-                  />
-                  <span className="conversation-group-name">{projectNames.get(String(group)) ?? String(group)}</span>
-                </span>
-              ),
+              label: (group) => {
+                const projectName = projectNames.get(String(group)) ?? String(group);
+                return (
+                  <span className="conversation-group-label" title={projectName}>
+                    <span
+                      className="conversation-group-dot"
+                      style={{ backgroundColor: conversationGroupColor(String(group)) }}
+                      aria-hidden="true"
+                    />
+                    <span className="conversation-group-name">{projectName}</span>
+                  </span>
+                );
+              },
               collapsible: true,
               expandedKeys: expandedGroups,
               onExpand: (keys) => {
