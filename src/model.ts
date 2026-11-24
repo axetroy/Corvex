@@ -302,6 +302,23 @@ export interface ConversationSkill {
   isSystem: boolean;
   createdAt: string;
   updatedAt: string;
+  /** 来源技能包 ID；手动添加的技能为空。 */
+  packId: string;
+}
+
+/** 导入的技能包：ZIP 原样存库，技能文档是它的派生视图。 */
+export interface SkillPack {
+  id: string;
+  name: string;
+  size: number;
+  /** upload / url / github / gitlab */
+  source: string;
+  /** 原始地址或文件名，便于追溯。 */
+  sourceValue: string;
+  enabled: boolean;
+  skillCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** 当前使用的模型及其供应商连接参数。 */

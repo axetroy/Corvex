@@ -3,7 +3,8 @@ import { Button, Modal, Space, Switch, Table, Typography } from "antd";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
-import type { ConversationSkill } from "../types.js";
+import type { ConversationSkill, SkillPack } from "../types.js";
+import { SkillImportDialog } from "./SkillImportDialog.js";
 
 // Monaco 体积很大，只在打开编辑弹窗时加载。
 const SkillEditor = lazy(() => import("./SkillEditor.js").then((module) => ({ default: module.SkillEditor })));
@@ -25,6 +26,8 @@ Instructions for the model. Use $ARGUMENTS for the user's text.
 /** 管理员维护对话技能：每个技能就是一份 SKILL.md，用 Monaco 编辑。 */
 export function SkillManager({ copy }: { copy: Copy }) {
   const [skills, setSkills] = useState<ConversationSkill[]>([]);
+  const [packs, setPacks] = useState<SkillPack[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<ConversationSkill | undefined>();
   const [document, setDocument] = useState(blankDocument);
   const [modalOpen, setModalOpen] = useState(false);
@@ -38,6 +41,9 @@ export function SkillManager({ copy }: { copy: Copy }) {
     fetchJson<{ items: ConversationSkill[] }>("/api/ops/admin/skills", copy)
       .then((result) => { if (active) setSkills(result.items ?? []); })
       .catch((cause: unknown) => { if (active) setError(errorMessage(cause)); });
+    fetchJson<{ items: SkillPack[] }>("/api/ops/admin/skills/packs", copy)
+      .then((result) => { if (active) setPacks(result.items ?? []); })
+      .catch(() => undefined);
     return () => { active = false; };
   }, [copy, notice]);
 
@@ -93,6 +99,31 @@ export function SkillManager({ copy }: { copy: Copy }) {
     });
   }
 
+  async function togglePack(pack: SkillPack, enabled: boolean) {
+    try {
+      await sendJson(`/api/ops/admin/skills/packs/${encodeURIComponent(pack.id)}`, { enabled }, copy);
+      setNotice(copy.skillManagerSaved);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  function confirmDeletePack(pack: SkillPack) {
+    modal.confirm({
+      title: copy.skillPackDeleteConfirm,
+      okText: copy.skillPackDelete,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await sendJson(`/api/ops/admin/skills/packs/${encodeURIComponent(pack.id)}`, {}, copy, "DELETE");
+          setNotice(copy.skillManagerSaved);
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      },
+    });
+  }
+
   const columns = [
     { title: copy.skillManagerName, dataIndex: "name", width: "18%" },
     {
@@ -138,7 +169,10 @@ export function SkillManager({ copy }: { copy: Copy }) {
       </Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {notice ? <Typography.Text type="success">{notice}</Typography.Text> : null}
-      <Button type="primary" onClick={openCreate}>{copy.skillManagerAdd}</Button>
+      <Space>
+        <Button type="primary" onClick={openCreate}>{copy.skillManagerAdd}</Button>
+        <Button onClick={() => setImportOpen(true)}>{copy.skillManagerImport}</Button>
+      </Space>
       <Table
         rowKey="id"
         dataSource={skills}
@@ -148,6 +182,47 @@ export function SkillManager({ copy }: { copy: Copy }) {
         locale={{ emptyText: copy.skillManagerEmpty }}
         tableLayout="fixed"
         style={{ marginTop: 12 }}
+      />
+      <Typography.Title level={5} style={{ marginTop: 24 }}>{copy.skillPackTitle}</Typography.Title>
+      <Table
+        rowKey="id"
+        dataSource={packs}
+        size="small"
+        pagination={false}
+        locale={{ emptyText: copy.skillPackEmpty }}
+        columns={[
+          { title: copy.skillManagerName, dataIndex: "name", width: "28%" },
+          { title: copy.skillPackSource, dataIndex: "source", width: "14%" },
+          { title: copy.skillPackSkills, dataIndex: "skillCount", width: "12%" },
+          {
+            title: copy.skillPackSize,
+            dataIndex: "size",
+            width: "12%",
+            render: (value: number) => `${Math.round(value / 1024)} KiB`,
+          },
+          {
+            title: copy.skillManagerEnabled,
+            dataIndex: "enabled",
+            width: "12%",
+            render: (enabled: boolean, pack: SkillPack) => (
+              <Switch checked={enabled} onChange={(next) => void togglePack(pack, next)} />
+            ),
+          },
+          {
+            title: "",
+            key: "actions",
+            width: "22%",
+            render: (_: unknown, pack: SkillPack) => (
+              <Button size="small" danger onClick={() => confirmDeletePack(pack)}>{copy.skillPackDelete}</Button>
+            ),
+          },
+        ]}
+      />
+      <SkillImportDialog
+        open={importOpen}
+        copy={copy}
+        onClose={() => setImportOpen(false)}
+        onImported={() => setNotice(copy.skillManagerSaved)}
       />
       <Modal
         open={modalOpen}

@@ -35,6 +35,26 @@ export async function sendJson<T>(path: string, body: unknown, copy: Copy, metho
   return await requestJson<T>(path, copy, { method, body });
 }
 
+/** 上传原始二进制（例如技能包 ZIP）；同源 fetch 会自动带上控制台会话凭据。 */
+export async function sendBinary<T>(path: string, body: ArrayBuffer, contentType: string, copy: Copy): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": contentType },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(copy.requestTimeoutTemplate.replace("{seconds}", String(requestTimeoutMs / 1000)), { cause: error });
+    }
+    throw error;
+  }
+  return await readResponse<T>(response, copy);
+}
+
 async function requestJson<T>(
   path: string,
   copy: Copy,
@@ -59,6 +79,11 @@ async function requestJson<T>(
     }
     throw error;
   }
+  return await readResponse<T>(response, copy);
+}
+
+/** 统一的响应处理：401 跳转、错误文案提取与 JSON 解析。 */
+async function readResponse<T>(response: Response, copy: Copy): Promise<T> {
   if (!response.ok) {
     const text = (await response.text()).trim();
     handleUnauthorized(response, text);

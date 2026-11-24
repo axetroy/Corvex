@@ -257,6 +257,7 @@ export function validateWebUrl(value: string, blockedHosts: ReadonlySet<string>)
 export function createPinnedRequest(
   maxBytes: number,
   accept = "text/html, application/xhtml+xml, application/json;q=0.9, text/plain;q=0.8, application/xml;q=0.8",
+  auth?: { header: string; value: string },
 ): WebFetchDependencies["request"] {
   const limitMessage = `web page exceeds the ${Math.round(maxBytes / (1024 * 1024))} MiB response limit`;
   return function requestPinned(url, address, signal) {
@@ -273,6 +274,7 @@ export function createPinnedRequest(
           "accept-encoding": "identity",
           host: url.host,
           "user-agent": "Corvex-WebFetch/1.0",
+          ...(auth ? { [auth.header]: auth.value } : {}),
         },
         ...(isIP(url.hostname.replace(/^\[|\]$/g, "")) === 0 ? { servername: url.hostname } : {}),
         agent: false,

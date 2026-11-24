@@ -3,6 +3,8 @@ import { requireAdmin } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import { readJsonObject, sendJson } from "../respond.js";
 import { parseSkillDocument, validateSkillDocument } from "../../../agent/skills.js";
+import { discoverSkillsFromZip, skillImportLimits } from "../../../agent/skill-import.js";
+import { fetchSkillsFromSource, type SkillSourceChannel } from "../../../agent/skill-sources.js";
 
 /** 管理员提交的是完整 SKILL.md；解析与校验失败时返回错误文本。 */
 function parseSkillDocumentBody(body: Record<string, unknown>): { document: string; name: string } | { error: string } {
@@ -92,6 +94,97 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
           return;
         }
         sendJson(reply, 200, ctx.store.updateConversationSkill(id, parsed.document));
+      });
+
+      // 技能包导入：ZIP 原样入库，包内 SKILL.md 派生为可调用的对话技能。
+      admin.get("/skills/packs", async (_request, reply) => {
+        sendJson(reply, 200, { items: ctx.store.listSkillPacks() });
+      });
+
+      admin.post("/skills/import", async (request, reply) => {
+        const contentType = String(request.headers["content-type"] ?? "").toLowerCase();
+        try {
+          let archive: Buffer;
+          let name: string;
+          let source: string;
+          let sourceValue: string;
+          let path: string | undefined;
+          let overwrite = false;
+          if (contentType.startsWith("application/zip") || contentType.startsWith("application/octet-stream")) {
+            if (!Buffer.isBuffer(request.body)) {
+              sendJson(reply, 400, { error: "ZIP archive body is required" });
+              return;
+            }
+            archive = request.body;
+            const query = request.query as { filename?: string };
+            name = String(query.filename ?? "skill-pack.zip").replace(/\.zip$/i, "");
+            source = "upload";
+            sourceValue = String(query.filename ?? "skill-pack.zip");
+          } else {
+            const body = readJsonObject(request, reply);
+            if (!body) return;
+            const channel = String(body.channel ?? "") as SkillSourceChannel;
+            const value = String(body.value ?? "").trim();
+            if (!["url", "github", "gitlab"].includes(channel) || !value) {
+              sendJson(reply, 400, { error: "channel and value are required" });
+              return;
+            }
+            const result = await fetchSkillsFromSource(
+              {
+                channel,
+                value,
+                ...(typeof body.ref === "string" && body.ref.trim() ? { ref: body.ref.trim() } : {}),
+                ...(typeof body.path === "string" && body.path.trim() ? { path: body.path.trim() } : {}),
+              },
+              {
+                gitlab: ctx.gitlabForRequest(request),
+                gitlabBaseUrl: ctx.config.gitlab.baseUrl,
+              },
+            );
+            archive = result.archive!;
+            name = value.split("/").filter(Boolean).pop() ?? "skill-pack";
+            source = channel;
+            sourceValue = value;
+            path = typeof body.path === "string" ? body.path : undefined;
+            overwrite = body.overwrite === true;
+          }
+          if (archive.byteLength > skillImportLimits.maxArchiveBytes) {
+            sendJson(reply, 413, { error: `ZIP exceeds the ${skillImportLimits.maxArchiveBytes} byte limit` });
+            return;
+          }
+          const discovered = await discoverSkillsFromZip(archive, path);
+          const result = ctx.store.createSkillPack({
+            name,
+            archive,
+            source,
+            sourceValue,
+            documents: discovered.skills.map((skill) => skill.document),
+            overwrite,
+          });
+          sendJson(reply, 201, { ...result, issues: discovered.issues });
+        } catch (cause) {
+          sendJson(reply, 400, { error: cause instanceof Error ? cause.message : "skill import failed" });
+        }
+      });
+
+      admin.put("/skills/packs/:id", async (request, reply) => {
+        const id = (request.params as { id: string }).id;
+        const body = readJsonObject(request, reply);
+        if (!body) return;
+        if (!ctx.store.setSkillPackEnabled(id, body.enabled === true)) {
+          sendJson(reply, 404, { error: "skill pack not found" });
+          return;
+        }
+        sendJson(reply, 200, { updated: true });
+      });
+
+      admin.delete("/skills/packs/:id", async (request, reply) => {
+        const id = (request.params as { id: string }).id;
+        if (!ctx.store.deleteSkillPack(id)) {
+          sendJson(reply, 404, { error: "skill pack not found" });
+          return;
+        }
+        sendJson(reply, 200, { deleted: true });
       });
 
       admin.delete("/skills/:id", async (request, reply) => {

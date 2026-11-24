@@ -8,7 +8,7 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
-import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument, SKILL_SEED_VERSION } from "./agent/skills.js";
+import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument, validateSkillDocument, SKILL_SEED_VERSION } from "./agent/skills.js";
 import {
   redactSensitiveText,
   sanitizeSensitiveText,
@@ -24,6 +24,7 @@ import {
   type ConversationFollowUp,
   type ConversationMessage,
   type ConversationSkill,
+  type SkillPack,
   type ConversationPage,
   type ConversationProcessEntry,
   type ConversationSummary,
@@ -2394,14 +2395,29 @@ export class AppStore {
         name TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1,
         is_system INTEGER NOT NULL DEFAULT 0,
+        pack_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name);
+      CREATE INDEX IF NOT EXISTS conversation_skills_pack_idx ON conversation_skills(pack_id);
+      CREATE TABLE IF NOT EXISTS skill_packs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        archive BLOB NOT NULL,
+        size INTEGER NOT NULL,
+        source TEXT NOT NULL DEFAULT '',
+        source_value TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
     `);
     // 早期技能表按列存储；必须在写种子之前补 document 列并从旧列生成 SKILL.md。
     const skillColumns = new Set(
       (this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((column) => column.name),
     );
+    if (!skillColumns.has("pack_id")) {
+      this.db.exec("ALTER TABLE conversation_skills ADD COLUMN pack_id TEXT NOT NULL DEFAULT ''");
+    }
     if (!skillColumns.has("document")) {
       this.db.exec("ALTER TABLE conversation_skills ADD COLUMN document TEXT NOT NULL DEFAULT ''");
       for (const row of this.db.prepare("SELECT * FROM conversation_skills").all() as Record<string, unknown>[]) {
@@ -2643,6 +2659,113 @@ export class AppStore {
     return this.db.prepare("DELETE FROM conversation_skills WHERE id=?").run(id).changes === 1;
   }
 
+  /** 技能包列表只返回元数据，不把 ZIP 二进制带进接口。 */
+  listSkillPacks(): SkillPack[] {
+    const rows = this.db.prepare(
+      `SELECT p.id, p.name, p.size, p.source, p.source_value, p.enabled, p.created_at, p.updated_at,
+        (SELECT COUNT(*) FROM conversation_skills s WHERE s.pack_id=p.id) AS skill_count
+       FROM skill_packs p ORDER BY p.created_at DESC`,
+    ).all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: stringColumn(row, "id"),
+      name: stringColumn(row, "name"),
+      size: numberColumn(row, "size"),
+      source: stringColumn(row, "source"),
+      sourceValue: stringColumn(row, "source_value"),
+      enabled: numberColumn(row, "enabled") === 1,
+      skillCount: numberColumn(row, "skill_count"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at"),
+    }));
+  }
+
+  /** 取回原始 ZIP，供重新解析或导出。 */
+  getSkillPackArchive(id: string): Buffer | undefined {
+    const row = this.db.prepare("SELECT archive FROM skill_packs WHERE id=?").get(id) as { archive: Buffer } | undefined;
+    return row?.archive ? Buffer.from(row.archive) : undefined;
+  }
+
+  /**
+   * 存下技能包并从包内 SKILL.md 派生技能行。重名技能按 overwrite 决定跳过或覆盖；
+   * 返回派生结果，ZIP 始终是包的唯一来源。
+   */
+  createSkillPack(input: {
+    name: string;
+    archive: Buffer;
+    source: string;
+    sourceValue: string;
+    documents: string[];
+    overwrite: boolean;
+  }): { pack: SkillPack; created: string[]; skipped: string[]; errors: string[] } {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const created: string[] = [];
+    const skipped: string[] = [];
+    const errors: string[] = [];
+    this.transaction(() => {
+      this.db.prepare(
+        `INSERT INTO skill_packs (id,name,archive,size,source,source_value,enabled,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,1,?,?)`,
+      ).run(id, input.name, input.archive, input.archive.byteLength, input.source, input.sourceValue, now, now);
+      for (const document of input.documents) {
+        try {
+          const parsed = parseSkillDocument(document);
+          const problems = validateSkillDocument(parsed);
+          if (problems.length > 0) {
+            errors.push(`${parsed.name || "unnamed"}: ${problems.join("; ")}`);
+            continue;
+          }
+          const existing = this.db.prepare("SELECT id FROM conversation_skills WHERE name=?").get(parsed.name) as { id: string } | undefined;
+          if (existing && !input.overwrite) {
+            skipped.push(parsed.name);
+            continue;
+          }
+          if (existing) {
+            this.db.prepare("UPDATE conversation_skills SET document=?,enabled=?,pack_id=?,updated_at=? WHERE id=?")
+              .run(document.trim(), parsed.enabled ? 1 : 0, id, now, existing.id);
+          } else {
+            this.db.prepare(
+              `INSERT INTO conversation_skills (id,document,name,enabled,is_system,pack_id,created_at,updated_at)
+               VALUES (?,?,?,?,0,?,?,?)`,
+            ).run(randomUUID(), document.trim(), parsed.name, parsed.enabled ? 1 : 0, id, now, now);
+          }
+          created.push(parsed.name);
+        } catch (cause) {
+          errors.push(cause instanceof Error ? cause.message : "invalid SKILL.md");
+        }
+      }
+    });
+    return {
+      pack: this.listSkillPacks().find((pack) => pack.id === id)!,
+      created,
+      skipped,
+      errors,
+    };
+  }
+
+  /** 删除技能包时一并删除它派生的技能，避免留下与包不一致的孤儿文档。 */
+  deleteSkillPack(id: string): boolean {
+    return this.transaction(() => {
+      this.db.prepare("DELETE FROM conversation_skills WHERE pack_id=?").run(id);
+      return this.db.prepare("DELETE FROM skill_packs WHERE id=?").run(id).changes === 1;
+    });
+  }
+
+  /** 停用技能包时同时停用其派生技能；重新启用时按各自 SKILL.md 的 enabled 恢复。 */
+  setSkillPackEnabled(id: string, enabled: boolean): boolean {
+    return this.transaction(() => {
+      const result = this.db.prepare("UPDATE skill_packs SET enabled=?,updated_at=? WHERE id=?")
+        .run(enabled ? 1 : 0, new Date().toISOString(), id);
+      if (result.changes !== 1) return false;
+      if (!enabled) {
+        this.db.prepare("UPDATE conversation_skills SET enabled=0 WHERE pack_id=?").run(id);
+      } else {
+        this.db.prepare("UPDATE conversation_skills SET enabled=1 WHERE pack_id=?").run(id);
+      }
+      return true;
+    });
+  }
+
   /** 元数据是开放的 string→string 映射；损坏的 JSON 按空处理，不让一条脏数据挡住列表。 */
   private readSkillMetadata(value: unknown): Record<string, string> {
     const parse = (record: Record<string, unknown>): Record<string, string> =>
@@ -2668,6 +2791,7 @@ export class AppStore {
       isSystem: numberColumn(row, "is_system") === 1,
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
+      packId: typeof row.pack_id === "string" ? row.pack_id : "",
     };
   }
 

@@ -5,6 +5,7 @@ import type { CorvexConfig } from "../config/config.js";
 import type { AppStore } from "../store.js";
 import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
+import { skillImportLimits } from "../agent/skill-import.js";
 import { currentUser } from "./auth/context.js";
 import { GitLabOAuthService } from "./auth/service.js";
 import type { FastifyRequest } from "fastify";
@@ -204,6 +205,12 @@ export class CorvexServer {
     });
     // 所有请求体先按原始字节读取；`/api/ops` 自行校验 content-type 并解析 JSON。
     this.app.removeAllContentTypeParsers();
+    // 技能包 ZIP 单独放宽到导入上限；其余路由仍受 Fastify 默认请求体限制。
+    this.app.addContentTypeParser(
+      "application/zip",
+      { parseAs: "buffer", bodyLimit: skillImportLimits.maxArchiveBytes },
+      (_request, body, done) => done(null, body),
+    );
     this.app.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
       done(null, body);
     });
