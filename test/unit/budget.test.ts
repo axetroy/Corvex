@@ -206,6 +206,15 @@ describe("buildConversationPrompt", () => {
     });
   });
 
+  it("在无证据时省略 toolEvidence，有证据时原样注入", () => {
+    const base = { repository: { project: "group/project", branch: "main", headSha: "a".repeat(40) } };
+    expect(JSON.parse(buildConversationPrompt({ ...base, summary: null, currentRequest: "hi" })))
+      .not.toHaveProperty("toolEvidence");
+    expect(JSON.parse(buildConversationPrompt({
+      ...base, summary: null, currentRequest: "did you post it?", toolEvidence: "- turn abc12345:\n  - create_merge_request: succeeded",
+    }))).toMatchObject({ toolEvidence: "- turn abc12345:\n  - create_merge_request: succeeded" });
+  });
+
   it("无摘要时不输出 summary 字段", () => {
     const prompt = buildConversationPrompt({
       repository: { project: "group/project", branch: "main", headSha: "a".repeat(40) },

@@ -1261,10 +1261,10 @@ export class AppStore {
         | undefined;
       if (!conversation) throw new Error(`conversation "${turn.conversation_id}" not found`);
       const history = this.db.prepare(
-        `SELECT id, role, content FROM conversation_messages
+        `SELECT id, role, content, turn_id FROM conversation_messages
          WHERE conversation_id=? AND status='completed' AND id <> ? AND id <> ?
          ORDER BY created_at,rowid`,
-      ).all(turn.conversation_id, turn.message_id ?? "", turn.user_message_id ?? "") as { id: string; role: string; content: string }[];
+      ).all(turn.conversation_id, turn.message_id ?? "", turn.user_message_id ?? "") as { id: string; role: string; content: string; turn_id: string | null }[];
       const summaryMessageId = stringColumn(conversation, "summary_message_id");
       const mode = stringColumn(conversation, "mode");
       if (!isConversationMode(mode)) throw new Error(`SQLite conversation mode "${mode}" is invalid`);
@@ -1286,7 +1286,12 @@ export class AppStore {
         attempt: turn.attempt_count + 1,
         history: recent
           .filter((item) => item.role === "user" || item.role === "assistant")
-          .map((item) => ({ id: item.id, role: item.role as "user" | "assistant", content: item.content })),
+          .map((item) => ({
+            id: item.id,
+            role: item.role as "user" | "assistant",
+            content: item.content,
+            ...(item.turn_id ? { turnId: item.turn_id } : {}),
+          })),
         summary: stringColumn(conversation, "summary") || null,
         summaryMessageId: summaryMessageId || null,
       };
@@ -1866,6 +1871,37 @@ export class AppStore {
       .prepare("SELECT * FROM execution_steps WHERE turn_id=? ORDER BY started_at DESC,id DESC")
       .all(traceScopeId(scope))
       .map((value) => readExecutionStep(value as Record<string, unknown>));
+  }
+
+  /**
+   * 读取指定轮次的工具调用证据，供新轮次注入「过去真实做过什么」。
+   * 只读 kind='tool' 的少量字段并按时间升序，调用方再按有界上限格式化。
+   */
+  getToolEvidence(turnIds: readonly string[]): Array<{
+    turnId: string;
+    name: string;
+    status: string;
+    input: string | null;
+    output: string | null;
+    error: string | null;
+  }> {
+    const ids = [...new Set(turnIds.filter((id) => typeof id === "string" && id))];
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db.prepare(
+      `SELECT turn_id, name, status, trace_input, trace_output, error_detail
+       FROM conversation_trace
+       WHERE kind='tool' AND turn_id IN (${placeholders})
+       ORDER BY turn_id, started_at, id`,
+    ).all(...ids) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      turnId: stringColumn(row, "turn_id"),
+      name: stringColumn(row, "name"),
+      status: stringColumn(row, "status"),
+      input: typeof row.trace_input === "string" ? row.trace_input : null,
+      output: typeof row.trace_output === "string" ? row.trace_output : null,
+      error: typeof row.error_detail === "string" ? row.error_detail : null,
+    }));
   }
 
   getTraceEntries(scope: TraceScope, attempt: number): TraceEntry[] {

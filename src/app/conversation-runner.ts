@@ -18,6 +18,7 @@ import { withGitToolBudget } from "../agent/git/budget.js";
 import { resolveTurnBaseSha } from "./conversation-base.js";
 import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-conflict.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
+import { buildToolEvidence } from "../agent/tool-evidence.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
@@ -1021,6 +1022,13 @@ export class ConversationRunner {
         (name) => this.store.getConversationSkill(name),
       );
       const systemPrompt = getConversationSystemPrompt(language, turn.mode);
+      // 注入过去轮次真实执行过的工具调用与结果：历史只带文本，「说过」不等于「做过」。
+      // 取最近若干轮，避开早期被裁剪的长轨迹；上限由 buildToolEvidence 统一约束。
+      const historyTurnIds = turn.history
+        .filter((message) => message.role === "assistant" && message.turnId)
+        .map((message) => message.turnId!)
+        .slice(-10);
+      const toolEvidence = buildToolEvidence(this.store.getToolEvidence(historyTurnIds));
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -1029,6 +1037,7 @@ export class ConversationRunner {
         },
         summary: turn.summary,
         currentRequest: effectiveRequest,
+        toolEvidence,
       });
       // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
       // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受

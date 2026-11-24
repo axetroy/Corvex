@@ -164,17 +164,20 @@ export function chunkForSummary<T extends HistoryMessage>(
 }
 
 /**
- * 组装对话请求的 user 提示词：仓库快照、可选的滚动摘要与当前请求。
- * 历史不作为文本嵌入，而是由 `ModelRequest.history` 以独立消息注入，避免重复。
+ * 组装对话请求的 user 提示词：仓库快照、可选的滚动摘要、工具操作证据与当前请求。
+ * 历史不作为文本嵌入，而是由 `ModelRequest.history` 以独立消息注入，避免重复；
+ * 工具证据例外：它是关于「过去真实做过什么」的权威记录，历史文本无法替代。
  */
 export function buildConversationPrompt(options: {
   repository: { project: string; branch: string; headSha: string };
   summary: string | null;
   currentRequest: string;
+  toolEvidence?: string;
 }): string {
   return JSON.stringify({
     repository: options.repository,
     ...(options.summary ? { summary: options.summary } : {}),
+    ...(options.toolEvidence ? { toolEvidence: options.toolEvidence } : {}),
     currentRequest: options.currentRequest,
   });
 }
