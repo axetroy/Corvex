@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dropdown, Modal, Typography } from "antd";
 import { Conversations } from "@ant-design/x";
 import type { ConversationItemType } from "@ant-design/x";
@@ -59,6 +59,9 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
   const [collapsedGroups, setCollapsedGroups] = useState(readCollapsedGroups);
   const [error, setError] = useState("");
   const [modal, modalContextHolder] = Modal.useModal();
+  /** 加载更多时记住视口顶部的会话，新页到达后滚回同一条，避免列表跳动。 */
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollAnchorRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -79,6 +82,19 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
     return () => { active = false; };
   }, [copy, offset, refreshToken, showArchived]);
+
+  // 新页合并后把锚点会话滚回顶部，让「加载更多」不改变用户正在看的位置。
+  useEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    if (!anchor) return;
+    scrollAnchorRef.current = null;
+    const frame = requestAnimationFrame(() => {
+      const list = listRef.current?.querySelector<HTMLElement>(".ant-conversations");
+      const item = list?.querySelector<HTMLElement>(`[data-conversation-id="${CSS.escape(anchor)}"]`);
+      if (list && item) list.scrollTop += item.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [conversations]);
 
   const sorted = useMemo(
     () => [...conversations].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
@@ -108,6 +124,7 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
         >
           <div
             className={`conversation-summary-label${item.archived ? " is-archived" : ""}`}
+            data-conversation-id={item.id}
             title={item.archived ? copy.conversationArchived : undefined}
           >
             <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
@@ -200,7 +217,7 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
           {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
         </Button>
       </div>
-      <div className="conversation-sidebar-list">
+      <div className="conversation-sidebar-list" ref={listRef}>
         {items.length ? (
           <Conversations
             items={items}
@@ -228,7 +245,19 @@ export function ConversationNavList({ conversationId, copy, refreshToken, onConv
           />
         ) : <Empty>{copy.noConversations}</Empty>}
         {conversations.length < total ? (
-          <Button className="conversation-load-more" type="text" onClick={() => setOffset((value) => value + conversationPageSize)}>
+          <Button
+            className="conversation-load-more"
+            type="text"
+            onClick={() => {
+              // 取当前视口顶部第一条会话作为锚点；加载完成后由 effect 滚回它。
+              const list = listRef.current?.querySelector<HTMLElement>(".ant-conversations");
+              const top = list?.getBoundingClientRect().top ?? 0;
+              const first = [...(list?.querySelectorAll<HTMLElement>("[data-conversation-id]") ?? [])]
+                .find((node) => node.getBoundingClientRect().top >= top - 2);
+              scrollAnchorRef.current = first?.dataset.conversationId ?? null;
+              setOffset((value) => value + conversationPageSize);
+            }}
+          >
             {copy.loadMore}
           </Button>
         ) : null}
