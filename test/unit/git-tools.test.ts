@@ -87,7 +87,8 @@ describe("consolidated Git tools", () => {
     const find = (name: string) => registered.find((tool) => tool.name === name)!;
 
     const commit = await find("git_commit").execute("1", { message: "noop" });
-    expect(commit.content[0]?.text).toBe('{"committed":false,"reason":"no changes in the worktree"}');
+    expect(commit.content[0]?.text).toContain('"committed":false');
+    expect(commit.content[0]?.text).toContain('Do not call git_commit again');
     const push = await find("git_push").execute("2", {});
     expect(push.content[0]?.text).toBe('{"saved":false,"reason":"no changes in the worktree"}');
     expect(commit.content[0]?.text).toBeTypeOf("string");

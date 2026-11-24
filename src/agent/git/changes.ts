@@ -9,11 +9,14 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       name: "git_commit",
       label: "Commit worktree changes",
       executionMode: "sequential",
-      description: "Commit the current worktree changes with a message. Inspect git_status and git_diff first.",
-      promptSnippet: "git_commit: Commit current worktree changes.",
+      description: "Commit the current worktree changes with a message. Inspect git_status and git_diff first. Commits are saved to this conversation's ref in the local mirror, not to the checked-out GitLab branch; a repeated commit with the same message usually means there is nothing new to save.",
+      promptSnippet: "git_commit: Commit worktree changes to the conversation ref; do not repeat a commit with the same message.",
       parameters: Type.Object({ message: Type.String({ minLength: 1, maxLength: 2_000 }) }),
       execute: async (_id, params) => text(
-        (await git.commit(params.message)) ?? { committed: false, reason: "no changes in the worktree" },
+        (await git.commit(params.message)) ?? {
+          committed: false,
+          reason: "the worktree is clean, so there are no new changes to commit. Do not call git_commit again with the same message; if git_status still shows differences after switching branches, rebase or merge the conversation ref instead.",
+        },
       ),
     });
     pi.registerTool({

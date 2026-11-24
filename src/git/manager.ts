@@ -933,7 +933,8 @@ export class GitManager {
         workspace.path, ["show-ref", "--verify", "--quiet", `refs/heads/${onto}`],
         undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
       );
-      target = local.exitCode === 0 ? onto : `origin/${onto}`;
+      // 同时接受 rebase 到 "origin/<branch>"（恢复提示里的写法）和裸分支名。
+      target = local.exitCode === 0 ? onto : onto.startsWith("origin/") ? onto : `origin/${onto}`;
       const available = await this.run(
         workspace.path, ["rev-parse", "--verify", "--quiet", target],
         undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
@@ -1066,7 +1067,9 @@ export class GitManager {
     );
     return {
       projectId,
-      branches: refs.stdout.toString().split("\n").map((line) => line.trim()).filter(Boolean),
+      branches: refs.stdout.toString().split("\n")
+        .map((line) => line.trim().replace(/^corvex\/remote\//, ""))
+        .filter(Boolean),
     };
   }
 
