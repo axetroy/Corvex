@@ -33,13 +33,31 @@ function parseProviderBody(
 
 function parseModelBody(
   body: Record<string, unknown>,
+  problems: string[] = [],
 ): { name: string; contextWindow: number; maxOutputTokens: number } | undefined {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const contextWindow = body.contextWindow;
   const maxOutputTokens = body.maxOutputTokens;
-  if (!name || name.length > 200) return undefined;
-  if (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow < 1_024 || contextWindow > 10_000_000) return undefined;
-  if (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8_192) return undefined;
+  if (!name || name.length > 200) {
+    problems.push("model name must be between 1 and 200 characters");
+    return undefined;
+  }
+  if (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow < 1_024 || contextWindow > 10_000_000) {
+    problems.push("context window must be between 1024 and 10000000 tokens");
+    return undefined;
+  }
+  // 输出上限没有固定天花板，只要求小于该模型自己的上下文窗口。
+  if (typeof maxOutputTokens !== "number" || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    problems.push("max output tokens must be a positive integer");
+    return undefined;
+  }
+  if (maxOutputTokens >= contextWindow) {
+    problems.push(
+      `max output tokens (${maxOutputTokens}) must be smaller than the context window (${contextWindow}); ` +
+      `use at most ${contextWindow - 1} so room remains for the prompt`,
+    );
+    return undefined;
+  }
   return { name, contextWindow, maxOutputTokens };
 }
 
@@ -137,9 +155,10 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
     const providerId = idParam((request.params as { id: string }).id);
     const body = readJsonObject(request, reply);
     if (!providerId || !body) return;
-    const input = parseModelBody(body);
+    const problems: string[] = [];
+    const input = parseModelBody(body, problems);
     if (!input) {
-      sendJson(reply, 400, { error: "invalid model" });
+      sendJson(reply, 400, { error: problems[0] ?? "invalid model" });
       return;
     }
     const model = ctx.store.createProviderModel(providerId, input);
@@ -157,9 +176,10 @@ export function registerModelRoutes(app: FastifyInstance, ctx: OpsContext): void
     const modelId = idParam(params.modelId);
     const body = readJsonObject(request, reply);
     if (!providerId || !modelId || !body) return;
-    const input = parseModelBody(body);
+    const problems: string[] = [];
+    const input = parseModelBody(body, problems);
     if (!input) {
-      sendJson(reply, 400, { error: "invalid model" });
+      sendJson(reply, 400, { error: problems[0] ?? "invalid model" });
       return;
     }
     const updated = ctx.store.updateProviderModel(providerId, modelId, input);

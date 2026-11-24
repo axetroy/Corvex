@@ -427,10 +427,10 @@ export function ModelManager({
             <Typography.Text strong>{copy.settingsMaxOutputTokens}</Typography.Text>
             <InputNumber
               min={1}
-              max={8192}
+              max={Math.max(1, modelDraft.contextWindow - 1)}
               step={256}
               value={modelDraft.maxOutputTokens}
-              onChange={(value) => setModelDraft({ ...modelDraft, maxOutputTokens: Number(value) || 8192 })}
+              onChange={(value) => setModelDraft({ ...modelDraft, maxOutputTokens: Number(value) || 1 })}
             />
             <Typography.Text type="secondary" className="settings-field-hint">{copy.settingsMaxOutputTokensHint}</Typography.Text>
           </div>

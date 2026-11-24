@@ -63,7 +63,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "compaction_keep_recent_tokens", section: "agent", field: "compactionKeepRecentTokens", type: "number", min: 0, max: 10_000_000 },
   { key: "compaction_trigger_percent", section: "agent", field: "compactionTriggerPercent", type: "number", min: 50, max: 95 },
   { key: "compaction_dynamic_threshold", section: "agent", field: "compactionDynamicThreshold", type: "boolean" },
-  { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, max: 8_192, hidden: true },
+  // 输出上限没有固定天花板：由模型能力决定，只要求小于上下文窗口（见 checkRelations）。
+  { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
   { key: "project_agents_md", section: "agent", field: "projectAgentsMd", type: "boolean" },
@@ -210,6 +211,11 @@ function checkRelations(values: RuntimeSettingValues): string[] {
     }
     if (typeof keepRecent === "number" && keepRecent > contextWindow) {
       problems.push("compaction_keep_recent_tokens must not exceed context_window");
+    }
+    // 输出预留必须小于窗口，否则输入预算会被挤成 0，系统提示词都放不下。
+    const maxOutputTokens = values.max_output_tokens;
+    if (typeof maxOutputTokens === "number" && maxOutputTokens >= contextWindow) {
+      problems.push("max_output_tokens must be less than context_window");
     }
   }
   const oauth = [

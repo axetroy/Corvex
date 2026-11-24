@@ -425,8 +425,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     }
     if (config.agent.requestTimeout <= 0) problems.push("agent.request_timeout must be positive");
     if (config.agent.sessionTimeout <= 0) problems.push("agent.session_timeout must be positive");
-    if (config.agent.maxOutputTokens <= 0 || config.agent.maxOutputTokens > 8192) {
-      problems.push("agent.max_output_tokens must be between 1 and 8192");
+    // 输出上限没有固定天花板；只要求为正且小于上下文窗口，否则输入预算会被挤空。
+    if (config.agent.maxOutputTokens <= 0 || config.agent.maxOutputTokens >= config.agent.contextWindow) {
+      problems.push("agent.max_output_tokens must be positive and less than context_window");
     }
     if (config.agent.dailyTokenBudget < 0 || config.agent.dailyTokenBudget > 1_000_000_000) {
       problems.push("agent.daily_token_budget must be between 0 and 1000000000");

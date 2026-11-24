@@ -76,7 +76,11 @@ describe("validateRuntimeSettings", () => {
   it("拒绝越界与类型错误的数字", () => {
     expect(validateRuntimeSettings({ context_window: "10" })).toEqual(["context_window must be at least 1024"]);
     expect(validateRuntimeSettings({ context_window: "1.5" })).toEqual(["context_window must be an integer"]);
-    expect(validateRuntimeSettings({ max_output_tokens: "999999" })).toEqual(["max_output_tokens must be at most 8192"]);
+    // 输出上限没有固定天花板；只有超过上下文窗口才被拒。
+    expect(validateRuntimeSettings({ max_output_tokens: "999999" })).toEqual([]);
+    expect(validateRuntimeSettings({ context_window: "131072", max_output_tokens: "131072" }))
+      .toEqual(["max_output_tokens must be less than context_window"]);
+    expect(validateRuntimeSettings({ context_window: "131072", max_output_tokens: "128000" })).toEqual([]);
     expect(validateRuntimeSettings({ git_tool_call_limit: "300" })).toEqual(["git_tool_call_limit must be at most 200"]);
     expect(validateRuntimeSettings({ git_tool_call_limit: "0" })).toEqual([]);
   });

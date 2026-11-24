@@ -15,7 +15,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
-import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, TraceEntry, TraceKind, ModelTaskType, TraceScope } from "../model.js";
+import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, TraceEntry, TraceKind, ModelTaskType, TraceScope, ThinkingLevel } from "../model.js";
 import type { AppStore } from "../store.js";
 import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 
@@ -65,6 +65,41 @@ export const maxAgentUserPromptBytes = 80 << 10;
 const framingOverheadTokens = 2_000;
 /** 持久化会话条目的字节上限；超过后跳过写入，避免把 SQLite 撑爆。 */
 const maxPersistedSessionBytes = 4 << 20;
+
+/** 空正文重试时逐级降低思考等级，直到 off（返回 undefined 表示无法再降）。 */
+export function lowerThinkingLevel(level: string): ThinkingLevel | undefined {
+  const order: readonly ThinkingLevel[] = ["max", "xhigh", "high", "medium", "low", "minimal", "off"];
+  const index = order.indexOf(level as ThinkingLevel);
+  if (index < 0 || index >= order.length - 1) return undefined;
+  return order[index + 1];
+}
+
+/**
+ * 思考预算：给每级思考设一个上界，且不超过输出预算减去答案保留空间。
+ * 自部署 OpenAI 兼容端点未必支持预算字段，但 SDK 会用它在本地约束可选字段；
+ * 真正的兜底仍是空正文降级重试。
+ */
+export function resolveThinkingBudgets(maxOutputTokens: number): Record<string, number> {
+  const ceiling = Math.max(0, maxOutputTokens - 1_024);
+  const budgets: Record<string, number> = {
+    minimal: Math.min(1_024, ceiling),
+    low: Math.min(2_048, ceiling),
+    medium: Math.min(4_096, ceiling),
+    high: Math.min(8_192, ceiling),
+  };
+  return Object.fromEntries(Object.entries(budgets).filter(([, value]) => value > 0));
+}
+
+/**
+ * 模型思考把输出预算吃光、没有产出任何正文时的专用错误。
+ * 上层据此降级思考等级重试，而不是直接把整轮判失败。
+ */
+export class EmptyCompletionError extends Error {
+  constructor() {
+    super("Pi returned an empty completion");
+    this.name = "EmptyCompletionError";
+  }
+}
 
 /** 解析持久化的 Pi 会话条目；格式异常或超限时按「无会话」处理，不阻断新一轮。 */
 function restoreSessionEntries(raw: string | undefined): FileEntry[] | undefined {
@@ -338,6 +373,7 @@ export class PiAgent {
     }
 
     let response: ModelResponse;
+    let reasoningRetried = false;
     try {
       const sessionSignal = signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.config.agent.sessionTimeout)])
@@ -345,9 +381,35 @@ export class PiAgent {
       try {
         response = await this.runSession(request, workingDirectory, sessionSignal, trace);
       } catch (error) {
-        // 本地预算估算总有误差（不同分词器差异很大）。服务端仍报超限时收缩一次
-        // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
-        if (signal?.aborted || !isContextOverflowError(errorMessage(error))) throw error;
+        // 推理把输出预算吃光时模型没有产出正文，直接判失败太粗暴。
+        // 降级思考等级重试一次，确保至少能拿到正文；重试成功后跳过超限分支。
+        if (!signal?.aborted && !reasoningRetried && error instanceof EmptyCompletionError) {
+          const lowered = lowerThinkingLevel(this.config.agent.thinkingLevel);
+          if (lowered && lowered !== this.config.agent.thinkingLevel) {
+            reasoningRetried = true;
+            const retryConfig = structuredClone(this.config);
+            retryConfig.agent.thinkingLevel = lowered;
+            try {
+              request.onContextDelta?.({
+                id: `context-reason-retry-${Date.now()}`,
+                text: this.config.agent.responseLanguage === "zh-CN"
+                  ? `模型把输出预算用于思考、没有产出正文，正在降低思考等级（${lowered}）重试。`
+                  : `The model spent its output budget on reasoning without producing an answer; retrying at lower thinking level (${lowered}).`,
+              });
+            } catch (noticeError) {
+              console.warn("reasoning retry notice failed", { error: errorMessage(noticeError) });
+            }
+            console.warn("empty completion after reasoning; retrying at lower thinking level", {
+              taskType: request.taskType,
+              from: this.config.agent.thinkingLevel,
+              to: lowered,
+            });
+            response = await this.runSession(request, workingDirectory, sessionSignal, trace, retryConfig);
+          } else {
+            throw error;
+          }
+        } else if (!signal?.aborted && !reasoningRetried && isContextOverflowError(errorMessage(error))) {
+          // 输入重试：去掉全部历史，只保留当前请求。第二轮失败即放弃并如实上报。
         // 自动调优只影响本次会话的有效窗口，不写回模型目录、不改全局配置：
         // 一次偶发的 provider 超限不应该永久缩小所有用户共享的模型设置。
         const nextWindow = nextOverflowRetryContextWindow(this.config.agent.contextWindow);
@@ -391,7 +453,10 @@ export class PiAgent {
           taskType: request.taskType,
           historyMessages: request.history?.length ?? 0,
         });
-        response = await this.runSession(retry, workingDirectory, sessionSignal, trace, retryConfig);
+          response = await this.runSession(retry, workingDirectory, sessionSignal, trace, retryConfig);
+        } else {
+          throw error;
+        }
       }
     } catch (error) {
       if (budgetDay) {
@@ -776,6 +841,8 @@ export class PiAgent {
           reserveTokens: sdkReserveTokens,
           keepRecentTokens: compactionKeepRecentTokens,
         },
+        // 显式压低各级思考预算（SDK 默认 medium 就 8192，容易吃光整个输出预算）。
+        thinkingBudgets: resolveThinkingBudgets(config.agent.maxOutputTokens),
       }),
       sessionManager: restoredEntries
         ? SessionManager.inMemory(agentDir, undefined, restoredEntries)
@@ -1155,7 +1222,7 @@ export class PiAgent {
       // 并让上层的「去掉历史重试一次」失效。
       if (lastAssistantError) throw new Error(lastAssistantError);
       const content = session.getLastAssistantText()?.trim();
-      if (!content) throw new Error("Pi returned an empty completion");
+      if (!content) throw new EmptyCompletionError();
       const usage = session.getSessionStats().tokens;
       // 回合结束后按真实 token 数主动压缩，为下一轮留出空间；compact() 会先 abort，
       // 因此必须在 prompt() 完全结束之后调用，避免打断正在执行的轮次。
