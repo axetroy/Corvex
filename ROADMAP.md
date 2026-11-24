@@ -40,13 +40,13 @@ Mainstream agents detect when the model repeats the same tool call with the same
 
 `record_plan` currently stores an immutable text list in the process snapshot; the model cannot update a step's status and a resumed turn does not know its progress. Mainstream agents keep a persisted checklist with `pending / in_progress / completed` states, updated across turns and reflected in the UI. Plan: evolve `record_plan` into a persisted task list with per-step status, allow status-only updates, restore it on resume, and render progress in the console.
 
-### P1 — Task-level round/token budget with forced wrap-up
+### P1 — Task-level round/token budget with forced wrap-up (implemented)
 
-There is a daily token budget but no per-task round or token ceiling that forces a structured wrap-up when crossed. Add a configurable per-task ceiling that injects a "you must finish and report now" notice before the turn runs away.
+`agent.task_max_rounds` / `agent.task_max_output_tokens` are soft per-task ceilings. `src/agent/task-budget.ts` observes model rounds and generated tokens, and at the ceiling steers the model once to stop starting new work, wrap up, and report from confirmed results. It never aborts the turn.
 
-### P1 — Completion verification
+### P1 — Completion verification (implemented)
 
-A turn ends as `completed` when the model says it is done. Combined with `src/agent/claim-verification.ts`, claims such as "fixed / completed / published" should be checked against the turn's tool trace, and "done" should require at least one read-back or diff verification of the changed files.
+`src/agent/claim-verification.ts` now also treats "fixed / completed" claims as high-risk: they are unverified unless the turn's tool trace contains a read-back (`read_file`) or diff (`git_diff`) tool. The system prompt requires reading changes back before claiming completion; unverified claims surface as a `context` notice in the process snapshot.
 
 ### P2 — Verification sandbox
 

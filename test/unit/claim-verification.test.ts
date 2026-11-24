@@ -36,6 +36,13 @@ describe("claim verification", () => {
     expect(verifyAnswerClaims("This should be merged eventually.", [], "en").unverified).toEqual([]);
   });
 
+  it("requires a read-back before accepting fixed/completed claims", () => {
+    expect(verifyAnswerClaims("已修复这个 BUG。", ["edit_file"], "zh-CN").unverified).toContain("fixed");
+    expect(verifyAnswerClaims("已修复这个 BUG。", ["edit_file", "read_file"], "zh-CN").unverified).not.toContain("fixed");
+    expect(verifyAnswerClaims("任务已完成。", ["write_file"], "zh-CN").unverified).toContain("done");
+    expect(verifyAnswerClaims("任务已完成。", ["write_file", "git_diff"], "zh-CN").unverified).not.toContain("done");
+  });
+
   it("detects English claims without matching tools", () => {
     const result = verifyAnswerClaims("I approved and deleted the issue.", [], "en");
     expect(result.unverified).toContain("approve");

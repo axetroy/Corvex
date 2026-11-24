@@ -40,6 +40,7 @@ import { createMicrocompactExtension, resolveMicrocompactPolicy } from "./microc
 import { estimateConservativeTokens } from "./budget.js";
 import { boundSessionEntries } from "./session-persistence.js";
 import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
+import { createTaskBudgetState, observeTaskBudget, wrapUpNotice } from "./task-budget.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -651,6 +652,12 @@ export class PiAgent {
     };
     // 每个会话一个循环检测器：同一签名重复或连续失败时提示模型换策略，避免长任务空转。
     const toolLoop = createToolLoopState();
+    // 任务级软预算：达到轮次/输出上限时用 steer 要求收尾，不中止本轮。
+    const taskBudget = createTaskBudgetState();
+    const taskBudgetLimits = {
+      maxRounds: config.agent.taskMaxRounds,
+      maxOutputTokens: config.agent.taskMaxOutputTokens,
+    };
     const noticeToolLoop = (notice: ToolLoopNotice) => {
       const language = config.agent.responseLanguage;
       const detail = notice.reason === "failures"
@@ -1150,6 +1157,20 @@ export class PiAgent {
           activeModelCall.responseHeadersMs,
         );
         activeModelCall = undefined;
+        // 任务级软预算：达到轮次/输出上限时用 steer 要求模型收尾汇报。
+        if (!failed) {
+          const hitRounds = taskBudgetLimits.maxRounds > 0 && taskBudget.rounds + 1 >= taskBudgetLimits.maxRounds;
+          const shouldWrapUp = observeTaskBudget(taskBudget, taskBudgetLimits, message.usage.output);
+          if (shouldWrapUp) {
+            const reason = hitRounds ? "rounds" : "tokens";
+            const value = hitRounds ? taskBudget.rounds : taskBudget.outputTokens;
+            const notice = wrapUpNotice(config.agent.responseLanguage, reason, value);
+            void session.steer(notice).catch((error: unknown) => {
+              console.warn("task budget wrap-up notice failed", { error: errorMessage(error) });
+            });
+            emitContextStream({ id: `task-budget-${reason}`, text: notice });
+          }
+        }
       } else if (event.type === "tool_execution_start") {
         const traceId = this.startTrace(trace, "tool", event.toolName, "", JSON.stringify(event.args), {
           round: currentRound || undefined,

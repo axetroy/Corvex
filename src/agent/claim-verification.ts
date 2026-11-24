@@ -5,7 +5,7 @@
  * 只覆盖高风险且能明确映射到工具的动作；不判断观点、计划或推测性表述。
  */
 
-export type ClaimKind = "publish" | "comment" | "merge" | "approve" | "delete";
+export type ClaimKind = "publish" | "comment" | "merge" | "approve" | "delete" | "fixed" | "done";
 
 interface ClaimRule {
   kind: ClaimKind;
@@ -45,6 +45,19 @@ const rules: readonly ClaimRule[] = [
     en: [/\bI\s+(?:have\s+)?(?:deleted|removed)\b/i, /\b(?:deleted|removed)\s+(?:the|an|a|this|that)\s+\w+/i, /\bhas been (?:deleted|removed)\b/i],
     tools: ["delete_merge_request", "delete_issue", "delete_mr_note", "delete_issue_note", "deleteFile", "delete"],
   },
+  {
+    // 「已修复 / 已完成」需要至少一次回读或 diff 验证，否则只是模型自述。
+    kind: "fixed",
+    zh: [/已(?:经)?(?:修复|改好|处理完)/, /(?:修复|修改)(?:完成|完毕)/],
+    en: [/\bI\s+(?:have\s+)?(?:fixed|patched)\b/i, /\b(?:fix|changes?)\s+(?:is|are)\s+(?:done|complete)\b/i],
+    tools: ["read_file", "git_diff", "readAllowedFile", "diff", "getWorkspaceDiff"],
+  },
+  {
+    kind: "done",
+    zh: [/已(?:经)?(?:完成|做完|搞定)/, /任务完成/],
+    en: [/\bI\s+(?:have\s+)?(?:completed|finished)\b/i, /\b(?:task|work)\s+(?:is|has been)\s+(?:done|complete|finished)\b/i],
+    tools: ["read_file", "git_diff", "git_status", "readAllowedFile", "diff", "getWorkspaceDiff", "status"],
+  },
 ];
 
 export interface ClaimVerificationResult {
@@ -80,6 +93,8 @@ export function verifyAnswerClaims(
     merge: { en: "merge", zh: "合并" },
     approve: { en: "approve", zh: "审批" },
     delete: { en: "delete", zh: "删除" },
+    fixed: { en: "fix", zh: "修复" },
+    done: { en: "completion", zh: "完成" },
   };
   const detail = unverified.length === 0
     ? ""

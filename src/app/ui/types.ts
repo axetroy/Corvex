@@ -184,6 +184,8 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "git_tool_call_limit", kind: "number", min: 0, max: 200, step: 5, labelKey: "settingsGitToolCallLimit", hintKey: "settingsGitToolCallLimitHint" },
       { key: "auto_create_merge_request", kind: "boolean", defaultValue: true, labelKey: "settingsAutoCreateMr", hintKey: "settingsAutoCreateMrHint" },
       { key: "reasoning_enabled", kind: "boolean", defaultValue: true, labelKey: "settingsReasoningEnabled", hintKey: "settingsReasoningEnabledHint" },
+      { key: "task_max_rounds", kind: "number", min: 0, max: 10_000, step: 10, labelKey: "settingsTaskMaxRounds", hintKey: "settingsTaskMaxRoundsHint" },
+      { key: "task_max_output_tokens", kind: "number", min: 0, max: 100_000_000, step: 1000, unit: "token", labelKey: "settingsTaskMaxOutputTokens", hintKey: "settingsTaskMaxOutputTokensHint" },
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
       { key: "project_agents_md", kind: "boolean", defaultValue: true, labelKey: "settingsProjectAgentsMd", hintKey: "settingsProjectAgentsMdHint" },
       { key: "project_agents_md_max_bytes", kind: "number", min: 1024, max: 262144, step: 1024, unit: "byte", defaultValue: 32 * 1024, labelKey: "settingsProjectAgentsMdMaxBytes", hintKey: "settingsProjectAgentsMdMaxBytesHint" },

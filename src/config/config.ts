@@ -64,6 +64,10 @@ export interface CorvexConfig {
     reasoningEnabled: boolean;
     /** 本轮使用的思考等级；用户可在输入框旁覆盖。 */
     thinkingLevel: ThinkingLevel;
+    /** 单任务模型调用轮次软上限，达到后要求收尾；0 表示不限制。 */
+    taskMaxRounds: number;
+    /** 单任务输出 token 软上限，达到后要求收尾；0 表示不限制。 */
+    taskMaxOutputTokens: number;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -129,6 +133,8 @@ const defaults: CorvexConfig = {
     autoCreateMergeRequest: true,
     reasoningEnabled: true,
     thinkingLevel: "medium",
+    taskMaxRounds: 0,
+    taskMaxOutputTokens: 0,
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -297,6 +303,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
       thinkingLevel: parseThinkingLevel(agent.thinking_level) ?? defaults.agent.thinkingLevel,
+      taskMaxRounds: number(agent.task_max_rounds, defaults.agent.taskMaxRounds),
+      taskMaxOutputTokens: number(agent.task_max_output_tokens, defaults.agent.taskMaxOutputTokens),
       reasoningEnabled: boolean(agent.reasoning_enabled, defaults.agent.reasoningEnabled),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
@@ -429,6 +437,10 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     if (config.agent.maxOutputTokens <= 0 || config.agent.maxOutputTokens >= config.agent.contextWindow) {
       problems.push("agent.max_output_tokens must be positive and less than context_window");
     }
+    if (config.agent.taskMaxRounds < 0 || config.agent.taskMaxRounds > 10_000) {
+      problems.push("agent.task_max_rounds must be between 0 and 10000");
+    }
+    if (config.agent.taskMaxOutputTokens < 0) problems.push("agent.task_max_output_tokens must not be negative");
     if (config.agent.dailyTokenBudget < 0 || config.agent.dailyTokenBudget > 1_000_000_000) {
       problems.push("agent.daily_token_budget must be between 0 and 1000000000");
     }
