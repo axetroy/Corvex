@@ -264,6 +264,60 @@ describe("Git workflows", () => {
     await expect(manager.createBranch(workspace, "bad..name")).rejects.toThrow("invalid branch name");
   });
 
+  it("fetches from a mirror worktree without touching a checked-out branch", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-mirror-pull-"));
+    const root = join(directory, "storage");
+    const source = join(directory, "source");
+    await mkdir(source, { recursive: true });
+    await execFile("git", ["init", "-q", source]);
+    await execFile("git", ["-C", source, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", source, "config", "user.name", "Corvex test"]);
+    await writeFile(join(source, "a.txt"), "base\n");
+    await execFile("git", ["-C", source, "add", "a.txt"]);
+    await execFile("git", ["-C", source, "commit", "-q", "-m", "base"]);
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "-q", "--mirror", source, mirror]);
+
+    // 与真实对话一致：从镜像建 detached worktree，再显式检出本地分支。
+    const workspacePath = join(root, "workspaces", "7", "conversation-1");
+    await mkdir(join(root, "workspaces", "7"), { recursive: true });
+    const headSha = (await execFile("git", [`--git-dir=${mirror}`, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    await execFile("git", ["--git-dir", mirror, "worktree", "add", "--detach", "-q", workspacePath, headSha]);
+    await execFile("git", ["-C", workspacePath, "checkout", "-q", "master"]);
+    // 指向镜像自身：旧实现套用镜像的 +refs/*:refs/* 会尝试更新已检出的 master 并失败。
+    await execFile("git", ["-C", workspacePath, "remote", "set-url", "origin", mirror]);
+    const workspace: Workspace = { projectId: 7, workspaceName: "conversation-1", path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com");
+
+    await expect(manager.fetchFromMirror(workspace)).resolves.toMatchObject({ fetched: true, sha: headSha });
+    expect((await execFile("git", ["-C", workspacePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" })).stdout.trim()).toBe("master");
+
+    // syncMirrorFromGitLab 把远端分支写进 refs/corvex/remote/*；pull 后模型应能用 origin/<branch> 做 rebase。
+    await execFile("git", ["--git-dir", mirror, "update-ref", `refs/corvex/remote/fix-asar`, headSha]);
+    await manager.fetchFromMirror(workspace);
+    expect((await execFile("git", ["-C", workspacePath, "rev-parse", "--verify", "origin/fix-asar"], { encoding: "utf8" })).stdout.trim()).toBe(headSha);
+  });
+
+  it("rejects merging into a dirty worktree with an actionable message", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-merge-dirty-"));
+    const root = join(directory, "storage");
+    const workspacePath = join(root, "workspaces", "7", "conversation-1");
+    await mkdir(workspacePath, { recursive: true });
+    await execFile("git", ["init", "-q", workspacePath]);
+    await execFile("git", ["-C", workspacePath, "config", "user.email", "test@example.com"]);
+    await execFile("git", ["-C", workspacePath, "config", "user.name", "Corvex test"]);
+    await writeFile(join(workspacePath, "a.txt"), "base\n");
+    await execFile("git", ["-C", workspacePath, "add", "a.txt"]);
+    await execFile("git", ["-C", workspacePath, "commit", "-q", "-m", "base"]);
+    const headSha = (await execFile("git", ["-C", workspacePath, "rev-parse", "HEAD"], { encoding: "utf8" })).stdout.trim();
+    await writeFile(join(workspacePath, "a.txt"), "dirty\n");
+    const workspace: Workspace = { projectId: 7, workspaceName: "conversation-1", path: workspacePath, headSha };
+    const manager = new GitManager(root, "https://gitlab.example.com");
+
+    await expect(manager.mergeRef(workspace, headSha)).rejects.toThrow("merge requires a clean worktree");
+  });
+
   it("returns a bounded worktree diff and supports literal path narrowing", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-worktree-diff-"));
     const root = join(directory, "storage");

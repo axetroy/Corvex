@@ -276,6 +276,7 @@ export class ConversationRunner {
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
       checkout: (name) => this.repo.checkoutBranch(workspace, name, signal),
       pull: () => this.repo.fetchFromMirror(workspace, signal, authToken),
+      sync: () => this.repo.syncMirrorFromGitLab(workspace.projectId, signal, authToken),
       merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
       commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message, turnId),
       push: async () => {

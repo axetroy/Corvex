@@ -47,6 +47,15 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       execute: async () => text(await git.pull()),
     });
     pi.registerTool({
+      name: "git_sync",
+      label: "Sync remote branches",
+      executionMode: "sequential",
+      description: "Refresh the bound project's mirror from GitLab so remote branch tips become available as origin/<branch> in the worktree. Use this when a push was rejected as non-fast-forward or before rebasing onto an updated branch. Uses the signed-in user's GitLab token; no arbitrary remote or force option.",
+      promptSnippet: "git_sync: Refresh GitLab branch tips in the mirror (origin/<branch>) before rebasing or after a non-fast-forward push.",
+      parameters: Type.Object({}),
+      execute: async () => text(await git.sync()),
+    });
+    pi.registerTool({
       name: "git_merge",
       label: "Merge local ref",
       executionMode: "sequential",

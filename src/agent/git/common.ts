@@ -18,6 +18,8 @@ export interface GitToolAdapter {
   checkout(name: string): Promise<{ name: string; sha: string; fromRemote: boolean }>;
   /** 从已配置的本地镜像抓取对象；不自动改变固定快照。 */
   pull(): Promise<{ sha: string; fetched: boolean }>;
+  /** 从 GitLab 刷新镜像里的远端分支指针，供 rebase/merge 使用。 */
+  sync(): Promise<{ projectId: number; branches: string[] }>;
   merge(ref: string): Promise<{ sha: string; ref: string }>;
   commit(message: string): Promise<{ sha: string; paths: string[] } | undefined>;
   /** 把当前改动写入项目镜像里的会话 ref；没有远端推送或强制更新。 */

@@ -579,6 +579,33 @@ export class GitManager {
       { timeoutMs: 10_000, allowExitCodes: [0, 1] },
     );
     if (commitCheck.exitCode !== 0) throw new Error("commit is not available in the project mirror");
+
+    // 推送前先刷新远端分支指针：否则远程一旦前进就必然非快进失败，而模型没有任何
+    // 正规手段把 GitLab 的新提交拉进镜像，只能反复试错。
+    await this.syncMirrorFromGitLab(projectId, signal, authToken);
+    const remoteRef = `refs/corvex/remote/${branch}`;
+    const remoteTipResult = await this.run(
+      mirror,
+      ["--git-dir", mirror, "rev-parse", "--verify", "--quiet", `${remoteRef}^{commit}`],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    if (remoteTipResult.exitCode === 0) {
+      const remoteTip = remoteTipResult.stdout.toString().trim();
+      const ancestor = await this.run(
+        mirror,
+        ["--git-dir", mirror, "merge-base", "--is-ancestor", remoteTip, sha],
+        undefined, maxErrorOutput, signal,
+        { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+      );
+      if (ancestor.exitCode !== 0) {
+        throw new Error(
+          `GitLab branch ${branch} has advanced to ${remoteTip.slice(0, 12)}. ` +
+          `Run git_pull to refresh the mirror, then rebase onto origin/${branch} and retry. Never force-push.`,
+        );
+      }
+    }
+
     await this.run(
       mirror,
       ["--git-dir", mirror, "push", "--porcelain", origin, `${sha}:refs/heads/${branch}`],
@@ -974,19 +1001,85 @@ export class GitManager {
   ): Promise<{ sha: string; fetched: boolean }> {
     this.validateWorkspace(workspace);
     const before = (await this.run(workspace.path, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+    // 镜像以 --mirror 克隆，worktree 继承了 remote.origin.mirror / +refs/*:refs/*，
+    // 即使命令行给了显式 refspec，git 仍会尝试更新本地分支并撞上已检出的分支。
+    // 直接用镜像路径作为 fetch 源（而非 remote 名）即可绕过远程配置，只写远端跟踪引用。
+    const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+    // 普通仓库（测试或外部 worktree）没有镜像目录，退回 origin 并只写跟踪引用。
+    const source = await this.pathExists(mirror) ? mirror : "origin";
     await this.run(
       workspace.path,
-      ["fetch", "--no-tags", "origin"],
+      [
+        "fetch", "--no-tags", source,
+        "+refs/heads/*:refs/remotes/mirror/*",
+        "+refs/corvex/remote/*:refs/remotes/origin/*",
+      ],
       undefined, maxErrorOutput, signal,
       { timeoutMs: 30_000, ...(authToken ? { authToken } : {}) },
     );
     return { sha: before, fetched: true };
   }
 
+  /**
+   * 从配置的 GitLab 实例刷新项目镜像里的远端分支指针。
+   *
+   * 镜像是 --mirror 克隆，默认 refspec 会覆盖本地分支；这里把 GitLab 的分支写进独立的
+   * refs/corvex/remote/* 命名空间，避免更新任何可能已被 worktree 检出的 refs/heads/*。
+   * 随后 fetchFromMirror 会把这些指针映射为 worktree 的 origin/*，模型即可 rebase/合并。
+   */
+  async syncMirrorFromGitLab(
+    projectId: number,
+    signal?: AbortSignal,
+    authToken?: string,
+  ): Promise<{ projectId: number; branches: string[] }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
+    if (!authToken) throw new Error("the logged-in user's GitLab token is required");
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) throw new Error("project mirror is not available");
+    const origin = (
+      await this.run(mirror, ["--git-dir", mirror, "config", "--get", "remote.origin.url"], undefined, maxErrorOutput, signal)
+    ).stdout.toString().trim();
+    let remote: URL;
+    try {
+      remote = new URL(origin);
+    } catch (error) {
+      throw new Error("mirror origin is not a valid URL", { cause: error });
+    }
+    if (
+      remote.username || remote.password || remote.search || remote.hash ||
+      remote.protocol !== this.gitlabUrl.protocol ||
+      remote.host.toLowerCase() !== this.gitlabUrl.host.toLowerCase()
+    ) {
+      throw new Error("mirror origin does not match the configured GitLab host");
+    }
+    await this.run(
+      mirror,
+      ["--git-dir", mirror, "fetch", "--quiet", "--no-tags", origin, "+refs/heads/*:refs/corvex/remote/*"],
+      undefined, maxErrorOutput, signal,
+      { authToken, timeoutMs: 60_000 },
+    );
+    const refs = await this.run(
+      mirror,
+      ["--git-dir", mirror, "for-each-ref", "--format=%(refname:short)", "refs/corvex/remote"],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 10_000 },
+    );
+    return {
+      projectId,
+      branches: refs.stdout.toString().split("\n").map((line) => line.trim()).filter(Boolean),
+    };
+  }
+
   /** 把本地分支或完整 SHA 合并进当前 worktree；冲突时直接中止，不留下半合并状态。 */
   async mergeRef(workspace: Workspace, ref: string, signal?: AbortSignal): Promise<{ sha: string; ref: string }> {
     this.validateWorkspace(workspace);
     if (!shaPattern.test(ref)) this.validateBranchName(ref);
+    const status = await this.getWorkspaceStatus(workspace, signal);
+    if (!status.clean) {
+      throw new Error(
+        `merge requires a clean worktree; commit or save the pending changes first (${status.files.map((file) => file.path).join(", ")}).`,
+      );
+    }
     try {
       await this.run(
         workspace.path,
@@ -1240,7 +1333,10 @@ export class GitManager {
       { timeoutMs: 10_000, allowExitCodes: [1] },
     );
     if (ancestry.exitCode !== 0) {
-      throw new Error("Git commit is not reachable from the pinned MR HEAD");
+      throw new Error(
+        `Commit ${sha.slice(0, 12)} is not reachable from the pinned revision ${workspace.headSha.slice(0, 12)}. ` +
+        "It may come from a merge request diff or a remote branch. Use get_merge_request_changes to read MR file patches, or git_pull then git_merge/git_rebase onto origin/<branch> first.",
+      );
     }
     const result = await this.run(
       workspace.path,
