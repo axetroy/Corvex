@@ -163,6 +163,8 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
         aria-label={copy.composerThinking}
         variant="borderless"
         size="small"
+        // 弹层不跟随选择器宽度（选择器被压到只显示当前值），否则选项文字被挤成单字。
+        popupMatchSelectWidth={false}
         value={thinkingLevel}
         options={thinkingLevelOptions.map((option) => ({ value: option.value, label: copy[option.labelKey] }))}
         loading={switchingThinking}
