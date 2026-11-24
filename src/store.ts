@@ -2570,6 +2570,17 @@ export class AppStore {
       // 旧的控制台 Basic 凭据不再使用。
       this.db.exec("DELETE FROM runtime_settings WHERE key IN ('operations_username','operations_password')");
     }
+    // 旧版微压缩按消息下标去重，把每次请求的重复裁剪都累计进指标，需要清掉失真值重新计数。
+    const microcompactMetricReset = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:reset-microcompact-metrics'")
+      .get() as { value: string } | undefined;
+    if (!microcompactMetricReset) {
+      this.db.exec("DELETE FROM context_metrics WHERE key IN ('microcompact','microcompact_chars')");
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:reset-microcompact-metrics", now, now, "migration");
+    }
     // 同步基线：旧库没有该列，按最近一轮的轮次快照回填；新建会话在首轮开始时补齐。
     const baseShaMigration = this.db
       .prepare("SELECT value FROM runtime_settings WHERE key='schema:conversation-base-sha'")
