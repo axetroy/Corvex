@@ -81,6 +81,17 @@ export function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 更多操作图标：竖向三点，用于账号下拉菜单入口。 */
+export function MoreIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <circle cx="8" cy="3.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** 收起侧边栏图标：竖线加左向箭头。 */
 export function SidebarCollapseIcon(props: SVGProps<SVGSVGElement>) {
   return (

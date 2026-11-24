@@ -181,41 +181,6 @@ a:hover {
   display: none;
 }
 
-/* 设置入口：展开时是带文字的整行，收起时只留一个居中图标。 */
-.sidebar-settings-nav {
-  display: flex;
-  flex: 0 0 auto;
-  min-height: 40px;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 8px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  text-align: left;
-}
-
-.sidebar-settings-nav:hover {
-  background: var(--primary-soft);
-  color: var(--text);
-}
-
-.sidebar-settings-nav[aria-current="page"] {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary);
-}
-
-.sidebar-settings-nav.is-collapsed {
-  justify-content: center;
-  padding: 0;
-  margin: 4px auto;
-  width: 40px;
-}
 
 /* 侧栏底部的当前 GitLab 账号：头像、用户名与登出操作。 */
 .sidebar-account-panel {
@@ -256,10 +221,17 @@ a:hover {
   padding: 10px 0;
 }
 
-/* 导航收起时，账号区只保留头像；用户名、管理员入口与登出按钮都隐藏。 */
+/* 导航收起时账号区只留设置与更多两个图标，竖向居中排列。 */
+.sidebar-collapsed .sidebar-account-panel {
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+}
+
 .sidebar-collapsed .sidebar-account-text,
 .sidebar-collapsed .sidebar-admin,
-.sidebar-collapsed .sidebar-logout {
+.sidebar-collapsed .sidebar-logout,
+.sidebar-collapsed .user-avatar {
   display: none;
 }
 
@@ -271,6 +243,9 @@ a:hover {
 }
 
 .sidebar-account-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
   font-weight: 600;
 }
@@ -280,19 +255,19 @@ a:hover {
   font-size: 11px;
 }
 
-/* 管理员入口：紧凑的圆角标签，保持链接行为但更像 Tag。 */
+/* 管理员标签：缩小后紧跟用户名，保留链接跳转到管理后台。 */
 .sidebar-admin {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  padding: 1px 6px;
+  padding: 0 4px;
   border: 1px solid var(--purple-soft);
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--purple-soft);
   color: var(--purple);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 14px;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -301,6 +276,32 @@ a:hover {
   border-color: var(--purple);
   background: var(--purple-soft);
   color: var(--purple);
+}
+
+/* 账号区右侧：设置齿轮与更多菜单入口。 */
+.sidebar-account-settings,
+.sidebar-account-more {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-account-settings.is-current {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.sidebar-account-settings:hover,
+.sidebar-account-more:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .sidebar-logout {

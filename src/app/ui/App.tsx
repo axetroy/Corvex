@@ -15,6 +15,7 @@ import { NotificationToggle } from "./components/NotificationToggle.js";
 import {
   LanguageIcon,
   LogoutIcon,
+  MoreIcon,
   SidebarCollapseIcon,
   SettingsIcon,
   SidebarExpandIcon,
@@ -384,18 +385,6 @@ export function App() {
               onRefresh={refresh}
             />
           </div>
-          {/* 设置入口单独成行放在账号上方，展开时带文字，收起时只留图标。 */}
-          <button
-            type="button"
-            className={`sidebar-settings-nav${navigationCollapsed ? " is-collapsed" : ""}`}
-            aria-label={copy.navSettings}
-            aria-current={pageKind === "settings" ? "page" : undefined}
-            title={copy.navSettings}
-            onClick={() => navigate("/settings")}
-          >
-            <SettingsIcon />
-            {navigationCollapsed ? null : <span>{copy.navSettings}</span>}
-          </button>
           {account ? (
             <div className="sidebar-account-panel">
               <UserAvatar
@@ -405,23 +394,54 @@ export function App() {
                 avatarUrl={account.avatarUrl}
               />
               <span className="sidebar-account-text">
-                <span className="sidebar-account-name">{account.name || account.username}</span>
+                <span className="sidebar-account-name">
+                  {account.name || account.username}
+                  {account.isAdmin ? (
+                    <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
+                      {copy.adminTag}
+                    </a>
+                  ) : null}
+                </span>
                 <span className="sidebar-account-username">@{account.username}</span>
               </span>
-              {account.isAdmin ? (
-                <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
-                  {copy.adminTag}
-                </a>
-              ) : null}
               <button
                 type="button"
-                className="sidebar-logout"
-                onClick={() => void logout()}
-                aria-label={copy.logout}
-                title={copy.logout}
+                className={`sidebar-account-settings${pageKind === "settings" ? " is-current" : ""}`}
+                aria-label={copy.navSettings}
+                aria-current={pageKind === "settings" ? "page" : undefined}
+                title={copy.navSettings}
+                onClick={() => navigate("/settings")}
               >
-                <LogoutIcon />
+                <SettingsIcon />
               </button>
+              <Dropdown
+                trigger={["click"]}
+                placement="topRight"
+                menu={{
+                  items: [
+                    { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
+                    ...(account.isAdmin
+                      ? [{ key: "admin", label: copy.adminEntry }]
+                      : []),
+                    { type: "divider" as const },
+                    { key: "logout", icon: <LogoutIcon />, label: copy.logout, danger: true },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === "settings") navigate("/settings");
+                    else if (key === "admin") window.open("/ops#/admin/users", "_blank", "noopener");
+                    else if (key === "logout") void logout();
+                  },
+                }}
+              >
+                <button
+                  type="button"
+                  className="sidebar-account-more"
+                  aria-label={copy.accountMenu}
+                  title={copy.accountMenu}
+                >
+                  <MoreIcon />
+                </button>
+              </Dropdown>
             </div>
           ) : null}
         </aside>
