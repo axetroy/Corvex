@@ -2399,7 +2399,6 @@ export class AppStore {
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name);
-      CREATE INDEX IF NOT EXISTS conversation_skills_pack_idx ON conversation_skills(pack_id);
       CREATE TABLE IF NOT EXISTS skill_packs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -2418,6 +2417,8 @@ export class AppStore {
     if (!skillColumns.has("pack_id")) {
       this.db.exec("ALTER TABLE conversation_skills ADD COLUMN pack_id TEXT NOT NULL DEFAULT ''");
     }
+    // 索引必须在列补齐后创建；旧库的建表语句不会因为 IF NOT EXISTS 自动补列。
+    this.db.exec("CREATE INDEX IF NOT EXISTS conversation_skills_pack_idx ON conversation_skills(pack_id)");
     if (!skillColumns.has("document")) {
       this.db.exec("ALTER TABLE conversation_skills ADD COLUMN document TEXT NOT NULL DEFAULT ''");
       for (const row of this.db.prepare("SELECT * FROM conversation_skills").all() as Record<string, unknown>[]) {
