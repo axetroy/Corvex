@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,8 @@ import {
   createFsReadExtension,
   readAllowedDirectory,
   readAllowedFile,
+  readAllowedTree,
+  renderDirectoryTree,
   requireRelativeRepoPath,
   searchAllowedFiles,
   statAllowedPath,
@@ -198,9 +200,56 @@ describe("readAllowedFile", () => {
     expect(registered).toEqual(new Map([
       ["read_file", "parallel"],
       ["read_dir", "parallel"],
+      ["tree", "parallel"],
       ["stat", "parallel"],
       ["search_text", "parallel"],
     ]));
+  });
+
+  it("builds a bounded tree without following symlinks or entering ignored directories", async () => {
+    await mkdir(join(root, "src", "nested"), { recursive: true });
+    await mkdir(join(root, "node_modules"));
+    await writeFile(join(root, "src", "a.ts"), "a");
+    await writeFile(join(root, "src", "nested", "b.ts"), "b");
+    await writeFile(join(root, "node_modules", "ignored.ts"), "ignored");
+    await symlink(join(root, "src"), join(root, "linked"));
+
+    const result = await readAllowedTree(".", [root], { maxDepth: 3 });
+    expect(result.path).toBe(".");
+    expect(result.entries.map((entry) => entry.name)).toEqual([
+      "linked", "README.md", "src", "a.ts", "nested", "b.ts",
+    ]);
+    expect(result.entries.some((entry) => entry.name === "node_modules")).toBe(false);
+    expect(result.entries.find((entry) => entry.name === "linked")).toMatchObject({ type: "symlink", depth: 1 });
+    expect(result.entries.find((entry) => entry.name === "b.ts")).toMatchObject({ depth: 3 });
+    expect(result.truncated).toBe(false);
+    const rendered = renderDirectoryTree(result);
+    expect(rendered).toContain("src/");
+    expect(rendered).toContain("    b.ts");
+    expect(rendered).not.toContain("[truncated:");
+  });
+
+  it("exposes the tree tool with a repository-relative path", async () => {
+    await mkdir(join(root, "lib"));
+    await writeFile(join(root, "lib", "index.ts"), "export {}");
+    let treeTool: { execute: (...args: unknown[]) => Promise<unknown> } | undefined;
+    createFsReadExtension([root])({
+      registerTool: (tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+        if (tool.name === "tree") treeTool = tool;
+      },
+    } as unknown as ExtensionAPI);
+    if (!treeTool) throw new Error("tree tool was not registered");
+
+    const result = await treeTool.execute("call-1", { path: "lib" });
+    expect(result).toMatchObject({ content: [{ text: expect.stringContaining("index.ts") }] });
+    await expect(treeTool.execute("call-2", { path: "../outside" })).rejects.toThrow("outside");
+  });
+
+  it("stops at the node limit and marks the tree truncated", async () => {
+    for (let index = 0; index < 12; index += 1) await writeFile(join(root, `file-${index}.ts`), "x");
+    const result = await readAllowedTree(".", [root], { maxNodes: 5 });
+    expect(result.entries).toHaveLength(5);
+    expect(result.truncated).toBe(true);
   });
 
   it("searches literal text with bounded, case-insensitive results", async () => {

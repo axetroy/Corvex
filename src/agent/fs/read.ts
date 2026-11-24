@@ -3,6 +3,12 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+/** 目录树默认最大深度；只展示骨架，避免把整个仓库铺进上下文。 */
+const maxTreeDepth = 4;
+/** 目录树最多节点数。 */
+const maxTreeNodes = 300;
+/** 目录树文本输出上限。 */
+const maxTreeBytes = 24 << 10;
 /** 单次 read_file 返回内容的 UTF-8 字节上限。 */
 const maxReadBytes = 256 << 10;
 /** read_file 未指定行范围时默认返回的行数。 */
@@ -140,6 +146,96 @@ export async function readAllowedDirectory(
     entries,
     truncated,
   };
+}
+
+export interface TreeEntry {
+  /** 相对请求目录的层级深度，从 1 开始。 */
+  depth: number;
+  name: string;
+  type: "directory" | "file" | "symlink" | "other";
+}
+
+export interface TreeResult {
+  path: string;
+  entries: TreeEntry[];
+  truncated: boolean;
+}
+
+/**
+ * 有界目录树：只沿普通目录递归，不跟随符号链接，跳过依赖/生成目录，
+ * 深度、节点数与输出字节三重上限，任何触顶都置 truncated，让调用方知道结果不完整。
+ */
+export async function readAllowedTree(
+  requestedPath: string,
+  allowedRoots: string[],
+  options: { maxDepth?: number; maxNodes?: number; maxBytes?: number } = {},
+): Promise<TreeResult> {
+  const resolvedPath = await resolveAllowedPath(requestedPath, allowedRoots);
+  const info = await stat(resolvedPath.path);
+  if (!info.isDirectory()) throw new Error("requested path is not a directory; provide a directory path");
+
+  const depthLimit = options.maxDepth ?? maxTreeDepth;
+  const nodeLimit = options.maxNodes ?? maxTreeNodes;
+  const byteLimit = options.maxBytes ?? maxTreeBytes;
+  const entries: TreeEntry[] = [];
+  let bytes = 0;
+  let truncated = false;
+  // 显式栈保持深度优先且顺序确定；每层先按名字排序后再压栈。
+  const stack: Array<{ path: string; depth: number }> = [{ path: resolvedPath.path, depth: 0 }];
+  while (stack.length > 0 && !truncated) {
+    const current = stack.pop()!;
+    const directory = await opendir(current.path);
+    const children: Array<{ name: string; kind: string }> = [];
+    for await (const child of directory) {
+      if (child.isDirectory() && ignoredSearchDirectories.has(child.name)) continue;
+      children.push({
+        name: child.name,
+        kind: child.isDirectory() ? "directory" : child.isFile() ? "file" : child.isSymbolicLink() ? "symlink" : "other",
+      });
+    }
+    children.sort((left, right) => left.name.localeCompare(right.name));
+    const directories: Array<{ path: string; depth: number }> = [];
+    for (const child of children) {
+      if (entries.length >= nodeLimit) {
+        truncated = true;
+        break;
+      }
+      const depth = current.depth + 1;
+      const line = `${"  ".repeat(depth - 1)}${child.name}${child.kind === "directory" ? "/" : ""}\n`;
+      if (bytes + Buffer.byteLength(line) > byteLimit) {
+        truncated = true;
+        break;
+      }
+      entries.push({ depth, name: child.name, type: child.kind as TreeEntry["type"] });
+      bytes += Buffer.byteLength(line);
+      // 到达深度上限时可能有未展示的子项；不递归，但标记结果不完整。
+      if (child.kind === "directory") {
+        if (depth >= depthLimit) truncated = true;
+        else directories.push({ path: resolve(current.path, child.name), depth });
+      }
+    }
+    // 子目录倒序压栈，弹出顺序与排序后的兄弟顺序一致。
+    for (let index = directories.length - 1; index >= 0; index -= 1) stack.push(directories[index]!);
+  }
+  return {
+    path: toForwardSlashPath(relative(resolvedPath.root, resolvedPath.path) || "."),
+    entries,
+    truncated,
+  };
+}
+
+/** 把有界树渲染为缩进文本；行宽已在采集时按字节计数，这里只做拼接。 */
+export function renderDirectoryTree(result: TreeResult): string {
+  const lines = result.entries.map((entry) =>
+    `${"  ".repeat(entry.depth - 1)}${entry.name}${entry.type === "directory" ? "/" : ""}`,
+  );
+  return [
+    `${result.path}${result.path === "." ? "" : "/"}`,
+    ...lines,
+    result.truncated
+      ? `[truncated: depth/node/byte limit reached; use a narrower path or read_dir to explore]`
+      : "",
+  ].filter(Boolean).join("\n");
 }
 
 export async function statAllowedPath(
@@ -656,6 +752,26 @@ export function createFsReadExtension(
       }),
       execute: async (_toolCallId, params) => ({
         content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(await requireRelativeRepoPath(params.path, roots), roots)) }],
+        details: {},
+      }),
+    });
+    pi.registerTool({
+      name: "tree",
+      label: "List bounded directory tree",
+      executionMode: "parallel",
+      description: `Show a bounded directory skeleton under a repository-relative path to understand the layout before reading files. Depth is limited to ${maxTreeDepth} levels, ${maxTreeNodes} nodes and ${maxTreeBytes} output bytes; .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are never followed. Results are sorted and marked truncated when a limit is hit, so narrow the path or use read_dir for the rest.`,
+      promptSnippet: "tree: Get a bounded directory skeleton once to orient, then read only the files you need.",
+      parameters: Type.Object({
+        path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+        maxDepth: Type.Optional(Type.Integer({ minimum: 1, maximum: maxTreeDepth })),
+      }),
+      execute: async (_toolCallId, params) => ({
+        content: [{
+          type: "text",
+          text: renderDirectoryTree(await readAllowedTree(
+            await requireRelativeRepoPath(params.path ?? ".", roots), roots, { maxDepth: params.maxDepth },
+          )),
+        }],
         details: {},
       }),
     });

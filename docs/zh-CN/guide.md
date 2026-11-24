@@ -79,7 +79,7 @@ pnpm start -- --config configs/config.yaml server
 
 ## 工具与写入边界
 
-Pi 会话不开放内建 shell、edit 或 write 工具。仓库文件读取通过有界的 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，仓库路径必须使用相对路径（只有可信 Skill 根目录允许绝对路径）。Skill 从 `agent.skill_paths` 加载，属于指令而非访问控制。
+Pi 会话不开放内建 shell、edit 或 write 工具。仓库文件读取通过有界的 `read_file` / `read_dir` / `tree` / `stat` / `search_text` / `git_grep` 完成，仓库路径必须使用相对路径（只有可信 Skill 根目录允许绝对路径）。Skill 从 `agent.skill_paths` 加载，属于指令而非访问控制。
 
 - **Git 工具**限定在对话的 worktree 和本地项目镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_sync`、`git_merge`、`git_commit`、`git_push`、`git_publish`、`git_push_branch`、`git_rebase`、`git_cherry_pick`、`git_revert`。不接受任意 URL、远端或强制推送参数；`git_push` 只写镜像中的 `refs/conversations/<id>`，明确要求发布时 `git_publish` 一步保存改动并快进推到 GitLab 具名分支，`git_push_branch` 则是已知完整 SHA 时的底层变体。保存改动后 worktree 会 detached 到保存的提交，因此 `git_rebase` / `git_merge` 面对的是干净工作区，变基/合并结果在轮末同步回会话 ref。轮次排队时抓取的分支快照只用于判断该轮是否过期；未发布改动的基线单独维护，只在成功发布到会话目标分支后前进：只 commit 时改动仍显示在「更改」里，publish 成功后该列表清空，同一轮内可以继续修改并再次发布而无需手动 rebase。推送被拒（非快进）时按 `git_sync` → `git_pull` → `git_rebase` 到 `origin/<branch>` 的顺序恢复，绝不强制推送；每轮 Git 调用次数有上限（`agent.git_tool_call_limit`），失败也计入，超限后停止操作并汇报，避免陷入试错循环。首次发布到功能分支后系统会自动复用或创建 MR（`agent.auto_create_merge_request`）；轮次过期时会在 context 轨迹里记录推进分支的具体提交与作者。
 - **GitLab 工具**固定绑定到对话的项目：项目与分支发现、读取 Issue/MR 及其变更与讨论，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。所有写操作都需要用户明确意图；删除、合并、批准等不可逆或公开动作在工具描述中明确标注。
