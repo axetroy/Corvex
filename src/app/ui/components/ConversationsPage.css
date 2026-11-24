@@ -2179,7 +2179,20 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversations-layout .conversation-chat .conversation-composer.ant-sender .ant-sender-content {
+  flex-wrap: wrap;
   padding: 9px 10px 9px 14px;
+}
+
+/* 长文本时发送/操作按钮移到 textarea 下方自成一行，避免形成「左滚动文本 + 右按钮」的割裂布局。 */
+.conversations-layout .conversation-chat .conversation-composer.ant-sender .ant-sender-content > .ant-sender-input {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.conversations-layout .conversation-chat .conversation-composer.ant-sender .ant-sender-content > .ant-sender-actions-list {
+  justify-content: flex-end;
+  width: 100%;
+  margin-top: 6px;
 }
 
 /* 输入框底栏：模型切换器留在框内，保持低视觉权重并允许长名称省略。 */
