@@ -1180,6 +1180,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         onSelect={scrollToTurn}
                       />
                     ) : null}
+                    <div className="conversation-composer-area">
                     {showScrollBottom ? (
                       <button
                         type="button"
@@ -1192,7 +1193,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         {copy.scrollToBottom}
                       </button>
                     ) : null}
-                    <div className="conversation-composer-area">
                     {commandSuggestions.length ? (
                       <div ref={commandMenuRef} className="conversation-command-suggestions" aria-label={copy.commandHint}>
                         {commandSuggestions.map(({ command, description, fullDescription }, index) => (

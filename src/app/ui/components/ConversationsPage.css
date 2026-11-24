@@ -145,10 +145,10 @@
   }
 }
 
-/* 离开底部一段距离后才出现，悬浮在输入框上方，点击回到最新消息。 */
+/* 离开底部一段距离后才出现，贴在输入框上方（随输入框高度变化），点击回到最新消息。 */
 .conversation-scroll-bottom {
   position: absolute;
-  bottom: 188px;
+  bottom: calc(100% + 10px);
   left: 50%;
   z-index: 4;
   display: flex;
