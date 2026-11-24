@@ -65,8 +65,8 @@ export class GitLabOAuthService {
     return { user, sessionId };
   }
 
-  /** 令牌将过期时用 refresh token 续期；失败时返回原用户，由调用方要求重新登录。 */
-  async refresh(user: AuthUser): Promise<AuthUser> {
+  /** 令牌将过期时用 refresh token 续期；失败返回 undefined，调用方应让会话失效并要求重新登录。 */
+  async refresh(user: AuthUser): Promise<AuthUser | undefined> {
     if (!user.refreshToken || !this.configured) return user;
     if (user.tokenExpiresAt > Date.now() + 60_000) return user;
     try {
@@ -87,7 +87,7 @@ export class GitLabOAuthService {
       return this.store.readUser(user.id, this.cipher) ?? user;
     } catch (error) {
       console.warn("GitLab token refresh failed", { username: user.username, error: String(error) });
-      return user;
+      return undefined;
     }
   }
 

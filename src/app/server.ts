@@ -77,7 +77,14 @@ export class CorvexServer {
       const sessionId = readCookie(request.headers.cookie, sessionCookieName);
       const session = sessionId ? store.readUserSession(sessionId) : undefined;
       const user = session ? store.readUser(session.userId, this.cipher) : undefined;
-      return user ? this.oauth.refresh(user) : undefined;
+      if (!user) return undefined;
+      const refreshed = await this.oauth.refresh(user);
+      if (!refreshed) {
+        // 令牌已失效且无法续期：删除本地会话，让后续请求统一返回 401 并触发前端重新登录。
+        if (sessionId) store.deleteUserSession(sessionId);
+        return undefined;
+      }
+      return refreshed;
     });
     this.hooks.settingsApplied.tap("runners", (applied) => {
       this.conversations.reconfigureGitLab(applied.gitlab.baseUrl);
@@ -190,6 +197,8 @@ export class CorvexServer {
         const saved = this.store.readUser(userId, this.cipher);
         if (!saved) return undefined;
         const user = await this.oauth.refresh(saved);
+        // 续期失败意味着用户在非请求路径上也需要重新登录，这里跳过该用户的队列恢复。
+        if (!user) return undefined;
         return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken);
       }).catch((error: unknown) => {
         console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
