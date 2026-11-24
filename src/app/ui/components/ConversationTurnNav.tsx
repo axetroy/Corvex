@@ -79,8 +79,8 @@ export function ConversationTurnNav({ items, activeId, copy, locale, onSelect }:
       const next = clamp(cursorRef.current + step, 0, items.length - 1);
       // 已到两端时不消费节流状态，反向滚动可以立即响应。
       if (next === cursorRef.current) return;
-      // 触控板一次手势的连续事件只认一次，避免一次轻扫连跳多轮。
-      if (!shouldStepTurnWheel(wheelState, event.timeStamp)) return;
+      // 触控板连续手势只跳一步，鼠标滚轮刻度仍可快速逐轮跳转。
+      if (!shouldStepTurnWheel(wheelState, event.timeStamp, event.deltaY)) return;
       cursorRef.current = next;
       setCursor(next);
       const target = items[next];

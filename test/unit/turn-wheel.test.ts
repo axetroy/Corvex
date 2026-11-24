@@ -2,36 +2,45 @@ import { describe, expect, it } from "vitest";
 import {
   createTurnWheelState,
   shouldStepTurnWheel,
-  turnWheelCooldownMs,
+  turnWheelGestureGapMs,
+  turnWheelNotchCooldownMs,
+  turnWheelNotchDelta,
   turnWheelStep,
 } from "../../src/app/ui/turnWheel.js";
 
 describe("turn navigation wheel", () => {
   it("uses a single cross-platform direction rule (no platform inversion)", () => {
-    // deltaY 已在浏览器层规范化：正=向下滚动→前进到更新轮次。
     expect(turnWheelStep(120)).toBe(1);
     expect(turnWheelStep(-120)).toBe(-1);
     expect(turnWheelStep(0)).toBe(0);
     expect(turnWheelStep(Number.NaN)).toBe(0);
   });
 
-  it("collapses a trackpad gesture into one step", () => {
+  it("collapses a whole trackpad gesture (including inertia) into one step", () => {
     const state = createTurnWheelState();
     const start = 1_000;
-    // 一次手势的连续事件（间隔远小于冷却时间）只认第一次。
-    expect(shouldStepTurnWheel(state, start)).toBe(true);
-    expect(shouldStepTurnWheel(state, start + 16)).toBe(false);
-    expect(shouldStepTurnWheel(state, start + 60)).toBe(false);
-    // 手势结束后再次滚动才允许下一步。
-    expect(shouldStepTurnWheel(state, start + turnWheelCooldownMs + 1)).toBe(true);
+    // 一次轻扫的连续小 deltaY 事件可跨越很长惯性时间（>旧冷却 150ms）。
+    expect(shouldStepTurnWheel(state, start, 2)).toBe(true);
+    for (let t = start + 16; t < start + 500; t += 16) {
+      expect(shouldStepTurnWheel(state, t, 2)).toBe(false);
+    }
+    // 手势静止超过间隔后，下一次滚动才算新手势。
+    expect(shouldStepTurnWheel(state, start + 500 + turnWheelGestureGapMs + 1, 2)).toBe(true);
   });
 
-  it("does not consume the cooldown at the boundaries", () => {
-    // 边界判定在调用 shouldStep 之前完成，因此反向滚动不被冷却吞掉——
-    // 这里仅验证节流状态本身在冷却结束后恢复。
+  it("allows fast repeated mouse-wheel notches to step each time", () => {
     const state = createTurnWheelState();
-    expect(shouldStepTurnWheel(state, 1_000)).toBe(true);
-    expect(shouldStepTurnWheel(state, 1_050)).toBe(false);
-    expect(shouldStepTurnWheel(state, 1_000 + turnWheelCooldownMs)).toBe(true);
+    const start = 1_000;
+    expect(shouldStepTurnWheel(state, start, turnWheelNotchDelta + 50)).toBe(true);
+    expect(shouldStepTurnWheel(state, start + turnWheelNotchCooldownMs + 1, turnWheelNotchDelta + 50)).toBe(true);
+  });
+
+  it("a notch resets the gesture state", () => {
+    const state = createTurnWheelState();
+    expect(shouldStepTurnWheel(state, 1_000, 2)).toBe(true);
+    expect(shouldStepTurnWheel(state, 1_016, 2)).toBe(false);
+    // 冷却结束后的刻度事件被允许；大 deltaY 走刻度分支并重置手势状态。
+    expect(shouldStepTurnWheel(state, 1_000 + turnWheelNotchCooldownMs + 1, 120)).toBe(true);
+    expect(state.stepped).toBe(false);
   });
 });
