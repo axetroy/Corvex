@@ -933,6 +933,47 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 等待偏久：转为警示色并放慢节奏，让文案之外的视觉也在传达「仍在等、可停止」。 */
+.conversation-pending.is-slow {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.conversation-pending.is-slow::after {
+  background: linear-gradient(90deg, transparent, var(--warning), transparent);
+  animation-duration: 2.4s;
+}
+
+.conversation-pending.is-slow .conversation-pending-dots i {
+  background: var(--warning);
+  animation-duration: 1.8s;
+}
+
+.conversation-pending.is-slow .conversation-pending-elapsed {
+  color: var(--warning);
+}
+
+.conversation-pending.is-long {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.conversation-pending.is-long::after {
+  background: linear-gradient(90deg, transparent, var(--danger), transparent);
+  animation-duration: 3s;
+}
+
+.conversation-pending.is-long .conversation-pending-dots i {
+  background: var(--danger);
+  animation-duration: 2.4s;
+}
+
+.conversation-pending.is-long .conversation-pending-elapsed {
+  color: var(--danger);
+}
+
 @keyframes conversation-pending-pulse {
   0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-3px); }

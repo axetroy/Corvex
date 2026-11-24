@@ -9,7 +9,7 @@ import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendJson } from "../api.js";
 import { streamConversationTurn } from "../stream.js";
-import { resolveWaitingSince } from "../conversationWaiting.js";
+import { resolveWaitingSince, resolveWaitingStage } from "../conversationWaiting.js";
 import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
@@ -120,27 +120,36 @@ function conversationGroupColor(key: string): string {
   return conversationGroupColors[hash % conversationGroupColors.length]!;
 }
 
-/** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
-/** 等待模型首个输出时的动态反馈：脉冲圆点 + 已等待秒数，避免静默带来的卡顿错觉。 */
+/**
+ * 等待模型首个输出时的动态反馈：脉冲圆点 + 已等待秒数。
+ * 超过阈值后换成安抚文案（并改变配色与节奏），让用户知道系统仍在等待且有停止出口。
+ */
 function ModelWaiting({ since, copy }: { since: number; copy: Copy }) {
-  const [seconds, setSeconds] = useState(() => Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+  const [elapsedMs, setElapsedMs] = useState(() => Math.max(0, Date.now() - since));
   useEffect(() => {
-    setSeconds(Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+    setElapsedMs(Math.max(0, Date.now() - since));
     const timer = window.setInterval(() => {
-      setSeconds(Math.max(0, Math.floor((Date.now() - since) / 1_000)));
+      setElapsedMs(Math.max(0, Date.now() - since));
     }, 1_000);
     return () => window.clearInterval(timer);
   }, [since]);
+  const stage = resolveWaitingStage(elapsedMs);
+  const label = stage === "long"
+    ? copy.conversationWaitingLong
+    : stage === "slow"
+      ? copy.conversationWaitingSlow
+      : copy.conversationThinkingPending;
   return (
-    <div className="conversation-pending" role="status">
+    <div className={`conversation-pending is-${stage}`} role="status">
       <span className="conversation-pending-dots" aria-hidden="true"><i /><i /><i /></span>
-      <span aria-live="polite">{copy.conversationThinkingPending}</span>
+      <span aria-live="polite">{label}</span>
       {/* 秒数每秒变化，不进入无障碍播报，避免反复朗读。 */}
-      <span className="conversation-pending-elapsed" aria-hidden="true">{seconds}s</span>
+      <span className="conversation-pending-elapsed" aria-hidden="true">{Math.floor(elapsedMs / 1_000)}s</span>
     </div>
   );
 }
 
+/** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
 function MessageContent({
   message,
   copy,

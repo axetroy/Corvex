@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveWaitingSince } from "../../src/app/ui/conversationWaiting.js";
+import {
+  resolveWaitingSince,
+  resolveWaitingStage,
+  WAIT_LONG_AFTER_MS,
+  WAIT_REASSURE_AFTER_MS,
+} from "../../src/app/ui/conversationWaiting.js";
 
 describe("conversation model waiting state", () => {
   const start = 1_000;
@@ -20,4 +25,12 @@ describe("conversation model waiting state", () => {
   it("re-enters waiting after a tool finishes so the next model call is visible", () => {
     expect(resolveWaitingSince(null, { type: "toolSettled" }, now)).toBe(now);
   });
+  it("uses reassuring copy after the wait threshold and escalates later", () => {
+    expect(resolveWaitingStage(0)).toBe("normal");
+    expect(resolveWaitingStage(WAIT_REASSURE_AFTER_MS - 1)).toBe("normal");
+    expect(resolveWaitingStage(WAIT_REASSURE_AFTER_MS)).toBe("slow");
+    expect(resolveWaitingStage(WAIT_LONG_AFTER_MS - 1)).toBe("slow");
+    expect(resolveWaitingStage(WAIT_LONG_AFTER_MS)).toBe("long");
+  });
+
 });
