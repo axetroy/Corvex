@@ -1300,6 +1300,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         copy={copy}
                         currentBranch={currentConversation.targetBranch}
                         pinnedSha={currentConversation.messages.at(-1)?.headSha}
+                        baseSha={currentConversation.baseSha}
                       >
                         <button
                           type="button"
@@ -1315,6 +1316,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       <Tag className="conversation-branch-tag">{currentConversation.targetBranch}</Tag>
                       <Typography.Text type="secondary" className="conversation-pinned">
                         {copy.pinnedRevision}: <code>{currentConversation.messages.at(-1)?.headSha?.slice(0, 12) ?? copy.none}</code>
+                      </Typography.Text>
+                      <Typography.Text type="secondary" className="conversation-pinned" title={currentConversation.baseSha || undefined}>
+                        {copy.syncBaseline}: <code>{currentConversation.baseSha?.slice(0, 12) ?? copy.none}</code>
                       </Typography.Text>
                       {hasActiveTurn ? <Tag color="processing">{copy.statuses.running}</Tag> : null}
                       {changePaths.length ? (

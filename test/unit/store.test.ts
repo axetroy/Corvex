@@ -230,13 +230,15 @@ describe("AppStore", () => {
       actorId: 0,
       request: "First turn",
     });
-    expect(store.getConversation(created.conversationId)?.baseSha).toBe("");
+    expect(store.getConversation(created.conversationId)?.baseSha).toBe("a".repeat(40));
+    expect(store.getConversation(created.conversationId)?.baseBranch).toBe("main");
     const updated = "f".repeat(40);
-    store.setConversationBaseSha(created.conversationId, updated);
+    store.setConversationBaseSha(created.conversationId, updated, "fix/asar");
     expect(store.getConversation(created.conversationId)?.baseSha).toBe(updated);
+    expect(store.getConversation(created.conversationId)?.baseBranch).toBe("fix/asar");
     // 推进基线不应改变轮次快照，也不应把对话排到列表最前。
     expect(store.getConversation(created.conversationId)?.messages[0]?.headSha).toBe("a".repeat(40));
-    expect(() => store.setConversationBaseSha(created.conversationId, "short")).toThrow("base SHA is invalid");
+    expect(() => store.setConversationBaseSha(created.conversationId, "short", "main")).toThrow("base SHA is invalid");
   });
 
   it("serializes conversation turns and reflects retry and cancellation states", async () => {

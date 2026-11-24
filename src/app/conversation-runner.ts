@@ -10,12 +10,13 @@ import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
 import { conversationWorkspaceName, GitManager } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
-import { GitLabClient, repositoryCloneUrl } from "../gitlab/client.js";
+import { GitLabClient, repositoryCloneUrl, type GitLabBranch } from "../gitlab/client.js";
 import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } from "../agent/pi.js";
 import { maxWriteBytes, replaceTextExactly, resolveWorktreePath, type WorkspaceFs } from "../agent/fs/index.js";
 import type { GitToolAdapter } from "../agent/git/index.js";
 import { withGitToolBudget } from "../agent/git/budget.js";
 import { resolveTurnBaseSha } from "./conversation-base.js";
+import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-conflict.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
@@ -268,21 +269,22 @@ export class ConversationRunner {
    * 把 Git 工具绑定到当前会话的 worktree、项目镜像与同步基线。
    *
    * publish 成功后把基线推进到已发布的提交：本轮后续 commit 才会以它为父提交并保持快进，
-   * 否则同一轮内第二次 push 必然非快进。只有推送到会话目标分支才推进，且失败不影响发布结果。
+   * 否则同一轮内第二次 push 必然非快进。任何分支的 publish 都推进基线，失败不影响发布结果；
+   * 发布到功能分支时另外尝试复用/创建 MR。
    */
   private gitTools(
     workspace: Workspace,
     conversationId: string,
     turnId: string,
     targetBranch: string,
+    gitlab: GitLabClient,
     signal?: AbortSignal,
     authToken?: string,
   ): GitToolAdapter {
     const onPublished = async (sha: string, branch: string): Promise<void> => {
-      if (branch !== targetBranch) return;
       try {
-        this.store.setConversationBaseSha(conversationId, sha);
-        // worktree 的父提交基线同步前进；本轮后续 saveConversationChanges 以它为父提交。
+        // 不管推到哪个分支，发布出去的提交都是新的同步基线：本轮后续 commit 以它为父提交。
+        this.store.setConversationBaseSha(conversationId, sha, branch);
         workspace.headSha = sha;
         // 改动已经进入 GitLab，不再是未发布改动：清掉会话 ref，Changes 视图回到空状态。
         await this.repo.clearConversationChangesRef(workspace.projectId, conversationId, signal);
@@ -292,6 +294,7 @@ export class ConversationRunner {
           conversationId, branch, sha, error: errorMessage(error),
         });
       }
+      await this.ensureMergeRequest(turnId, conversationId, workspace.projectId, branch, targetBranch, sha, gitlab, signal);
     };
     const adapter: GitToolAdapter = {
       status: () => this.repo.getWorkspaceStatus(workspace, signal),
@@ -853,6 +856,95 @@ export class ConversationRunner {
     });
   }
 
+  /**
+   * 首次发布到功能分支后创建（或复用）MR。失败只记日志，绝不影响已经成功的 publish。
+   * 复用判断按 source/target 分支匹配已打开的 MR，避免模型随后再建一个重复 MR。
+   */
+  private async ensureMergeRequest(
+    turnId: string,
+    conversationId: string,
+    projectId: number,
+    sourceBranch: string,
+    targetBranch: string,
+    sha: string,
+    gitlab: GitLabClient,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.config.agent.autoCreateMergeRequest || sourceBranch === targetBranch) return;
+    try {
+      const open = await gitlab.listMergeRequests(projectId, { state: "opened", perPage: 100 }, signal);
+      if (open.some((mr) => mr.sourceBranch === sourceBranch && mr.targetBranch === targetBranch)) return;
+      const title = this.store.getConversation(conversationId)?.title?.trim() || `Corvex: ${sourceBranch}`;
+      const created = await gitlab.createMergeRequest(projectId, {
+        title,
+        sourceBranch,
+        targetBranch,
+        description: `Opened automatically by Corvex after publishing ${sha.slice(0, 12)}.\nConversation: ${conversationId}`,
+      }, signal);
+      const text = this.config.agent.responseLanguage === "zh-CN"
+        ? `已将 ${sha.slice(0, 12)} 发布到 ${sourceBranch}，并自动创建合并请求 ${created.webUrl}（目标分支 ${targetBranch}）。`
+        : `Published ${sha.slice(0, 12)} to ${sourceBranch} and opened merge request ${created.webUrl} (target ${targetBranch}).`;
+      this.publishStream(turnId, {
+        type: "context",
+        context: { id: `${turnId}-merge-request-${sha.slice(0, 8)}`, text },
+      });
+    } catch (error) {
+      const reason = errorMessage(error);
+      console.warn("auto create merge request failed", {
+        conversationId, sourceBranch, targetBranch, error: reason,
+      });
+      // 模型已被告知不要自己建 MR，因此失败必须告诉操作人员，避免没人发现没有 MR。
+      this.publishStream(turnId, {
+        type: "context",
+        context: {
+          id: `${turnId}-merge-request-failed-${sha.slice(0, 8)}`,
+          text: this.config.agent.responseLanguage === "zh-CN"
+            ? `已发布到 ${sourceBranch}，但自动创建合并请求失败：${reason}。请检查权限或手动创建。`
+            : `Published to ${sourceBranch}, but automatic merge request creation failed: ${reason}. Check permissions or create it manually.`,
+        },
+      });
+    }
+  }
+
+  /**
+   * 记录分支被别人推进的具体提交：写一条 context 轨迹供 Trace 查看，并把作者/标题
+   * 放进轮次失败原因。GitLab 提交详情查询失败时退回分支接口自带的标题，不改变 stale 终态。
+   */
+  private async recordStaleConflict(
+    turn: ConversationTurnContext,
+    gitlab: GitLabClient,
+    branch: GitLabBranch,
+    stepContext: { turnId: string; attempt: number },
+    signal: AbortSignal,
+  ): Promise<void> {
+    let detail: StaleConflictDetail = {
+      title: branch.commit.title,
+      committedDate: branch.commit.committed_date,
+    };
+    try {
+      const commit = await gitlab.getCommit(turn.projectId, branch.commit.id, signal);
+      detail = {
+        authorName: commit.authorName,
+        title: commit.title || detail.title,
+        committedDate: commit.committedDate || detail.committedDate,
+      };
+    } catch (error) {
+      detail = { ...detail, lookupError: errorMessage(error).slice(0, 200) };
+    }
+    const note = buildStaleConflictNote(turn.headSha, branch.commit.id, turn.targetBranch, detail);
+    const traceId = this.store.startTrace(
+      stepContext,
+      turn.attempt,
+      "context",
+      note.traceName,
+      "",
+      note.input,
+      { input: note.input },
+    );
+    this.store.finishTrace(traceId, "failed", 0, undefined, undefined, undefined, note.output);
+    this.store.failConversationTurn(turn.turnId, "stale", note.message);
+  }
+
   private async execute(
     turn: ConversationTurnContext,
     signal: AbortSignal,
@@ -876,11 +968,7 @@ export class ConversationRunner {
         (value) => ({ name: value.name, headSha: value.commit.id }),
       );
       if (branch.commit.id.toLowerCase() !== turn.headSha.toLowerCase()) {
-        this.store.failConversationTurn(
-          turn.turnId,
-          "stale",
-          "The branch changed after this turn was queued; send a new message to use the current snapshot.",
-        );
+        await this.recordStaleConflict(turn, gitlab, branch, stepContext, signal);
         return;
       }
       // 基线是「本地未发布改动的父提交」，与只用于过期检测的轮次快照分开维护：
@@ -891,8 +979,12 @@ export class ConversationRunner {
         return;
       }
       const unpublished = await this.repo.getConversationChanges(turn.projectId, turn.conversationId, signal);
-      const baseSha = resolveTurnBaseSha(conversation.baseSha, turn.headSha, Boolean(unpublished));
-      if (baseSha !== conversation.baseSha) this.store.setConversationBaseSha(turn.conversationId, baseSha);
+      const baseSha = resolveTurnBaseSha(
+        conversation.baseSha, conversation.baseBranch, turn.headSha, turn.targetBranch, Boolean(unpublished),
+      );
+      if (baseSha !== conversation.baseSha) {
+        this.store.setConversationBaseSha(turn.conversationId, baseSha, conversation.baseBranch || turn.targetBranch);
+      }
       const project = await traceExecutionStep(
         this.store,
         stepContext,
@@ -997,7 +1089,7 @@ export class ConversationRunner {
               steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, signal, gitlab.authToken) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, gitlab, signal, gitlab.authToken) }
                 : {}),
             },
             workspace.path,

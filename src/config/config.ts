@@ -58,6 +58,8 @@ export interface CorvexConfig {
     webSearchMaxQueries: number;
     /** 每个对话轮次最多调用的 Git 工具次数；0 表示不限制。 */
     gitToolCallLimit: number;
+    /** 首次 publish 到功能分支后是否自动创建（或复用）合并请求。 */
+    autoCreateMergeRequest: boolean;
     skillPaths: string[];
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
@@ -120,6 +122,7 @@ const defaults: CorvexConfig = {
     webSearchEnabled: true,
     webSearchMaxQueries: 5,
     gitToolCallLimit: 40,
+    autoCreateMergeRequest: true,
     skillPaths: [],
     contextWindow: 131_072,
     maxInputTokens: 0,
@@ -275,6 +278,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       webSearchEnabled: boolean(agent.web_search_enabled, defaults.agent.webSearchEnabled),
       webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
+      autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),

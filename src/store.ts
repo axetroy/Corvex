@@ -886,9 +886,12 @@ export class AppStore {
     return this.transaction(() => {
       this.db.prepare(
         `INSERT INTO conversations
-         (id,project_id,project_name,target_branch,mode,owner_user_id,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?)`,
-      ).run(conversationId, input.projectId, input.projectName, input.targetBranch, mode, input.ownerUserId ?? "", now, now);
+         (id,project_id,project_name,target_branch,mode,base_sha,base_branch,owner_user_id,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        conversationId, input.projectId, input.projectName, input.targetBranch, mode,
+        input.headSha, input.targetBranch, input.ownerUserId ?? "", now, now,
+      );
       return this.enqueueConversationTurn(conversationId, input, now);
     });
   }
@@ -1377,9 +1380,11 @@ export class AppStore {
    * 推进会话的同步基线。只在值变化时写入，且不改 updated_at（发布动作不应把对话排到列表最前）。
    * 调用方负责保证顺序：仅在成功 publish 到目标分支或新轮次确认远端快照后推进。
    */
-  setConversationBaseSha(conversationId: string, sha: string): void {
+  setConversationBaseSha(conversationId: string, sha: string, branch: string): void {
     if (!/^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(sha)) throw new Error("conversation base SHA is invalid");
-    this.db.prepare("UPDATE conversations SET base_sha=? WHERE id=? AND base_sha<>?").run(sha, conversationId, sha);
+    if (!branch.trim() || branch.length > 255) throw new Error("conversation base branch is invalid");
+    this.db.prepare("UPDATE conversations SET base_sha=?,base_branch=? WHERE id=? AND (base_sha<>? OR base_branch<>?)")
+      .run(sha, branch, conversationId, sha, branch);
   }
 
   /**
@@ -1742,6 +1747,7 @@ export class AppStore {
       targetBranch: stringColumn(row, "target_branch"),
       mode,
       baseSha: stringColumn(row, "base_sha"),
+      baseBranch: stringColumn(row, "base_branch"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
       turnCount: numberColumn(row, "turn_count"),
@@ -2305,6 +2311,7 @@ export class AppStore {
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'gitlab',
         -- 与远端同步到的基线：本地提交未发布时不变，publish 成功后前进。
         base_sha TEXT NOT NULL DEFAULT '',
+        base_branch TEXT NOT NULL DEFAULT '',
         owner_user_id TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -2536,6 +2543,7 @@ export class AppStore {
       mode: "TEXT NOT NULL DEFAULT 'gitlab'",
       // 同步基线：旧库由下面的回填逻辑从最近一轮的 head_sha 补齐。
       base_sha: "TEXT NOT NULL DEFAULT ''",
+      base_branch: "TEXT NOT NULL DEFAULT ''",
       // 模型生成的标题：旧库留空，首次生成后写入。
       title: "TEXT NOT NULL DEFAULT ''",
       // 归档标记：旧库默认未归档。
@@ -2568,7 +2576,8 @@ export class AppStore {
       .get() as { value: string } | undefined;
     if (!baseShaMigration) {
       this.db.exec(
-        "UPDATE conversations SET base_sha = COALESCE((SELECT head_sha FROM conversation_turns WHERE conversation_id=conversations.id AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1), '') WHERE base_sha=''",
+        "UPDATE conversations SET base_sha = COALESCE((SELECT head_sha FROM conversation_turns WHERE conversation_id=conversations.id AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1), '') WHERE base_sha='';" +
+        "UPDATE conversations SET base_branch = target_branch WHERE base_branch=''",
       );
       const now = new Date().toISOString();
       this.db

@@ -846,5 +846,36 @@ describe("GitLab issue and MR lifecycle writes", () => {
     await expect(client.createIssue(7, { title: "ok", labels: ["bad\nlabel"] })).rejects.toThrow("labels");
     await expect(client.createMergeRequest(7, { title: "ok", sourceBranch: "feat", targetBranch: "main", labels: ["x".repeat(101)] })).rejects.toThrow("labels");
   });
+  it("reads bounded commit details for stale conflict diagnostics", async () => {
+    const sha = "b".repeat(40);
+    const server = createServer((request, response) => {
+      expect(request.url).toBe(`/api/v4/projects/7/repository/commits/${sha}`);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: sha,
+        short_id: sha.slice(0, 8),
+        title: "fix: parser",
+        author_name: "alice",
+        committed_date: "2026-11-24T00:00:00Z",
+        // 其余字段一概忽略，不进入返回结构。
+        stats: { additions: 5 },
+      }));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
+      await expect(client.getCommit(7, sha)).resolves.toEqual({
+        id: sha,
+        shortId: sha.slice(0, 8),
+        title: "fix: parser",
+        authorName: "alice",
+        committedDate: "2026-11-24T00:00:00Z",
+      });
+      await expect(client.getCommit(7, "short")).rejects.toThrow("full SHA");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
 });
 

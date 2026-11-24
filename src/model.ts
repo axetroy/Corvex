@@ -89,6 +89,11 @@ export interface ConversationSummary {
    * 只 commit 时保持不变（改动仍处于「未发布」状态）；成功 publish 到目标分支后前进到该提交。
    */
   baseSha: string;
+  /**
+   * 基线所在的分支。目标分支上时可在新轮次跟随远端快照；
+   * 功能分支上则保持基线，否则下一轮会退回目标分支而丢掉发布进度。
+   */
+  baseBranch: string;
   createdAt: string;
   updatedAt: string;
   /** 该对话的轮次总数（每条助手回复对应一轮）。 */

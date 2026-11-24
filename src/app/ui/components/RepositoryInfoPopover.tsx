@@ -28,7 +28,7 @@ function InfoRow({ label, children, copy }: { label: string; children: ReactNode
 
 /**
  * 点击仓库名打开的只读信息气泡：项目元数据来自 GitLab，
- * 另外带出当前对话绑定的分支与固定提交快照。气泡锚在按钮下方，不遮挡工作区。
+ * 另外带出当前对话绑定的分支、轮次快照与可推进的同步基线。气泡锚在按钮下方，不遮挡工作区。
  */
 export function RepositoryInfoPopover({
   open,
@@ -38,6 +38,7 @@ export function RepositoryInfoPopover({
   copy,
   currentBranch,
   pinnedSha,
+  baseSha,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -46,6 +47,7 @@ export function RepositoryInfoPopover({
   copy: Copy;
   currentBranch?: string;
   pinnedSha?: string;
+  baseSha?: string;
 }) {
   const [details, setDetails] = useState<RepositoryDetails>();
   const [error, setError] = useState("");
@@ -98,6 +100,11 @@ export function RepositoryInfoPopover({
               <InfoRow label={copy.conversationRepositoryCurrent} copy={copy}>
                 {currentBranch ? <span>{currentBranch}</span> : null}
                 {pinnedSha ? <code>{pinnedSha.slice(0, 12)}</code> : null}
+              </InfoRow>
+            ) : null}
+            {baseSha ? (
+              <InfoRow label={copy.conversationRepositoryBaseline} copy={copy}>
+                <code>{baseSha.slice(0, 12)}</code>
               </InfoRow>
             ) : null}
           </dl>

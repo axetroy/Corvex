@@ -105,6 +105,15 @@ export interface GitLabBranch {
   commit: GitLabBranchCommit;
 }
 
+/** 提交详情里只取定位冲突所需的有界字段；其余响应一概忽略。 */
+export interface GitLabCommitInfo {
+  id: string;
+  shortId: string;
+  title: string;
+  authorName: string;
+  committedDate: string;
+}
+
 export interface GitLabIssue {
   iid: number;
   title: string;
@@ -700,6 +709,28 @@ export class GitLabClient {
       throw new Error("GitLab returned an invalid branch or commit SHA");
     }
     return result as unknown as GitLabBranch;
+  }
+
+  /**
+   * 读取提交的作者与标题，用于解释「谁把分支推进了」。
+   * 这是只读调用；失败时调用方应回退到分支接口自带的标题，不能因此改变轮次结果。
+   */
+  async getCommit(projectId: number, sha: string, signal?: AbortSignal): Promise<GitLabCommitInfo> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) throw new Error("commit lookup requires a full SHA");
+    const result = await this.getJson(`/projects/${projectId}/repository/commits/${sha}`, signal);
+    if (!isRecord(result) || typeof result.id !== "string") {
+      throw new Error("GitLab returned an invalid commit");
+    }
+    const bounded = (value: unknown, max: number) =>
+      typeof value === "string" ? value.slice(0, max) : "";
+    return {
+      id: result.id,
+      shortId: bounded(result.short_id, 16),
+      title: bounded(result.title, 500),
+      authorName: bounded(result.author_name, 200),
+      committedDate: bounded(result.committed_date, 40),
+    };
   }
 
   async listBranches(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabBranch[]> {
