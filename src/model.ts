@@ -76,6 +76,20 @@ export interface TraceScope {
 export type ResponseLanguage = "en" | "zh-CN";
 
 /** 模型思考等级；与 Pi SDK 的 ThinkingLevel 取值一致，前端不依赖 SDK 类型。 */
+/** 任务清单中单步的状态；done 的步骤不删除，便于汇报进度。 */
+export type PlanStepStatus = "pending" | "in_progress" | "completed";
+
+export interface PlanStep {
+  text: string;
+  status: PlanStepStatus;
+}
+
+/** 会话的任务清单：跨轮持久化，模型可更新步骤状态。 */
+export interface ConversationPlan {
+  steps: PlanStep[];
+  updatedAt: string;
+}
+
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export const thinkingLevels: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];

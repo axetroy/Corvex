@@ -39,6 +39,7 @@ import { domainSummaryInstructions } from "./domain-summary.js";
 import { createMicrocompactExtension, resolveMicrocompactPolicy } from "./microcompact.js";
 import { estimateConservativeTokens } from "./budget.js";
 import { boundSessionEntries } from "./session-persistence.js";
+import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -648,6 +649,23 @@ export class PiAgent {
         console.warn("context stream callback failed", { error: errorMessage(error) });
       }
     };
+    // 每个会话一个循环检测器：同一签名重复或连续失败时提示模型换策略，避免长任务空转。
+    const toolLoop = createToolLoopState();
+    const noticeToolLoop = (notice: ToolLoopNotice) => {
+      const language = config.agent.responseLanguage;
+      const detail = notice.reason === "failures"
+        ? language === "zh-CN"
+          ? `工具 ${notice.signature.slice(7)} 已连续失败 ${notice.count} 次，请换一个方法或汇报卡点。`
+          : `Tool ${notice.signature.slice(7)} has failed ${notice.count} times in a row; change approach or report the blocker.`
+        : language === "zh-CN"
+          ? `你已用相同参数重复调用 ${notice.signature.split(":")[0]} ${notice.count} 次，请换策略或向用户汇报进展，不要继续重复。`
+          : `You have called ${notice.signature.split(":")[0]} ${notice.count} times with the same arguments; change strategy or report progress instead of repeating.`;
+      emitContextStream({
+        id: `tool-loop-${notice.signature.slice(0, 60)}-${notice.count}`,
+        text: detail,
+      });
+      console.warn("tool loop detected", { reason: notice.reason, signature: notice.signature, count: notice.count });
+    };
     let contextEventCount = 0;
     let contextEventId = "";
     let activeCompactionTrigger: {
@@ -709,7 +727,19 @@ export class PiAgent {
               signal,
             )]
           : []),
-        ...(request.taskType === "conversation" ? [createPlanExtension()] : []),
+        ...(request.taskType === "conversation"
+          ? [createPlanExtension({
+              ...(request.conversationId && this.store
+                ? {
+                    conversationId: request.conversationId,
+                    store: {
+                      get: (id) => this.store!.getConversationPlan(id),
+                      save: (id, steps) => this.store!.saveConversationPlan(id, steps),
+                    },
+                  }
+                : {}),
+            })]
+          : []),
         ...(request.taskType === "conversation" && request.fs
           ? [createFsWriteExtension(request.fs)]
           : []),
@@ -1153,6 +1183,8 @@ export class PiAgent {
             attempt: trace?.attempt,
           }).catch((error: unknown) => console.warn("tool after hook failed", { error: errorMessage(error) }));
         }
+        const loopNotice = recordToolCall(toolLoop, event.toolName, streamToolInputs.get(event.toolCallId) ?? null, event.isError);
+        if (loopNotice) noticeToolLoop(loopNotice);
         this.finishTrace(
           active.traceId,
           event.isError ? "failed" : "succeeded",

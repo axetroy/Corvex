@@ -46,6 +46,8 @@ import {
   type ActiveModel,
   isThinkingLevel,
   type ThinkingLevel,
+  type ConversationPlan,
+  type PlanStepStatus,
   type ResponseLanguage,
   type ModelProvider,
   type ModelProviderDetails,
@@ -836,6 +838,9 @@ export class AppStore {
           .run(...ids);
         this.db
           .prepare(`DELETE FROM conversation_sessions WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_plans WHERE conversation_id IN (${placeholders})`)
           .run(...ids);
         this.db
           .prepare(`DELETE FROM conversation_followups WHERE conversation_id IN (${placeholders})`)
@@ -1652,6 +1657,7 @@ export class AppStore {
       this.db.prepare("DELETE FROM conversation_followups WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_context_snapshots WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_sessions WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_plans WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_turns WHERE conversation_id=?").run(conversationId);
       return this.db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId).changes === 1;
     });
@@ -2150,6 +2156,42 @@ export class AppStore {
     return true;
   }
 
+  /** 读取会话的任务清单；步骤状态做边界校验。 */
+  getConversationPlan(conversationId: string): ConversationPlan | undefined {
+    const row = this.db.prepare(
+      "SELECT steps, updated_at FROM conversation_plans WHERE conversation_id=?",
+    ).get(conversationId) as { steps: string; updated_at: string } | undefined;
+    if (!row) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(row.steps);
+      if (!Array.isArray(parsed)) return undefined;
+      const valid: PlanStepStatus[] = ["pending", "in_progress", "completed"];
+      const steps = parsed.flatMap((item): Array<{ text: string; status: PlanStepStatus }> => {
+        if (!item || typeof item !== "object") return [];
+        const record = item as Record<string, unknown>;
+        if (typeof record.text !== "string" || !record.text.trim()) return [];
+        const status = valid.includes(record.status as PlanStepStatus) ? record.status as PlanStepStatus : "pending";
+        return [{ text: record.text.slice(0, 160), status }];
+      });
+      if (steps.length === 0) return undefined;
+      return { steps, updatedAt: stringColumn(row, "updated_at") };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 覆盖写入会话的任务清单；空清单表示清除。 */
+  saveConversationPlan(conversationId: string, steps: readonly { text: string; status: PlanStepStatus }[]): void {
+    if (steps.length === 0) {
+      this.db.prepare("DELETE FROM conversation_plans WHERE conversation_id=?").run(conversationId);
+      return;
+    }
+    this.db.prepare(
+      `INSERT INTO conversation_plans (conversation_id,steps,updated_at) VALUES (?,?,?)
+       ON CONFLICT(conversation_id) DO UPDATE SET steps=excluded.steps, updated_at=excluded.updated_at`,
+    ).run(conversationId, JSON.stringify(steps), new Date().toISOString());
+  }
+
   /** 用户选择的思考等级；未选择时返回 undefined，由调用方回退到默认。 */
   getUserThinkingLevel(userId: string): ThinkingLevel | undefined {
     const row = this.db.prepare(
@@ -2445,6 +2487,10 @@ export class AppStore {
       );
       CREATE TABLE IF NOT EXISTS user_thinking_levels (
         user_id TEXT PRIMARY KEY, thinking_level TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversation_plans (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+        steps TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS provider_models (
         id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,

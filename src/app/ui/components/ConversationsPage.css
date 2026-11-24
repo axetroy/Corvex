@@ -1061,6 +1061,20 @@
   line-height: 1.65;
 }
 
+.conversation-plan-step.is-pending {
+  color: var(--conversation-muted);
+}
+
+.conversation-plan-step.is-in_progress {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.conversation-plan-step.is-completed {
+  color: var(--conversation-muted);
+  text-decoration: line-through;
+}
+
 /* 上下文压缩/裁剪通知：嵌在过程时间线里，与思考、工具调用共享左侧轨道。 */
 .conversation-context-notice {
   display: flex;

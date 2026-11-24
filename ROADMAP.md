@@ -28,6 +28,34 @@ The current stage focuses on persistent, user-driven conversations in the ops co
 - Keep all agent output untrusted and re-check authorization, cancellation and revision before publishing to GitLab.
 - Restore bilingual docs and integration tests together with the feature.
 
+## Long-running autonomous agent gaps
+
+Corvex already covers context governance (microcompaction, proactive compaction, real token counts, bounded tool results), human collaboration (steer/interject, queued follow-ups, Stop, notifications) and durable state (per-conversation full Pi session persistence, interrupted-turn recovery, rolling summaries). To match mainstream coding agents on **long, autonomous tasks**, the following gaps remain. They are ordered by impact and are not implemented in this stage (except where noted).
+
+### P0 — Tool loop detection and recovery (in progress)
+
+Mainstream agents detect when the model repeats the same tool call with the same arguments, stops making progress, or fails the same way repeatedly, and steer or stop it. Corvex only has narrow guards: a 40-call Git budget, a five-read hint for `read_file`, and a response-stall watchdog. A previous session still produced 253 turns re-reading the same files. Plan: record a bounded signature of `(toolName, normalized args)` per turn, inject a localized "you have repeated this N times — change strategy or report" context notice at a threshold, count repeats toward the turn's tool budget, and mark repeated identical failures as exhausted.
+
+### P0 — Live plan state machine (in progress)
+
+`record_plan` currently stores an immutable text list in the process snapshot; the model cannot update a step's status and a resumed turn does not know its progress. Mainstream agents keep a persisted checklist with `pending / in_progress / completed` states, updated across turns and reflected in the UI. Plan: evolve `record_plan` into a persisted task list with per-step status, allow status-only updates, restore it on resume, and render progress in the console.
+
+### P1 — Task-level round/token budget with forced wrap-up
+
+There is a daily token budget but no per-task round or token ceiling that forces a structured wrap-up when crossed. Add a configurable per-task ceiling that injects a "you must finish and report now" notice before the turn runs away.
+
+### P1 — Completion verification
+
+A turn ends as `completed` when the model says it is done. Combined with `src/agent/claim-verification.ts`, claims such as "fixed / completed / published" should be checked against the turn's tool trace, and "done" should require at least one read-back or diff verification of the changed files.
+
+### P2 — Verification sandbox
+
+The largest structural gap: Corvex has no shell and never executes repository code (`design.md` non-goal), so it cannot close the edit → test → fix loop that mainstream agents rely on. Adding a read-only command allowlist (for example `tsc --noEmit` or a test runner) inside an isolated sandbox requires a separate authorization model and is deferred.
+
+### P2 — Sub-agents / parallel research
+
+Long tasks benefit from lightweight read-only sub-agents that investigate in parallel and return bounded findings, keeping the main session's context clean. Corvex runs one session per turn; delegation is deferred.
+
 ## Other deferred items
 
 No other items are currently recorded.

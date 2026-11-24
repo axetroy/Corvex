@@ -31,6 +31,25 @@ describe("AppStore", () => {
     expect(store.getUserThinkingLevel("user-1")).toBe("high");
   });
 
+  it("持久化会话任务清单并清理", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "first",
+    });
+    expect(store.getConversationPlan(created.conversationId)).toBeUndefined();
+    store.saveConversationPlan(created.conversationId, [
+      { text: "read", status: "completed" },
+      { text: "edit", status: "in_progress" },
+    ]);
+    expect(store.getConversationPlan(created.conversationId)?.steps).toEqual([
+      { text: "read", status: "completed" },
+      { text: "edit", status: "in_progress" },
+    ]);
+    store.saveConversationPlan(created.conversationId, []);
+    expect(store.getConversationPlan(created.conversationId)).toBeUndefined();
+  });
+
   it("持久化并清理会话的完整 Pi 会话条目", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({
