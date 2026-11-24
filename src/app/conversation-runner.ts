@@ -19,6 +19,7 @@ import { resolveTurnBaseSha } from "./conversation-base.js";
 import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-conflict.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { buildToolEvidence } from "../agent/tool-evidence.js";
+import { verifyAnswerClaims } from "../agent/claim-verification.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
@@ -1115,6 +1116,22 @@ export class ConversationRunner {
         throw error;
       }
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
+      // 确定性兜底：回答声称「已发布 / 已评论 / 已合并」但本轮没有对应工具调用时，
+      // 追加一条 context 警告进入过程快照。提示词是软约束，这里是代码级硬校验。
+      const turnTools = this.store.getTraceEntries({ turnId: turn.turnId }, turn.attempt)
+        .filter((entry) => entry.kind === "tool")
+        .map((entry) => entry.name);
+      const claim = verifyAnswerClaims(answer.content, turnTools, language);
+      if (claim.unverified.length > 0) {
+        this.publishStream(turn.turnId, {
+          type: "context",
+          context: { id: `unverified-${turn.turnId}`, text: claim.detail },
+        });
+        console.warn("unverified claims in conversation answer", {
+          turnId: turn.turnId,
+          claims: claim.unverified,
+        });
+      }
       await this.persistChanges(workspace, turn.conversationId, turn.turnId, signal);
       this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
