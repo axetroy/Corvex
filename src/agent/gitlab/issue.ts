@@ -43,8 +43,8 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       name: "create_issue",
       label: "Create issue",
       executionMode: "sequential",
-      description: "Create a new issue in the current project. Only call this when the user explicitly asks to create an issue. Omitted optional fields stay at GitLab defaults.",
-      promptSnippet: "create_issue: Create an issue only on explicit user request.",
+      description: "Create a new issue in the current project. Omitted optional fields stay at GitLab defaults.",
+      promptSnippet: "create_issue: Create an issue in the current project.",
       parameters: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 248 }),
         description: Type.Optional(Type.String({ maxLength: 100_000 })),
@@ -69,8 +69,8 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       name: "update_issue",
       label: "Update issue",
       executionMode: "sequential",
-      description: "Update an issue's title, description, state, labels, assignees or milestone in the current project. Only call this when the user explicitly asks. Omitted fields stay unchanged; state can be close or reopen.",
-      promptSnippet: "update_issue: Change issue fields only on explicit user request.",
+      description: "Update an issue's title, description, state, labels, assignees or milestone in the current project. Omitted fields stay unchanged; state can be close or reopen.",
+      promptSnippet: "update_issue: Change issue fields in the current project.",
       parameters: Type.Object({
         issue_iid: iidParam,
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -101,18 +101,18 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       label,
       executionMode: "sequential",
       description: hint,
-      promptSnippet: `${name}: ${label} only on explicit user request.`,
+      promptSnippet: `${name}: ${label} in the current project.`,
       parameters: Type.Object({ issue_iid: iidParam }),
       execute: async (_id, params) => text(await tools.updateIssue(params.issue_iid, { stateEvent: state })),
     });
-    stateTool("close_issue", "Close issue", "close", "Close an issue in the current project. Only call this when the user explicitly asks to close that issue; this is a public action.");
-    stateTool("reopen_issue", "Reopen issue", "reopen", "Reopen a closed issue in the current project. Only call this when the user explicitly asks.");
+    stateTool("close_issue", "Close issue", "close", "Close an issue in the current project. This is a public action.");
+    stateTool("reopen_issue", "Reopen issue", "reopen", "Reopen a closed issue in the current project.");
     pi.registerTool({
       name: "delete_issue",
       label: "Delete issue",
       executionMode: "sequential",
-      description: "Delete an issue in the current project. Only call this when the user explicitly asks; deletion is irreversible.",
-      promptSnippet: "delete_issue: Delete an issue only on explicit user request.",
+      description: "Delete an issue in the current project. Deletion is irreversible.",
+      promptSnippet: "delete_issue: Delete an issue in the current project.",
       parameters: Type.Object({ issue_iid: iidParam }),
       execute: async (_id, params) => text(await tools.deleteIssue(params.issue_iid)),
     });
@@ -129,8 +129,8 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       name: "post_issue_note",
       label: "Post issue note",
       executionMode: "sequential",
-      description: "Post a comment to an issue in the current project. Only call this when the user explicitly asks to reply to that issue. Confirm the issue with get_issue first.",
-      promptSnippet: "post_issue_note: Reply to an issue only when the user explicitly asks.",
+      description: "Post a comment to an issue in the current project. Confirm the issue with get_issue first.",
+      promptSnippet: "post_issue_note: Reply to an issue in the current project.",
       parameters: Type.Object({ issue_iid: iidParam, body: bodyParam }),
       execute: async (_id, params) => text(await tools.postIssueNote(params.issue_iid, params.body)),
     });
@@ -138,8 +138,8 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       name: "update_issue_note",
       label: "Update issue note",
       executionMode: "sequential",
-      description: "Edit your own comment on an issue in the current project. Only call this when the user explicitly asks to edit that comment.",
-      promptSnippet: "update_issue_note: Edit an issue comment only on explicit user request.",
+      description: "Edit your own comment on an issue in the current project.",
+      promptSnippet: "update_issue_note: Edit an issue comment in the current project.",
       parameters: Type.Object({ issue_iid: iidParam, note_id: noteIdParam, body: bodyParam }),
       execute: async (_id, params) => text(await tools.updateIssueNote(params.issue_iid, params.note_id, params.body)),
     });
@@ -147,8 +147,8 @@ export function createIssueExtension(tools: GitLabAgentTools): (pi: ExtensionAPI
       name: "delete_issue_note",
       label: "Delete issue note",
       executionMode: "sequential",
-      description: "Delete your own comment on an issue in the current project. Only call this when the user explicitly asks.",
-      promptSnippet: "delete_issue_note: Delete an issue comment only on explicit user request.",
+      description: "Delete your own comment on an issue in the current project.",
+      promptSnippet: "delete_issue_note: Delete an issue comment in the current project.",
       parameters: Type.Object({ issue_iid: iidParam, note_id: noteIdParam }),
       execute: async (_id, params) => text(await tools.deleteIssueNote(params.issue_iid, params.note_id)),
     });

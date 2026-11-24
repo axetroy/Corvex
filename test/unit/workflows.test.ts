@@ -8,9 +8,19 @@ import {
 describe("conversation prompt contracts", () => {
   it("describes a read-write conversation assistant in both languages", () => {
     expect(getConversationSystemPrompt("en", "gitlab")).toContain("general-purpose collaboration assistant");
-    expect(getConversationSystemPrompt("en", "gitlab")).toContain("explicitly asks");
+    expect(getConversationSystemPrompt("en", "gitlab")).toContain("The user's request is your authorization");
     expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("通用协作助手");
-    expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("明确要求");
+    expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("用户的请求就是授权");
+  });
+
+  it("does not tell the model to keep asking for in-scope approval", () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const prompt = getConversationSystemPrompt(language, "gitlab");
+      expect(prompt).not.toContain("explicitly asks");
+      expect(prompt).not.toContain("ask for clarification");
+      expect(prompt).not.toContain("明确要求");
+      expect(prompt).not.toContain("先询问");
+    }
   });
 
   it("keeps the conversation system prompt organized into readable sections", () => {
@@ -28,13 +38,13 @@ describe("conversation prompt contracts", () => {
     expect(en).toContain("search with web_search first");
     expect(en).toContain("re-read with read_file or git_diff");
     expect(en).toContain("For multi-step tasks");
-    expect(en).toContain("Do only what the user asked");
+    expect(en).toContain("The user's request is your authorization");
 
     const zh = getConversationSystemPrompt("zh-CN", "gitlab");
     expect(zh).toContain("先用 web_search 搜索");
     expect(zh).toContain("回读确认改动符合预期");
     expect(zh).toContain("对于需要多步执行的任务");
-    expect(zh).toContain("只做用户要求的事");
+    expect(zh).toContain("用户的请求就是授权");
   });
 
   it("titles a conversation from the first request and keeps the tool budget a soft checkpoint", () => {

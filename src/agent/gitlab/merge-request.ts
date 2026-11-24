@@ -34,8 +34,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "create_merge_request",
       label: "Create merge request",
       executionMode: "sequential",
-      description: "Create a merge request in the current project from an existing source branch to a target branch. Only call this when the user explicitly asks; the agent cannot push commits, so the source branch must already exist. Set draft=true when the work is not ready for review.",
-      promptSnippet: "create_merge_request: Create an MR only on explicit user request, from an existing branch.",
+      description: "Create a merge request in the current project from an existing source branch to a target branch. The source branch must already exist; set draft=true when the work is not ready for review.",
+      promptSnippet: "create_merge_request: Create an MR in the current project from an existing branch.",
       parameters: Type.Object({
         title: Type.String({ minLength: 1, maxLength: 248 }),
         description: Type.Optional(Type.String({ maxLength: 100_000 })),
@@ -64,8 +64,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "update_merge_request",
       label: "Update merge request",
       executionMode: "sequential",
-      description: "Update the title, description, state, labels, assignees, milestone or squash flag of a merge request in the current project. Only call this when the user explicitly asks. Omitted fields stay unchanged.",
-      promptSnippet: "update_merge_request: Change MR fields only on explicit user request.",
+      description: "Update the title, description, state, labels, assignees, milestone or squash flag of a merge request in the current project. Omitted fields stay unchanged.",
+      promptSnippet: "update_merge_request: Change MR fields in the current project.",
       parameters: Type.Object({
         mr_iid: iidParam,
         title: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
@@ -94,18 +94,18 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       label,
       executionMode: "sequential",
       description: hint,
-      promptSnippet: `${name}: ${label} only on explicit user request.`,
+      promptSnippet: `${name}: ${label} in the current project.`,
       parameters: Type.Object({ mr_iid: iidParam }),
       execute: async (_id, params) => text(await tools.updateMergeRequest(params.mr_iid, { stateEvent: state })),
     });
-    stateTool("close_merge_request", "Close merge request", "close", "Close a merge request in the current project. Only call this when the user explicitly asks; this is a public action.");
-    stateTool("reopen_merge_request", "Reopen merge request", "reopen", "Reopen a closed merge request in the current project. Only call this when the user explicitly asks.");
+    stateTool("close_merge_request", "Close merge request", "close", "Close a merge request in the current project. This is a public action.");
+    stateTool("reopen_merge_request", "Reopen merge request", "reopen", "Reopen a closed merge request in the current project.");
     pi.registerTool({
       name: "merge_merge_request",
       label: "Merge merge request",
       executionMode: "sequential",
-      description: "Merge a merge request in the current project. Only call this when the user explicitly asks to merge that MR; merging is irreversible and changes the target branch.",
-      promptSnippet: "merge_merge_request: Merge an MR only on explicit user request.",
+      description: "Merge a merge request in the current project. Merging is irreversible and changes the target branch.",
+      promptSnippet: "merge_merge_request: Merge an MR in the current project.",
       parameters: Type.Object({
         mr_iid: iidParam,
         squash: Type.Optional(Type.Boolean()),
@@ -122,8 +122,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "approve_merge_request",
       label: "Approve merge request",
       executionMode: "sequential",
-      description: "Approve a merge request in the current project. Only call this when the user explicitly asks to approve that MR.",
-      promptSnippet: "approve_merge_request: Approve an MR only on explicit user request.",
+      description: "Approve a merge request in the current project.",
+      promptSnippet: "approve_merge_request: Approve an MR in the current project.",
       parameters: Type.Object({ mr_iid: iidParam }),
       execute: async (_id, params) => text(await tools.approveMergeRequest(params.mr_iid)),
     });
@@ -131,8 +131,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "unapprove_merge_request",
       label: "Unapprove merge request",
       executionMode: "sequential",
-      description: "Remove your approval from a merge request in the current project. Only call this when the user explicitly asks.",
-      promptSnippet: "unapprove_merge_request: Remove approval only on explicit user request.",
+      description: "Remove your approval from a merge request in the current project.",
+      promptSnippet: "unapprove_merge_request: Remove approval in the current project.",
       parameters: Type.Object({ mr_iid: iidParam }),
       execute: async (_id, params) => text(await tools.unapproveMergeRequest(params.mr_iid)),
     });
@@ -140,8 +140,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "delete_merge_request",
       label: "Delete merge request",
       executionMode: "sequential",
-      description: "Delete a merge request in the current project. Only call this when the user explicitly asks; deletion is irreversible.",
-      promptSnippet: "delete_merge_request: Delete an MR only on explicit user request.",
+      description: "Delete a merge request in the current project. Deletion is irreversible.",
+      promptSnippet: "delete_merge_request: Delete an MR in the current project.",
       parameters: Type.Object({ mr_iid: iidParam }),
       execute: async (_id, params) => text(await tools.deleteMergeRequest(params.mr_iid)),
     });
@@ -185,8 +185,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "resolve_merge_request_discussion",
       label: "Resolve MR discussion",
       executionMode: "sequential",
-      description: "Resolve or unresolve a review discussion thread on a merge request in the current project. Only call this when the user explicitly asks.",
-      promptSnippet: "resolve_merge_request_discussion: Change thread resolution only on explicit user request.",
+      description: "Resolve or unresolve a review discussion thread on a merge request in the current project.",
+      promptSnippet: "resolve_merge_request_discussion: Change thread resolution in the current project.",
       parameters: Type.Object({ mr_iid: iidParam, discussion_id: Type.String({ minLength: 1, maxLength: 128 }), resolve: Type.Boolean() }),
       execute: async (_id, params) => text(await tools.resolveDiscussion(params.mr_iid, params.discussion_id, params.resolve)),
     });
@@ -194,8 +194,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "post_mr_note",
       label: "Post MR note",
       executionMode: "sequential",
-      description: "Post a comment to a merge request in the current project. Only call this when the user explicitly asks to reply on that MR. Confirm the MR with get_merge_request first.",
-      promptSnippet: "post_mr_note: Reply on a merge request only when the user explicitly asks.",
+      description: "Post a comment to a merge request in the current project. Confirm the MR with get_merge_request first.",
+      promptSnippet: "post_mr_note: Reply on a merge request in the current project.",
       parameters: Type.Object({ mr_iid: iidParam, body: bodyParam }),
       execute: async (_id, params) => text(await tools.postMergeRequestNote(params.mr_iid, params.body)),
     });
@@ -203,8 +203,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "update_mr_note",
       label: "Update MR note",
       executionMode: "sequential",
-      description: "Edit your own comment on a merge request in the current project. Only call this when the user explicitly asks to edit that comment.",
-      promptSnippet: "update_mr_note: Edit an MR comment only on explicit user request.",
+      description: "Edit your own comment on a merge request in the current project.",
+      promptSnippet: "update_mr_note: Edit an MR comment in the current project.",
       parameters: Type.Object({ mr_iid: iidParam, note_id: noteIdParam, body: bodyParam }),
       execute: async (_id, params) => text(await tools.updateMergeRequestNote(params.mr_iid, params.note_id, params.body)),
     });
@@ -212,8 +212,8 @@ export function createMergeRequestExtension(tools: GitLabAgentTools): (pi: Exten
       name: "delete_mr_note",
       label: "Delete MR note",
       executionMode: "sequential",
-      description: "Delete your own comment on a merge request in the current project. Only call this when the user explicitly asks.",
-      promptSnippet: "delete_mr_note: Delete an MR comment only on explicit user request.",
+      description: "Delete your own comment on a merge request in the current project.",
+      promptSnippet: "delete_mr_note: Delete an MR comment in the current project.",
       parameters: Type.Object({ mr_iid: iidParam, note_id: noteIdParam }),
       execute: async (_id, params) => text(await tools.deleteMergeRequestNote(params.mr_iid, params.note_id)),
     });
