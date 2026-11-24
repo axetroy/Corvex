@@ -87,6 +87,10 @@ export interface CorvexConfig {
     compactionDynamicThreshold: boolean;
     /** 是否启用跨轮滚动摘要，把被裁剪的历史压缩成持久化摘要。 */
     summaryEnabled: boolean;
+    /** 是否在回复末尾附带下一步建议块，并在界面渲染可点击 chip。 */
+    followupsEnabled: boolean;
+    /** 每次回复附带的最大建议条数（1-5）。 */
+    followupsCount: number;
     /** 是否把仓库根目录的 AGENTS.md 作为本轮项目指导注入。 */
     projectAgentsMd: boolean;
     /** 项目指导的最大字节数；超限截断。 */
@@ -146,6 +150,8 @@ const defaults: CorvexConfig = {
     compactionTriggerPercent: 85,
     compactionDynamicThreshold: true,
     summaryEnabled: true,
+    followupsEnabled: true,
+    followupsCount: 3,
     projectAgentsMd: true,
     projectAgentsMdMaxBytes: 32 << 10,
     contextInspectEnabled: true,
@@ -316,6 +322,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       compactionTriggerPercent: number(agent.compaction_trigger_percent, defaults.agent.compactionTriggerPercent ?? 85),
       compactionDynamicThreshold: boolean(agent.compaction_dynamic_threshold, defaults.agent.compactionDynamicThreshold),
       summaryEnabled: boolean(agent.summary_enabled, defaults.agent.summaryEnabled),
+      followupsEnabled: boolean(agent.followups_enabled, defaults.agent.followupsEnabled),
+      followupsCount: number(agent.followups_count, defaults.agent.followupsCount),
       projectAgentsMd: boolean(agent.project_agents_md, defaults.agent.projectAgentsMd),
       projectAgentsMdMaxBytes: number(agent.project_agents_md_max_bytes, defaults.agent.projectAgentsMdMaxBytes),
       contextInspectEnabled: boolean(agent.context_inspect_enabled, defaults.agent.contextInspectEnabled),
@@ -443,6 +451,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
     if (config.agent.taskMaxOutputTokens < 0) problems.push("agent.task_max_output_tokens must not be negative");
     if (config.agent.dailyTokenBudget < 0 || config.agent.dailyTokenBudget > 1_000_000_000) {
       problems.push("agent.daily_token_budget must be between 0 and 1000000000");
+    }
+    if (config.agent.followupsCount < 1 || config.agent.followupsCount > 5) {
+      problems.push("agent.followups_count must be between 1 and 5");
     }
     if (config.agent.contextWindow < 1_024 || config.agent.contextWindow > 10_000_000) {
       problems.push("agent.context_window must be between 1024 and 10000000");

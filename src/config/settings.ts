@@ -67,6 +67,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "max_output_tokens", section: "agent", field: "maxOutputTokens", type: "number", min: 1, hidden: true },
   { key: "daily_token_budget", section: "agent", field: "dailyTokenBudget", type: "number", min: 0, max: 1_000_000_000 },
   { key: "summary_enabled", section: "agent", field: "summaryEnabled", type: "boolean" },
+  { key: "followups_enabled", section: "agent", field: "followupsEnabled", type: "boolean" },
+  { key: "followups_count", section: "agent", field: "followupsCount", type: "number", min: 1, max: 5 },
   { key: "project_agents_md", section: "agent", field: "projectAgentsMd", type: "boolean" },
   { key: "project_agents_md_max_bytes", section: "agent", field: "projectAgentsMdMaxBytes", type: "number", min: 1_024, max: 262_144 },
   // 上下文洞察：每次模型请求前采集有界快照，默认开启；关闭后不增加请求延迟。

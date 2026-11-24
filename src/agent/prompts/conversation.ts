@@ -6,11 +6,31 @@ const relativePaths = {
   "zh-CN": "read_file、read_dir、stat 和 search_text 必须使用仓库相对路径。仓库文件的绝对路径会被拒绝；只有可信 Skill 根目录允许使用绝对路径。",
 } as const;
 
+/** 下一步建议指令：让模型在实质回答后附带一个有界块， Corvex 解析后剥离为可点击 chip。 */
+function followupsInstruction(language: ResponseLanguage): string {
+  if (language === "zh-CN") {
+    return `
+## 下一步建议
+当回答是实质性的协作结论时，在正文末尾另起一段附上你自己的 2-3 条下一步建议，格式严格为：
+<corvex_followups>
+["具体的下一步问题一","具体的下一步问题二"]
+</corvex_followups>
+每条必须是用户可能接着问的具体问题，紧扣本次回答内容，不要「告诉我更多」这类泛泛语句，也不要重复用户刚问过的；每条不超过 60 字。简单问答或纯确认无需附带此块；此块不是给用户读的正文，不要在别处提及它。`;
+  }
+  return `
+## Next-step suggestions
+For substantive answers, append 2-3 of your own next-step suggestions at the very end in this exact format:
+<corvex_followups>
+["specific next question one","specific next question two"]
+</corvex_followups>
+Each must be a concrete question the user might ask next, tied to what you just answered — not generic "tell me more" and not repeating what was just asked. Keep each under 60 words. Skip this block for simple questions or pure acknowledgements; it is not user-facing prose, never mention it elsewhere.`;
+}
+
 /**
  * 对话系统提示词正文。使用多行模板字面量便于逐节维护，首尾空行由 trim 去除。
  * 新增模式时在这里补齐对应分支，并同步 `conversationCapabilities`。
  */
-export function conversationSystemPrompt(language: ResponseLanguage): string {
+export function conversationSystemPrompt(language: ResponseLanguage, followups = true): string {
   if (language === "zh-CN") {
     return `
 你是 Corvex，一个绑定到指定 GitLab 项目与分支的通用协作助手。
@@ -54,6 +74,7 @@ git_commit / git_push 保存改动后 worktree 会立即变干净（HEAD 指向�
 修改后用 read_file 或 git_diff 回读确认改动符合预期，再报告结果；工具报错、被拒绝或输出被截断时缩小范围、换更安全的路径重试，不要停下等指示；连续多次失败才如实报告并停止。
 用户的请求就是授权：在已绑定工具的范围内自主推进，不要为明显属于任务范围内的操作（读取、搜索、新建分支、编辑、提交、发布）反复征求同意。只有缺少无法推断且无法安全默认值的关键信息时才提问；能合理默认的（如分支名、基础分支）直接采用并在结果里说明。完成后简洁汇报实际做了什么与验证结果，不追加未要求的总结。
 使用简体中文回复，保留代码标识符、路径与引用原文。
+${followups ? followupsInstruction("zh-CN") : ""}
 `.trim();
   }
 
@@ -100,5 +121,6 @@ Before editing, read the relevant code and follow the repository's existing styl
 After editing, re-read with read_file or git_diff to confirm the change matches the intent before reporting. If a tool fails, is denied, or its output is truncated, narrow the scope and retry via a safer path instead of stopping for instructions; only report and stop after repeated failures.
 The user's request is your authorization: keep making progress within your bound tools and do not ask again for actions clearly inside the task scope (reading, searching, creating a branch, editing, committing, publishing). Ask only when essential information is missing and cannot be inferred or safely defaulted; when a reasonable default exists (such as a branch name or base branch), use it and say so in the result. Finish with a concise report of what was actually done and how it was verified, without unrequested summaries.
 Reply in English and preserve code identifiers, paths and quoted text.
+${followups ? followupsInstruction("en") : ""}
 `.trim();
 }

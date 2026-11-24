@@ -231,6 +231,20 @@ function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[
 }
 
 /** 从 SQLite 文本读取过程条目；损坏或形状不认识的条目直接丢弃，不让列表接口失败。 */
+/** 读取落库的下一步建议：只接受字符串数组并限长，损坏数据按空处理。 */
+function parseStoredSuggestions(raw: string): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((value): value is string => typeof value === "string" && value.length > 0 && value.length <= 200)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 function readConversationProcess(raw: string): ConversationProcessEntry[] {
   if (!raw) return [];
   let parsed: unknown;
@@ -1361,7 +1375,7 @@ export class AppStore {
   }
 
   /** 完成一轮对话：写入助手回复正文并把轮次置为完成。 */
-  finishConversationTurn(turnId: string, content: string, model = ""): void {
+  finishConversationTurn(turnId: string, content: string, model = "", suggestions: readonly string[] = []): void {
     const now = new Date().toISOString();
     this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM conversation_turns WHERE id=?").get(turnId) as
@@ -1376,8 +1390,8 @@ export class AppStore {
       this.insertAudit(turn.actor_id, "conversation_turn", turnId, "running->completed", now);
       if (turn.message_id) {
         this.db.prepare(
-          "UPDATE conversation_messages SET content=?,status='completed',updated_at=? WHERE id=?",
-        ).run(content, now, turn.message_id);
+          "UPDATE conversation_messages SET content=?,status='completed',suggestions=?,updated_at=? WHERE id=?",
+        ).run(content, JSON.stringify(suggestions), now, turn.message_id);
       }
       this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, turn.conversation_id);
     });
@@ -1840,6 +1854,7 @@ export class AppStore {
       tps,
       toolCalls: [],
       process: typeof row.turn_process === "string" ? readConversationProcess(row.turn_process) : [],
+      suggestions: typeof row.suggestions === "string" ? parseStoredSuggestions(row.suggestions) : [],
     };
   }
 
@@ -2667,6 +2682,13 @@ export class AppStore {
     if (!turnColumns.has("process")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN process TEXT NOT NULL DEFAULT ''");
     // 落库回复使用的模型名，供控制台在复制按钮旁展示；旧库补齐这一列。
     if (!turnColumns.has("model")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+    // 回复末尾的下一步建议，作为 JSON 数组落库；旧库留空由界面隐藏。
+    const freshMessageColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!freshMessageColumns.has("suggestions")) {
+      this.db.exec("ALTER TABLE conversation_messages ADD COLUMN suggestions TEXT NOT NULL DEFAULT '[]'");
+    }
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
     const legacyConversationColumns = new Set(conversationColumns.map((column) => column.name));

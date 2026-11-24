@@ -20,6 +20,7 @@ import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-confli
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { buildToolEvidence } from "../agent/tool-evidence.js";
 import { verifyAnswerClaims } from "../agent/claim-verification.js";
+import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
@@ -1024,7 +1025,7 @@ export class ConversationRunner {
         turn.request,
         (name) => this.store.getConversationSkill(name),
       );
-      const systemPrompt = getConversationSystemPrompt(language, turn.mode);
+      const systemPrompt = getConversationSystemPrompt(language, turn.mode, this.config.agent.followupsEnabled);
       // 注入过去轮次真实执行过的工具调用与结果：历史只带文本，「说过」不等于「做过」。
       // 取最近若干轮，避开早期被裁剪的长轨迹；上限由 buildToolEvidence 统一约束。
       const historyTurnIds = turn.history
@@ -1135,7 +1136,10 @@ export class ConversationRunner {
         });
       }
       await this.persistChanges(workspace, turn.conversationId, turn.turnId, signal);
-      this.store.finishConversationTurn(turn.turnId, answer.content, answer.model);
+      const parsed = this.config.agent.followupsEnabled
+        ? parseFollowups(answer.content, this.config.agent.followupsCount)
+        : { content: answer.content, suggestions: [] };
+      this.store.finishConversationTurn(turn.turnId, parsed.content, answer.model, parsed.suggestions);
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });

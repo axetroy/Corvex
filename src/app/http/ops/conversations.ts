@@ -224,7 +224,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     // 使尚未执行过轮次的新对话也能在控制台查看。
     sendJson(reply, 200, {
       ...conversation,
-      systemPrompt: getConversationSystemPrompt(ctx.config.agent.responseLanguage, conversation.mode),
+      systemPrompt: getConversationSystemPrompt(ctx.config.agent.responseLanguage, conversation.mode, ctx.config.agent.followupsEnabled),
     });
   });
 

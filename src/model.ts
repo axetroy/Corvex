@@ -178,6 +178,8 @@ export interface ConversationMessage {
   toolCalls: ConversationToolCall[];
   /** 该轮落库的过程条目（思考、中间回复、工具调用），按发生顺序排列。 */
   process: ConversationProcessEntry[];
+  /** 模型附带并经服务端校验的下一步建议，点击后填入输入框。 */
+  suggestions: string[];
 }
 
 export interface Conversation extends ConversationSummary {

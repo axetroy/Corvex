@@ -6,10 +6,10 @@ import { conversationSystemPrompt } from "./prompts/conversation.js";
  * 对话统一为可读可写：读取仓库与 GitLab，并按用户明确要求写入 GitLab。
  * 提示词必须与 `conversationCapabilities` 保持一致；新增模式时在此补齐对应分支。
  */
-export function getConversationSystemPrompt(language: ResponseLanguage, mode: ConversationMode): string {
+export function getConversationSystemPrompt(language: ResponseLanguage, mode: ConversationMode, followups = true): string {
   switch (mode) {
     case "gitlab":
-      return conversationSystemPrompt(language);
+      return conversationSystemPrompt(language, followups);
     default: {
       const exhaustive: never = mode;
       throw new Error(`unhandled conversation mode: ${String(exhaustive)}`);

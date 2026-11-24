@@ -1733,6 +1733,39 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   color: var(--conversation-muted);
 }
 
+/* 下一步建议：每个 chip 是一条可点的后续问题，点击填入输入框，不自动发送。 */
+.conversation-followup-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.conversation-followup-suggestions-label {
+  color: var(--conversation-muted);
+  font-size: 11px;
+}
+
+.conversation-followup-suggestion {
+  max-width: 100%;
+  padding: 4px 10px;
+  overflow: hidden;
+  color: var(--conversation-brand);
+  background: var(--conversation-brand-soft, var(--bg-subtle));
+  border: 1px solid var(--conversation-border);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-followup-suggestion:hover {
+  border-color: var(--conversation-brand);
+  background: var(--bg-hover);
+}
+
 .conversation-tabs {
   display: flex;
   flex: 1;

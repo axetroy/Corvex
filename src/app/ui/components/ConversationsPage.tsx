@@ -128,12 +128,14 @@ function MessageContent({
   streaming,
   timeline,
   waitingSince,
+  onSuggestion,
 }: {
   message: ConversationMessage;
   copy: Copy;
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
   waitingSince?: number | null;
+  onSuggestion?: (text: string) => void;
 }) {
   const codeComponentsProps = useMemo(() => ({
     code: {
@@ -194,6 +196,22 @@ function MessageContent({
           {message.model ? (
             <Typography.Text type="secondary" className="conversation-message-model">{displayModelName(message.model)}</Typography.Text>
           ) : null}
+        </div>
+      ) : null}
+      {settled && message.suggestions.length > 0 && onSuggestion ? (
+        <div className="conversation-followup-suggestions" aria-label={copy.suggestNextStep}>
+          <span className="conversation-followup-suggestions-label">{copy.suggestNextStep}</span>
+          {message.suggestions.map((text) => (
+            <button
+              key={text}
+              type="button"
+              className="conversation-followup-suggestion"
+              title={text}
+              onClick={() => onSuggestion(text)}
+            >
+              {text}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>
@@ -783,6 +801,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       composerRef.current?.focus();
     }
   };
+  const applySuggestion = (text: string) => {
+    setDraftMessage(text.slice(0, 20_000));
+    composerRef.current?.focus();
+  };
   // 输入 "/" 或 "/abc" 且尚未输入空格时展示技能补全；普通路径文本不会被误判。
   const commandQuery = /^\/[a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
   const commandSuggestions = commandQuery === null
@@ -928,6 +950,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         streaming={streaming}
         timeline={timeline}
         waitingSince={streaming ? waitingSince : null}
+        onSuggestion={(text) => applySuggestion(text)}
       />,
       // 首 token 前的等待提示由 MessageContent 自己渲染，避免与 Bubble 的 loading 重复。
       loading: false,
