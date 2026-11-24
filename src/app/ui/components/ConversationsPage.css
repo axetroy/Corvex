@@ -473,12 +473,16 @@
   overflow-y: auto;
   padding: 14px 20px 210px;
   overscroll-behavior: contain;
+  /* 两侧对称预留滚动条宽度，避免单侧滚动条让居中的消息列相对输入框偏移。 */
+  scrollbar-gutter: stable both-edges;
 }
 
 /* 内容较矮时垂直居中；内容高于可视区时 margin:auto 归零，从顶部开始滚动，
    避免 justify-content:center 把顶部内容推到滚动区之外。 */
+/* 左右对称留白，让居中的消息列与底部输入框共享同一条工作区中线。 */
 .conversation-transcript-pane.has-turn-nav {
   padding-right: 48px;
+  padding-left: 48px;
 }
 
 .conversation-setup-pane {
@@ -563,6 +567,7 @@
 
   .conversation-transcript-pane.has-turn-nav {
     padding-right: 20px;
+    padding-left: 20px;
   }
 }
 
@@ -2088,7 +2093,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   bottom: 16px;
   left: 50%;
   display: flex;
-  width: min(720px, calc(100% - 52px));
+  width: min(768px, calc(100% - 96px));
   flex-direction: column;
   gap: 6px;
   transform: translateX(-50%);
