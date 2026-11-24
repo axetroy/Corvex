@@ -582,7 +582,11 @@ describe("Git workflows", () => {
     await execFile("git", ["-C", workspace.path, "checkout", "-q", "fix"]);
     await writeFile(join(workspace.path, "theirs.txt"), "theirs\n");
     await execFile("git", ["-C", workspace.path, "add", "theirs.txt"]);
-    await execFile("git", ["-C", workspace.path, "commit", "-q", "-m", "theirs"]);
+    await execFile("git", [
+      "-C", workspace.path,
+      "-c", "user.name=Corvex Test", "-c", "user.email=corvex@example.test",
+      "commit", "-q", "-m", "theirs",
+    ]);
     await execFile("git", ["-C", workspace.path, "checkout", "-q", "--detach", saved!.sha]);
 
     // 旧实现在这里会因「工作区不干净」失败；现在保存已让工作区干净。
