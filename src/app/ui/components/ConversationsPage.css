@@ -777,9 +777,12 @@
   color: var(--conversation-brand);
 }
 
+/* 宽屏下把消息列限制在舒适阅读宽度（约 70 字符）并居中，避免长回复一行铺满屏幕。 */
 .conversation-transcript.ant-bubble-list {
   width: 100%;
+  max-width: 768px;
   max-height: none;
+  margin: 0 auto;
   padding: 2px 0;
 }
 
