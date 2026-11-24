@@ -44,6 +44,11 @@
   }
 }
 
+/* 会话列表已并入左侧导航：去掉与主区域之间的重复边框，占满侧栏剩余高度。 */
+.sidebar .conversation-sidebar {
+  border-right: 0;
+}
+
 .conversation-sidebar {
   display: flex;
   width: 100%;
@@ -219,7 +224,7 @@
 }
 
 /* 仓库分组标题：浅色吸顶条 + 色点 + 分隔线，跨仓库时一眼可辨。 */
-.conversations-layout .conversation-sidebar-list .ant-conversations .ant-conversations-group-title {
+.conversation-sidebar-list .ant-conversations .ant-conversations-group-title {
   position: sticky;
   z-index: 2;
   top: 0;

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
-import { ConfigProvider, Dropdown, Menu, theme as antdThemeApi } from "antd";
+import { ConfigProvider, Dropdown, theme as antdThemeApi } from "antd";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
@@ -13,13 +13,13 @@ import { UserAvatar } from "./components/UserAvatar.js";
 import { ThemeToggle } from "./components/ThemeToggle.js";
 import { NotificationToggle } from "./components/NotificationToggle.js";
 import {
-  ConversationsIcon,
   LanguageIcon,
   LogoutIcon,
   SidebarCollapseIcon,
   SettingsIcon,
   SidebarExpandIcon,
 } from "./components/icons.js";
+import { ConversationNavList } from "./components/ConversationNavList.js";
 import { fetchJson } from "./api.js";
 import { formatDate } from "./format.js";
 import { en, resolveLocale, resolveLocaleMode, zhCN } from "./i18n.js";
@@ -364,6 +364,16 @@ export function App() {
             <NotificationToggle copy={copy} className="sidebar-notifications" />
             <button
               type="button"
+              className="sidebar-settings"
+              aria-label={copy.navSettings}
+              aria-current={pageKind === "settings" ? "page" : undefined}
+              title={copy.navSettings}
+              onClick={() => navigate("/settings")}
+            >
+              <SettingsIcon />
+            </button>
+            <button
+              type="button"
               className="sidebar-toggle"
               onClick={toggleNavigation}
               aria-label={copy.toggleNavigation}
@@ -373,19 +383,14 @@ export function App() {
               {navigationCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
             </button>
           </div>
-          <Menu
-            className="sidebar-nav"
-            mode="inline"
-            inlineCollapsed={navigationCollapsed}
-            selectedKeys={[pageKind === "settings" ? "settings" : "conversations"]}
-            onClick={({ key }) => {
-              if (key === "conversations" && pageKind === "conversations") navigate(conversationsPath(routeId));
-              else navigate(key.startsWith("/") ? key : `/${key}`);
-            }}
-            items={[
-              { key: "conversations", icon: <ConversationsIcon />, label: copy.navConversations },
-              { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
-            ]}
+          {/* 会话列表就是主导航；设置入口在侧栏头部的齿轮按钮。 */}
+          <ConversationNavList
+            conversationId={routeId}
+            copy={copy}
+            locale={locale}
+            refreshToken={refreshToken}
+            onConversationChange={updateConversationRoute}
+            onRefresh={refresh}
           />
           {account ? (
             <div className="sidebar-account-panel">

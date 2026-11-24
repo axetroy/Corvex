@@ -25,8 +25,18 @@ a:hover {
   text-decoration: underline;
 }
 
-/* 应用外壳：左侧可折叠导航栏，主区域占满剩余视口。 */
+/* 应用外壳：左侧导航（会话列表）与主区域，主区域占满剩余视口。 */
 .app-shell {
+  /* 会话列表等复用组件的语义变量，移到外壳上让侧栏与主区域都能取到。 */
+  --conversation-border: var(--border);
+  --conversation-border-strong: var(--border-strong);
+  --conversation-muted: var(--text-muted);
+  --conversation-ink: var(--text);
+  --conversation-surface: var(--bg-panel);
+  --conversation-canvas: var(--bg-subtle);
+  --conversation-brand: var(--primary);
+  --conversation-brand-soft: var(--primary-soft);
+
   position: relative;
   display: flex;
   height: 100vh;
@@ -43,7 +53,7 @@ a:hover {
 .sidebar {
   display: flex;
   flex: 0 0 auto;
-  width: 232px;
+  width: 300px;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-panel);
@@ -147,6 +157,7 @@ a:hover {
 /* 语言、主题入口与侧边栏收起按钮共用同一图标按钮外观，置于顶栏右侧。 */
 .sidebar-language,
 .sidebar-theme,
+.sidebar-settings,
 .sidebar-toggle {
   display: grid;
   width: 30px;
@@ -158,6 +169,11 @@ a:hover {
   border: 1px solid transparent;
   border-radius: 7px;
   cursor: pointer;
+}
+
+.sidebar-settings[aria-current="page"] {
+  color: var(--primary);
+  background: var(--primary-soft);
 }
 
 /* 侧栏底部的当前 GitLab 账号：头像、用户名与登出操作。 */

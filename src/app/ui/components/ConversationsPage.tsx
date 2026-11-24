@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
-import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
-import { Actions, Bubble, Conversations, Prompts, Sender, Welcome } from "@ant-design/x";
-import type { BubbleItemType, ConversationItemType, PromptsItemType } from "@ant-design/x";
+import { Button, Modal, Space, Tabs, Tag, Typography } from "antd";
+import { Actions, Bubble, Prompts, Sender, Welcome } from "@ant-design/x";
+import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "./MarkdownCode.js";
 import "./ConversationsPage.css";
@@ -15,7 +15,7 @@ import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationPage, ConversationSkill, ConversationStreamContext, ConversationStreamTool, ConversationSummary } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamTool } from "../types.js";
 import type { ConversationFollowUp } from "../../../model.js";
 import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
@@ -30,13 +30,13 @@ import { BranchPicker } from "./BranchPicker.js";
 import { displayModelName } from "../modelLabel.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, InterjectIcon, InterruptIcon, QueueIcon, RocketIcon, ScrollBottomIcon, SearchIcon, SidebarCollapseIcon, SidebarExpandIcon, StopIcon, WrenchIcon } from "./icons.js";
+import { BookIcon, FilesIcon, InterjectIcon, InterruptIcon, QueueIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
 import { ConversationTurnNav } from "./ConversationTurnNav.js";
 import type { ProjectOption } from "../projectPicker.js";
-import { Empty, ErrorBanner, ExpandableText } from "./common.js";
+import { ErrorBanner, ExpandableText } from "./common.js";
 
 interface Props {
   conversationId: string;
@@ -51,35 +51,10 @@ interface Props {
 /** 对话详情右侧的标签：对话流、调用记录、轮次轨迹与用量统计。 */
 type ConversationDetailTab = "chat" | "records" | "trace" | "context" | "stats" | "changes" | "git";
 
-/** 对话列表每页条数。 */
-const conversationPageSize = 50;
-/** localStorage 中保存对话分组收起状态的键名。 */
-const collapsedGroupsKey = "corvex-ops-conversation-collapsed-groups";
-/** localStorage 中保存三个面板布局的键名（由 react-resizable-panels 管理）。 */
+/** localStorage 中保存工作区/文件面板布局的键名（由 react-resizable-panels 管理）。 */
 const panelLayoutKey = "corvex-ops-conversation-panels-layout";
-const listPanelId = "conversation-list";
 const workspacePanelId = "workspace";
 const filesPanelId = "files";
-
-/** 读取已收起的仓库分组；localStorage 不可用时回退为空集合。 */
-function readCollapsedGroups(): Set<string> {
-  try {
-    const saved = window.localStorage.getItem(collapsedGroupsKey);
-    if (saved) return new Set(JSON.parse(saved) as string[]);
-  } catch (error) {
-    window.console.warn("read conversation group preference failed", error);
-  }
-  return new Set();
-}
-
-/** 保存收起的仓库分组；隐私模式等场景下写入失败只记录告警。 */
-function saveCollapsedGroups(collapsed: Set<string>): void {
-  try {
-    window.localStorage.setItem(collapsedGroupsKey, JSON.stringify([...collapsed]));
-  } catch (error) {
-    window.console.warn("save conversation group preference failed", error);
-  }
-}
 
 /** 读取已保存的面板布局；无效数据回退为默认布局。 */
 function readPanelLayout(): Layout | undefined {
@@ -87,9 +62,13 @@ function readPanelLayout(): Layout | undefined {
     const raw = window.localStorage.getItem(panelLayoutKey);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Layout;
-    if (parsed && typeof parsed === "object" && Object.values(parsed).every(
+    // 旧布局还带有 conversation-list 面板；列表已移入左侧导航，丢弃旧键避免面板 ID 不匹配。
+    const cleaned = Object.fromEntries(
+      Object.entries(parsed).filter(([key]) => key === workspacePanelId || key === filesPanelId),
+    ) as Layout;
+    if (Object.keys(cleaned).length > 0 && Object.values(cleaned).every(
       (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100,
-    )) return parsed;
+    )) return cleaned;
   } catch (error) {
     window.console.warn("read conversation panel layout failed", error);
   }
@@ -111,14 +90,6 @@ function messageStatus(message: ConversationMessage, copy: Copy): string {
   if (message.status === "running") return copy.statuses.running;
   if (message.status === "failed") return copy.statuses.failed;
   return "";
-}
-
-/** 按仓库 ID 取一个稳定的分组色，让相邻仓库在视觉上立刻能区分。 */
-const conversationGroupColors = ["#4f8ef7", "#27a37a", "#b977e0", "#e0923a", "#e46a6a", "#38a8b8"];
-function conversationGroupColor(key: string): string {
-  let hash = 0;
-  for (const character of key) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return conversationGroupColors[hash % conversationGroupColors.length]!;
 }
 
 /**
@@ -230,9 +201,6 @@ function MessageContent({
 }
 
 export function ConversationsPage({ conversationId, copy, locale, refreshToken, onUpdated, onRefresh, onConversationChange }: Props) {
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [conversationOffset, setConversationOffset] = useState(0);
-  const [conversationTotal, setConversationTotal] = useState(0);
   const [selectedConversationId, setSelectedConversationId] = useState(conversationId);
   const selectedConversationIdRef = useRef(conversationId);
   const [conversation, setConversation] = useState<ConversationDetail>();
@@ -271,12 +239,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }, [copy, refreshToken]);
   const [detailTab, setDetailTab] = useState<ConversationDetailTab>("chat");
   const [repoInfoOpen, setRepoInfoOpen] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
   const [savedLayout] = useState(readPanelLayout);
-  const [listCollapsed, setListCollapsed] = useState((savedLayout?.[listPanelId] ?? 22) === 0);
   const [filesCollapsed, setFilesCollapsed] = useState((savedLayout?.[filesPanelId] ?? 0) === 0);
-  const listPanelRef = usePanelRef();
   const filesPanelRef = usePanelRef();
   const replySubmitting = useRef(false);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
@@ -321,28 +285,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     pinnedToBottom.current = true;
   }, [conversationId]);
 
-  useEffect(() => {
-    let active = true;
-    fetchJson<ConversationPage>(
-      `/api/ops/conversations?limit=${conversationPageSize}&offset=${conversationOffset}&archived=${showArchived}`,
-      copy,
-    )
-      .then((page) => {
-        if (!active) return;
-        setConversations((current) => {
-          if (conversationOffset === 0) return page.items;
-          const byId = new Map(current.map((item) => [item.id, item]));
-          for (const item of page.items) byId.set(item.id, item);
-          return [...byId.values()];
-        });
-        setConversationTotal(page.total);
-        onUpdated(new Date().toISOString());
-      })
-      .catch((cause: unknown) => active && setError(errorMessage(cause)));
-    return () => {
-      active = false;
-    };
-  }, [copy, conversationOffset, refreshToken, pollToken, onUpdated, showArchived]);
 
   useEffect(() => {
     if (!selectedConversationId) {
@@ -601,7 +543,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       selectedConversationIdRef.current = created.conversationId;
       onConversationChange(created.conversationId);
       setShowCreate(false);
-      setConversationOffset(0);
       setPollToken((value) => value + 1);
       onRefresh();
       setError("");
@@ -676,33 +617,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
-  async function changeArchived(item: ConversationSummary, archived: boolean) {
-    setError("");
-    try {
-      const result = await fetch(`/api/ops/conversations/${encodeURIComponent(item.id)}/archive`, {
-        method: "POST",
-        headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ archived }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (result.status === 401) {
-        handleUnauthorized(result, await result.clone().text());
-        throw new Error(copy.authRequired);
-      }
-      if (!result.ok) {
-        throw new Error(copy.requestFailedTemplate
-          .replace("{status}", String(result.status))
-          .replace("{message}", (await result.text()).trim() || result.statusText));
-      }
-      setConversationOffset(0);
-      setPollToken((value) => value + 1);
-      onRefresh();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
   async function downloadChangesPatch(conversationId: string, sha: string) {
     if (!sha) return;
     try {
@@ -770,71 +684,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         }
       },
     });
-  }
-
-  function confirmDelete(item: ConversationSummary) {
-    modal.confirm({
-      title: copy.conversationDeleteConfirm,
-      content: copy.conversationDeleteConfirmDescription,
-      okType: "danger",
-      onOk: async () => {
-        setError("");
-        try {
-          const result = await fetch(`/api/ops/conversations/${encodeURIComponent(item.id)}`, {
-            method: "DELETE",
-            headers: { accept: "application/json" },
-            cache: "no-store",
-            signal: AbortSignal.timeout(20_000),
-          });
-          if (result.status === 401) {
-            handleUnauthorized(result, await result.clone().text());
-            throw new Error(copy.authRequired);
-          }
-          if (!result.ok) {
-            throw new Error(copy.requestFailedTemplate
-              .replace("{status}", String(result.status))
-              .replace("{message}", (await result.text()).trim() || result.statusText));
-          }
-          if (selectedConversationIdRef.current === item.id) {
-            onConversationChange("");
-            setSelectedConversationId("");
-            selectedConversationIdRef.current = "";
-            setConversation(undefined);
-            setShowCreate(true);
-            setDraftMessage("");
-          }
-          setPollToken((value) => value + 1);
-          onRefresh();
-        } catch (cause) {
-          setError(errorMessage(cause));
-        }
-      },
-    });
-  }
-
-  function startNewConversation() {
-    setSelectedConversationId("");
-    selectedConversationIdRef.current = "";
-    onConversationChange("");
-    setConversation(undefined);
-    setShowCreate(true);
-    setProject(undefined);
-    setSelectedBranch("");
-    setDraftMessage("");
-    setError("");
-  }
-
-  function openConversation(key: string) {
-    if (!key || key === selectedConversationIdRef.current) return;
-    setSelectedConversationId(key);
-    selectedConversationIdRef.current = key;
-    setConversation(undefined);
-    setDraftMessage("");
-    setError("");
-    setTimelineByTurn({});
-    pinnedToBottom.current = true;
-    onConversationChange(key);
-    setShowCreate(false);
   }
 
   function submitMessage(message: string, delivery?: "steer" | "queue" | "interrupt") {
@@ -1005,14 +854,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     // 轮次执行中也可发送：服务端会把消息作为插话送进当前轮次。
     : Boolean(currentConversation && draftMessage.trim() && !pendingReplyConversations.has(currentConversation.id)));
 
-  // 面板的展开/收起交给 react-resizable-panels，自带键盘操作与尺寸约束。
-  function toggleListPanel() {
-    const panel = listPanelRef.current;
-    if (!panel) return;
-    if (panel.isCollapsed()) panel.expand();
-    else panel.collapse();
-  }
-
   function toggleFilesPanel() {
     const panel = filesPanelRef.current;
     if (!panel) return;
@@ -1022,53 +863,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   function handleLayoutChanged(layout: Layout, meta: { requestedLayout?: Layout }) {
     savePanelLayout(meta.requestedLayout ?? layout);
-    setListCollapsed((layout[listPanelId] ?? 0) === 0);
     setFilesCollapsed((layout[filesPanelId] ?? 0) === 0);
   }
 
-  // 列表按最近更新排序：分组按首次出现的顺序排列，因此每组及其内部都是最近优先。
-  const sortedConversations = [...conversations].sort(
-    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
-  );
-  const projectNames = new Map<string, string>();
-  const conversationItems: ConversationItemType[] = sortedConversations.map((item) => {
-    const group = `${item.projectId}`;
-    projectNames.set(group, item.projectName);
-    const running = item.lastTurnStatus === "queued" || item.lastTurnStatus === "running";
-    return {
-      key: item.id,
-      group,
-      label: (
-        <Dropdown
-          trigger={["contextMenu"]}
-          menu={{
-            items: [
-              {
-                key: "archive",
-                label: item.archived ? copy.conversationMenuUnarchive : copy.conversationMenuArchive,
-              },
-              { key: "delete", label: copy.conversationMenuDelete, danger: true },
-            ],
-            onClick: ({ key }) => {
-              if (key === "archive") void changeArchived(item, !item.archived);
-              else confirmDelete(item);
-            },
-          }}
-        >
-          <div
-            className={`conversation-summary-label${item.archived ? " is-archived" : ""}`}
-            title={item.archived ? copy.conversationArchived : undefined}
-          >
-            <Typography.Text ellipsis>{item.title || item.projectName}</Typography.Text>
-            {running ? <span className="conversation-summary-active" aria-label={copy.statuses.running} /> : null}
-          </div>
-        </Dropdown>
-      ),
-    };
-  });
-  // 新仓库分组默认展开：只把用户明确收起的分组从展开列表里剔除，并按当前列表收敛旧记录。
-  const groupKeys = [...new Set(conversationItems.map((item) => item.group!))];
-  const expandedGroups = groupKeys.filter((group) => !collapsedGroups.has(group));
   const transcriptMessages = (currentConversation?.messages ?? []).map((message) =>
     message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId
       ? { ...message, content: streamedReply.text }
@@ -1254,78 +1051,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         <Group
           id="conversation-panels"
           className="conversation-panel-group"
-          defaultLayout={savedLayout ?? { [listPanelId]: 25, [workspacePanelId]: 75, [filesPanelId]: 0 }}
+          defaultLayout={savedLayout ?? { [workspacePanelId]: 100, [filesPanelId]: 0 }}
           onLayoutChanged={handleLayoutChanged}
         >
-        <Panel
-          id={listPanelId}
-          panelRef={listPanelRef}
-          className="conversation-list-panel"
-          collapsible
-          collapsedSize={0}
-          defaultSize={288}
-          minSize={190}
-          maxSize={480}
-        >
-        <aside className="conversation-sidebar" aria-label={copy.conversationList}>
-          <div className="conversation-sidebar-heading">
-            <Button className="conversation-new-button" type="primary" onClick={startNewConversation}>
-              <span aria-hidden="true">+</span>
-              {copy.newConversation}
-            </Button>
-            <Button
-              className={`conversation-archived-toggle${showArchived ? " is-active" : ""}`}
-              type="text"
-              size="small"
-              aria-pressed={showArchived}
-              onClick={() => {
-                setShowArchived((value) => !value);
-                setConversationOffset(0);
-              }}
-            >
-              {showArchived ? copy.conversationShowActive : copy.conversationShowArchived}
-            </Button>
-          </div>
-          {listCollapsed ? null : <div className="conversation-sidebar-list">
-            {conversationItems.length ? (
-              <Conversations
-                items={conversationItems}
-                activeKey={selectedConversationId || undefined}
-                onActiveChange={(key) => {
-                  // Ant Design X 点击当前项会回调空值表示取消选中；会话页必须保持选中。
-                  if (key) openConversation(key);
-                }}
-                groupable={{
-                  label: (group) => (
-                    <span className="conversation-group-label">
-                      <span
-                        className="conversation-group-dot"
-                        style={{ backgroundColor: conversationGroupColor(String(group)) }}
-                        aria-hidden="true"
-                      />
-                      <span className="conversation-group-name">{projectNames.get(String(group)) ?? String(group)}</span>
-                    </span>
-                  ),
-                  collapsible: true,
-                  expandedKeys: expandedGroups,
-                  onExpand: (keys) => {
-                    const collapsed = new Set(groupKeys.filter((group) => !keys.includes(group)));
-                    setCollapsedGroups(collapsed);
-                    saveCollapsedGroups(collapsed);
-                  },
-                }}
-              />
-            ) : <Empty>{copy.noConversations}</Empty>}
-            {conversations.length < conversationTotal ? (
-              <Button className="conversation-load-more" type="text" onClick={() => setConversationOffset((value) => value + conversationPageSize)}>
-                {copy.loadMore}
-              </Button>
-            ) : null}
-          </div>}
-        </aside>
-        </Panel>
-        <Separator id="separator-list-workspace" className="conversation-separator" />
-        <Panel id={workspacePanelId} className="conversation-workspace-panel" defaultSize={620} minSize={240}>
+        <Panel id={workspacePanelId} className="conversation-workspace-panel" defaultSize={100} minSize={240}>
         <section className="conversation-workspace">
           <Tabs
             className="conversation-tabs"
@@ -1333,20 +1062,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
             onChange={(key) => setDetailTab(key as ConversationDetailTab)}
             destroyOnHidden
             tabBarExtraContent={{
-              // 展开/收起按钮放在「对话」标签之前；收起后列表完全隐藏。
-              left: (
-                <Button
-                  className="conversation-list-toggle"
-                  type="text"
-                  size="small"
-                  aria-label={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
-                  aria-expanded={!listCollapsed}
-                  title={listCollapsed ? copy.expandConversationList : copy.collapseConversationList}
-                  onClick={toggleListPanel}
-                >
-                  {listCollapsed ? <SidebarExpandIcon /> : <SidebarCollapseIcon />}
-                </Button>
-              ),
               // 仓库信息与标签页同处一行，减少纵向占用。
               right: (
                 <div className="conversation-workspace-meta">
