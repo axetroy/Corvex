@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Popover, Typography } from "antd";
+import { Button, Popover, Spin, Typography } from "antd";
 import { SiGitlab } from "react-icons/si";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
@@ -51,14 +51,18 @@ export function RepositoryInfoPopover({
 }) {
   const [details, setDetails] = useState<RepositoryDetails>();
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!open || !projectId) {
+    // 提前预取：点击时详情已在本地，气泡一次渲染到位，不会先小后大跳动。
+    if (!projectId) {
       setDetails(undefined);
       setError("");
+      setLoading(false);
       return;
     }
     let active = true;
+    setLoading(true);
     fetchJson<RepositoryDetails>(`/api/ops/projects/${projectId}`, copy)
       .then((value) => {
         if (active) {
@@ -71,17 +75,23 @@ export function RepositoryInfoPopover({
           setDetails(undefined);
           setError(errorMessage(cause));
         }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [open, projectId, copy]);
+  }, [projectId, copy]);
 
   const webUrl = safeRepositoryUrl(details?.web_url);
+  // 加载期间用固定高度占位，避免详情到达后气泡高度突变、位置二次调整。
   const content = (
     <div className="repository-info-popover-content">
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
-      {details ? (
+      {loading ? (
+        <div className="repository-info-loading"><Spin size="small" /></div>
+      ) : details ? (
         <>
           <dl className="repository-info-list">
             <InfoRow label={copy.conversationRepositoryPath} copy={copy}>
@@ -128,7 +138,7 @@ export function RepositoryInfoPopover({
     <Popover
       open={open}
       onOpenChange={onOpenChange}
-      placement="bottomLeft"
+      placement="bottomRight"
       trigger="click"
       arrow={false}
       title={copy.conversationRepositoryInfo}

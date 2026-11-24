@@ -370,6 +370,14 @@
   max-width: 340px;
 }
 
+/* 加载占位与最终详情同高，避免数据到达时气泡高度突变导致位置调整。 */
+.repository-info-loading {
+  display: flex;
+  min-height: 430px;
+  align-items: center;
+  justify-content: center;
+}
+
 .repository-info-list {
   display: flex;
   flex-direction: column;
