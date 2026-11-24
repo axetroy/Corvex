@@ -2228,17 +2228,27 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   font-size: 12px;
 }
 
-/* 思考等级：标签为两字中文（最低/极高），给足内容宽度并禁止被挤压。 */
+/* 思考等级：按当前文案自适应宽度，兼容中文两字与英文更长文案，不写死宽度。 */
 .conversation-composer-thinking-select.ant-select {
   width: auto;
-  min-width: 72px;
-  max-width: 120px;
   flex: 0 0 auto;
   font-size: 12px;
 }
 
 .conversation-composer-thinking-select .ant-select-selector {
   padding-inline: 6px;
+}
+
+.conversation-composer-thinking-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.conversation-composer-thinking-default {
+  color: var(--conversation-muted);
+  font-size: 10px;
 }
 
 .conversation-composer-model-value {

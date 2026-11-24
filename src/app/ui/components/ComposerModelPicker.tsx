@@ -12,6 +12,7 @@ import {
   modelOptionValue,
   modelSelectGroups,
   thinkingLevelOptions,
+  defaultThinkingLevel,
 } from "../modelPicker.js";
 
 interface Props {
@@ -28,7 +29,7 @@ interface Props {
  */
 export function ComposerModelPicker({ copy, disabled }: Props) {
   const [providers, setProviders] = useState<ModelProviderDetails[]>([]);
-  const [thinkingLevel, setThinkingLevel] = useState<string>("medium");
+  const [thinkingLevel, setThinkingLevel] = useState<string>(defaultThinkingLevel);
   const [reasoningEnabled, setReasoningEnabled] = useState(true);
   const [switchingThinking, setSwitchingThinking] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -43,7 +44,7 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
       .then((response) => {
         if (!active) return;
         setProviders(response.items);
-        setThinkingLevel(response.thinkingLevel ?? "medium");
+        setThinkingLevel(response.thinkingLevel ?? defaultThinkingLevel);
         setReasoningEnabled(response.reasoningEnabled ?? true);
         setError("");
       })
@@ -81,6 +82,8 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
       ),
     })),
   }));
+
+  const thinkingLabelKey = thinkingLevelOptions.find((option) => option.value === thinkingLevel)?.labelKey ?? "thinkingLevelMedium";
 
   const activeLabel: ReactNode = active ? (
     <span className="conversation-composer-model-value">
@@ -164,6 +167,14 @@ export function ComposerModelPicker({ copy, disabled }: Props) {
         options={thinkingLevelOptions.map((option) => ({ value: option.value, label: copy[option.labelKey] }))}
         loading={switchingThinking}
         disabled={disabled || switchingThinking || !reasoningEnabled}
+        labelRender={() => (
+          <span className="conversation-composer-thinking-value">
+            {copy[thinkingLabelKey]}
+            {thinkingLevel === defaultThinkingLevel ? (
+              <span className="conversation-composer-thinking-default">{copy.composerThinkingDefault}</span>
+            ) : null}
+          </span>
+        )}
         onChange={(value) => void switchThinking(value)}
       />
       {error ? (

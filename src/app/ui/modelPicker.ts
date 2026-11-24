@@ -1,5 +1,8 @@
 import type { ModelProviderDetails, ProviderModel } from "./types.js";
 
+/** 思考等级默认值：未从服务端取到时使用，保证选择器始终显示一个有效值。 */
+export const defaultThinkingLevel = "medium";
+
 /** 思考等级下拉项：值是与 Pi SDK 一致的稳定标识，文案 key 直接写在源码便于 i18n 完整性检查。 */
 export const thinkingLevelOptions = [
   { value: "off", labelKey: "thinkingLevelOff" },
