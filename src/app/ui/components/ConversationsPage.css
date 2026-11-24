@@ -1752,7 +1752,9 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-tabs > .ant-tabs-nav {
-  flex: 0 0 auto;
+  display: flex;
+  height: 48px;
+  flex: 0 0 48px;
   align-items: center;
   margin: 0;
   padding: 0 20px;
