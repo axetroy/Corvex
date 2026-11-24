@@ -8,6 +8,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -61,6 +62,24 @@ const toolBudgetWarningRatio = 0.75;
 export const maxAgentUserPromptBytes = 80 << 10;
 /** 估算用的固定开销：system 提示、工具定义与消息框架。 */
 const framingOverheadTokens = 2_000;
+/** 持久化会话条目的字节上限；超过后跳过写入，避免把 SQLite 撑爆。 */
+const maxPersistedSessionBytes = 4 << 20;
+
+/** 解析持久化的 Pi 会话条目；格式异常或超限时按「无会话」处理，不阻断新一轮。 */
+function restoreSessionEntries(raw: string | undefined): FileEntry[] | undefined {
+  if (!raw || Buffer.byteLength(raw) > maxPersistedSessionBytes) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return undefined;
+    if (!parsed.every((entry) => entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).type === "string")) {
+      return undefined;
+    }
+    if (parsed[0]?.type !== "session") return undefined;
+    return parsed as FileEntry[];
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * 单次请求的输入字节上限：由上下文窗口推导，而不是固定 96 KiB。
@@ -419,6 +438,13 @@ export class PiAgent {
       ? AbortSignal.any([parentSignal, stallController.signal])
       : stallController.signal;
     const agentDir = resolve(join(config.storage.root, "pi-agent"));
+    // 对话轮次恢复同一会话的完整消息（含 tool_use/tool_result），而不是每轮新会话 + 文本历史。
+    const sessionKey = request.taskType === "conversation" && request.conversationId && !request.noTools
+      ? request.conversationId
+      : undefined;
+    const restoredEntries = sessionKey
+      ? restoreSessionEntries(this.store?.conversationSessionEntries(sessionKey))
+      : undefined;
     const repositoryRoot = await realpath(workingDirectory);
     const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
     const allowedRoots = [repositoryRoot, ...skillRoots];
@@ -750,7 +776,9 @@ export class PiAgent {
           keepRecentTokens: compactionKeepRecentTokens,
         },
       }),
-      sessionManager: SessionManager.inMemory(),
+      sessionManager: restoredEntries
+        ? SessionManager.inMemory(agentDir, undefined, restoredEntries)
+        : SessionManager.inMemory(),
       noTools: request.noTools ? "all" : "builtin",
       // SDK 默认 thinkingLevel 由 settings 决定；显式给出安全默认值，避免被默认值关掉。
       thinkingLevel: config.agent.reasoningEnabled ? "medium" : "off",
@@ -762,9 +790,11 @@ export class PiAgent {
       request.steer.bind((text) => session.steer(text));
     }
     // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
-    // SDK 的压缩切点也才能在正确的轮次边界上工作。
-    for (const message of seedHistoryMessages(request.history ?? [], providerId, config.agent.model)) {
-      session.sessionManager.appendMessage(message);
+    // SDK 的压缩切点也才能在正确的轮次边界上工作。恢复完整会话时已含这些消息，跳过注入。
+    if (!restoredEntries) {
+      for (const message of seedHistoryMessages(request.history ?? [], providerId, config.agent.model)) {
+        session.sessionManager.appendMessage(message);
+      }
     }
     // 动态阈值需要本轮的真实增量：先记录历史注入后的 token 基线，回合结束时用
     // 「最终 token − 基线」衡量本轮增长。只记录文本/思考，与结束时的计数口径一致。
@@ -1165,6 +1195,25 @@ export class PiAgent {
       } catch (error) {
         activeCompactionTrigger = undefined;
         console.warn("self-triggered context compaction failed", { error: errorMessage(error) });
+      }
+      // 把完整会话（含本轮 tool_use/tool_result 与压缩边界）持久化，供下一轮恢复真实上下文。
+      if (sessionKey) {
+        try {
+          const manager = session.sessionManager;
+          const header = manager.getHeader();
+          const payload = JSON.stringify(header ? [header, ...manager.getEntries()] : manager.getEntries());
+          if (Buffer.byteLength(payload) <= maxPersistedSessionBytes) {
+            this.store?.saveConversationSessionEntries(sessionKey, payload);
+          } else {
+            console.warn("conversation session exceeds persistence limit", {
+              conversationId: sessionKey, bytes: Buffer.byteLength(payload),
+            });
+          }
+        } catch (error) {
+          console.warn("persist conversation session failed", {
+            conversationId: sessionKey, error: errorMessage(error),
+          });
+        }
       }
       return {
         content,

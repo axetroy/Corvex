@@ -17,6 +17,33 @@ describe("AppStore", () => {
     directory = "";
   });
 
+  it("持久化并清理会话的完整 Pi 会话条目", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "first",
+    });
+    expect(store.conversationSessionEntries(created.conversationId)).toBeUndefined();
+    store.saveConversationSessionEntries(created.conversationId, '[{"type":"session","id":"s1","timestamp":"t","cwd":"/tmp"}]');
+    expect(store.conversationSessionEntries(created.conversationId)).toContain('"type":"session"');
+    // 覆盖写入而不是重复插入。
+    store.saveConversationSessionEntries(created.conversationId, '[{"type":"session","id":"s2","timestamp":"t","cwd":"/tmp"}]');
+    expect(store.conversationSessionEntries(created.conversationId)).toContain('"s2"');
+    store.deleteConversationSessionEntries(created.conversationId);
+    expect(store.conversationSessionEntries(created.conversationId)).toBeUndefined();
+  });
+
+  it("删除对话时同时清理持久化会话", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "first",
+    });
+    store.saveConversationSessionEntries(created.conversationId, "[]");
+    expect(store.deleteConversation(created.conversationId)).toBe(true);
+    expect(store.conversationSessionEntries(created.conversationId)).toBeUndefined();
+  });
+
   it("为旧库的 conversation_turns 补齐 model 列", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     const databasePath = join(directory, "state.db");

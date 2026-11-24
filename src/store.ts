@@ -503,6 +503,31 @@ export class AppStore {
       .run(key, amount);
   }
 
+  /**
+   * 读取会话持久化的完整 Pi 会话条目（JSON 字符串）；不存在时返回 undefined。
+   * 只返回原始文本，解析与大小校验由调用方负责。
+   */
+  conversationSessionEntries(conversationId: string): string | undefined {
+    const row = this.db.prepare(
+      "SELECT entries FROM conversation_sessions WHERE conversation_id=?",
+    ).get(conversationId) as { entries: string } | undefined;
+    return row?.entries;
+  }
+
+  /**  upsert 会话的 Pi 会话条目。调用方负责脱敏与大小上限。 */
+  saveConversationSessionEntries(conversationId: string, entries: string): void {
+    if (!conversationId || !entries) return;
+    this.db.prepare(
+      `INSERT INTO conversation_sessions (conversation_id,entries,updated_at) VALUES (?,?,?)
+       ON CONFLICT(conversation_id) DO UPDATE SET entries=excluded.entries, updated_at=excluded.updated_at`,
+    ).run(conversationId, entries, new Date().toISOString());
+  }
+
+  /** 删除会话的持久化 Pi 会话条目；对话删除时由 ON DELETE CASCADE 兜底。 */
+  deleteConversationSessionEntries(conversationId: string): void {
+    this.db.prepare("DELETE FROM conversation_sessions WHERE conversation_id=?").run(conversationId);
+  }
+
   /** 保存一次模型请求前的上下文快照；写入前走与轨迹相同的脱敏与限长路径。 */
   saveContextSnapshot(snapshot: ContextSnapshotData): void {
     if (!snapshot.conversationId || !snapshot.turnId) throw new Error("context snapshot requires conversation and turn");
@@ -806,6 +831,9 @@ export class AppStore {
           .run(...ids);
         this.db
           .prepare(`DELETE FROM conversation_context_snapshots WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
+          .prepare(`DELETE FROM conversation_sessions WHERE conversation_id IN (${placeholders})`)
           .run(...ids);
         this.db
           .prepare(`DELETE FROM conversation_followups WHERE conversation_id IN (${placeholders})`)
@@ -1621,6 +1649,7 @@ export class AppStore {
       this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_followups WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_context_snapshots WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_sessions WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_turns WHERE conversation_id=?").run(conversationId);
       return this.db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId).changes === 1;
     });
@@ -2444,6 +2473,11 @@ export class AppStore {
         breakdown TEXT NOT NULL, counts TEXT NOT NULL, items TEXT NOT NULL, truncated INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS context_snapshots_conversation_idx ON conversation_context_snapshots(conversation_id,request_seq,id);
+      -- 完整 Pi 会话条目（含 tool_use/tool_result），跨轮恢复真实会话而不是只注入文本历史。
+      CREATE TABLE IF NOT EXISTS conversation_sessions (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+        entries TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_skills (
         id TEXT PRIMARY KEY,
         document TEXT NOT NULL DEFAULT '',
