@@ -56,6 +56,10 @@ The largest structural gap: Corvex has no shell and never executes repository co
 
 Long tasks benefit from lightweight read-only sub-agents that investigate in parallel and return bounded findings, keeping the main session's context clean. Corvex runs one session per turn; delegation is deferred.
 
+## Readable terminal (planned)
+
+A readable terminal for `run_command`: stream command output to the console in real time and let the user stop a single command without cancelling the whole turn. Full design in [terminal-design.md](terminal-design.md) (Chinese). Staged: P0 event model (`exec` SSE event) + backend `onChunk` + streaming + per-command cancel API/UI; P1 offline replay from the persisted trajectory; P2 output search/virtual scrolling. Not implemented yet.
+
 ## Other deferred items
 
 No other items are currently recorded.

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository. Read `design.md` before making architectural changes: it is the binding contract for the runtime, boundaries and security invariants. For the planned command-execution environment (free commands with local/sandbox backends), read `execution-design.md` before touching that area; it is the binding contract for that feature.
+Guidance for coding agents working in this repository. Read `design.md` before making architectural changes: it is the binding contract for the runtime, boundaries and security invariants. For the planned command-execution environment (free commands with local/sandbox backends), read `execution-design.md` before touching that area; it is the binding contract for that feature. The planned readable terminal (streaming command output + per-command stop) is specified in `terminal-design.md`.
 
 ## Project overview
 
