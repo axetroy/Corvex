@@ -42,7 +42,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 
 - Ant Design v6；颜色只用 `theme.css` 里的主题变量，不写死 hex，亮色和暗色都要跟随。
 - antd 运行时样式带三个 class 选择器，覆盖时至少用四个 class；portal 到 `body` 的弹层要传 `classNames.popup.root` 并声明自己的变量。
-- 管理中心表格配色只在 `AdminConsole.css` 定义（`.admin-console .admin-console-main .ant-table …`）：表头与斑马纹用 `--bg-subtle`，正文 `--text-secondary` / 12px，hover `--bg-hover`，代码 `--primary`；不要在存储、设置等页面另写表格配色。
+- 管理中心表格配色的唯一坐标是「Git 存储清理」列表（`.settings-cleanup-list li`，定义在 `SettingsPage.css`）：条目与表头背景 `--bg-subtle`、文字 `--text-secondary` / 12px、边框 `--border-soft`、hover `--bg-hover`、目录代码 `--primary`。统一在 `AdminConsole.css` 用 `.admin-console .admin-console-main .ant-table …` 实现，新增的管理中心表格自动继承；不要在存储、设置等页面另写表格配色。
 - 页面有 nonce CSP：禁止静态 `Modal.confirm` / `message.*` / `notification.*`，改用 `Modal.useModal()` 或 `App.useApp()` 并把 contextHolder 渲染在页面内；动态 `<style>` 由 `src/app/ui/csp.ts` 盖章。
 - 布局：`.app-shell` 左侧栏 + 主内容区；会话列表在左栏；工作区用 `react-resizable-panels`，不要手写拖拽；布局状态存 `localStorage`。
 - 设置项 key 必须与 `runtimeSettingDefinitions` 完全一致（有测试校验）。运行时设置存 SQLite，配置文件只提供初始值。
