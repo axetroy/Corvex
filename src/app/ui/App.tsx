@@ -397,7 +397,7 @@ export function App() {
                 <span className="sidebar-account-name">
                   {account.name || account.username}
                   {account.isAdmin ? (
-                    <a className="sidebar-admin" href="/ops#/admin/users" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
+                    <a className="sidebar-admin" href="/ops#/admin/dashboard" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
                       {copy.adminTag}
                     </a>
                   ) : null}
@@ -428,7 +428,7 @@ export function App() {
                   ],
                   onClick: ({ key }) => {
                     if (key === "settings") navigate("/settings");
-                    else if (key === "admin") window.open("/ops#/admin/users", "_blank", "noopener");
+                    else if (key === "admin") window.open("/ops#/admin/dashboard", "_blank", "noopener");
                     else if (key === "logout") void logout();
                   },
                 }}

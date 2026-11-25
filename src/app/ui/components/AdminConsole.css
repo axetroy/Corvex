@@ -57,13 +57,6 @@
   outline-offset: 1px;
 }
 
-.admin-console-label {
-  color: var(--text-muted);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .admin-console-nav {
   display: flex;
   flex-direction: column;

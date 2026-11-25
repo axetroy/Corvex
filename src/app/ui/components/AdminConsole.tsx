@@ -10,6 +10,7 @@ import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
 import { ContextMetricsPanel } from "./ContextMetricsPanel.js";
 import { ExecutionConfigPanel } from "./ExecutionConfigPanel.js";
+import { AdminDashboard } from "./AdminDashboard.js";
 import "./AdminConsole.css";
 
 interface Props {
@@ -46,6 +47,8 @@ export function AdminConsole({
   onRefresh,
 }: Props) {
   const [allowed, setAllowed] = useState<boolean>();
+  // `#/admin` 与 `#/admin/dashboard` 都是管理后台首页。
+  const dashboardActive = route === "admin" || route === "admin/dashboard";
   const usersActive = route === "admin/users";
   const metricsActive = route === "admin/metrics";
   const executionsActive = route === "admin/executions";
@@ -79,10 +82,12 @@ export function AdminConsole({
             className="admin-console-theme"
           />
         </div>
-        <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">
           <div className="admin-console-nav-group">
             <div className="admin-console-nav-label">{copy.adminNavGroupManagement}</div>
+            <Link className={dashboardActive ? "active" : ""} to={adminPath("dashboard")}>
+              {copy.adminDashboardTitle}
+            </Link>
             <Link className={usersActive ? "active" : ""} to={adminPath("users")}>
               {copy.adminUsersTitle}
             </Link>
@@ -112,7 +117,9 @@ export function AdminConsole({
         </nav>
       </aside>
       <main className="admin-console-main">
-        {usersActive ? (
+        {dashboardActive ? (
+          <AdminDashboard copy={copy} />
+        ) : usersActive ? (
           <>
             <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />

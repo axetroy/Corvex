@@ -1,0 +1,20 @@
+/* 管理后台首页仪表盘：只读指标卡片与两张小表，复用管理中心的主题变量。 */
+.admin-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-dashboard .page-heading {
+  margin-bottom: 0;
+}
+
+.admin-dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.admin-dashboard-table .ant-table-cell {
+  font-size: 12px;
+}
