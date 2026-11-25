@@ -5,7 +5,7 @@
  * 只覆盖高风险且能明确映射到工具的动作；不判断观点、计划或推测性表述。
  */
 
-export type ClaimKind = "publish" | "comment" | "merge" | "approve" | "delete" | "fixed" | "done";
+export type ClaimKind = "publish" | "comment" | "merge" | "approve" | "delete" | "fixed" | "done" | "verified";
 
 interface ClaimRule {
   kind: ClaimKind;
@@ -58,6 +58,13 @@ const rules: readonly ClaimRule[] = [
     en: [/\bI\s+(?:have\s+)?(?:completed|finished)\b/i, /\b(?:task|work)\s+(?:is|has been)\s+(?:done|complete|finished)\b/i],
     tools: ["read_file", "git_diff", "git_status", "readAllowedFile", "diff", "getWorkspaceDiff", "status"],
   },
+  {
+    // 声称「测试通过 / 类型检查通过」需要一次成功的 run_command 支撑。
+    kind: "verified",
+    zh: [/(?:测试|类型检查|lint|构建)(?:已)?(?:通过|成功|无误)/i, /验证通过/, /测试全部通过/],
+    en: [/\b(?:tests?|typecheck|lint|build)\s+(?:pass|passed|succeed|succeeded)\b/i, /\bverified\b/i],
+    tools: ["run_command"],
+  },
 ];
 
 export interface ClaimVerificationResult {
@@ -70,21 +77,27 @@ export interface ClaimVerificationResult {
 /**
  * 核对最终回答中的高风险声明。只有回答确实包含该动作表述、且本轮没有任何对应工具调用时才计入。
  * `verifiedActions` 允许调用方补充由系统代执行、未走 Pi 工具的动作（如自动创建 MR）。
+ * `successfulTools` 用于「验证通过」类声明：必须有一次成功的工具调用才算支撑。
  */
 export function verifyAnswerClaims(
   answer: string,
   toolNames: readonly string[],
   language: "en" | "zh-CN",
   verifiedActions: ReadonlySet<ClaimKind> = new Set(),
+  successfulTools: ReadonlySet<string> = new Set(),
 ): ClaimVerificationResult {
   if (!answer.trim()) return { unverified: [], detail: "" };
   const called = new Set(toolNames);
+  const succeeded = new Set(successfulTools);
   const unverified: ClaimKind[] = [];
   for (const rule of rules) {
     if (verifiedActions.has(rule.kind)) continue;
     const patterns = language === "zh-CN" ? rule.zh : rule.en;
     if (!patterns.some((pattern) => pattern.test(answer))) continue;
-    if (rule.tools.some((tool) => called.has(tool))) continue;
+    const supporting = rule.kind === "verified"
+      ? rule.tools.some((tool) => succeeded.has(tool))
+      : rule.tools.some((tool) => called.has(tool));
+    if (supporting) continue;
     unverified.push(rule.kind);
   }
   const labels: Record<ClaimKind, { en: string; zh: string }> = {
@@ -95,6 +108,7 @@ export function verifyAnswerClaims(
     delete: { en: "delete", zh: "删除" },
     fixed: { en: "fix", zh: "修复" },
     done: { en: "completion", zh: "完成" },
+    verified: { en: "verification", zh: "验证" },
   };
   const detail = unverified.length === 0
     ? ""

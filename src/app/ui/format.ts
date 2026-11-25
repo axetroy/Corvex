@@ -66,6 +66,13 @@ export function describeSessionTool(
 ): string {
   const record = asTraceRecord(input);
   const path = typeof record?.path === "string" && record.path ? record.path : copy.traceUnknownPath;
+  if (name === "run_command") {
+    const command = typeof record?.command === "string" && record.command
+      ? record.command.replace(/\s+/g, " ").trim()
+      : copy.traceUnknownPath;
+    const shown = command.length > 120 ? `${command.slice(0, 120)}…` : command;
+    return copy.traceToolRunCommandTemplate.replace("{command}", shown);
+  }
   switch (name) {
     case "read_file": {
       const startLine = record?.startLine;

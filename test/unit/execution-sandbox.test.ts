@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExecutionConfig } from "../../src/config/config.js";
 import { buildContainerArgs, SandboxExecutionBackend } from "../../src/agent/execution/sandbox.js";

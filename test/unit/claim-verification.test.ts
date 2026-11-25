@@ -43,6 +43,14 @@ describe("claim verification", () => {
     expect(verifyAnswerClaims("任务已完成。", ["write_file", "git_diff"], "zh-CN").unverified).not.toContain("done");
   });
 
+  it("requires a successful run_command for verification claims", () => {
+    // 只有调用过、且成功，才算验证通过。
+    expect(verifyAnswerClaims("测试已通过。", ["run_command"], "zh-CN").unverified).toContain("verified");
+    expect(verifyAnswerClaims(
+      "测试已通过。", ["run_command"], "zh-CN", new Set(), new Set(["run_command"]),
+    ).unverified).not.toContain("verified");
+  });
+
   it("detects English claims without matching tools", () => {
     const result = verifyAnswerClaims("I approved and deleted the issue.", [], "en");
     expect(result.unverified).toContain("approve");

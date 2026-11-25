@@ -1122,10 +1122,13 @@ export class ConversationRunner {
       this.store.recordModelCall("conversation", "success", Date.now() - started, answer.usage.inputTokens, answer.usage.outputTokens);
       // 确定性兜底：回答声称「已发布 / 已评论 / 已合并」但本轮没有对应工具调用时，
       // 追加一条 context 警告进入过程快照。提示词是软约束，这里是代码级硬校验。
-      const turnTools = this.store.getTraceEntries({ turnId: turn.turnId }, turn.attempt)
-        .filter((entry) => entry.kind === "tool")
+      const toolEntries = this.store.getTraceEntries({ turnId: turn.turnId }, turn.attempt)
+        .filter((entry) => entry.kind === "tool");
+      const turnTools = toolEntries.map((entry) => entry.name);
+      const successfulTools = toolEntries
+        .filter((entry) => entry.status === "succeeded")
         .map((entry) => entry.name);
-      const claim = verifyAnswerClaims(answer.content, turnTools, language);
+      const claim = verifyAnswerClaims(answer.content, turnTools, language, new Set(), new Set(successfulTools));
       if (claim.unverified.length > 0) {
         this.publishStream(turn.turnId, {
           type: "context",
