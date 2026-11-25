@@ -33,7 +33,7 @@ import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ExecutionHistoryTab } from "./ExecutionHistoryTab.js";
-import { applyExecDelta, createExecDisplay, type ExecDisplay } from "./ConversationExecTerminal.js";
+import { applyExecDelta, createExecDisplay, replayExecsFromProcess, commandFromToolInput, type ExecDisplay } from "./execDisplay.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
 import { ConversationTurnNav } from "./ConversationTurnNav.js";
@@ -121,40 +121,6 @@ function ModelWaiting({ since, copy }: { since: number; copy: Copy }) {
       <span className="conversation-pending-elapsed" aria-hidden="true">{Math.floor(elapsedMs / 1_000)}s</span>
     </div>
   );
-}
-
-/** 从工具参数里取出命令原文（脱敏后的 JSON 文本），失败时回退到原文。 */
-function commandFromToolInput(input: string | null): string {
-  if (!input) return "";
-  try {
-    const parsed = JSON.parse(input) as { command?: unknown };
-    return typeof parsed.command === "string" ? parsed.command : input;
-  } catch {
-    return input;
-  }
-}
-
-/** 刷新后从落库的过程快照还原命令终端（输出已随 collectProcess 落库）。 */
-function replayExecsFromProcess(process: ReadonlyArray<ConversationMessage["process"][number]>): Map<string, ExecDisplay> {
-  const result = new Map<string, ExecDisplay>();
-  for (const entry of process) {
-    if (entry.kind !== "tool" || entry.name !== "run_command" || !entry.id || !entry.execOutput) continue;
-    const output = entry.execOutput;
-    result.set(entry.id, {
-      execId: entry.id,
-      command: commandFromToolInput(entry.input),
-      stdout: output.stdout,
-      stderr: output.stderr,
-      done: true,
-      exitCode: output.exitCode,
-      aborted: output.aborted,
-      reason: output.reason,
-      truncated: output.truncated,
-      startedAt: 0,
-      finishedAt: 0,
-    });
-  }
-  return result;
 }
 
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */

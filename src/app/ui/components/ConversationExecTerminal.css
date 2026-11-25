@@ -1,4 +1,4 @@
-/* 可读终端：命令输出流式展示，运行中可单独停止（不取消整轮）。 */
+/* 可读终端：xterm.js 渲染 ANSI 输出，内置虚拟滚动；头部提供搜索与复制。 */
 .conversation-exec-terminal {
   margin: 6px 0;
   overflow: hidden;
@@ -20,6 +20,7 @@
 
 .conversation-exec-command {
   min-width: 0;
+  max-width: 52%;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
@@ -31,27 +32,64 @@
   font-size: 11px;
 }
 
-.conversation-exec-body {
-  max-height: 320px;
-  overflow: auto;
-  padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+.conversation-exec-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.conversation-exec-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
+}
+
+.conversation-exec-search .ant-input-affix-wrapper,
+.conversation-exec-search > .ant-input {
+  max-width: 280px;
   font-size: 12px;
-  line-height: 1.55;
 }
 
-.conversation-exec-body pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+.conversation-exec-search-count {
+  min-width: 64px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
 }
 
-.conversation-exec-stdout {
-  color: var(--text);
+/* xterm 的 viewport 需要一个确定高度才能按行虚拟滚动。 */
+.conversation-exec-screen {
+  position: relative;
+  height: clamp(180px, 28vh, 320px);
+  background: var(--bg-code, var(--bg-subtle));
 }
 
-.conversation-exec-stderr {
-  color: var(--danger);
+.conversation-exec-body {
+  width: 100%;
+  height: 100%;
+  padding: 8px 4px 8px 10px;
+  font-size: 12px;
+}
+
+.conversation-exec-body .xterm {
+  height: 100%;
+}
+
+.conversation-exec-body .xterm-viewport {
+  background-color: transparent;
+}
+
+.conversation-exec-placeholder {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
 }
 
 .conversation-exec-truncated,
