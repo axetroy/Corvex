@@ -97,7 +97,7 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 |---|---|---|
 | P0 | **已完成** | 事件模型 `exec` + 后端 `onChunk` + PiAgent/Runner/SSE/stream.ts 全链路；`ConversationExecTerminal` 渲染流式输出与状态；单命令停止 API + 按钮（停止原因 `user manually stopped this command` 经 `signal.reason` → `ExecutionResult.reason` 进入工具结果，供模型决策） |
 | P1 | **已完成** | `collectProcess` 把 exec 增量合并为完整输出写入过程快照 `execOutput`，刷新后由 `message.process` 还原终端；`streamSnapshots` 对连续 chunk 合并防膨胀 |
-| P2 | 待实现 | 体验增强：输出搜索、复制、按命令过滤、大输出虚拟滚动 |
+| P2 | 进行中 | 体验增强：输出搜索、复制、按命令过滤、大输出虚拟滚动 |
 
 ## 7. 测试策略
 
@@ -112,3 +112,14 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 - 流式 chunk 与最终落库共用同一字节预算，防止通过高频输出绕过上限；
 - 停止命令走与整轮取消相同的 `AbortSignal` 体系，子进程 kill 逻辑复用，不新增旁路；
 - 前端终端只展示，不提供输入，避免变成交互式 shell。
+
+## 9. P2 渲染方案：xterm.js（架构决策）
+
+P2 采用 VS Code 同款的 **xterm.js**（`@xterm/xterm` 6.x）替换 P0 的手写 `<pre>` 输出区，配套 `@xterm/addon-search`（搜索高亮与逐个跳转）、`@xterm/addon-fit`（按容器自适应行列）。理由：
+
+- **ANSI 原生渲染**：构建工具、`ls --color` 等命令会输出颜色与光标控制序列，手写 `<pre>` 只会把转义序列显示成乱码；xterm 正确解析这些序列；
+- **虚拟滚动开箱即用**：xterm 的 viewport 只渲染可见行，长输出不会生成上万个 DOM 节点，直接满足 P2 的大输出性能目标；
+- **搜索/复制内置**：搜索插件提供高亮与前后匹配跳转，选中即复制（另有"复制全部"按钮）；不需要自研文本遍历与高亮；
+- **依赖面可控**：仅 3 个前端包，由 Vite 打包进独立的懒加载 chunk，不进入服务端运行时依赖集，不改变任何安全边界。
+
+与 React 的衔接：终端实例是命令式的，组件持有 `Terminal` 并按 execId 记录"已写入长度"，输出增量到达时只 `write()` 新增部分；主题切换经 `MutationObserver` 更新 `term.options.theme`，容器尺寸变化经 `ResizeObserver` 触发 `fit()`；用户上翻时暂停自动跟随（xterm `onScroll` 的 `viewportY < baseY` 判定），回到底部恢复跟随。纯数据变换（`createExecDisplay`/`applyExecDelta`）抽到不依赖 React/xterm 的模块，便于单测。
