@@ -83,11 +83,12 @@
 
 新增 `ConversationExecTerminal`（对话工作区 Chat 过程块内，紧随对应工具调用显示）：
 
-- 单行终端样式：等宽字体、深色/浅色主题变量（`var(--bg-code)` / `var(--text)`）；
-- 头部：`$ <command>` + 状态徽标（running / exit 0 / exit N / aborted / truncated）+ 停止按钮 + 耗时；
-- 正文：滚动区，stdout 常规色、stderr 用 `--danger`/`--warning` 色；自动滚动到底，用户上翻时暂停跟随（复用 `isAtScrollBottom`）；
-- 输出按字节上限渲染，超出显示"输出已截断"提示；
-- 终端作为一个 disclosure（可折叠），默认运行中展开、结束后可收起。
+- 终端正文由 xterm.js 渲染（ANSI 颜色、内置虚拟滚动），主题变量经 `getComputedStyle` 转成真实色值；
+- 头部：`$ <command>` + 状态徽标（running / exit 0 / exit N / aborted / truncated）+ 复制 / 搜索 / 停止按钮 + 耗时；
+- 搜索栏：输入即高亮全部匹配并显示 `index/count`，上/下箭头跳转，Enter 下一个、Shift+Enter 上一个、Esc 关闭；
+- 一条轮次含多个命令时，过程块顶部提供按命令文本筛选（不区分大小写），非命令步骤不受影响；
+- 自动滚动到底，用户上翻时暂停跟随；超出字节上限显示"输出已截断"提示；
+- 过程块本身是 disclosure，执行中强制展开、结束后可收起。
 
 i18n：命令头、状态文案、停止按钮、截断提示、回放提示，中英文各一组。
 
@@ -97,7 +98,7 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 |---|---|---|
 | P0 | **已完成** | 事件模型 `exec` + 后端 `onChunk` + PiAgent/Runner/SSE/stream.ts 全链路；`ConversationExecTerminal` 渲染流式输出与状态；单命令停止 API + 按钮（停止原因 `user manually stopped this command` 经 `signal.reason` → `ExecutionResult.reason` 进入工具结果，供模型决策） |
 | P1 | **已完成** | `collectProcess` 把 exec 增量合并为完整输出写入过程快照 `execOutput`，刷新后由 `message.process` 还原终端；`streamSnapshots` 对连续 chunk 合并防膨胀 |
-| P2 | 进行中 | 体验增强：输出搜索、复制、按命令过滤、大输出虚拟滚动 |
+| P2 | **已完成** | xterm.js 渲染（ANSI + 虚拟滚动）、输出搜索与前后跳转、复制全部、按命令筛选终端 |
 
 ## 7. 测试策略
 
