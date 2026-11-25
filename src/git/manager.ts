@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -79,6 +80,35 @@ export interface GitStorageCleanupPlan {
   mirrors: string[];
   applied: boolean;
 }
+
+/** 管理页展示的一条回答：镜像或工作树目录的只读统计。 */
+export interface StorageEntry {
+  projectId: number;
+  /** 目录名，如 `62.git` 或 `conversation-<uuid>`。 */
+  name: string;
+  /** 相对存储根目录的路径，用于展示与去重，不接受外部写入。 */
+  relativePath: string;
+  sizeBytes: number;
+  modifiedAt: string;
+  /** 仅工作树条目：对应的对话 ID（名称不符合约定时为空）。 */
+  conversationId?: string;
+  /** 该条目的大小统计是否因节点/深度上限而截断。 */
+  truncated: boolean;
+}
+
+export interface StorageDescription {
+  mirrors: StorageEntry[];
+  workspaces: StorageEntry[];
+  /** 任意条目截断或列表本身超限时为真，界面应提示数据为近似值。 */
+  truncated: boolean;
+}
+
+/** 单条目大小扫描的节点上限：packed Git 仓库几个文件即可覆盖主要体积，loose objects 过多时标记为截断。 */
+const maxStorageSizeNodes = 50_000;
+/** 单条目大小扫描的深度上限，避免异常深层目录导致栈溢出。 */
+const maxStorageSizeDepth = 64;
+/** 镜像/工作树列表各自的最大展示条数。 */
+const maxStorageEntries = 2_000;
 
 /**
  * 由对话 ID 推导常驻工作区目录名。对话 ID 是 UUID，先做严格校验再拼进路径，
@@ -190,6 +220,137 @@ export class GitManager {
   async initialize(): Promise<void> {
     await mkdir(this.mirrorRoot, { recursive: true, mode: 0o750 });
     await mkdir(this.workspaceRoot, { recursive: true, mode: 0o750 });
+  }
+
+  /**
+   * 递归统计目录字节数；符号链接跳过，节点/深度超限时置 truncated 并停止深入。
+   * 并发清理导致目录消失（ENOENT）时跳过该条目，不让整个管理页请求失败。
+   */
+  private async measureDirectory(directory: string): Promise<{ bytes: number; truncated: boolean }> {
+    let nodes = 0;
+    let truncated = false;
+    const walk = async (path: string, depth: number): Promise<number> => {
+      if (nodes >= maxStorageSizeNodes || depth > maxStorageSizeDepth) {
+        truncated = true;
+        return 0;
+      }
+      let entries: Dirent[];
+      try {
+        entries = await readdir(path, { withFileTypes: true });
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return 0;
+        throw error;
+      }
+      let total = 0;
+      for (const entry of entries) {
+        if (nodes >= maxStorageSizeNodes) {
+          truncated = true;
+          break;
+        }
+        // 符号链接一律跳过：既不跟随出受管根目录，也不重复计数。
+        if (entry.isSymbolicLink()) continue;
+        const child = join(path, entry.name);
+        if (entry.isDirectory()) {
+          total += await walk(child, depth + 1);
+        } else if (entry.isFile()) {
+          nodes += 1;
+          try {
+            const info = await lstat(child);
+            total += info.size;
+          } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+            throw error;
+          }
+        }
+      }
+      return total;
+    };
+    return { bytes: await walk(directory, 0), truncated };
+  }
+
+  /**
+   * 只读扫描镜像与工作树目录，供运维台「存储管理」页展示大小与修改时间。
+   * 不修改任何文件，也不建立项目锁——读到的 mtime/大小是扫描瞬间的近似值。
+   */
+  async describeStorage(): Promise<StorageDescription> {
+    await this.initialize();
+    for (const root of [this.workspaceRoot, this.mirrorRoot]) {
+      const info = await lstat(root);
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        throw new Error(`managed Git storage path "${root}" is not a regular directory`);
+      }
+    }
+
+    const mirrors: StorageEntry[] = [];
+    for (const name of await readdir(this.mirrorRoot)) {
+      if (mirrors.length >= maxStorageEntries) break;
+      const match = /^([1-9]\d*)\.git$/.exec(name);
+      if (!match) continue;
+      const projectId = Number(match[1]);
+      if (!Number.isSafeInteger(projectId)) continue;
+      const path = join(this.mirrorRoot, name);
+      let info;
+      try { info = await lstat(path); } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      if (!info.isDirectory() || info.isSymbolicLink()) continue;
+      const size = await this.measureDirectory(path);
+      mirrors.push({
+        projectId,
+        name,
+        relativePath: `mirrors/${name}`,
+        sizeBytes: size.bytes,
+        modifiedAt: new Date(info.mtimeMs).toISOString(),
+        truncated: size.truncated,
+      });
+    }
+
+    const workspaces: StorageEntry[] = [];
+    for (const projectName of await readdir(this.workspaceRoot)) {
+      if (workspaces.length >= maxStorageEntries) break;
+      if (!/^[1-9]\d*$/.test(projectName)) continue;
+      const projectId = Number(projectName);
+      if (!Number.isSafeInteger(projectId)) continue;
+      const projectRoot = join(this.workspaceRoot, projectName);
+      let projectInfo;
+      try { projectInfo = await lstat(projectRoot); } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) continue;
+      for (const name of await readdir(projectRoot)) {
+        if (workspaces.length >= maxStorageEntries) break;
+        if (!workspaceNamePattern.test(name)) continue;
+        const path = join(projectRoot, name);
+        let info;
+        try { info = await lstat(path); } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+          throw error;
+        }
+        if (!info.isDirectory() || info.isSymbolicLink()) continue;
+        const size = await this.measureDirectory(path);
+        const conversationId = conversationWorkspacePattern.test(name)
+          ? name.slice(conversationWorkspacePrefix.length)
+          : undefined;
+        workspaces.push({
+          projectId,
+          name,
+          relativePath: `workspaces/${projectName}/${name}`,
+          sizeBytes: size.bytes,
+          modifiedAt: new Date(info.mtimeMs).toISOString(),
+          ...(conversationId ? { conversationId } : {}),
+          truncated: size.truncated,
+        });
+      }
+    }
+
+    return {
+      mirrors,
+      workspaces,
+      truncated: mirrors.length >= maxStorageEntries || workspaces.length >= maxStorageEntries ||
+        mirrors.some((entry) => entry.truncated) || workspaces.some((entry) => entry.truncated),
+    };
   }
 
   async cleanupStorage(

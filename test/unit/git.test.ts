@@ -580,6 +580,39 @@ describe("Git workflows", () => {
     expect((await lstat(join(root, "workspaces", "8"))).isDirectory()).toBe(true);
   });
 
+  it("describes mirrors and workspaces with size and modification time", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-storage-describe-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com");
+    await manager.initialize();
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(mirror, { recursive: true });
+    await writeFile(join(mirror, "config"), "mirror-config");
+    const conversationId = "123e4567-e89b-12d3-a456-426614174000";
+    const worktree = join(root, "workspaces", "7", `conversation-${conversationId}`);
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, "file.txt"), "work in progress");
+
+    const description = await manager.describeStorage();
+    expect(description.mirrors).toHaveLength(1);
+    expect(description.mirrors[0]).toMatchObject({
+      projectId: 7,
+      name: "7.git",
+      relativePath: "mirrors/7.git",
+    });
+    expect(description.mirrors[0].sizeBytes).toBeGreaterThan(0);
+    expect(description.mirrors[0].modifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(description.workspaces).toHaveLength(1);
+    expect(description.workspaces[0]).toMatchObject({
+      projectId: 7,
+      name: `conversation-${conversationId}`,
+      conversationId,
+      relativePath: `workspaces/7/conversation-${conversationId}`,
+    });
+    expect(description.workspaces[0].sizeBytes).toBeGreaterThan(0);
+    expect(description.truncated).toBe(false);
+  });
+
   it("keeps the worktree clean after saving so rebase works and its result survives", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-save-align-"));
     const root = join(directory, "storage");
