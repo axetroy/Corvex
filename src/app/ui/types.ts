@@ -75,6 +75,10 @@ export interface OverviewResponse extends OperationsOverview {
   workspaceOverLimitCount: number;
   /** 所有 worktree 字节数合计（有界扫描的近似值）。 */
   workspaceTotalBytes: number;
+  /** worktree / 镜像条目数，供仪表盘存储摘要使用。 */
+  workspaceCount: number;
+  mirrorCount: number;
+  mirrorTotalBytes: number;
 }
 
 /** 分页默认单页大小。 */

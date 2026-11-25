@@ -1,19 +1,165 @@
-/* 设置页「存储」分组内嵌的磁盘概览：镜像与工作树的只读统计。 */
+/* 设置页「存储」分组：可视化图表 + 明细表，颜色全部取自主题变量。 */
+.storage-overview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .storage-overview-toolbar {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 12px;
 }
 
-.storage-overview-stats {
+.storage-chart-grid .storage-chart-card {
+  height: 100%;
+}
+
+/* 环形图 */
+.storage-chart-donut {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.storage-chart-donut svg {
+  width: 140px;
+  height: 140px;
+  flex: 0 0 140px;
+}
+
+.storage-chart-donut-value {
+  fill: var(--text-strong);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.storage-chart-donut-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+
+.storage-chart-legend {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.storage-chart-legend > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.storage-chart-legend b {
+  margin-left: auto;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-chart-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+}
+
+/* 容量环 */
+.storage-usage {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.storage-usage-info {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.storage-usage-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.storage-usage-value {
+  color: var(--text-strong);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-usage-limit {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* 排行条 */
+.storage-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 2px;
+}
+
+.storage-bar-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 1.2fr) 76px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
 }
 
-.storage-overview-panel .panel + .panel {
-  margin-top: 16px;
+.storage-bar-name {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-bar-track {
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+
+.storage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--primary);
+}
+
+.storage-bar-value {
+  color: var(--text-strong);
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-bar-empty {
+  padding: 20px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 明细表 */
+.storage-detail-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+}
+
+.storage-detail-table .ant-typography {
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 .storage-overview-table .ant-table-cell {

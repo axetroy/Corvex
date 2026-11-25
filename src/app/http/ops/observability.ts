@@ -22,6 +22,7 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
       (entry) => entry.sizeBytes > workspaceSizeLimitBytes,
     ).length;
     const workspaceTotalBytes = storage.workspaces.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+    const mirrorTotalBytes = storage.mirrors.reduce((sum, entry) => sum + entry.sizeBytes, 0);
     sendJson(reply, 200, {
       generatedAt: generatedAt.toISOString(),
       ...overview,
@@ -31,6 +32,9 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
       workspaceSizeLimitBytes,
       workspaceOverLimitCount,
       workspaceTotalBytes,
+      workspaceCount: storage.workspaces.length,
+      mirrorCount: storage.mirrors.length,
+      mirrorTotalBytes,
     });
   });
 }

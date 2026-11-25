@@ -184,6 +184,7 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
                 format={() => `${capacityPercent}%`}
               />
               <div className="admin-dashboard-capacity-info">
+                <div className="admin-dashboard-capacity-label">{copy.adminStorageWorkspaceSize}</div>
                 <div className="admin-dashboard-capacity-value">{formatStorageBytes(data.workspaceTotalBytes)}</div>
                 <div className="admin-dashboard-capacity-limit">
                   {copy.adminDashboardWorkspaceNote.replace("{limit}", formatStorageBytes(data.workspaceSizeLimitBytes))}
@@ -194,6 +195,11 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
                   </div>
                 ) : null}
               </div>
+            </div>
+            <div className="admin-dashboard-storage-summary">
+              <div><span>{copy.adminStorageMirrorCount}</span><b>{data.mirrorCount}</b></div>
+              <div><span>{copy.adminStorageMirrorSize}</span><b>{formatStorageBytes(data.mirrorTotalBytes)}</b></div>
+              <div><span>{copy.adminStorageWorkspaceCount}</span><b>{data.workspaceCount}</b></div>
             </div>
           </Card>
         </Col>

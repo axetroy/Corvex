@@ -140,6 +140,11 @@
   min-width: 0;
 }
 
+.admin-dashboard-capacity-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .admin-dashboard-capacity-value {
   color: var(--text-strong);
   font-size: 24px;
@@ -157,6 +162,33 @@
   margin-top: 6px;
   color: var(--danger);
   font-size: 12px;
+}
+
+.admin-dashboard-storage-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.admin-dashboard-storage-summary > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-dashboard-storage-summary span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.admin-dashboard-storage-summary b {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 模型调用列表：图标 + 任务/结果 + 次数耗时 + Token 量级。 */
