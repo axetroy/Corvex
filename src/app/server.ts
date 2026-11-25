@@ -24,6 +24,7 @@ import type { OpsContext } from "./http/context.js";
 import { sendJson, sendText } from "./http/respond.js";
 import { registerRoutes } from "./http/routes.js";
 import { SettingsService } from "./settings-service.js";
+import { ExecutionConfigService } from "./execution-config-service.js";
 
 /** 把 `host:port` 形式监听地址拆成 Fastify 需要的字段；支持 `[::1]:8080`。 */
 function parseListenAddress(address: string): { host: string; port: number } {
@@ -51,6 +52,7 @@ export class CorvexServer {
   /** 对话轮次在 Server 进程内联执行。 */
   private readonly conversations: ConversationRunner;
   private readonly settings: SettingsService;
+  private readonly executionConfig: ExecutionConfigService;
   private readonly cipher: TokenCipher;
   private readonly oauth: GitLabOAuthService;
   private readonly hooks: CorvexHooks;
@@ -208,6 +210,10 @@ export class CorvexServer {
     this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
       this.hooks.settingsApplied.call(applied);
     });
+    // 执行环境配置由管理员 UI 管理；保存后 exec 后端在每轮重建，无需重启。
+    this.executionConfig = new ExecutionConfigService(
+      config, store, structuredClone(config), (applied) => this.hooks.settingsApplied.call(applied),
+    );
     this.app = Fastify({
       // 原实现对 HEAD 不额外放行，交给路由兜底；保持同样的可见行为。
       exposeHeadRoutes: false,
@@ -254,6 +260,7 @@ export class CorvexServer {
       oauth: this.oauth,
       hooks: this.hooks,
       settings: this.settings,
+      executionConfig: this.executionConfig,
       gitlabForRequest: (request: FastifyRequest) => {
         const user = currentUser(request);
         // 受保护路由已经校验登录态；这里再兜一层，确保绝不产生无用户凭据的 GitLab 请求。
@@ -278,6 +285,7 @@ export class CorvexServer {
 
   async run(signal: AbortSignal): Promise<void> {
     this.settings.applyStored();
+    this.executionConfig.applyStored();
     await callAsyncHook(this.hooks.serverBeforeListen);
     await this.app.listen({ host: this.address.host, port: this.address.port });
     console.info("Corvex server listening", {

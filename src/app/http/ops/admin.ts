@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { requireAdmin } from "../../auth/context.js";
+import { currentUser, requireAdmin } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import { readJsonObject, sendJson } from "../respond.js";
 import { parseSkillDocument, validateSkillDocument } from "../../../agent/skills.js";
@@ -194,6 +194,27 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
           return;
         }
         sendJson(reply, 200, { deleted: true });
+      });
+
+      // 执行环境配置：管理员专属，保存前走完整 fail-closed 校验。
+      admin.get("/execution", async (_request, reply) => {
+        sendJson(reply, 200, ctx.executionConfig.read());
+      });
+
+      admin.put("/execution", async (request, reply) => {
+        const body = readJsonObject(request, reply);
+        if (!body) return;
+        const actor = currentUser(request)?.username ?? "admin";
+        const result = ctx.executionConfig.save(body, actor);
+        if (!result.ok) {
+          sendJson(reply, 400, { error: result.error });
+          return;
+        }
+        sendJson(reply, 200, result.payload);
+      });
+
+      admin.delete("/execution", async (_request, reply) => {
+        sendJson(reply, 200, ctx.executionConfig.reset());
       });
     },
     { prefix: "/api/ops/admin" },

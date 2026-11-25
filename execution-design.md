@@ -72,7 +72,12 @@ interface ExecutionBackend {
 
 ## 5. 配置
 
-执行环境是**安全边界配置**，只放 YAML 文件（file-only），改后需重启；不放进运维台运行时设置，避免被热改绕过隔离。
+执行环境是**安全边界配置**——只有管理员能改，且保存前必须走完整 `validateConfig`（含 fail-closed），不进通用运行时设置（避免普通用户或半套配置绕过隔离）。配置有两个来源，优先级从高到低：
+
+1. **管理中心 UI**（管理员专属）：`GET/PUT /api/ops/admin/execution`，存 SQLite `execution_config` 表，保存即生效（后端在每轮 `runSession` 时从配置重建）。适用于日常调整开关、后端、镜像、限额。
+2. **YAML / 环境变量**（file-only）：提供初始值，作为 SQLite 无覆盖项时的回退，也是容器化部署的引导入口。改 YAML 需重启。
+
+无论从哪个入口保存，都必须通过同一套校验：生产禁 `local`、sandbox 必须有 image/socket、限额在合理区间。任何校验失败都拒绝写入。
 
 ```yaml
 execution:

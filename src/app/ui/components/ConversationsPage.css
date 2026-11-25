@@ -2806,3 +2806,79 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 
+
+/* 命令执行历史 */
+.conversation-execution-history {
+  padding: 8px;
+}
+
+.conversation-execution-command {
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.conversation-execution-ok { color: var(--success, var(--primary)); }
+.conversation-execution-fail { color: var(--danger); font-weight: 600; }
+
+/* 执行环境配置面板（管理中心） */
+.execution-config-panel {
+  display: flex;
+  max-width: 760px;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.execution-config-source {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.execution-config-notice {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.execution-config-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.execution-config-field > span {
+  flex: 0 0 160px;
+  color: var(--text-secondary);
+}
+
+.execution-config-field > input {
+  min-width: 0;
+  max-width: 360px;
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.execution-config-warning {
+  padding: 8px 12px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 12px;
+}

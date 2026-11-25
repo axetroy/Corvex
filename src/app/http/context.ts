@@ -8,6 +8,7 @@ import type { GitLabClient } from "../../gitlab/client.js";
 import type { ResponseLanguage } from "../../model.js";
 import type { ConversationRunner } from "../conversation-runner.js";
 import type { SettingsService } from "../settings-service.js";
+import type { ExecutionConfigService } from "../execution-config-service.js";
 
 /**
  * `/api/ops` 路由所需的运行时依赖。Server 只暴露路由真正需要的能力，
@@ -18,6 +19,7 @@ export interface OpsContext {
   readonly store: AppStore;
   readonly conversations: ConversationRunner;
   readonly settings: SettingsService;
+  readonly executionConfig: ExecutionConfigService;
   /** GitLab OAuth 服务；用于当前用户信息与登录态。 */
   readonly oauth: GitLabOAuthService;
   readonly hooks: CorvexHooks;

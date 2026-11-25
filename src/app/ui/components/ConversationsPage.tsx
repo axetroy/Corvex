@@ -32,6 +32,7 @@ import { ProjectPicker } from "./ProjectPicker.js";
 import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
+import { ExecutionHistoryTab } from "./ExecutionHistoryTab.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
 import { ConversationTurnNav } from "./ConversationTurnNav.js";
@@ -49,7 +50,7 @@ interface Props {
 }
 
 /** 对话详情右侧的标签：对话流、调用记录、轮次轨迹与用量统计。 */
-type ConversationDetailTab = "chat" | "records" | "trace" | "context" | "stats" | "changes" | "git";
+type ConversationDetailTab = "chat" | "records" | "trace" | "context" | "stats" | "changes" | "git" | "executions";
 
 /** localStorage 中保存工作区/文件面板布局的键名（由 react-resizable-panels 管理）。 */
 const panelLayoutKey = "corvex-ops-conversation-panels-layout";
@@ -1397,6 +1398,22 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                 children: (
                   <div className="conversation-tab-pane">
                     {selectedConversationId ? <ConversationGitGraph conversationId={selectedConversationId} copy={copy} /> : null}
+                  </div>
+                ),
+              },
+              {
+                key: "executions",
+                label: copy.conversationTabExecutions,
+                children: (
+                  <div className="conversation-tab-pane">
+                    {selectedConversationId ? (
+                      <ExecutionHistoryTab
+                        conversationId={selectedConversationId}
+                        copy={copy}
+                        locale={locale}
+                        refreshToken={refreshToken}
+                      />
+                    ) : null}
                   </div>
                 ),
               },

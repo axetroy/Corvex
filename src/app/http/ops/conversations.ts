@@ -744,6 +744,17 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     sendJson(reply, 200, stats);
   });
 
+  // 命令执行历史：来自审计事件，供「执行」标签展示本会话跑过的命令与结果。
+  app.get("/api/ops/conversations/:id/executions", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    sendJson(reply, 200, { items: ctx.store.listExecutionHistory(conversationId) });
+  });
+
   app.post("/api/ops/conversations/:id/messages", async (request, reply) => {
     const conversationId = idParam((request.params as { id: string }).id);
     if (!conversationId) {

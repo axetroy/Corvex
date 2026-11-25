@@ -1639,6 +1639,37 @@ export class AppStore {
     }));
   }
 
+  /** 读取某会话的命令执行历史（来自审计事件），最新在前；result 形如 backend:exitCode:commandPreview。 */
+  listExecutionHistory(conversationId: string, limit = 100): Array<{
+    turnId: string;
+    command: string;
+    backend: string;
+    exitCode: number | null;
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare(
+      `SELECT resource, result, created_at FROM audit_events
+       WHERE action='command_execution' AND resource LIKE ? ORDER BY id DESC LIMIT ?`,
+    ).all(`${conversationId}:%`, limit) as { resource: string; result: string; created_at: string }[];
+    return rows.flatMap((row) => {
+      const turnId = row.resource.slice(conversationId.length + 1);
+      const separator = row.result.indexOf(":");
+      const second = row.result.indexOf(":", separator + 1);
+      if (separator < 0 || second < 0) return [];
+      const backend = row.result.slice(0, separator);
+      const rawExit = row.result.slice(separator + 1, second);
+      const command = row.result.slice(second + 1);
+      const exitCode = rawExit === "aborted" ? null : Number(rawExit);
+      return [{
+        turnId,
+        command,
+        backend,
+        exitCode: Number.isSafeInteger(exitCode) ? exitCode : null,
+        createdAt: stringColumn(row, "created_at"),
+      }];
+    });
+  }
+
   /**
    * 记录一次运行时设置变更。设置不属于 GitLab 用户，actor_id 固定为 0，
    * 控制台操作者写入 resource；结果保存「旧值->新值」摘要，便于审计回溯。
@@ -2386,6 +2417,30 @@ export class AppStore {
     return new Set(rows.map((row) => row.conversation_id));
   }
 
+  /** 读取管理员保存的执行环境配置；无行返回 undefined（用配置文件初始值）。 */
+  getExecutionConfig(): { value: string; updatedAt: string; updatedBy: string } | undefined {
+    const row = this.db.prepare(
+      "SELECT value, updated_at, updated_by FROM execution_config WHERE id=1",
+    ).get() as { value: string; updated_at: string; updated_by: string } | undefined;
+    return row
+      ? { value: row.value, updatedAt: stringColumn(row, "updated_at"), updatedBy: stringColumn(row, "updated_by") }
+      : undefined;
+  }
+
+  /** 覆盖写入执行环境配置（JSON 字符串）。 */
+  saveExecutionConfig(value: string, updatedBy: string): void {
+    if (!value) return;
+    this.db.prepare(
+      `INSERT INTO execution_config (id,value,updated_at,updated_by) VALUES (1,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, updated_by=excluded.updated_by`,
+    ).run(value, new Date().toISOString(), updatedBy);
+  }
+
+  /** 删除执行环境配置覆盖，回退到配置文件初始值。 */
+  clearExecutionConfig(): void {
+    this.db.prepare("DELETE FROM execution_config WHERE id=1").run();
+  }
+
   /** 记录一次命令执行审计：resource 带会话/轮次，result 带后端/退出码；命令前缀已脱敏限长。 */
   insertExecutionAudit(
     actorId: number,
@@ -2468,6 +2523,10 @@ export class AppStore {
         created_at TEXT NOT NULL, expires_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS user_sessions_expiry_idx ON user_sessions(expires_at);
+      -- 执行环境配置（管理员专属）：整段 JSON；无行时用配置文件初始值。
+      CREATE TABLE IF NOT EXISTS execution_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL DEFAULT ''
+      );
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, project_name TEXT NOT NULL,
         target_branch TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'gitlab',
