@@ -178,7 +178,6 @@ export const ConversationTimeline = memo(function ConversationTimeline({
               conversationId={conversationId}
               turnId={turnId}
               copy={copy}
-              disabled={active}
             />
           ) : (
             <details className="conversation-tool-call" key={segment.key}>

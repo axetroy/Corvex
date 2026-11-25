@@ -18,7 +18,6 @@ interface Props {
   conversationId?: string;
   turnId?: string;
   copy: Copy;
-  disabled?: boolean;
 }
 
 type SearchResults = Pick<ISearchResultChangeEvent, "resultIndex" | "resultCount">;
@@ -70,7 +69,7 @@ function searchDecorations() {
  * 可读终端：用 VS Code 同款 xterm.js 渲染 ANSI 输出，内置虚拟滚动；
  * 支持输出内搜索、复制全部，并可在命令运行期间单独停止（不取消整轮）。
  */
-export const ConversationExecTerminal = memo(function ConversationExecTerminal({ entry, conversationId, turnId, copy, disabled }: Props) {
+export const ConversationExecTerminal = memo(function ConversationExecTerminal({ entry, conversationId, turnId, copy }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -258,7 +257,7 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
             </>
           ) : null}
           {!entry.done && conversationId && turnId ? (
-            <Button size="small" danger loading={stopping} disabled={disabled} onClick={() => void stop()}>
+            <Button size="small" danger loading={stopping} onClick={() => void stop()}>
               {copy.execStop}
             </Button>
           ) : null}
