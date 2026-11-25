@@ -50,6 +50,23 @@ describe("AppStore", () => {
     expect(store.getConversationPlan(created.conversationId)).toBeUndefined();
   });
 
+  it("下一轮的历史只包含消息正文，不包含下一步建议", async () => {
+    store = await AppStore.open(":memory:");
+    const first = store.createConversation({
+      projectId: 7, projectName: "group/project", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "first",
+    });
+    store.claimConversationTurn(first.turnId);
+    // 完成时附带建议；建议只写入 suggestions 列，不得进入 content。
+    store.finishConversationTurn(first.turnId, "Clean answer", "test-model", ["查看改动"]);
+    const second = store.addConversationMessage(first.conversationId, {
+      projectId: 7, targetBranch: "main", headSha: "b".repeat(40), actorId: 0, request: "second",
+    });
+    const claimed = store.claimConversationTurn(second.turnId);
+    expect(claimed?.history.some((message) => message.content.includes("查看改动"))).toBe(false);
+    expect(claimed?.history.some((message) => message.content.includes("Clean answer"))).toBe(true);
+  });
+
   it("持久化并清理会话的完整 Pi 会话条目", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

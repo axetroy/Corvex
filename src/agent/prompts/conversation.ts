@@ -6,24 +6,26 @@ const relativePaths = {
   "zh-CN": "read_file、read_dir、stat 和 search_text 必须使用仓库相对路径。仓库文件的绝对路径会被拒绝；只有可信 Skill 根目录允许使用绝对路径。",
 } as const;
 
-/** 下一步建议指令：让模型在实质回答后附带一个有界块， Corvex 解析后剥离为可点击 chip。 */
+/** 下一步建议指令：模型只给动作短语，客服腔反问由 parseFollowups 在代码层过滤。 */
 function followupsInstruction(language: ResponseLanguage): string {
   if (language === "zh-CN") {
     return `
 ## 下一步建议
-当回答是实质性的协作结论时，在正文末尾另起一段附上你自己的 2-3 条下一步建议，格式严格为：
+仅当你在本轮**完成了实际动作**（修改/新建文件、创建或合并 MR、运行命令、提交代码）时，才在正文末尾另起一段附上 1-3 条下一步建议，格式严格为：
 <corvex_followups>
-["具体的下一步问题一","具体的下一步问题二"]
+["查看 MR diff","运行测试验证","提交改动"]
 </corvex_followups>
-每条必须是用户可能接着问的具体问题，紧扣本次回答内容，不要「告诉我更多」这类泛泛语句，也不要重复用户刚问过的；每条不超过 60 字。简单问答或纯确认无需附带此块；此块不是给用户读的正文，不要在别处提及它。`;
+每条必须是**动宾短语**（动词开头的具体动作），紧扣本次实际做的事。严禁写成向用户提问或请求许可，例如「需要我…吗？」「要不要…？」「想…吗？」「帮你…吗？」一律不许出现；也不要写泛泛的「告诉我更多」。每条不超过 30 字。
+以下情况**一律不附带此块**：单纯的事实回答（如版本号、路径、目录列表）、解释性回答、失败或取消的轮次、以及任何没有产生实际动作的回答。此块不是给用户读的正文，不要在别处提及它。`;
   }
   return `
 ## Next-step suggestions
-For substantive answers, append 2-3 of your own next-step suggestions at the very end in this exact format:
+Only when you actually completed an action this turn (changed/created a file, created or merged an MR, ran a command, committed code), append 1-3 next-step suggestions at the very end in this exact format:
 <corvex_followups>
-["specific next question one","specific next question two"]
+["View the MR diff","Run tests to verify","Commit the changes"]
 </corvex_followups>
-Each must be a concrete question the user might ask next, tied to what you just answered — not generic "tell me more" and not repeating what was just asked. Keep each under 60 words. Skip this block for simple questions or pure acknowledgements; it is not user-facing prose, never mention it elsewhere.`;
+Each must be a short **verb-first action** tied to what you actually did. Never phrase them as questions or permission requests to the user — "Would you like me to…?", "Should I…?", "Want me to…?" are forbidden. No generic "tell me more". Keep each under 30 words.
+Never emit this block for: plain factual answers (versions, paths, directory listings), explanations, failed or cancelled turns, or any turn with no real action. It is not user-facing prose; never mention it elsewhere.`;
 }
 
 /**

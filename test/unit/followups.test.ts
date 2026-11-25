@@ -4,11 +4,11 @@ import { parseFollowups } from "../../src/agent/followups.ts";
 describe("parseFollowups", () => {
   it("strips a JSON follow-up block and keeps the clean answer", () => {
     const result = parseFollowups(
-      "Here is the answer.\n\n<corvex_followups>\n[\"为什么这样改?\",\"能补充测试吗?\"]\n</corvex_followups>",
+      "Here is the answer.\n\n<corvex_followups>\n[\"查看改动\",\"补充测试\"]\n</corvex_followups>",
       3,
     );
     expect(result.content).toBe("Here is the answer.");
-    expect(result.suggestions).toEqual(["为什么这样改?", "能补充测试吗?"]);
+    expect(result.suggestions).toEqual(["查看改动", "补充测试"]);
   });
 
   it("supports one-per-line plain text and trims markdown bullets", () => {
@@ -30,6 +30,14 @@ describe("parseFollowups", () => {
   it("leaves content untouched when no valid block is present", () => {
     const answer = "普通回答，没有建议。";
     expect(parseFollowups(answer, 3)).toEqual({ content: answer, suggestions: [] });
+  });
+
+  it("filters out service-tone questions (agent asking the user for permission)", () => {
+    const result = parseFollowups(
+      "答案\n<corvex_followups>\n[\"需要我运行测试吗？\",\"要不要查看 MR？\",\"帮你检查 Git 状态吗？\",\"Would you like me to commit?\",\"运行测试验证\"]\n</corvex_followups>",
+      5,
+    );
+    expect(result.suggestions).toEqual(["运行测试验证"]);
   });
 
   it("does not leak credentials from suggestions", () => {

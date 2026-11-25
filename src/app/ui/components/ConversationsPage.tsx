@@ -130,6 +130,7 @@ function MessageContent({
   timeline,
   waitingSince,
   onSuggestion,
+  showSuggestions,
 }: {
   message: ConversationMessage;
   copy: Copy;
@@ -137,6 +138,8 @@ function MessageContent({
   timeline: readonly ConversationTimelineSegment[];
   waitingSince?: number | null;
   onSuggestion?: (text: string) => void;
+  /** 只有最新一轮的回答才展示建议；用户发起下一轮后旧建议过期。 */
+  showSuggestions?: boolean;
 }) {
   const codeComponentsProps = useMemo(() => ({
     code: {
@@ -199,7 +202,7 @@ function MessageContent({
           ) : null}
         </div>
       ) : null}
-      {settled && message.suggestions.length > 0 && onSuggestion ? (
+      {settled && showSuggestions && message.suggestions.length > 0 && onSuggestion ? (
         <div className="conversation-followup-suggestions" aria-label={copy.suggestNextStep}>
           <span className="conversation-followup-suggestions-label">{copy.suggestNextStep}</span>
           {message.suggestions.map((text) => (
@@ -894,6 +897,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       ? { ...message, content: streamedReply.text }
       : message,
   );
+  // 只有最后一条消息（最新一轮）的建议才有效；用户继续提问后旧建议隐藏。
+  const lastMessageId = transcriptMessages.at(-1)?.id;
   const bubbleItems: BubbleItemType[] = transcriptMessages.map((message) => {
     const streaming = message.role === "assistant" && message.status === "running" &&
       streamedReply?.turnId === message.turnId;
@@ -952,6 +957,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         timeline={timeline}
         waitingSince={streaming ? waitingSince : null}
         onSuggestion={(text) => applySuggestion(text)}
+        showSuggestions={message.id === lastMessageId}
       />,
       // 首 token 前的等待提示由 MessageContent 自己渲染，避免与 Bubble 的 loading 重复。
       loading: false,

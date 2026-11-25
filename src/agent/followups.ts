@@ -9,14 +9,40 @@ export interface ParsedFollowups {
   suggestions: string[];
 }
 
-/** 校验并清洗单条建议：非空、限长、脱敏，去掉 markdown 列表符号。 */
+/**
+ * 客服腔反问特征：模型常把建议写成「需要我…吗？」这类向用户提问/求许可的句子，
+ * 它们不是可执行的下一步，展示出来会干扰用户。命中即丢弃（代码级硬过滤，
+ * 提示词是软约束，模型未必遵守）。
+ */
+const serviceTonePatterns = [
+  /需要我.*[吗么]/,
+  /要不要/,
+  /想(?:要)?我?.*[吗么]/,
+  /帮你.*[吗么]/,
+  /我帮你/,
+  /是否.*[吗么]/,
+  /请问/,
+  /\bwould you like\b/i,
+  /\bdo you want\b/i,
+  /\bshould i\b/i,
+  /\bshall i\b/i,
+  /\bwant me to\b/i,
+  /\bneed me to\b/i,
+  /\bcan i\b/i,
+  /\?$/,
+  /？$/,
+];
+
+/** 校验并清洗单条建议：非空、限长、脱敏，去掉 markdown 列表符号，过滤客服腔反问。 */
 function cleanSuggestion(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const text = redactSensitiveText(raw.trim())
     .replace(/^[-*\d.\s]+/, "")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > 0 && text.length <= 200 ? text : null;
+  if (text.length === 0 || text.length > 200) return null;
+  if (serviceTonePatterns.some((pattern) => pattern.test(text))) return null;
+  return text;
 }
 
 /**
