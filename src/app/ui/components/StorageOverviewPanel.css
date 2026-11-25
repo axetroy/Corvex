@@ -1,0 +1,19 @@
+/* 存储管理页：镜像与工作树的只读统计，复用管理中心的主题变量。 */
+.storage-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.storage-overview-panel .panel + .panel {
+  margin-top: 16px;
+}
+
+.storage-overview-table .ant-table-cell {
+  font-size: 12px;
+}
+
+.storage-overview-table .ant-typography-code {
+  font-size: 12px;
+}

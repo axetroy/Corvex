@@ -10,6 +10,7 @@ import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
 import { ContextMetricsPanel } from "./ContextMetricsPanel.js";
 import { ExecutionConfigPanel } from "./ExecutionConfigPanel.js";
+import { StorageOverviewPanel } from "./StorageOverviewPanel.js";
 import "./AdminConsole.css";
 
 interface Props {
@@ -49,6 +50,7 @@ export function AdminConsole({
   const usersActive = route === "admin/users";
   const metricsActive = route === "admin/metrics";
   const executionsActive = route === "admin/executions";
+  const storageActive = route === "admin/storage";
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
 
   useEffect(() => {
@@ -98,6 +100,9 @@ export function AdminConsole({
           <Link className={executionsActive ? "active" : ""} to={adminPath("executions")}>
             {copy.adminExecutionsTitle}
           </Link>
+          <Link className={storageActive ? "active" : ""} to={adminPath("storage")}>
+            {copy.adminStorageTitle}
+          </Link>
           <a className="admin-console-back" href="/ops">{copy.adminBackToConsole}</a>
         </nav>
       </aside>
@@ -111,6 +116,8 @@ export function AdminConsole({
           <ContextMetricsPanel copy={copy} refreshToken={0} />
         ) : executionsActive ? (
           <ExecutionConfigPanel copy={copy} onUpdated={onUpdated} />
+        ) : storageActive ? (
+          <StorageOverviewPanel copy={copy} locale={locale} />
         ) : (
           <SettingsPage
             copy={copy}
