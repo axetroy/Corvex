@@ -231,6 +231,47 @@ describe("AppStore", () => {
       .toEqual([{ kind: "context", id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" }]);
   });
 
+  it("过程快照保留命令输出并在读取时脱敏限长", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-exec-process-"));
+    store = await AppStore.open(join(directory, "state.db"));
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Run a command",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    store.saveConversationTurnProcess(claimed.turnId, [
+      {
+        kind: "tool",
+        id: "call-1",
+        name: "run_command",
+        input: JSON.stringify({ command: "echo hello" }),
+        status: "succeeded",
+        durationMs: 5,
+        execOutput: {
+          stdout: `Bearer abcdefghijklmnopqrstuvwxyz\n${"x".repeat(40_000)}`,
+          stderr: "warn",
+          exitCode: 0,
+          aborted: false,
+        },
+      },
+    ]);
+
+    const turn = store.getConversationTurn(created.conversationId, claimed.turnId);
+    const entry = turn?.process.find((item) => item.kind === "tool" && item.id === "call-1");
+    expect(entry?.kind).toBe("tool");
+    if (entry?.kind !== "tool" || !entry.execOutput) throw new Error("execOutput was dropped on read");
+    expect(entry.execOutput.stdout).toContain("Bearer [REDACTED]");
+    expect(entry.execOutput.stdout.length).toBeLessThanOrEqual(32_000);
+    expect(entry.execOutput.truncated).toBe(true);
+    expect(entry.execOutput.stderr).toBe("warn");
+    expect(entry.execOutput.exitCode).toBe(0);
+  });
+
   it("把旧的 model_profiles 表拆分为供应商与模型", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     const databasePath = join(directory, "state.db");

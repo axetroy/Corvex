@@ -87,6 +87,8 @@ const maxConversationProcessBytes = 256 << 10;
 /** 过程条目里单段文本/工具参数的字符上限，按与轨迹相同的规则脱敏后截断。 */
 const maxConversationProcessTextChars = 20_000;
 const maxConversationProcessInputChars = 8_000;
+/** 回放终端的单流输出字符上限：过程快照总限额为 256 KiB，单字段不能无限增长。 */
+const maxConversationExecOutputChars = 32_000;
 /** 单次对话轮次注入模型上下文的历史消息条数上限，按最近优先截断。 */
 /** 滚动摘要的最大字符数，避免摘要本身撑大提示词。 */
 const maxConversationSummaryCharacters = 4_000;
@@ -245,6 +247,26 @@ function parseStoredSuggestions(raw: string): string[] {
   }
 }
 
+/**
+ * 读取落库的命令输出：只接受已知形状，按与轨迹相同的规则脱敏并限长，
+ * 损坏字段直接忽略，避免回放路径绕过过程快照的脱敏与大小边界。
+ */
+function readStoredExecOutput(value: unknown): NonNullable<Extract<ConversationProcessEntry, { kind: "tool" }>["execOutput"]> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.stdout !== "string" || typeof raw.stderr !== "string") return undefined;
+  const tooLong = raw.stdout.length > maxConversationExecOutputChars || raw.stderr.length > maxConversationExecOutputChars;
+  return {
+    stdout: redactSensitiveText(raw.stdout).slice(0, maxConversationExecOutputChars),
+    stderr: redactSensitiveText(raw.stderr).slice(0, maxConversationExecOutputChars),
+    ...(raw.exitCode === null || typeof raw.exitCode === "number" ? { exitCode: raw.exitCode } : {}),
+    ...(typeof raw.aborted === "boolean" ? { aborted: raw.aborted } : {}),
+    ...(typeof raw.reason === "string" ? { reason: redactSensitiveText(raw.reason).slice(0, 200) } : {}),
+    ...(typeof raw.truncated === "boolean" ? { truncated: raw.truncated } : {}),
+    ...(tooLong ? { truncated: true } : {}),
+  };
+}
+
 function readConversationProcess(raw: string): ConversationProcessEntry[] {
   if (!raw) return [];
   let parsed: unknown;
@@ -267,6 +289,7 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
       entry.kind === "tool" && typeof entry.name === "string" &&
       (entry.status === "running" || entry.status === "succeeded" || entry.status === "failed")
     ) {
+      const execOutput = readStoredExecOutput(entry.execOutput);
       return [{
         kind: "tool",
         ...(typeof entry.id === "string" ? { id: entry.id } : {}),
@@ -274,6 +297,7 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
         input: typeof entry.input === "string" ? entry.input : null,
         status: entry.status,
         durationMs: typeof entry.durationMs === "number" ? entry.durationMs : null,
+        ...(execOutput ? { execOutput } : {}),
       }];
     }
     return [];
