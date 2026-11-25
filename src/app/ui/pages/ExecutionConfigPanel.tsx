@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Input, InputNumber, Select, Switch, Tag, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
+import type { Copy } from "../lib/i18n.js";
+import { ErrorBanner, Loading, Panel } from "../components/common.js";
+import { AdminPage } from "../components/AdminPage.js";
 import "./ExecutionConfigPanel.css";
 
 interface ExecutionConfig {
@@ -135,18 +136,17 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
   const dirty = JSON.stringify(draft) !== JSON.stringify(payload.config);
 
   return (
-    <div className="execution-config-panel">
-      <PageHeading
-        title={copy.executionConfigTitle}
-        description={copy.executionConfigHint}
-        actions={
-          <div className="execution-config-actions">
-            <Button onClick={() => applyPayload(payload)} disabled={!dirty || saving}>{copy.executionConfigCancel}</Button>
-            <Button onClick={() => void reset()} disabled={saving || payload.source === "file"}>{copy.executionConfigResetButton}</Button>
-            <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
-          </div>
-        }
-      />
+    <AdminPage
+      title={copy.executionConfigTitle}
+      description={copy.executionConfigHint}
+      actions={
+        <div className="execution-config-actions">
+          <Button onClick={() => applyPayload(payload)} disabled={!dirty || saving}>{copy.executionConfigCancel}</Button>
+          <Button onClick={() => void reset()} disabled={saving || payload.source === "file"}>{copy.executionConfigResetButton}</Button>
+          <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
+        </div>
+      }
+    >
 
       <div className="execution-config-meta">
         <span>{copy.executionConfigSource}</span>{sourceTag}
@@ -256,6 +256,6 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
           </Field>
         </Panel>
       )}
-    </div>
+    </AdminPage>
   );
 }

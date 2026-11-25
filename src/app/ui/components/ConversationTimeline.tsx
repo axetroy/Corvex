@@ -1,13 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "antd";
-import { describeSessionTool, formatTraceDuration } from "../format.js";
-import { isAtScrollBottom } from "../scroll.js";
-import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../truncate.js";
-import { translate } from "../i18n.js";
-import type { Copy } from "../i18n.js";
-import { parseTraceValue } from "../trace.js";
-import { parseDisplayPlanSteps } from "../planDisplay.js";
-import type { ConversationToolCall } from "../types.js";
+import { describeSessionTool, formatTraceDuration } from "../lib/format.js";
+import { isAtScrollBottom } from "../lib/scroll.js";
+import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../lib/truncate.js";
+import { translate } from "../lib/i18n.js";
+import type { Copy } from "../lib/i18n.js";
+import { parseTraceValue } from "../lib/trace.js";
+import { parseDisplayPlanSteps } from "../lib/planDisplay.js";
+import type { ConversationToolCall } from "../lib/types.js";
 import { ConversationExecTerminal, type ExecDisplay } from "./ConversationExecTerminal.js";
 import { commandFromToolInput } from "./execDisplay.js";
 

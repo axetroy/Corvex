@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGitGraphLayout, graphLaneX, graphNodeY } from "../../src/app/ui/gitGraph.ts";
+import { buildGitGraphLayout, graphLaneX, graphNodeY } from "../../src/app/ui/lib/gitGraph";
 import type { GitGraphNode } from "../../src/git/types.ts";
 
 function node(sha: string, parents: string[] = [], refs: string[] = []): GitGraphNode {

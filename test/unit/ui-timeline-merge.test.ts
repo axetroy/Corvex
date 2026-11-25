@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextSegmentKey, mergeContextNotice } from "../../src/app/ui/conversationTimelineMerge.js";
+import { contextSegmentKey, mergeContextNotice } from "../../src/app/ui/lib/conversationTimelineMerge.js";
 
 interface Segment { kind: string; key: string; text: string; count?: number }
 const make = (key: string, text: string): Segment => ({ kind: "context", key, text });

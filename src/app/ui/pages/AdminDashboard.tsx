@@ -4,13 +4,14 @@ import {
   FiActivity, FiAlertCircle, FiBarChart2, FiCheckCircle, FiClock,
   FiCpu, FiDatabase, FiMessageSquare, FiRefreshCw,
 } from "react-icons/fi";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import { formatStorageBytes } from "../storage.js";
+import type { Copy } from "../lib/i18n.js";
+import { formatStorageBytes } from "../lib/storage.js";
 import type { ConversationTurnStatus } from "../../../model.js";
-import type { OverviewResponse } from "../types.js";
-import { ErrorBanner, Loading, PageHeading } from "./common.js";
+import type { OverviewResponse } from "../lib/types.js";
+import { ErrorBanner, Loading } from "../components/common.js";
+import { AdminPage } from "../components/AdminPage.js";
 import "./AdminDashboard.css";
 
 /** 指标卡：左侧彩色图标、右侧标签与大数字，底部可带一行辅助说明。 */
@@ -98,16 +99,15 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
   }));
 
   return (
-    <div className="admin-dashboard">
-      <PageHeading
-        title={copy.adminDashboardTitle}
-        description={copy.adminDashboardHint}
-        actions={(
-          <Button icon={<FiRefreshCw />} onClick={() => setToken((value) => value + 1)}>
-            {copy.refresh}
-          </Button>
-        )}
-      />
+    <AdminPage
+      title={copy.adminDashboardTitle}
+      description={copy.adminDashboardHint}
+      actions={(
+        <Button icon={<FiRefreshCw />} onClick={() => setToken((value) => value + 1)}>
+          {copy.refresh}
+        </Button>
+      )}
+    >
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
       {data.workspaceOverLimitCount > 0 ? (
         <Alert type="warning" showIcon message={copy.adminStorageWorkspaceOverLimit} />
@@ -277,6 +277,6 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
           </Card>
         </Col>
       </Row>
-    </div>
+    </AdminPage>
   );
 }

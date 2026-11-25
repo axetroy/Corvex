@@ -5,7 +5,7 @@ import {
   mergeBranches,
   toBranchSelectOption,
   type BranchOption,
-} from "../../src/app/ui/branchPicker.ts";
+} from "../../src/app/ui/lib/branchPicker";
 
 function branch(name: string, commit: Partial<BranchOption["commit"]> = {}): BranchOption {
   return { name, commit: { id: "a".repeat(40), ...commit } };

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Button, Input, Typography } from "antd";
-import { sendJson } from "../api.js";
+import { sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import { PageHeading, Panel } from "./common.js";
+import type { Copy } from "../lib/i18n.js";
+import { PageHeading, Panel } from "../components/common.js";
 
 interface Props {
   copy: Copy;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAtScrollBottom } from "../../src/app/ui/scroll.ts";
+import { isAtScrollBottom } from "../../src/app/ui/lib/scroll";
 
 describe("operations UI scroll following", () => {
   it("treats a container at the bottom as pinned", () => {

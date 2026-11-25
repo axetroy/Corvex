@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { darkTheme, languageForPath, lightTheme, monaco } from "../monaco.js";
-import { parseUnifiedDiff } from "../diff.js";
+import { darkTheme, languageForPath, lightTheme, monaco } from "../lib/monaco.js";
+import { parseUnifiedDiff } from "../lib/diff.js";
 
 interface Props {
   path: string;

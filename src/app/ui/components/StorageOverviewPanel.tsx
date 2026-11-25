@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Alert, Button, Card, Col, Progress, Row, Table, Typography } from "antd";
-import { fetchJson } from "../api.js";
-import type { Copy, Locale } from "../i18n.js";
-import { formatDate } from "../format.js";
-import { formatStorageBytes, sortStorageRows, totalStorageBytes, type StorageRow } from "../storage.js";
+import { fetchJson } from "../lib/api.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import { formatDate } from "../lib/format.js";
+import { formatStorageBytes, sortStorageRows, totalStorageBytes, type StorageRow } from "../lib/storage.js";
 import { ErrorBanner, Loading } from "./common.js";
 import "./StorageOverviewPanel.css";
 

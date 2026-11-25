@@ -1,0 +1,13 @@
+/* 管理中心页面的统一外壳：宽度、标题下边距与内容间距的唯一来源。 */
+.admin-page {
+  display: flex;
+  width: 100%;
+  max-width: 1100px;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+}
+
+.admin-page > .page-heading {
+  margin-bottom: 0;
+}

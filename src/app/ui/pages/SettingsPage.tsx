@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Input, InputNumber, Select, Switch, Typography } from "antd";
 import "./SettingsPage.css";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy, CopyTextKey, Locale } from "../i18n.js";
-import { settingGroups } from "../types.js";
-import { buildSettingsPayload } from "../settingsPayload.js";
-import type { SettingField, SettingValue, SettingsResponse } from "../types.js";
-import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
-import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
-import { StorageOverviewContent } from "./StorageOverviewPanel.js";
-import { ModelManager } from "./ModelManager.js";
-import { SkillManager } from "./SkillManager.js";
+import type { Copy, CopyTextKey, Locale } from "../lib/i18n.js";
+import { settingGroups } from "../lib/types.js";
+import { buildSettingsPayload } from "../lib/settingsPayload.js";
+import type { SettingField, SettingValue, SettingsResponse } from "../lib/types.js";
+import { ErrorBanner, Loading, Panel } from "../components/common.js";
+import { AdminPage } from "../components/AdminPage.js";
+import { StorageCleanupPanel } from "../components/StorageCleanupPanel.js";
+import { StorageOverviewContent } from "../components/StorageOverviewPanel.js";
+import { ModelManager } from "../components/ModelManager.js";
+import { SkillManager } from "../components/SkillManager.js";
 
 /** 设置元数据里的文案键是普通字符串，查表时收窄为 Copy 的文案键。 */
 function text(copy: Copy, key: string): string {
@@ -344,19 +345,18 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
   );
 
   return (
-    <>
+    <AdminPage
+      title={copy[sectionTitleKeys[section]]}
+      description={copy[sectionDescriptionKeys[section]]}
+      actions={(
+        <div className="settings-actions">
+          <Button type="primary" loading={saving} disabled={!editable || !dirty || problems.length > 0} onClick={() => void save()}>
+            {saving ? copy.settingsSaving : copy.settingsSave}
+          </Button>
+        </div>
+      )}
+    >
       {error ? <ErrorBanner message={error} /> : null}
-      <PageHeading
-        title={copy[sectionTitleKeys[section]]}
-        description={copy[sectionDescriptionKeys[section]]}
-        actions={(
-          <div className="settings-actions">
-            <Button type="primary" loading={saving} disabled={!editable || !dirty || problems.length > 0} onClick={() => void save()}>
-              {saving ? copy.settingsSaving : copy.settingsSave}
-            </Button>
-          </div>
-        )}
-      />
       {editable && data.configPath ? (
         <p className="settings-config-path">
           {copy.settingsConfigPath}: <code>{data.configPath}</code>
@@ -406,6 +406,6 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
           {renderGroup("settingsGroupAdvanced")}
         </>
       ) : null}
-    </>
+    </AdminPage>
   );
 }

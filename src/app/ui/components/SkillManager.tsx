@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Button, Modal, Space, Switch, Table, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import type { ConversationSkill, SkillPack } from "../types.js";
+import type { Copy } from "../lib/i18n.js";
+import type { ConversationSkill, SkillPack } from "../lib/types.js";
 import { SkillImportDialog } from "./SkillImportDialog.js";
 
 // Monaco 体积很大，只在打开编辑弹窗时加载。

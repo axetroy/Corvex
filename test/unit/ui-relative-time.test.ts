@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatRelativeTime } from "../../src/app/ui/format.ts";
-import { en, zhCN } from "../../src/app/ui/i18n.ts";
+import { formatRelativeTime } from "../../src/app/ui/lib/format";
+import { en, zhCN } from "../../src/app/ui/lib/i18n";
 
 const now = Date.parse("2026-11-17T12:00:00.000Z");
 

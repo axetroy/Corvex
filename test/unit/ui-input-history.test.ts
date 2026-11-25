@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendInputHistory, inputHistoryLimit, readInputHistory, writeInputHistory } from "../../src/app/ui/inputHistory.ts";
+import { appendInputHistory, inputHistoryLimit, readInputHistory, writeInputHistory } from "../../src/app/ui/lib/inputHistory";
 
 function fakeStorage(seed = ""): Storage {
   let value = seed;

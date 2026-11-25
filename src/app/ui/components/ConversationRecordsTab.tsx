@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { ConversationTurns } from "../types.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ConversationTurns } from "../lib/types.js";
 import { ErrorBanner, Loading } from "./common.js";
 import { ExecutionSteps } from "./ExecutionSteps.js";
 

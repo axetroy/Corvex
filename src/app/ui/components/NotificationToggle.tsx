@@ -1,5 +1,5 @@
-import type { Copy } from "../i18n.js";
-import { useTurnNotifications } from "../useTurnNotifications.js";
+import type { Copy } from "../lib/i18n.js";
+import { useTurnNotifications } from "../lib/useTurnNotifications.js";
 import { BellIcon } from "./icons.js";
 
 interface Props {

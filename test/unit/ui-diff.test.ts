@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseUnifiedDiff } from "../../src/app/ui/diff.ts";
+import { parseUnifiedDiff } from "../../src/app/ui/lib/diff";
 
 describe("unified diff parsing for Monaco", () => {
   it("reconstructs original and modified sides from a hunk", () => {

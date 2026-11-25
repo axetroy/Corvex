@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Button, Dropdown, Select, Spin, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 import type { GitGraphNode } from "../../../git/types.js";
-import { buildGitGraphLayout, graphLaneX, type GraphLaneNode } from "../gitGraph.js";
-import { highlightCode } from "../codeHighlight.js";
+import { buildGitGraphLayout, graphLaneX, type GraphLaneNode } from "../lib/gitGraph.js";
+import { highlightCode } from "../lib/codeHighlight.js";
 
 interface GraphResponse {
   nodes: GitGraphNode[];

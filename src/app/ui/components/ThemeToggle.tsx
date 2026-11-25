@@ -1,6 +1,6 @@
 import { Dropdown } from "antd";
-import type { Copy } from "../i18n.js";
-import type { ResolvedTheme, ThemeMode } from "../theme.js";
+import type { Copy } from "../lib/i18n.js";
+import type { ResolvedTheme, ThemeMode } from "../lib/theme.js";
 import { ThemeDarkIcon, ThemeLightIcon, ThemeSystemIcon } from "./icons.js";
 
 interface Props {

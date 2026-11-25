@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitForMiddleEllipsis } from "../../src/app/ui/truncate.ts";
+import { splitForMiddleEllipsis } from "../../src/app/ui/lib/truncate";
 
 describe("operations UI middle ellipsis", () => {
   it("keeps short text whole", () => {

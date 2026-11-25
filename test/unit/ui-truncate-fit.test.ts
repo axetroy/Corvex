@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitMiddleEllipsis } from "../../src/app/ui/truncate.ts";
+import { fitMiddleEllipsis } from "../../src/app/ui/lib/truncate";
 
 /** 测试用的简化字宽：ASCII 1，中文 2。 */
 function measure(text: string): number {

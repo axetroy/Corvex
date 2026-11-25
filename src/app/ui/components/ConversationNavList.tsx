@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dropdown, Modal, Typography } from "antd";
 import { Conversations } from "@ant-design/x";
 import type { ConversationItemType } from "@ant-design/x";
-import { fetchJson, handleUnauthorized } from "../api.js";
+import { fetchJson, handleUnauthorized } from "../lib/api.js";
 import { ArchiveIcon } from "./icons.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { ConversationPage, ConversationSummary } from "../types.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ConversationPage, ConversationSummary } from "../lib/types.js";
 import { Empty, ErrorBanner } from "./common.js";
 
 /** 列表每页条数与分组收起状态的存储键。 */

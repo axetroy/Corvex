@@ -4,7 +4,7 @@ import {
   resolveWaitingStage,
   WAIT_LONG_AFTER_MS,
   WAIT_REASSURE_AFTER_MS,
-} from "../../src/app/ui/conversationWaiting.js";
+} from "../../src/app/ui/lib/conversationWaiting.js";
 
 describe("conversation model waiting state", () => {
   const start = 1_000;

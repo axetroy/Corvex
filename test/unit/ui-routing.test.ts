@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminPath, conversationsPath } from "../../src/app/ui/routing.ts";
+import { adminPath, conversationsPath } from "../../src/app/ui/lib/routing";
 
 describe("operations UI routing paths", () => {
   it("builds hash-router paths without a hash prefix", () => {

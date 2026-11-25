@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { en } from "../../src/app/ui/i18n.ts";
+import { en } from "../../src/app/ui/lib/i18n";
 import { TraceField } from "../../src/app/ui/components/common.tsx";
 import { ConversationTimeline } from "../../src/app/ui/components/ConversationTimeline.tsx";
 import {
@@ -15,7 +15,7 @@ import {
   timelineTicksForWidth,
   traceTurnId,
   wheelZoomFactor,
-} from "../../src/app/ui/trace.ts";
+} from "../../src/app/ui/lib/trace";
 
 describe("operations UI trace reconstruction", () => {
   it("renders each thought and tool call separately in occurrence order", () => {

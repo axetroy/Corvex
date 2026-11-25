@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTheme, resolveThemeMode } from "../../src/app/ui/theme.ts";
+import { resolveTheme, resolveThemeMode } from "../../src/app/ui/lib/theme";
 
 describe("operations UI theme", () => {
   it("treats missing or unknown preferences as system", () => {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Input, InputNumber, Modal, Space, Table, Tag, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import type { ModelProviderDetails, ProviderModel } from "../types.js";
+import type { Copy } from "../lib/i18n.js";
+import type { ModelProviderDetails, ProviderModel } from "../lib/types.js";
 import { Panel } from "./common.js";
 
 interface ProviderDraft {

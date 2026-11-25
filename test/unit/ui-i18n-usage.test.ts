@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { en } from "../../src/app/ui/i18n.ts";
+import { en } from "../../src/app/ui/lib/i18n";
 
 const uiDirectory = fileURLToPath(new URL("../../src/app/ui/", import.meta.url));
 

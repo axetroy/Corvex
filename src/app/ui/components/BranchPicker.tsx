@@ -3,17 +3,17 @@ import type { UIEvent } from "react";
 import { Button, Select, Spin, Typography } from "antd";
 import "./RemotePicker.css";
 import { BranchIcon } from "./icons.js";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import { formatRelativeTime } from "../format.js";
+import type { Copy } from "../lib/i18n.js";
+import { formatRelativeTime } from "../lib/format.js";
 import {
   branchPageSize,
   mergeBranches,
   toBranchSelectOption,
   type BranchOption,
   type BranchSelectOption,
-} from "../branchPicker.js";
+} from "../lib/branchPicker.js";
 
 interface Props {
   copy: Copy;

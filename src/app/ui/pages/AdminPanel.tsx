@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Tag, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import { Panel } from "./common.js";
-import { UserAvatar } from "./UserAvatar.js";
+import type { Copy } from "../lib/i18n.js";
+import { Panel } from "../components/common.js";
+import { UserAvatar } from "../components/UserAvatar.js";
 import "./AdminPanel.css";
 
 interface ManagedUser {

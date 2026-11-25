@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Select, Tag, Tooltip, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import type { ModelProviderDetails } from "../types.js";
+import type { Copy } from "../lib/i18n.js";
+import type { ModelProviderDetails } from "../lib/types.js";
 import {
   activeModelSelection,
   findModelSelection,
@@ -13,7 +13,7 @@ import {
   modelSelectGroups,
   thinkingLevelOptions,
   defaultThinkingLevel,
-} from "../modelPicker.js";
+} from "../lib/modelPicker.js";
 
 interface Props {
   copy: Copy;

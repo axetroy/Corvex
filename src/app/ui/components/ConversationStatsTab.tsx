@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Typography } from "antd";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate, formatTraceDuration } from "../format.js";
-import { translate } from "../i18n.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { ConversationStats } from "../types.js";
+import { formatDate, formatTraceDuration } from "../lib/format.js";
+import { translate } from "../lib/i18n.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ConversationStats } from "../lib/types.js";
 import { DataTable, Empty, ErrorBanner, Loading, Panel, StatCard } from "./common.js";
 
 interface Props {

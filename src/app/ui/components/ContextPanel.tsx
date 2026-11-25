@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Spin, Typography } from "antd";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate } from "../format.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { TraceEntry } from "../types.js";
+import { formatDate } from "../lib/format.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { TraceEntry } from "../lib/types.js";
 // 仅导入类型：采集模块含 Node 侧依赖，不能被打进浏览器包。
 import type { ContextCategory, ContextSnapshotData } from "../../../agent/context-inspect.js";
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
-import { LandingParticles } from "./LandingParticles.js";
-import type { Copy, Locale } from "../i18n.js";
-import { LanguageIcon } from "./icons.js";
+import { LandingParticles } from "../components/LandingParticles.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import { LanguageIcon } from "../components/icons.js";
 import "./LandingPage.css";
 
 interface Props {

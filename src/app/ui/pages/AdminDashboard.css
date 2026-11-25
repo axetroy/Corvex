@@ -1,13 +1,4 @@
-/* 管理后台首页仪表盘：Ant Design Pro 风格的指标卡与分析区，颜色全部取自主题变量。 */
-.admin-dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.admin-dashboard .page-heading {
-  margin-bottom: 0;
-}
+/* 管理后台首页仪表盘：布局宽度与标题由 AdminPage 统一提供，这里只定义局部组件。 */
 
 /* 指标卡 */
 .admin-dashboard-metric-top {

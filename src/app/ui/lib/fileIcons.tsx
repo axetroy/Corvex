@@ -32,8 +32,8 @@ import {
   SiDotnet,
 } from "react-icons/si";
 import type { IconType } from "react-icons";
-import type { FileEntry } from "../files/source.js";
-import { FileIcon, FolderIcon, FolderOpenIcon } from "./components/icons.js";
+import type { FileEntry } from "../../files/source.js";
+import { FileIcon, FolderIcon, FolderOpenIcon } from "../components/icons.js";
 
 interface IconChoice {
   Icon: IconType;

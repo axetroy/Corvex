@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPageOffset, pageRange } from "../../src/app/ui/pagination.ts";
+import { clampPageOffset, pageRange } from "../../src/app/ui/lib/pagination";
 
 describe("operations UI pagination", () => {
   it("keeps a valid offset unchanged", () => {

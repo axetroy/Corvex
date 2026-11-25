@@ -1,11 +1,15 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const read = (name: string) => readFileSync(
-  fileURLToPath(new URL(`../../src/app/ui/components/${name}`, import.meta.url)),
-  "utf8",
-);
+/** 页面与组件分目录后，源码读取要在两个目录里查找。 */
+const read = (name: string) => {
+  const found = ["components", "pages"]
+    .map((dir) => new URL(`../../src/app/ui/${dir}/${name}`, import.meta.url))
+    .find((url) => existsSync(fileURLToPath(url)));
+  if (!found) throw new Error(`missing UI source: ${name}`);
+  return readFileSync(fileURLToPath(found), "utf8");
+};
 
 describe("conversation markdown rendering", () => {
   it("renders mermaid fences as lazy-loaded diagrams instead of highlighted code", () => {

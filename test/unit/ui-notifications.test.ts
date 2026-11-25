@@ -4,7 +4,7 @@ import {
   notificationPermission,
   notifyTurnFinished,
   setNotificationEnabled,
-} from "../../src/app/ui/notifications.ts";
+} from "../../src/app/ui/lib/notifications";
 
 interface FakeNotification {
   permission: NotificationPermission;

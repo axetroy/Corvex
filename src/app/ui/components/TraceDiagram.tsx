@@ -1,9 +1,9 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
-import { translate } from "../i18n.js";
-import { displayModelName } from "../modelLabel.js";
-import type { Copy, CopyTextKey, Locale } from "../i18n.js";
+import { formatDate, formatOutputTps, formatTraceDuration } from "../lib/format.js";
+import { translate } from "../lib/i18n.js";
+import { displayModelName } from "../lib/modelLabel.js";
+import type { Copy, CopyTextKey, Locale } from "../lib/i18n.js";
 import {
   anchoredScrollLeft,
   buildTimelineLayout,
@@ -16,8 +16,8 @@ import {
   timelineTicksForWidth,
   traceTurnId,
   wheelZoomFactor,
-} from "../trace.js";
-import type { ConversationTurnSegment, TraceEntry } from "../types.js";
+} from "../lib/trace.js";
+import type { ConversationTurnSegment, TraceEntry } from "../lib/types.js";
 import { DetailItem, TraceField } from "./common.js";
 
 type InspectorTab = "overview" | "parameters" | "result" | "schema" | "timing" | "context";

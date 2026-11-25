@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Popover, Spin, Typography } from "antd";
 import { SiGitlab } from "react-icons/si";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import type { RepositoryDetails } from "../types.js";
+import type { Copy } from "../lib/i18n.js";
+import type { RepositoryDetails } from "../lib/types.js";
 
 /** GitLab 返回的地址可能是内网或过期域名，只把 http(s) 链接渲染成可点击跳转。 */
 export function safeRepositoryUrl(value: string | null | undefined): string | undefined {

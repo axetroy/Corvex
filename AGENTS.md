@@ -20,7 +20,10 @@ src/cli.ts         CLI 入口（init / backup / storage / server / check-config�
 src/config/        YAML 加载、按角色校验、运行时设置
 src/app/           HTTP 生命周期、内联对话 Runner、运维台
 src/app/http/      Fastify 路由、鉴权、响应封装、静态资源
-src/app/ui/        React 运维台（Vite 打包到 dist/app/ui）
+src/app/ui/        React 运维台入口（App.tsx / main.tsx 与构建配置）
+src/app/ui/pages/  有路由的页面（对话、设置、安装、落地页、管理后台各页）
+src/app/ui/components/  无路由的可复用 UI 组件
+src/app/ui/lib/    纯公共库：api、i18n、routing、格式化、主题、类型等
 src/store.ts       SQLite schema/迁移、存储与轨迹
 src/model.ts       共享领域类型
 src/gitlab/        GitLab REST 客户端
@@ -40,6 +43,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 
 ## 运维台 UI
 
+- 目录归属：有路由的页面放 `pages/`，无路由的可复用组件放 `components/`，纯工具、类型和常量放 `lib/`；不要在 `components/` 里留带路由的页面，也不要在 `ui/` 根目录新增工具文件。
 - Ant Design v6；颜色只用 `theme.css` 里的主题变量，不写死 hex，亮色和暗色都要跟随。
 - antd 运行时样式带三个 class 选择器，覆盖时至少用四个 class；portal 到 `body` 的弹层要传 `classNames.popup.root` 并声明自己的变量。
 - 管理中心表格配色的唯一坐标是「Git 存储清理」列表（`.settings-cleanup-list li`，定义在 `SettingsPage.css`）：条目与表头背景 `--bg-subtle`、文字 `--text-secondary` / 12px、边框 `--border-soft`、hover `--bg-hover`、目录代码 `--primary`。统一在 `AdminConsole.css` 用 `.admin-console .admin-console-main .ant-table …` 实现，新增的管理中心表格自动继承；不要在存储、设置等页面另写表格配色。

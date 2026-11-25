@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import type { Copy, Locale } from "../i18n.js";
-import type { ConversationTurnSegment, TraceEntry } from "../types.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ConversationTurnSegment, TraceEntry } from "../lib/types.js";
 import { Empty } from "./common.js";
 import { TraceDiagram } from "./TraceDiagram.js";
 

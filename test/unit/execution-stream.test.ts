@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LocalExecutionBackend } from "../../src/agent/execution/local.js";
 import { USER_STOPPED_REASON } from "../../src/agent/execution/types.js";
-import { parseSseFrames } from "../../src/app/ui/stream.js";
+import { parseSseFrames } from "../../src/app/ui/lib/stream.js";
 
 describe("execution stream", () => {
   it("emits redacted chunks incrementally and a terminal event", async () => {

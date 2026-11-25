@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildSettingsPayload } from "../../src/app/ui/settingsPayload.ts";
-import { settingGroups } from "../../src/app/ui/types.ts";
+import { buildSettingsPayload } from "../../src/app/ui/lib/settingsPayload";
+import { settingGroups } from "../../src/app/ui/lib/types";
 
 const settingsPage = readFileSync(
-  fileURLToPath(new URL("../../src/app/ui/components/SettingsPage.tsx", import.meta.url)),
+  fileURLToPath(new URL("../../src/app/ui/pages/SettingsPage.tsx", import.meta.url)),
   "utf8",
 );
 

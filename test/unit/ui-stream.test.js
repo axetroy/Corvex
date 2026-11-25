@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSseFrames } from "../../src/app/ui/stream.ts";
+import { parseSseFrames } from "../../src/app/ui/lib/stream";
 
 describe("operations UI conversation stream", () => {
   it("parses cumulative text events from partial SSE frames", () => {

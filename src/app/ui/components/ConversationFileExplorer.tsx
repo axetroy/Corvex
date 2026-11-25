@@ -3,16 +3,16 @@ import { Dropdown, Input, Modal, Spin, Tree, Typography } from "antd";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import type { TreeDataNode } from "antd";
-import { fetchJson, handleUnauthorized } from "../api.js";
+import { fetchJson, handleUnauthorized } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 import type { FileContentResult, FileListResult, FileSourceKind } from "../../files/source.js";
 import { isImagePath } from "../../files/image.js";
-import { entriesToTreeNodes, mergeTreeChildren, pathSegments } from "../fileTree.js";
-import type { FileTreeNode } from "../fileTree.js";
+import { entriesToTreeNodes, mergeTreeChildren, pathSegments } from "../lib/fileTree.js";
+import type { FileTreeNode } from "../lib/fileTree.js";
 import { FileIcon } from "./icons.js";
 import { ImagePreview } from "./ImagePreview.js";
-import { renderFileIcon } from "../fileIcons.js";
+import { renderFileIcon } from "../lib/fileIcons.js";
 
 // Monaco 体积较大，只有真正打开文本文件时才加载。
 const CodeViewer = lazy(() => import("./CodeViewer.js").then((module) => ({ default: module.CodeViewer })));

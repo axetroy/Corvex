@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escapeHtml, highlightCode } from "../../src/app/ui/codeHighlight.ts";
+import { escapeHtml, highlightCode } from "../../src/app/ui/lib/codeHighlight";
 
 describe("chat code highlighting", () => {
   it("highlights a known language from a fenced code info string", () => {

@@ -2,7 +2,7 @@ import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { Alert, Button, Typography } from "antd";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 
 interface Props {
   copy: Copy;

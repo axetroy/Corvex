@@ -6,9 +6,9 @@ import enUSLocale from "antd/locale/en_US";
 import zhCNLocale from "antd/locale/zh_CN";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Loading } from "./components/common.js";
-import { LandingPage } from "./components/LandingPage.js";
-import { AdminConsole } from "./components/AdminConsole.js";
-import { SetupPage } from "./components/SetupPage.js";
+import { LandingPage } from "./pages/LandingPage.js";
+import { AdminConsole } from "./pages/AdminConsole.js";
+import { SetupPage } from "./pages/SetupPage.js";
 import { UserAvatar } from "./components/UserAvatar.js";
 import { ThemeToggle } from "./components/ThemeToggle.js";
 import { NotificationToggle } from "./components/NotificationToggle.js";
@@ -21,16 +21,16 @@ import {
   SidebarExpandIcon,
 } from "./components/icons.js";
 import { ConversationNavList } from "./components/ConversationNavList.js";
-import { fetchJson } from "./api.js";
-import { formatDate } from "./format.js";
-import { en, resolveLocale, resolveLocaleMode, zhCN } from "./i18n.js";
-import type { LocaleMode } from "./i18n.js";
-import { conversationsPath } from "./routing.js";
-import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./theme.js";
+import { fetchJson } from "./lib/api.js";
+import { formatDate } from "./lib/format.js";
+import { en, resolveLocale, resolveLocaleMode, zhCN } from "./lib/i18n.js";
+import type { LocaleMode } from "./lib/i18n.js";
+import { conversationsPath } from "./lib/routing.js";
+import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./lib/theme.js";
 
 // 各路由页面按需加载，让首屏只包含外壳，其余页面在导航时再取用。
-const ConversationsPage = lazy(() => import("./components/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
-const UserSettingsPage = lazy(() => import("./components/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
+const ConversationsPage = lazy(() => import("./pages/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
+const UserSettingsPage = lazy(() => import("./pages/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
 
 /** localStorage 中保存语言偏好的键名。 */
 const localePreferenceKey = "corvex-ops-locale-mode";

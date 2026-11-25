@@ -27,7 +27,7 @@ import type {
   OperationsOverview,
   RepositoryDetails,
   StorageCleanupRecord,
-} from "../../model.js";
+} from "../../../model.js";
 
 /**
  * Agent 控制台依赖的接口数据结构。字段形状与 `src/model.ts` 一致，

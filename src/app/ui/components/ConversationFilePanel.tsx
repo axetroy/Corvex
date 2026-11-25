@@ -1,5 +1,5 @@
 import { Button, Tabs } from "antd";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 import { ConversationFileExplorer } from "./ConversationFileExplorer.js";
 
 interface Props {

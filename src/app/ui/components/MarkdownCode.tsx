@@ -1,7 +1,7 @@
 import { isValidElement, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import type { ComponentProps } from "@ant-design/x-markdown";
-import type { Copy } from "../i18n.js";
-import { highlightCode } from "../codeHighlight.js";
+import type { Copy } from "../lib/i18n.js";
+import { highlightCode } from "../lib/codeHighlight.js";
 import { CheckIcon, CopyIcon } from "./icons.js";
 
 /** 图表渲染器按需加载，普通代码块不会引入 Mermaid 的体积。 */

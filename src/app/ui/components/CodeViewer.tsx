@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { darkTheme, languageForPath, lightTheme, monaco } from "../monaco.js";
+import { darkTheme, languageForPath, lightTheme, monaco } from "../lib/monaco.js";
 
 interface Props {
   path: string;

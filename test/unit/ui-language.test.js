@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { languageIdForPath } from "../../src/app/ui/language.ts";
+import { languageIdForPath } from "../../src/app/ui/lib/language";
 
 describe("code viewer language mapping", () => {
   it("maps the configured extensions to Monaco language ids", () => {

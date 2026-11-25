@@ -134,7 +134,7 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  padding: 24px max(24px, calc((100% - 1100px) / 2));
+  padding: 24px;
   overflow: auto;
 }
 

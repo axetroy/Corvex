@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizePlanSteps } from "../../src/agent/plan.js";
-import { parseDisplayPlanSteps, parsePlanSteps } from "../../src/app/ui/planDisplay.js";
+import { parseDisplayPlanSteps, parsePlanSteps } from "../../src/app/ui/lib/planDisplay.js";
 
 describe("plan steps", () => {
   it("normalizes untrusted step lists", () => {

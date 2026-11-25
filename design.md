@@ -140,7 +140,7 @@ HTTP 层使用 Fastify，路由按系统检查、认证、运维 API 和控制�
 
 运维控制台使用 React 渲染，源码位于 `src/app/ui`，由 Vite 在构建阶段打包到 `dist/app/ui`；Server 只按 `/ops/assets/<file>` 白名单提供构建产物。控制台以对话为核心：发现项目、绑定分支、固定 SHA、保存每轮消息与轨迹，并提供只读 Git 图谱、文件浏览与执行记录。助手回复按 Markdown 渲染并提供复制操作。
 
-React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、`react-icons`、`monaco-editor`、`highlight.js` 与 `react-resizable-panels` 均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。`mermaid` 也只在 `dist/app/ui` 中按需加载（仅当回复含 mermaid 围栏），用于渲染流程图；其输出 SVG 的主题样式需要页面 nonce 才能通过 CSP。控制台路由选择 `react-router-dom` 的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化集中在 `src/app/ui/routing.ts` 的纯函数中。
+React、React DOM、Vite、antd、`@ant-design/x`、`@ant-design/x-markdown`、`react-router-dom`、`react-icons`、`monaco-editor`、`highlight.js` 与 `react-resizable-panels` 均被打包进 `dist/app/ui`，属于构建期依赖，不进入运行时依赖。`mermaid` 也只在 `dist/app/ui` 中按需加载（仅当回复含 mermaid 围栏），用于渲染流程图；其输出 SVG 的主题样式需要页面 nonce 才能通过 CSP。控制台路由选择 `react-router-dom` 的 `HashRouter`：Server 只提供 `/ops` 单页，`#/...` 让深链与刷新无需服务端重写；页面状态序列化集中在 `src/app/ui/lib/routing.ts` 的纯函数中。
 
 运行环境必须包含 Git。SQLite 由 Node.js 26.12.1 内置的 `node:sqlite` 模块提供。Docker 构建使用锁定的生产依赖，构建 TypeScript，并在 Node.js 26.12.1 上运行编译后的应用。版本标签发布会在 CI 检查通过后构建多架构 GHCR 镜像并创建源码 Release。
 

@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, InputNumber, Pagination, Space, Typography } from "antd";
-import { fetchJson, sendJson } from "../api.js";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
-import type { StorageCleanupRecord } from "../types.js";
-import { formatDate } from "../format.js";
-import type { Locale } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
+import type { StorageCleanupRecord } from "../lib/types.js";
+import { formatDate } from "../lib/format.js";
+import type { Locale } from "../lib/i18n.js";
 import { Panel } from "./common.js";
 
 interface CleanupResult {

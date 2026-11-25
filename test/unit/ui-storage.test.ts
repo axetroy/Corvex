@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatStorageBytes, sortStorageRows, totalStorageBytes, type StorageRow } from "../../src/app/ui/storage.js";
+import { formatStorageBytes, sortStorageRows, totalStorageBytes, type StorageRow } from "../../src/app/ui/lib/storage.js";
 
 function row(overrides: Partial<StorageRow>): StorageRow {
   return {

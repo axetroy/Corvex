@@ -1,4 +1,4 @@
-import type { GitGraphNode } from "../../git/types.js";
+import type { GitGraphNode } from "../../../git/types.js";
 
 export const graphRowHeight = 34;
 export const graphLaneWidth = 18;

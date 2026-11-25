@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { welcomePromptGroups, welcomePromptText } from "../../src/app/ui/conversationPrompts.ts";
-import { en, zhCN } from "../../src/app/ui/i18n.ts";
+import { welcomePromptGroups, welcomePromptText } from "../../src/app/ui/lib/conversationPrompts";
+import { en, zhCN } from "../../src/app/ui/lib/i18n";
 
 describe("operations UI welcome prompts", () => {
   it("groups prompts by intent with two questions per group", () => {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Tag } from "antd";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate } from "../format.js";
-import type { Copy, Locale } from "../i18n.js";
+import { formatDate } from "../lib/format.js";
+import type { Copy, Locale } from "../lib/i18n.js";
 import { DataTable, Empty, ErrorBanner, Loading } from "./common.js";
 
 /** 单条命令执行记录（对应后端 listExecutionHistory）。 */

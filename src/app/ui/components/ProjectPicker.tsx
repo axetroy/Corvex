@@ -3,16 +3,16 @@ import type { UIEvent } from "react";
 import { Button, Select, Spin, Typography } from "antd";
 import "./RemotePicker.css";
 import { RepositoryIcon } from "./icons.js";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 import {
   mergeProjects,
   projectPageSize,
   toProjectSelectOption,
   type ProjectOption,
   type ProjectSelectOption,
-} from "../projectPicker.js";
+} from "../lib/projectPicker.js";
 
 interface Props {
   copy: Copy;

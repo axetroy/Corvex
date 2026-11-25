@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Segmented, Switch, Typography } from "antd";
-import { sendBinary, sendJson } from "../api.js";
+import { sendBinary, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 
 type Channel = "upload" | "url" | "github" | "gitlab";
 

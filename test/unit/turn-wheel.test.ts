@@ -6,7 +6,7 @@ import {
   turnWheelNotchCooldownMs,
   turnWheelNotchDelta,
   turnWheelStep,
-} from "../../src/app/ui/turnWheel.js";
+} from "../../src/app/ui/lib/turnWheel.js";
 
 describe("turn navigation wheel", () => {
   it("uses a single cross-platform direction rule (no platform inversion)", () => {

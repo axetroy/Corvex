@@ -5,7 +5,7 @@ import {
   projectTitle,
   toProjectSelectOption,
   type ProjectOption,
-} from "../../src/app/ui/projectPicker.ts";
+} from "../../src/app/ui/lib/projectPicker";
 
 function project(overrides: Partial<ProjectOption> & { id: number }): ProjectOption {
   return { http_url_to_repo: "", ...overrides } as ProjectOption;

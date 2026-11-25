@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "antd";
-import type { Copy, Locale } from "../i18n.js";
-import { formatDate } from "../format.js";
-import { createTurnWheelState, shouldStepTurnWheel, turnWheelStep } from "../turnWheel.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import { formatDate } from "../lib/format.js";
+import { createTurnWheelState, shouldStepTurnWheel, turnWheelStep } from "../lib/turnWheel.js";
 
 export interface TurnNavItem {
   id: string;

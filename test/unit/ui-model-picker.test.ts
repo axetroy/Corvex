@@ -7,8 +7,8 @@ import {
   modelSelections,
   modelSelectGroups,
   thinkingLevelOptions,
-} from "../../src/app/ui/modelPicker.ts";
-import type { ModelProviderDetails, ProviderModel } from "../../src/app/ui/types.ts";
+} from "../../src/app/ui/lib/modelPicker";
+import type { ModelProviderDetails, ProviderModel } from "../../src/app/ui/lib/types";
 
 function model(id: string, name: string, active = false): ProviderModel {
   return {

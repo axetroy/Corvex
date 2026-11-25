@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../api.js";
-import { adminPath } from "../routing.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { ResolvedTheme, ThemeMode } from "../theme.js";
-import { ThemeToggle } from "./ThemeToggle.js";
+import { fetchJson } from "../lib/api.js";
+import { adminPath } from "../lib/routing.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ResolvedTheme, ThemeMode } from "../lib/theme.js";
+import { ThemeToggle } from "../components/ThemeToggle.js";
 import { AdminPanel } from "./AdminPanel.js";
-import { Loading, PageHeading } from "./common.js";
+import { Loading } from "../components/common.js";
+import { AdminPage } from "../components/AdminPage.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
 import { ExecutionConfigPanel } from "./ExecutionConfigPanel.js";
 import { AdminDashboard } from "./AdminDashboard.js";
@@ -115,10 +116,9 @@ export function AdminConsole({
         {dashboardActive ? (
           <AdminDashboard copy={copy} />
         ) : usersActive ? (
-          <>
-            <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
+          <AdminPage title={copy.adminUsersTitle} description={copy.adminHint}>
             <AdminPanel copy={copy} />
-          </>
+          </AdminPage>
         ) : executionsActive ? (
           <ExecutionConfigPanel copy={copy} onUpdated={onUpdated} />
         ) : (

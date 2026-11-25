@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayModelName } from "../../src/app/ui/modelLabel.ts";
+import { displayModelName } from "../../src/app/ui/lib/modelLabel";
 
 describe("operations UI model label", () => {
   it("keeps the provider and model written by the server", () => {

@@ -11,7 +11,7 @@ import {
   secretRuntimeSettingKeys,
   validateRuntimeSettings,
 } from "../../src/config/settings.js";
-import { settingGroups } from "../../src/app/ui/types.js";
+import { settingGroups } from "../../src/app/ui/lib/types.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 
 /** 一份完整的 agent 配置，作为测试基准；每个用例取一份独立副本。 */

@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Button, Select, Spin, Typography } from "antd";
-import { fetchJson } from "../api.js";
+import { fetchJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 
 // Monaco 体积较大：只在真正展开某个文件的 diff 时加载。
 const DiffViewer = lazy(() => import("./DiffViewer.js").then((module) => ({ default: module.DiffViewer })));

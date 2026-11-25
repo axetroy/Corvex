@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { fetchJson } from "../api.js";
-import { formatDate } from "../format.js";
-import type { Copy, Locale } from "../i18n.js";
+import { fetchJson } from "../lib/api.js";
+import { formatDate } from "../lib/format.js";
+import type { Copy, Locale } from "../lib/i18n.js";
 
 interface SnapshotSummary {
   requestSeq: number;

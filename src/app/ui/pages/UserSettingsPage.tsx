@@ -1,6 +1,6 @@
-import type { Copy } from "../i18n.js";
-import { PageHeading } from "./common.js";
-import { ModelManager } from "./ModelManager.js";
+import type { Copy } from "../lib/i18n.js";
+import { PageHeading } from "../components/common.js";
+import { ModelManager } from "../components/ModelManager.js";
 
 interface Props {
   copy: Copy;

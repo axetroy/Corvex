@@ -1,8 +1,8 @@
-import { formatDate, formatExecutionPayload, formatTraceDuration } from "../format.js";
+import { formatDate, formatExecutionPayload, formatTraceDuration } from "../lib/format.js";
 import { Collapse } from "antd";
-import { translate } from "../i18n.js";
-import type { Copy, Locale } from "../i18n.js";
-import type { ExecutionStep } from "../types.js";
+import { translate } from "../lib/i18n.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import type { ExecutionStep } from "../lib/types.js";
 import { DataTable, Empty, ExpandableText } from "./common.js";
 
 /** 执行事件的输入、输出与标识折叠区。 */

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { Typography } from "antd";
-import type { Copy } from "../i18n.js";
+import type { Copy } from "../lib/i18n.js";
 
 interface Props {
   src: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePlanSteps } from "../../src/app/ui/planDisplay.ts";
+import { parsePlanSteps } from "../../src/app/ui/lib/planDisplay";
 
 describe("operations UI plan display", () => {
   it("extracts recorded steps from the tool input", () => {

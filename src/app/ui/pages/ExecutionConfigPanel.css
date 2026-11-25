@@ -1,15 +1,4 @@
-/* 执行环境配置（管理员中心）：与设置页一致的字段网格与主题变量。 */
-.execution-config-panel {
-  display: flex;
-  max-width: 980px;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.execution-config-panel .page-heading {
-  margin-bottom: 0;
-}
-
+/* 执行环境配置（管理员中心）：布局由 AdminPage 统一提供，这里只定义字段与局部组件。 */
 .execution-config-actions {
   display: flex;
   gap: 8px;
@@ -30,10 +19,6 @@
 .execution-config-meta-time {
   margin-left: auto;
   font-size: 12px;
-}
-
-.execution-config-panel .panel + .panel {
-  margin-top: 16px;
 }
 
 /* 字段网格：标签占左列，控件占右列，紧凑对齐。 */

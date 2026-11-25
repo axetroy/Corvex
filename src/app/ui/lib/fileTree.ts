@@ -1,5 +1,5 @@
 import type { TreeDataNode } from "antd";
-import type { FileEntry } from "../files/source.js";
+import type { FileEntry } from "../../files/source.js";
 
 /** 文件树节点：key 用仓库相对路径，既唯一又能直接作为接口参数。 */
 export interface FileTreeNode extends TreeDataNode {
