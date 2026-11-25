@@ -41,7 +41,7 @@ import { estimateConservativeTokens } from "./budget.js";
 import { boundSessionEntries } from "./session-persistence.js";
 import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
 import { createTaskBudgetState, observeTaskBudget, wrapUpNotice } from "./task-budget.js";
-import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecutionBackend } from "./execution/index.js";
+import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecDelta, type ExecutionBackend } from "./execution/index.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -259,6 +259,12 @@ export interface ModelRequest {
    * 参数沿用轨迹的脱敏与限长结果；与正文、思考一样只用于展示，不影响执行。
    */
   onToolDelta?: (tool: ConversationStreamTool) => void;
+  /** 命令开始：登记独立停止回调（只停该命令，不取消整轮）。 */
+  onExecStart?: (execId: string, stop: (reason: string) => void) => void;
+  /** 命令结束：注销停止回调。 */
+  onExecEnd?: (execId: string) => void;
+  /** 命令输出增量与终态，供 SSE 终端展示。 */
+  onExecDelta?: (delta: ExecDelta) => void;
   /**
    * 上下文压缩/裁剪通知，用于对话控制台把变化以消息形式展示。
    * 同一 id 的后续事件替换前面的提示（例如「正在压缩」→「已压缩」）。
@@ -707,6 +713,15 @@ export class PiAgent {
         text: projectGuidanceNoticeText(config.agent.responseLanguage, projectGuidance.bytes, projectGuidance.truncated),
       });
     }
+    // 命令输出流桥接：定义在扩展工厂之前，便于 run_command 工具在注册时捕获。
+    const emitExecStream = (delta: ExecDelta) => {
+      if (!request.onExecDelta) return;
+      try {
+        request.onExecDelta(delta);
+      } catch (error) {
+        console.warn("exec stream callback failed", { error: errorMessage(error) });
+      }
+    };
     const resourceLoader = new DefaultResourceLoader({
       cwd: agentDir,
       agentDir,
@@ -753,6 +768,9 @@ export class PiAgent {
               signal,
               maxTimeoutMs: executionLimits.timeoutMs,
               maxOutputBytes: executionLimits.maxOutputBytes,
+              onExecStart: (execId, stop) => request.onExecStart?.(execId, stop),
+              onExecEnd: (execId) => request.onExecEnd?.(execId),
+              onExecDelta: emitExecStream,
               onExecuted: (result) => {
                 // 审计：记录操作者/会话/轮次/命令前缀/后端/退出码，不记完整敏感命令。
                 if (this.store && request.actorId !== undefined) {

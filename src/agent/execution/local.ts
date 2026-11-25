@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { errorMessage } from "../../errors.js";
-import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "./types.js";
+import type { ExecChunkCallback, ExecutionBackend, ExecutionRequest, ExecutionResult } from "./types.js";
 
 /** 本地后端：在 worktree 里执行自由命令，env 白名单，超时与输出上限。仅限开发，不是安全边界。 */
 export class LocalExecutionBackend implements ExecutionBackend {
   readonly kind = "local" as const;
 
-  async run(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+  async run(request: ExecutionRequest, signal?: AbortSignal, onChunk?: ExecChunkCallback): Promise<ExecutionResult> {
     const startedAt = Date.now();
     const env = sanitizeEnv();
     return new Promise<ExecutionResult>((resolve) => {
@@ -31,18 +31,24 @@ export class LocalExecutionBackend implements ExecutionBackend {
         }
         const piece = chunk.subarray(0, budget);
         if (piece.length < chunk.length) truncated = true;
-        if (which === "stdout") stdout += piece.toString("utf8");
-        else stderr += piece.toString("utf8");
+        const text = piece.toString("utf8");
+        if (which === "stdout") stdout += text;
+        else stderr += text;
+        // 脱敏后推送增量，前端终端逐段追加；超限时后续 chunk 不再产生。
+        if (text) onChunk?.(which, text);
       };
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
-      let abortReason: "timeout" | "cancel" | undefined;
+      let abortReason: string | undefined;
       const timer = setTimeout(() => {
         abortReason = "timeout";
         kill(child);
       }, request.timeoutMs);
       const onSignal = () => {
-        abortReason = "cancel";
+        // signal.reason 由停止按钮写入（USER_STOPPED_REASON），整轮取消时可能是 AbortError。
+        abortReason = typeof signal?.reason === "string" && signal.reason
+          ? signal.reason
+          : "cancelled";
         kill(child);
       };
       signal?.addEventListener("abort", onSignal, { once: true });
@@ -61,6 +67,7 @@ export class LocalExecutionBackend implements ExecutionBackend {
           truncated,
           durationMs: Date.now() - startedAt,
           aborted: abortReason !== undefined,
+          ...(abortReason ? { reason: abortReason } : {}),
         });
       };
       child.on("error", (error) => finish(null, error));

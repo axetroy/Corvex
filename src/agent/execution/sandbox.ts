@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ExecutionConfig } from "../../config/config.js";
 import { errorMessage } from "../../errors.js";
-import type { ExecutionBackend, ExecutionRequest, ExecutionResult } from "./types.js";
+import type { ExecChunkCallback, ExecutionBackend, ExecutionRequest, ExecutionResult } from "./types.js";
 
 /**
  * 沙箱后端：通过容器运行时（docker / podman）执行自由命令。
@@ -58,7 +58,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
 
   constructor(private readonly config: ExecutionConfig["sandbox"]) {}
 
-  async run(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+  async run(request: ExecutionRequest, signal?: AbortSignal, onChunk?: ExecChunkCallback): Promise<ExecutionResult> {
     const containerName = `corvex-exec-${randomUUID()}`;
     const args = buildContainerArgs(this.config, request, containerName);
     const startedAt = Date.now();
@@ -73,7 +73,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
       let stderr = "";
       let truncated = false;
       let settled = false;
-      let abortReason: "timeout" | "cancel" | undefined;
+      let abortReason: string | undefined;
       const append = (which: "stdout" | "stderr", chunk: Buffer) => {
         const budget = request.maxOutputBytes - Buffer.byteLength(stdout) - Buffer.byteLength(stderr);
         if (budget <= 0) {
@@ -82,8 +82,10 @@ export class SandboxExecutionBackend implements ExecutionBackend {
         }
         const piece = chunk.subarray(0, budget);
         if (piece.length < chunk.length) truncated = true;
-        if (which === "stdout") stdout += piece.toString("utf8");
-        else stderr += piece.toString("utf8");
+        const text = piece.toString("utf8");
+        if (which === "stdout") stdout += text;
+        else stderr += text;
+        if (text) onChunk?.(which, text);
       };
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
@@ -102,7 +104,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
         cleanup();
       }, request.timeoutMs);
       const onSignal = () => {
-        abortReason = "cancel";
+        abortReason = typeof signal?.reason === "string" && signal.reason ? signal.reason : "cancelled";
         kill(child);
         cleanup();
       };
@@ -123,6 +125,7 @@ export class SandboxExecutionBackend implements ExecutionBackend {
           truncated,
           durationMs: Date.now() - startedAt,
           aborted: abortReason !== undefined,
+          ...(abortReason ? { reason: abortReason } : {}),
         });
       };
       child.on("error", (error) => finish(null, error));

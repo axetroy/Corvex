@@ -21,9 +21,19 @@ export interface ExecutionResult {
   durationMs: number;
   /** 被取消或超时时为 true。 */
   aborted: boolean;
+  /** 终止原因：用户手动停止时为 USER_STOPPED_REASON，超时为 timeout。 */
+  reason?: string;
 }
+
+/** 用户手动停止命令时写入 signal.reason 与工具结果，供后续模型据此决定下一步。 */
+export const USER_STOPPED_REASON = "user manually stopped this command";
+
+/** 命令输出的增量流类型。 */
+export type ExecStream = "stdout" | "stderr";
+/** 后端把脱敏后的输出增量推给上层，用于终端实时展示。 */
+export type ExecChunkCallback = (stream: ExecStream, text: string) => void;
 
 export interface ExecutionBackend {
   readonly kind: "local" | "sandbox";
-  run(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult>;
+  run(request: ExecutionRequest, signal?: AbortSignal, onChunk?: ExecChunkCallback): Promise<ExecutionResult>;
 }

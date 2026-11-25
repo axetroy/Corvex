@@ -706,6 +706,24 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     sendJson(reply, 200, turn);
   });
 
+  // 停止一条正在运行的命令（不取消整轮）。reason 固定为用户手动停止，模型据此决定下一步。
+  app.post("/api/ops/conversations/:id/turns/:turnId/executions/:execId/cancel", async (request, reply) => {
+    const params = request.params as { id: string; turnId: string; execId: string };
+    const conversationId = idParam(params.id);
+    const turnId = idParam(params.turnId);
+    const execId = idParam(params.execId);
+    if (!conversationId || !turnId || !execId) {
+      invalidTurnId(reply);
+      return;
+    }
+    if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    if (!ctx.conversations.cancelExecution(turnId, execId)) {
+      sendJson(reply, 409, { error: "command is not running in this turn" });
+      return;
+    }
+    sendJson(reply, 202, { conversationId, turnId, execId, cancelled: true });
+  });
+
   // 取消一轮正在内联执行的对话；已结束的轮次返回 409，由界面提示重新拉取。
   app.post("/api/ops/conversations/:id/turns/:turnId/cancel", async (request, reply) => {
     const params = request.params as { id: string; turnId: string };

@@ -5,4 +5,4 @@ export type {
 } from "./types.js";
 export { LocalExecutionBackend } from "./local.js";
 export { SandboxExecutionBackend } from "./sandbox.js";
-export { createExecutionExtension, previewCommand } from "./tool.js";
+export { createExecutionExtension, previewCommand, type ExecDelta } from "./tool.js";

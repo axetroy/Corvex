@@ -1,7 +1,20 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { errorMessage } from "../../errors.js";
 import { redactSensitiveText } from "../../redact.js";
-import type { ExecutionBackend, ExecutionResult } from "./types.js";
+import type { ExecStream, ExecutionBackend, ExecutionResult } from "./types.js";
+
+/** 一条命令的流式事件；execId 即工具调用 ID，逐段追加输出，done 带终态。 */
+export interface ExecDelta {
+  execId: string;
+  stream: ExecStream;
+  chunk: string;
+  done?: boolean;
+  exitCode?: number | null;
+  aborted?: boolean;
+  reason?: string;
+  truncated?: boolean;
+}
 
 /** 命令字符串最大字符数。 */
 const maxCommandCharacters = 4_096;
@@ -17,6 +30,12 @@ export interface RunCommandToolOptions {
   maxOutputBytes: number;
   /** 执行审计回调；由 Runner 传入以写入 audit_events。 */
   onExecuted?: (result: ExecutionResult) => void;
+  /** 命令开始：把该命令的独立停止回调登记到 Runner，用于 UI 单命令停止。 */
+  onExecStart?: (execId: string, stop: (reason: string) => void) => void;
+  /** 命令结束：从 Runner 注销停止回调。 */
+  onExecEnd?: (execId: string) => void;
+  /** 命令输出增量与终态，供 SSE 终端实时展示。 */
+  onExecDelta?: (delta: ExecDelta) => void;
 }
 
 /** 截断并脱敏命令，用于审计与展示。 */
@@ -50,21 +69,50 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
         timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: options.maxTimeoutMs })),
         maxOutputBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: options.maxOutputBytes })),
       }),
-      execute: async (_toolCallId, params) => {
-        const result = await options.backend.run(
-          {
-            command: params.command,
-            cwd: options.cwd,
-            timeoutMs: params.timeoutMs ?? options.maxTimeoutMs,
-            maxOutputBytes: params.maxOutputBytes ?? options.maxOutputBytes,
-          },
-          options.signal,
-        );
+      execute: async (toolCallId, params) => {
+        // 每条命令用自己的 AbortController：停止单条命令不能 abort 整个 turn 的 signal。
+        // 但与 turn signal 关联，整轮取消时命令同样被 kill。
+        const controller = new AbortController();
+        const commandSignal = options.signal
+          ? AbortSignal.any([options.signal, controller.signal])
+          : controller.signal;
+        options.onExecStart?.(toolCallId, (reason) => controller.abort(reason));
+        const emit = (delta: ExecDelta) => {
+          try { options.onExecDelta?.(delta); } catch (error) {
+            console.warn("exec stream callback failed", { error: errorMessage(error) });
+          }
+        };
+        let result: ExecutionResult;
+        try {
+          result = await options.backend.run(
+            {
+              command: params.command,
+              cwd: options.cwd,
+              timeoutMs: params.timeoutMs ?? options.maxTimeoutMs,
+              maxOutputBytes: params.maxOutputBytes ?? options.maxOutputBytes,
+            },
+            commandSignal,
+            (stream, text) => emit({ execId: toolCallId, stream, chunk: redactSensitiveText(text) }),
+          );
+        } finally {
+          options.onExecEnd?.(toolCallId);
+        }
+        // 终态：chunk 为空，done=true；前端据此收起终端并把状态定为成功/失败/已停止。
+        emit({
+          execId: toolCallId,
+          stream: "stdout",
+          chunk: "",
+          done: true,
+          exitCode: result.exitCode,
+          aborted: result.aborted,
+          reason: result.reason,
+          truncated: result.truncated,
+        });
         options.onExecuted?.(result);
         const body = [
           `backend: ${result.backend}`,
           `command: ${previewCommand(result.command)}`,
-          `exitCode: ${result.exitCode ?? "null"}${result.aborted ? " (aborted)" : ""}`,
+          `exitCode: ${result.exitCode ?? "null"}${result.aborted ? ` (aborted${result.reason ? `: ${result.reason}` : ""})` : ""}`,
           `durationMs: ${result.durationMs}`,
           result.truncated ? "output: TRUNCATED" : "",
           "--- stdout ---",

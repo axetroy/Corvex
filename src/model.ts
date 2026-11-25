@@ -219,6 +219,21 @@ export type ConversationStreamEvent =
   | { type: "text"; reset: boolean; text: string }
   | { type: "thinking"; reset: boolean; text: string }
   | { type: "tool"; tool: ConversationStreamTool }
+  /**
+   * 命令输出增量：execId 为工具调用 ID；chunk 逐段追加，done 时带终态。
+   * 输出在服务端已脱敏并按字节上限截断。
+   */
+  | {
+      type: "exec";
+      execId: string;
+      stream: "stdout" | "stderr";
+      chunk: string;
+      done?: boolean;
+      exitCode?: number | null;
+      aborted?: boolean;
+      reason?: string;
+      truncated?: boolean;
+    }
   | { type: "context"; context: ConversationStreamContext }
   | { type: "interjection"; turnId: string }
   /** 排队列表发生变化；只带数量，正文由详情接口按需拉取。 */

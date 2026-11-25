@@ -40,6 +40,18 @@ export function parseSseFrames(buffer: string): {
       typeof event.reset === "boolean"
     ) {
       events.push({ type: event.type, reset: event.reset, text: event.text });
+    } else if (event.type === "exec" && typeof event.execId === "string" && typeof event.chunk === "string" && (event.stream === "stdout" || event.stream === "stderr")) {
+      events.push({
+        type: "exec",
+        execId: event.execId,
+        stream: event.stream,
+        chunk: event.chunk,
+        ...(typeof event.done === "boolean" ? { done: event.done } : {}),
+        ...(typeof event.exitCode === "number" || event.exitCode === null ? { exitCode: event.exitCode } : {}),
+        ...(typeof event.aborted === "boolean" ? { aborted: event.aborted } : {}),
+        ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+        ...(typeof event.truncated === "boolean" ? { truncated: event.truncated } : {}),
+      });
     } else if (event.type === "context" && event.context && typeof event.context === "object" && !Array.isArray(event.context)) {
       const context = event.context as Record<string, unknown>;
       if (typeof context.id === "string" && typeof context.text === "string") {
@@ -81,6 +93,8 @@ export interface ConversationStreamHandlers {
   onThinking?: (text: string, reset: boolean) => void;
   /** 工具开始/结束事件，按发生顺序与思考事件交替出现。 */
   onTool?: (tool: ConversationStreamTool) => void;
+  /** 命令输出增量与终态，供终端逐段追加。 */
+  onExec?: (event: Extract<ConversationStreamEvent, { type: "exec" }>) => void;
   /** 上下文压缩/裁剪通知；同一 id 的后续事件替换前面的提示。 */
   onContext?: (context: ConversationStreamContext) => void;
   /** 用户在执行期间追加了补充消息；详情刷新后即可看到该用户气泡。 */
@@ -130,6 +144,8 @@ export async function streamConversationTurn(
           handlers.onThinking?.(event.text, event.reset);
         } else if (event.type === "tool") {
           handlers.onTool?.(event.tool);
+        } else if (event.type === "exec") {
+          handlers.onExec?.(event);
         } else if (event.type === "context") {
           handlers.onContext?.(event.context);
         } else if (event.type === "interjection") {
