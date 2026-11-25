@@ -60,7 +60,7 @@ execution:
         socket: "/var/run/docker.sock",
         runtime: "podman",
         cpus: 2,
-        pidsLimit: 512,
+        pidsLimit: 512, tmpfsSizeMb: 512,
         network: "bridge",
         timeoutMs: 120_000,
         maxOutputBytes: 1_048_576,

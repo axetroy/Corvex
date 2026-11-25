@@ -119,6 +119,8 @@ export interface ExecutionConfig {
     memory: string;
     cpus: number;
     pidsLimit: number;
+    /** 容器内 /tmp 与缓存目录的 tmpfs 大小（MiB）；与输出上限无关，避免包管理器 ENOSPC。 */
+    tmpfsSizeMb: number;
     network: "none" | "bridge";
     readOnlyMounts: string[];
     timeoutMs: number;
@@ -195,6 +197,7 @@ const defaults: CorvexConfig = {
       memory: "2g",
       cpus: 1,
       pidsLimit: 256,
+      tmpfsSizeMb: 512,
       // 默认 bridge：允许联网（装依赖等），但容器网络命名空间与宿主隔离。
       network: "bridge",
       readOnlyMounts: [],
@@ -319,6 +322,10 @@ function parseExecution(raw: unknown): ExecutionConfig {
       memory: string(sandbox.memory, defaults.execution.sandbox.memory),
       cpus: number(sandbox.cpus, defaults.execution.sandbox.cpus),
       pidsLimit: number(sandbox.pids_limit, defaults.execution.sandbox.pidsLimit),
+      tmpfsSizeMb: number(
+        process.env.CORVEX_EXECUTION_SANDBOX_TMPFS_SIZE_MB ?? sandbox.tmpfs_size_mb,
+        defaults.execution.sandbox.tmpfsSizeMb,
+      ),
       network: enumValue(sandbox.network, ["none", "bridge"] as const, defaults.execution.sandbox.network, "execution.sandbox.network"),
       readOnlyMounts: stringArray(sandbox.read_only_mounts, defaults.execution.sandbox.readOnlyMounts),
       timeoutMs: duration(sandbox.timeout, defaults.execution.sandbox.timeoutMs, "execution.sandbox.timeout"),
@@ -547,6 +554,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
       if (!execution.sandbox.socket.trim()) problems.push("execution.sandbox.socket is required when backend=sandbox");
       if (execution.sandbox.cpus <= 0) problems.push("execution.sandbox.cpus must be positive");
       if (execution.sandbox.pidsLimit < 1) problems.push("execution.sandbox.pids_limit must be at least 1");
+      if (execution.sandbox.tmpfsSizeMb < 16 || execution.sandbox.tmpfsSizeMb > 4096) {
+        problems.push("execution.sandbox.tmpfs_size_mb must be between 16 and 4096");
+      }
     }
     const limits = execution.backend === "sandbox" ? execution.sandbox : execution.local;
     if (limits.timeoutMs < 1 || limits.timeoutMs > 3_600_000) {

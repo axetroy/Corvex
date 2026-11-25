@@ -96,7 +96,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 ## 运行时设置
 
-执行环境配置**不在** `runtime_settings` 中，而是单独保存在 SQLite 的 `execution_config` 表，由管理员在「设置 → 执行环境」维护：控制是否注册 `run_command`、后端（沙箱或仅开发的本地）、容器运行时/镜像/socket，以及资源与输出上限。管理接口对整份配置做 fail-closed 校验并立即作用于后续轮次；首次保存前才使用 YAML/环境变量兜底。设计约定见 [execution-design.md](https://github.com/axetroy/Corvex/blob/main/execution-design.md)。
+执行环境配置**不在** `runtime_settings` 中，而是单独保存在 SQLite 的 `execution_config` 表，由管理员在「设置 → 执行环境」维护：控制是否注册 `run_command`、后端（沙箱或仅开发的本地）、容器运行时/镜像/socket，以及资源与输出上限（含 `tmpfs_size_mb`：容器内临时/缓存用的 16–4096 MiB tmpfs，与输出上限无关）。管理接口对整份配置做 fail-closed 校验并立即作用于后续轮次；首次保存前才使用 YAML/环境变量兜底。设计约定见 [execution-design.md](https://github.com/axetroy/Corvex/blob/main/execution-design.md)。
 
 上表中的可调项在运维台「设置」页维护，保存在 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`）；配置文件只提供初始值。控制台保存时提交全部可编辑项，此后数据库就是唯一来源，也不再提供「恢复为配置文件值」。Server 立即把修改作用于后续轮次，并写入 `audit_events`（`update_settings`，操作者为控制台用户名）；启动时也会重新应用已保存的设置。每个字段显示运行时推导出的生效值：例如 `max_input_tokens` 由窗口推导、工具结果检查点收敛到四个工具输出轮次、压缩预留提升到安全下限，因此填写值可能与进程实际使用值不同。
 

@@ -79,6 +79,10 @@ interface ExecutionBackend {
 
 无论从哪个入口保存，都必须通过同一套校验：生产禁 `local`、sandbox 必须有 image/socket、限额在合理区间。任何校验失败都拒绝写入。
 
+`tmpfs_size_mb` 必须与 `max_output_bytes` 解耦：后者只是输出捕获上限（默认 256 KiB），若用它推导 `/tmp` 容量，npm/yarn/pip 的缓存写入会立刻 ENOSPC。容器内 `HOME=/tmp`，并把 `XDG_CACHE_HOME`、`npm_config_cache`、`YARN_CACHE_FOLDER`、`PIP_CACHE_DIR` 都指向 `/tmp/corvex-cache`，所有临时文件留在容器 tmpfs，既不污染宿主 worktree，也不携带宿主路径。
+
+**可见性边界**：容器只通过 bind mount 看到 `request.cwd` 这一个 worktree 目录；`df` 在该挂载点上显示的是底层文件系统容量（Linux bind mount 的 `statvfs` 语义），这不代表容器能读取宿主其它路径。rootfs 只读、不挂载 docker socket、不注入宿主环境变量或凭据。
+
 ```yaml
 execution:
   # 总开关，默认 false；关闭时模型看不到 run_command 工具
@@ -92,6 +96,7 @@ execution:
     memory: "2g"
     cpus: 1
     pids_limit: 256
+    tmpfs_size_mb: 512         # /tmp 与包管理器缓存的 tmpfs 大小（16–4096），与 max_output_bytes 无关
     network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）
     read_only_mounts: []
     timeout: 120s

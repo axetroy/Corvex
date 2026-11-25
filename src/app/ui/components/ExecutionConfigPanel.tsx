@@ -16,6 +16,7 @@ interface ExecutionConfig {
     memory: string;
     cpus: number;
     pids_limit: number;
+    tmpfs_size_mb: number;
     network: "none" | "bridge";
     read_only_mounts: string[];
     timeout_ms: number;
@@ -221,6 +222,9 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
           </Field>
           <Field label={copy.executionConfigPids}>
             <InputNumber min={1} className="execution-config-control" value={draft.sandbox.pids_limit} onChange={(value) => value && setSandbox({ pids_limit: value })} />
+          </Field>
+          <Field label={copy.executionConfigTmpfs} hint={copy.executionConfigTmpfsHint}>
+            <InputNumber min={16} max={4096} addonAfter="MiB" className="execution-config-control" value={draft.sandbox.tmpfs_size_mb} onChange={(value) => value && setSandbox({ tmpfs_size_mb: value })} />
           </Field>
           <Field label={copy.executionConfigTimeout} hint={copy.executionConfigTimeoutHint}>
             <InputNumber min={1} addonAfter="ms" className="execution-config-control" value={draft.sandbox.timeout_ms} onChange={(value) => value && setSandbox({ timeout_ms: value })} />

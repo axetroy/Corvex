@@ -9,6 +9,7 @@ const sandboxConfig: ExecutionConfig["sandbox"] = {
   memory: "2g",
   cpus: 1,
   pidsLimit: 256,
+  tmpfsSizeMb: 512,
   network: "bridge",
   readOnlyMounts: [],
   timeoutMs: 30_000,
@@ -30,6 +31,10 @@ describe("sandbox container args", () => {
     expect(args).toContain("--cap-drop");
     expect(args).toContain("--security-opt");
     expect(args).toContain("--read-only");
+    const tmpfs = args[args.indexOf("--tmpfs") + 1];
+    expect(tmpfs).toBe("/tmp:rw,size=512m");
+    expect(args).toContain("HOME=/tmp");
+    expect(args).toContain("npm_config_cache=/tmp/corvex-cache/npm");
     expect(args).toContain("--pids-limit");
     expect(args).toContain("--rm");
     expect(args).toContain("--name");
