@@ -69,7 +69,7 @@ pnpm start -- --config configs/config.yaml server
 | **Git 图谱** | 只读查看项目镜像的提交图，高亮固定 SHA 与会话 ref 的提交，展开提交详情并下载补丁。 |
 | **文件面板** | 浏览固定快照下的文件，文本使用只读代码查看器，图片可直接预览；会标明实际提供数据的来源（本地工作区或 GitLab）。 |
 
-聊天输入框的斜杠命令来自管理员在「设置 → 技能」中配置的对话技能，遵循 [Agent Skills 规范](https://agentskills.io/specification)：名称、描述与 Markdown 提示词模板，可用 `$ARGUMENTS` 占位。输入 `/` 会在可滚动列表中展示已启用的技能。命令名在发送前会被技能模板替换，因此单独发送 `/docs` 也会带上完整指令；这些只是**本轮的模型指令**，不会创建事件、改变状态或向 GitLab 发布内容。技能附带的脚本不会被执行，因为 Corvex 没有 shell 执行器。 管理员还可以在「设置 → 技能 → 导入技能包」中导入技能包：上传 ZIP（最大 10 MiB），或填写 GitHub 仓库、GitLab 项目（使用当前登录令牌）以及 HTTPS ZIP 直链。只提取其中的 `SKILL.md`，脚本与其它条目一律忽略；ZIP 会原样入库，导入的技能与它绑定，停用或删除技能包会同步停用或删除这些技能。输入框下方显示一条紧凑的上下文简讯，给出最近一次请求的窗口占用与 token 数，点击可打开「上下文」标签。
+聊天输入框的斜杠命令来自管理员在「设置 → 技能」中配置的对话技能，遵循 [Agent Skills 规范](https://agentskills.io/specification)：名称、描述与 Markdown 提示词模板，可用 `$ARGUMENTS` 占位。输入 `/` 会在可滚动列表中展示已启用的技能。命令名在发送前会被技能模板替换，因此单独发送 `/docs` 也会带上完整指令；这些只是**本轮的模型指令**，不会创建事件、改变状态或向 GitLab 发布内容。技能附带的脚本不会被执行，只解析 SKILL.md。 管理员还可以在「设置 → 技能 → 导入技能包」中导入技能包：上传 ZIP（最大 10 MiB），或填写 GitHub 仓库、GitLab 项目（使用当前登录令牌）以及 HTTPS ZIP 直链。只提取其中的 `SKILL.md`，脚本与其它条目一律忽略；ZIP 会原样入库，导入的技能与它绑定，停用或删除技能包会同步停用或删除这些技能。输入框下方显示一条紧凑的上下文简讯，给出最近一次请求的窗口占用与 token 数，点击可打开「上下文」标签。
 
 如果分支在入队消息开始执行前发生移动，该轮会以 `stale` 结束；重新发送消息即可使用当前版本。每个用户还有自己的**设置**页（`#/settings`），可在共享的系统级模型供应商（标有「系统」且只读）之外添加私有供应商与模型；Personal 设置中激活的模型只作用于该用户自己的对话。
 
@@ -84,7 +84,7 @@ Pi 会话不开放内建 shell、edit 或 write 工具。仓库文件读取通�
 - **Git 工具**限定在对话的 worktree 和本地项目镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_sync`、`git_merge`、`git_commit`、`git_push`、`git_publish`、`git_push_branch`、`git_rebase`、`git_cherry_pick`、`git_revert`。不接受任意 URL、远端或强制推送参数；`git_push` 只写镜像中的 `refs/conversations/<id>`，明确要求发布时 `git_publish` 一步保存改动并快进推到 GitLab 具名分支，`git_push_branch` 则是已知完整 SHA 时的底层变体。保存改动后 worktree 会 detached 到保存的提交，因此 `git_rebase` / `git_merge` 面对的是干净工作区，变基/合并结果在轮末同步回会话 ref。轮次排队时抓取的分支快照只用于判断该轮是否过期；未发布改动的基线单独维护，只在成功发布到会话目标分支后前进：只 commit 时改动仍显示在「更改」里，publish 成功后该列表清空，同一轮内可以继续修改并再次发布而无需手动 rebase。推送被拒（非快进）时按 `git_sync` → `git_pull` → `git_rebase` 到 `origin/<branch>` 的顺序恢复，绝不强制推送；每轮 Git 调用次数有上限（`agent.git_tool_call_limit`），失败也计入，超限后停止操作并汇报，避免陷入试错循环。首次发布到功能分支后系统会自动复用或创建 MR（`agent.auto_create_merge_request`）；轮次过期时会在 context 轨迹里记录推进分支的具体提交与作者。
 - **GitLab 工具**固定绑定到对话的项目：项目与分支发现、读取 Issue/MR 及其变更与讨论，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。所有写操作都需要用户明确意图；删除、合并、批准等不可逆或公开动作在工具描述中明确标注。
 - **文件修改**只在工作树中进行，并通过有界的 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成；改动保存到项目镜像的会话 ref，工作区被清理后仍会恢复，且永不 commit 到 GitLab 分支。删除对话或会话改动会移除该 ref。
-- Corvex 不执行仓库代码、脚本或测试；所有 Agent 输出均视为不可信，写入 GitLab 前再次校验授权、取消状态与固定版本。
+- 在「设置 → 执行环境」开启后，对话还会获得 `run_command`：自由命令在固定 worktree 中经配置的后端运行（生产用容器沙箱，开发可用本地后端），有命令长度、超时与输出上限；Chat 过程块里实时显示终端输出，并可单独停止某条命令而不取消整轮。技能脚本仍不会执行。所有 Agent 输出均视为不可信，写入 GitLab 前再次校验授权、取消状态与固定版本。
 
 ## 后续阅读
 

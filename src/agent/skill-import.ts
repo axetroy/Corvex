@@ -76,7 +76,7 @@ function readEntry(zip: yauzl.ZipFile, entry: yauzl.Entry, limit: number): Promi
 }
 
 /**
- * 从 ZIP 中发现 SKILL.md：只解析文本指令文档，包内脚本与其它文件一律忽略（Corvex 不执行脚本）。
+ * 从 ZIP 中发现 SKILL.md：只解析文本指令文档，包内脚本与其它文件一律忽略（技能只提供指令，脚本永不执行）。
  * 返回可导入技能与逐文件问题，单个坏文档不会让整包失败。
  */
 export function discoverSkillsFromZip(archive: Buffer, pathPrefix?: string): Promise<SkillImportResult> {

@@ -27,7 +27,7 @@ GitLab GET 请求遇到瞬时网络错误或 HTTP 408、425、429、500、502、
 
 对话是运维台的一等对象，使用独立表（`conversations`、`conversation_messages`、`conversation_turns`）存储，轮次由 Server 通过 `ConversationRunner` 内联执行，不进入任何事件队列。每轮拥有按 `turn_id` 关联的轨迹与执行记录；`GET /api/ops/conversations/<id>/turns` 把整段对话合并成一条有序时间线，`GET /api/ops/conversations/<id>/turns/<turnId>` 只读取单轮并校验归属，`GET /api/ops/conversations/<id>/stats` 汇总用量与耗时，`GET /api/ops/conversations/<id>` 还返回服务端派生的系统提示词；`GET /api/ops/conversations/<id>/context` 与 `.../context/<seq>` 提供按请求记录的上下文快照。Pi 的 `context_with_system` 扩展把提示词按系统 / 工具 / 用户 / 注入 / 助手 / 工具结果分类，经 `contextSnapshot` 钩子产出有界快照，默认 tap 将脱敏预览写入 `conversation_context_snapshots`；「上下文」标签展示窗口占用、组成、请求时间线、逐项内容与上下文事件，可用 `agent.context_inspect_enabled` 关闭采集。轨迹数据在 `src/store.ts` 中脱敏并限长。
 
-斜杠命令由管理员维护的对话技能提供，存放在 `conversation_skills`：每个技能是一份 SKILL.md，遵循 [Agent Skills 规范](https://agentskills.io/specification)，正文为单语言 Markdown、支持 `$ARGUMENTS`，并可包含许可证、兼容性、元数据与允许工具字段。`resolveCommandRequest` 在请求出站前展开模板，命令名不会发给模型；七个旧命令作为可编辑的系统技能种子写入，CRUD 仅在管理员的 `/api/ops/admin/skills`，普通用户通过 `/api/ops/skills` 读取已启用技能。技能附带的脚本不会执行，因为 Corvex 没有 shell 执行器。
+斜杠命令由管理员维护的对话技能提供，存放在 `conversation_skills`：每个技能是一份 SKILL.md，遵循 [Agent Skills 规范](https://agentskills.io/specification)，正文为单语言 Markdown、支持 `$ARGUMENTS`，并可包含许可证、兼容性、元数据与允许工具字段。`resolveCommandRequest` 在请求出站前展开模板，命令名不会发给模型；七个旧命令作为可编辑的系统技能种子写入，CRUD 仅在管理员的 `/api/ops/admin/skills`，普通用户通过 `/api/ops/skills` 读取已启用技能。技能附带的脚本不会执行，只解析 SKILL.md。
 
 工作区铺满视口：左侧对话列表按仓库分组、最近更新的对话与分组优先，组标题吸顶并带稳定色点，运行中的轮次显示脉冲圆点；右侧工作区的 **Chat**、**调用记录**、**轨迹**、**上下文**、**统计**、**变更**、**Git 图谱**、**文件面板** 分别呈现回复与工具调用时间线、按轮次的执行步骤、合并轨迹（可聚焦单轮，LLM / 工具 / 上下文三条轨道）、每次模型请求的上下文组成与内容、用量汇总、按轮次或全会话的改动、项目镜像的提交图与补丁导出、以及固定快照下的文件浏览。仓库名按钮弹出项目信息 Popover（含分支与固定 SHA）；欢迎页提供按意图分组的快捷提示词。
 
@@ -43,13 +43,13 @@ Corvex 让对话始终落在模型上下文窗口之内，而不是等服务商�
 
 ## 工具与写入边界
 
-Pi 会话不开放内建 shell、edit 或 write 工具；工具集由对话模式（`ConversationMode`，当前只有 `gitlab`）派生，读写能力统一。
+Pi 会话不开放内建 shell、edit 或 write 工具；命令执行仅在开启执行环境后由绑定的 `run_command` 工具提供，工具集由对话模式（`ConversationMode`，当前只有 `gitlab`）派生，读写能力统一。
 
 - **文件读取**通过 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本；仓库文件必须使用相对路径，绝对路径只接受 Skill 根目录。文件改动通过 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成，并受统一的 worktree 路径守卫与字节上限约束。
 - **Git 工具**限定在对话 worktree 与本地镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_merge`、`git_commit`、`git_push`、`git_revert`。不接受任意 URL、远端或强制推送；`git_push` 只写镜像中的 `refs/conversations/<id>`，绝不写 GitLab 分支。分支、合并与回滚都经过校验，不会重写历史。
 - **GitLab 工具**固定绑定到对话项目：项目与 MR 发现、Issue/MR 读取、讨论与变更，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。iid 必须来自用户或读取结果；写操作需要用户明确意图，删除、合并、批准等不可逆或公开动作在描述中明确标注。
 - `web_fetch`（启用时）只能访问公网 HTTPS 主机，重定向会重新校验，私网/保留地址与配置的黑名单主机始终被拒绝，返回文本受限且视为不可信输入。`web_search` 使用 Tavily 免费免 key 模式：查询文本会发送给 Tavily，共享额度可能限流，限流时以提示文本返回而不是让本轮失败；结果链接经过与 `web_fetch` 相同的 URL 校验，摘要限长，每轮搜索次数可配置。搜索结果是第三方不可信文本。Skill 只是指令，不是访问控制。
-- Corvex 不执行仓库代码、脚本或测试；没有 shell 执行器。Agent 输出不被信任，GitLab 写入前再次校验授权、取消状态与固定版本。
+- 命令仅在开启执行环境后经绑定到会话 worktree 的 `run_command` 工具执行，不存在任意 shell；技能脚本永不执行。Agent 输出不被信任，GitLab 写入前再次校验授权、取消状态与固定版本。
 
 ## 轮次状态与取消
 

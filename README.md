@@ -9,7 +9,7 @@ Corvex runs persistent conversations in the ops console. Each conversation is bo
 - The console discovers every repository visible to the signed-in user's GitLab token and stores conversations and turns in SQLite.
 - Each turn keeps its own trajectory, execution records, a streaming reply and bounded per-request context snapshots; the workspace includes Context and Trace inspectors, a read-only Git graph, file browser and conversation records.
 - Conversations may read and, with explicit user intent, write to GitLab through bounded tools; the Git tool set is confined to the conversation worktree and local mirror.
-- Corvex does not execute repository scripts or tests. There is no shell executor by design.
+- Commands run only through the conversation-bound `run_command` tool when the execution environment is enabled; bundled skill scripts are never executed.
 - Prometheus metrics and a storage cleanup console support operations.
 
 Webhook-driven task events (review, chat, explain, fix, Issue implementation) are not part of this stage; see [ROADMAP.md](ROADMAP.md) for the deferred design.

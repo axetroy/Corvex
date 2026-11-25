@@ -96,6 +96,8 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 ## 运行时设置
 
+执行环境配置**不在** `runtime_settings` 中，而是单独保存在 SQLite 的 `execution_config` 表，由管理员在「设置 → 执行环境」维护：控制是否注册 `run_command`、后端（沙箱或仅开发的本地）、容器运行时/镜像/socket，以及资源与输出上限。管理接口对整份配置做 fail-closed 校验并立即作用于后续轮次；首次保存前才使用 YAML/环境变量兜底。设计约定见 [execution-design.md](https://github.com/axetroy/Corvex/blob/main/execution-design.md)。
+
 上表中的可调项在运维台「设置」页维护，保存在 SQLite 的 `runtime_settings` 表（含 `updated_at` 与 `updated_by`）；配置文件只提供初始值。控制台保存时提交全部可编辑项，此后数据库就是唯一来源，也不再提供「恢复为配置文件值」。Server 立即把修改作用于后续轮次，并写入 `audit_events`（`update_settings`，操作者为控制台用户名）；启动时也会重新应用已保存的设置。每个字段显示运行时推导出的生效值：例如 `max_input_tokens` 由窗口推导、工具结果检查点收敛到四个工具输出轮次、压缩预留提升到安全下限，因此填写值可能与进程实际使用值不同。
 
 「设置 → 模型」管理模型供应商：每个供应商保存名称、Base URL 与 API Key，并在其下维护各自的模型（上下文窗口与最大输出 Token）。全局只有一个模型处于使用状态：第一个新增的模型自动激活，切换后无需重启即作用于下一轮；每条助手回复也会记录生成它的模型。当前模型覆盖 `agent.model`、`agent.base_url`、`agent.api_key`、`agent.context_window` 与 `agent.max_output_tokens`；目录为空时才使用 YAML 或环境变量回退值。API Key 不会通过接口返回，也不会写入审计日志；密码框留空表示沿用已保存值。请保护数据库文件及其备份。从旧版本升级时，已保存的 `model` / `model_base_url` / `model_api_key` 运行时覆盖会自动迁移成供应商。每个用户还可以在自己的 `#/settings` 页面添加私有供应商与模型，激活时只修改该用户的选择，不影响系统级模型。设置页分为「基础 / 模型 / GitLab / 存储 / 高级」几个分页，连接测试不会回显密钥。

@@ -81,6 +81,9 @@ Expose the console through HTTPS and keep the GitLab API, database volume, and m
 | `GET /api/ops/admin/users`, `PUT /api/ops/admin/users/<id>` | Administrator-only user list and admin-flag updates. |
 | `GET /api/ops/skills` | Enabled conversation skills (SKILL.md documents following [agentskills.io/specification](https://agentskills.io/specification)) for every signed-in user. |
 | `GET` / `POST /api/ops/admin/skills`, `PUT` / `DELETE /api/ops/admin/skills/<id>` | Administrator CRUD for conversation skills; the seven seeded system skills can be edited or disabled but not deleted. |
+| `GET` / `PUT` / `DELETE /api/ops/admin/execution` | Read, save or reset the execution environment config (enabled, backend, sandbox/local limits). Admin-only; stored in SQLite and validated fail-closed; YAML/env is the file fallback. |
+| `GET /api/ops/conversations/<id>/executions` | Past `run_command` invocations for a conversation (command, backend, exit code, time). |
+| `POST /api/ops/conversations/<id>/turns/<turnId>/executions/<execId>/cancel` | Stop one running command without cancelling the turn. |
 
 The console endpoints require a GitLab OAuth2 session; settings, model providers and storage maintenance are administrator-only. API calls return `401` JSON when unauthenticated, never a redirect, and the console turns that into a client-side redirect to login or setup. Protect operator sessions and use HTTPS. Do not expose `/metrics` publicly unless your monitoring setup requires it; restrict it at the network or proxy layer. Webhook and event endpoints are deferred; see [ROADMAP.md](https://github.com/axetroy/Corvex/blob/main/ROADMAP.md).
 

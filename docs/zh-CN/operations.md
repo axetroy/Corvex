@@ -78,6 +78,9 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 | `GET`/`PUT /api/ops/settings` | 读取运行时设置的生效值，或整份替换；首次保存后 SQLite 即为唯一来源，是否提供 `--config` 都可用。 |
 | `GET /api/ops/skills` | 所有登录用户可读的已启用对话技能（遵循 [agentskills.io/specification](https://agentskills.io/specification) 的 SKILL.md 文档）。 |
 | `GET`/`POST /api/ops/admin/skills`、`PUT`/`DELETE /api/ops/admin/skills/<id>` | 管理员增删改对话技能；七个系统种子技能可编辑或停用，但不可删除。 |
+| `GET`/`PUT`/`DELETE /api/ops/admin/execution` | 读取、保存或重置执行环境配置（开关、后端、沙箱/本地限额）。仅管理员可用；存 SQLite 并做 fail-closed 校验，YAML/环境变量作为文件兜底。 |
+| `GET /api/ops/conversations/<id>/executions` | 会话内历史 `run_command` 记录（命令、后端、退出码、时间）。 |
+| `POST /api/ops/conversations/<id>/turns/<turnId>/executions/<execId>/cancel` | 只停止某条正在运行的命令，不取消整轮。 |
 
 运维台接口需要 GitLab OAuth2 会话；API 遇到未登录返回 401 JSON（永不 302），前端据此重定向到登录或安装页。请保护会话并使用 HTTPS。除非监控系统需要，否则不要公开暴露 `/metrics`；应在网络或代理层限制访问。不存在 `/webhooks/gitlab` 或 `/api/ops/events` 端点。
 
