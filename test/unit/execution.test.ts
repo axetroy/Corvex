@@ -27,7 +27,7 @@ function baseConfig(): CorvexConfig {
     },
     execution: {
       enabled: false, backend: "sandbox",
-      sandbox: { runtime: "docker", image: "", socket: "", memory: "2g", cpus: 1, pidsLimit: 256, tmpfsSizeMb: 512, network: "none", readOnlyMounts: [], timeoutMs: 120_000, maxOutputBytes: 256 << 10 },
+      sandbox: { runtime: "docker", image: "", socket: "", memory: "2g", cpus: 1, pidsLimit: 256, tmpfsSizeMb: 512, logMaxSizeMb: 4, logMaxFile: 2, network: "none", readOnlyMounts: [], timeoutMs: 120_000, maxOutputBytes: 256 << 10 },
       local: { allowUnsafe: false, timeoutMs: 120_000, maxOutputBytes: 256 << 10 },
     },
   };

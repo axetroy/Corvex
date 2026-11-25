@@ -121,6 +121,10 @@ export interface ExecutionConfig {
     pidsLimit: number;
     /** 容器内 /tmp 与缓存目录的 tmpfs 大小（MiB）；与输出上限无关，避免包管理器 ENOSPC。 */
     tmpfsSizeMb: number;
+    /** Docker json-file 日志单文件上限（MiB）；防止命令巨量输出撑爆宿主日志文件。 */
+    logMaxSizeMb: number;
+    /** Docker json-file 日志保留文件个数。 */
+    logMaxFile: number;
     network: "none" | "bridge";
     readOnlyMounts: string[];
     timeoutMs: number;
@@ -198,6 +202,8 @@ const defaults: CorvexConfig = {
       cpus: 1,
       pidsLimit: 256,
       tmpfsSizeMb: 512,
+      logMaxSizeMb: 4,
+      logMaxFile: 2,
       // 默认 bridge：允许联网（装依赖等），但容器网络命名空间与宿主隔离。
       network: "bridge",
       readOnlyMounts: [],
@@ -326,6 +332,11 @@ function parseExecution(raw: unknown): ExecutionConfig {
         process.env.CORVEX_EXECUTION_SANDBOX_TMPFS_SIZE_MB ?? sandbox.tmpfs_size_mb,
         defaults.execution.sandbox.tmpfsSizeMb,
       ),
+      logMaxSizeMb: number(
+        process.env.CORVEX_EXECUTION_SANDBOX_LOG_MAX_SIZE_MB ?? sandbox.log_max_size_mb,
+        defaults.execution.sandbox.logMaxSizeMb,
+      ),
+      logMaxFile: number(sandbox.log_max_file, defaults.execution.sandbox.logMaxFile),
       network: enumValue(sandbox.network, ["none", "bridge"] as const, defaults.execution.sandbox.network, "execution.sandbox.network"),
       readOnlyMounts: stringArray(sandbox.read_only_mounts, defaults.execution.sandbox.readOnlyMounts),
       timeoutMs: duration(sandbox.timeout, defaults.execution.sandbox.timeoutMs, "execution.sandbox.timeout"),
@@ -556,6 +567,12 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
       if (execution.sandbox.pidsLimit < 1) problems.push("execution.sandbox.pids_limit must be at least 1");
       if (execution.sandbox.tmpfsSizeMb < 16 || execution.sandbox.tmpfsSizeMb > 4096) {
         problems.push("execution.sandbox.tmpfs_size_mb must be between 16 and 4096");
+      }
+      if (execution.sandbox.logMaxSizeMb < 1 || execution.sandbox.logMaxSizeMb > 1024) {
+        problems.push("execution.sandbox.log_max_size_mb must be between 1 and 1024");
+      }
+      if (!Number.isInteger(execution.sandbox.logMaxFile) || execution.sandbox.logMaxFile < 1 || execution.sandbox.logMaxFile > 100) {
+        problems.push("execution.sandbox.log_max_file must be an integer between 1 and 100");
       }
     }
     const limits = execution.backend === "sandbox" ? execution.sandbox : execution.local;

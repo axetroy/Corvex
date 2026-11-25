@@ -17,6 +17,8 @@ interface ExecutionConfig {
     cpus: number;
     pids_limit: number;
     tmpfs_size_mb: number;
+    log_max_size_mb: number;
+    log_max_file: number;
     network: "none" | "bridge";
     read_only_mounts: string[];
     timeout_ms: number;
@@ -225,6 +227,12 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
           </Field>
           <Field label={copy.executionConfigTmpfs} hint={copy.executionConfigTmpfsHint}>
             <InputNumber min={16} max={4096} addonAfter="MiB" className="execution-config-control" value={draft.sandbox.tmpfs_size_mb} onChange={(value) => value && setSandbox({ tmpfs_size_mb: value })} />
+          </Field>
+          <Field label={copy.executionConfigLogSize} hint={copy.executionConfigLogHint}>
+            <InputNumber min={1} max={1024} addonAfter="MiB" className="execution-config-control" value={draft.sandbox.log_max_size_mb} onChange={(value) => value && setSandbox({ log_max_size_mb: value })} />
+          </Field>
+          <Field label={copy.executionConfigLogFiles} hint={copy.executionConfigLogHint}>
+            <InputNumber min={1} max={100} className="execution-config-control" value={draft.sandbox.log_max_file} onChange={(value) => value && setSandbox({ log_max_file: value })} />
           </Field>
           <Field label={copy.executionConfigTimeout} hint={copy.executionConfigTimeoutHint}>
             <InputNumber min={1} addonAfter="ms" className="execution-config-control" value={draft.sandbox.timeout_ms} onChange={(value) => value && setSandbox({ timeout_ms: value })} />

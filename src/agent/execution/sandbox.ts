@@ -30,6 +30,11 @@ export function buildContainerArgs(
     "run",
     "--rm",
     "--name", containerName,
+    // 限制 Docker json-file 日志：maxOutputBytes 只管 Corvex 捕获多少，
+    // 但 Docker 仍把命令的完整 stdout/stderr 写入宿主日志文件，巨量输出会撑爆磁盘。
+    "--log-driver", "json-file",
+    "--log-opt", `max-size=${config.logMaxSizeMb}m`,
+    "--log-opt", `max-file=${config.logMaxFile}`,
     "--network", config.network,
     "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true",

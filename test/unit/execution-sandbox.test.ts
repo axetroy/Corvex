@@ -10,6 +10,8 @@ const sandboxConfig: ExecutionConfig["sandbox"] = {
   cpus: 1,
   pidsLimit: 256,
   tmpfsSizeMb: 512,
+  logMaxSizeMb: 4,
+  logMaxFile: 2,
   network: "bridge",
   readOnlyMounts: [],
   timeoutMs: 30_000,
@@ -40,6 +42,9 @@ describe("sandbox container args", () => {
     expect(args).toContain("--name");
     expect(args[args.indexOf("--name") + 1]).toBe("corvex-exec-test");
     expect(args.some((arg) => arg.includes("type=bind") && arg.includes("target=/workspace"))).toBe(true);
+    expect(args[args.indexOf("--log-driver") + 1]).toBe("json-file");
+    expect(args).toContain("max-size=4m");
+    expect(args).toContain("max-file=2");
     expect(args.at(-3)).toBe("/bin/sh");
     expect(args.at(-2)).toBe("-c");
     expect(args.at(-1)).toBe("echo hello");

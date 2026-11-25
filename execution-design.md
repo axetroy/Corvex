@@ -83,6 +83,8 @@ interface ExecutionBackend {
 
 **可见性边界**：容器只通过 bind mount 看到 `request.cwd` 这一个 worktree 目录；`df` 在该挂载点上显示的是底层文件系统容量（Linux bind mount 的 `statvfs` 语义），这不代表容器能读取宿主其它路径。rootfs 只读、不挂载 docker socket、不注入宿主环境变量或凭据。
 
+`max_output_bytes` 只控制 Corvex **捕获**多少字节返回给模型和终端；Docker 仍把命令的完整 stdout/stderr 写进宿主上的容器日志文件，一个无限打印的命令（如 `yes`）能撑爆 `/var/lib/docker/containers/*-json.log`。因此容器固定使用 `--log-driver json-file` 并加上 `--log-opt max-size=<log_max_size_mb>m` / `--log-opt max-file=<log_max_file>`，在日志写入侧做轮转硬限，与输出捕获预算相互独立。
+
 ```yaml
 execution:
   # 总开关，默认 false；关闭时模型看不到 run_command 工具
@@ -97,6 +99,8 @@ execution:
     cpus: 1
     pids_limit: 256
     tmpfs_size_mb: 512         # /tmp 与包管理器缓存的 tmpfs 大小（16–4096），与 max_output_bytes 无关
+    log_max_size_mb: 4         # Docker json-file 日志单文件上限（1–1024）
+    log_max_file: 2            # 保留的日志文件个数（1–100）
     network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）
     read_only_mounts: []
     timeout: 120s

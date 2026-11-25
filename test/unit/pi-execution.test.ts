@@ -85,7 +85,7 @@ describe("PiAgent run_command integration", () => {
       execution: {
         enabled: true,
         backend: "local",
-        sandbox: { runtime: "docker", image: "", socket: "", memory: "2g", cpus: 1, pidsLimit: 256, tmpfsSizeMb: 512, network: "bridge", readOnlyMounts: [], timeoutMs: 10_000, maxOutputBytes: 4_096 },
+        sandbox: { runtime: "docker", image: "", socket: "", memory: "2g", cpus: 1, pidsLimit: 256, tmpfsSizeMb: 512, logMaxSizeMb: 4, logMaxFile: 2, network: "bridge", readOnlyMounts: [], timeoutMs: 10_000, maxOutputBytes: 4_096 },
         local: { allowUnsafe: true, timeoutMs: 10_000, maxOutputBytes: 4_096 },
       },
     } as unknown as CorvexConfig;
