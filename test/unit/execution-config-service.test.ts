@@ -41,6 +41,13 @@ describe("ExecutionConfigService", () => {
     const payload = service.read();
     expect(payload.source).toBe("file");
     expect(payload.config.enabled).toBe(false);
+    // 接口返回 snake_case（UI 期望的形态），不能是内部 camelCase。
+    const sandbox = (payload.config as unknown as Record<string, Record<string, unknown>>).sandbox;
+    expect(sandbox).toHaveProperty("pids_limit");
+    expect(sandbox).toHaveProperty("timeout_ms");
+    expect(sandbox).toHaveProperty("max_output_bytes");
+    expect(sandbox).toHaveProperty("read_only_mounts");
+    expect(sandbox).not.toHaveProperty("pidsLimit");
   });
 
   it("saves a valid sandbox config and applies it immediately", async () => {

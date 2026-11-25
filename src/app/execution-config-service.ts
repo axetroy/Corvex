@@ -45,11 +45,38 @@ export class ExecutionConfigService {
     }
   }
 
+  /** 把内部 camelCase 配置转成 UI/接口统一的 snake_case 形态。 */
+  private static toFrontend(config: ExecutionConfig): Record<string, unknown> {
+    const sandbox = config.sandbox;
+    const local = config.local;
+    return {
+      enabled: config.enabled,
+      backend: config.backend,
+      sandbox: {
+        runtime: sandbox.runtime,
+        image: sandbox.image,
+        socket: sandbox.socket,
+        memory: sandbox.memory,
+        cpus: sandbox.cpus,
+        pids_limit: sandbox.pidsLimit,
+        network: sandbox.network,
+        read_only_mounts: [...sandbox.readOnlyMounts],
+        timeout_ms: sandbox.timeoutMs,
+        max_output_bytes: sandbox.maxOutputBytes,
+      },
+      local: {
+        allow_unsafe: local.allowUnsafe,
+        timeout_ms: local.timeoutMs,
+        max_output_bytes: local.maxOutputBytes,
+      },
+    };
+  }
+
   /** 读取当前生效配置与来源。 */
   read(): ExecutionConfigPayload {
     const stored = this.store.getExecutionConfig();
     return {
-      config: structuredClone(this.config.execution),
+      config: ExecutionConfigService.toFrontend(this.config.execution) as unknown as ExecutionConfig,
       source: stored ? "database" : "file",
       ...(stored ? { updatedAt: stored.updatedAt, updatedBy: stored.updatedBy } : {}),
       effectiveImmediately: true,
