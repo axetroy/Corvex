@@ -12,6 +12,8 @@ interface StorageResponse {
   mirrors: StorageRow[];
   workspaces: StorageRow[];
   truncated: boolean;
+  /** 单会话 worktree 大小上限（字节）；超限只警告记录，不自动删除。 */
+  workspaceSizeLimitBytes: number;
 }
 
 interface Props {
@@ -41,6 +43,8 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
 
   const mirrorRows = sortStorageRows(data.mirrors);
   const workspaceRows = sortStorageRows(data.workspaces);
+  const sizeLimit = data.workspaceSizeLimitBytes ?? Number.POSITIVE_INFINITY;
+  const overLimitCount = data.workspaces.filter((row) => row.sizeBytes > sizeLimit).length;
 
   const columns = [
     {
@@ -77,6 +81,11 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
     {
       ...columns[2],
       title: copy.adminStorageColumnSize,
+      render: (value: number, row: StorageRow) => (
+        <Typography.Text strong type={row.sizeBytes > sizeLimit ? "warning" : undefined}>
+          {formatStorageBytes(value)}
+        </Typography.Text>
+      ),
     },
     columns[3],
     {
@@ -97,6 +106,9 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
       />
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
       {data.truncated ? <Alert type="warning" showIcon message={copy.adminStorageTruncated} /> : null}
+      {overLimitCount > 0 ? (
+        <Alert type="warning" showIcon message={copy.adminStorageWorkspaceOverLimit} />
+      ) : null}
 
       <div className="storage-overview-stats">
         <StatCard label={copy.adminStorageMirrorCount} value={data.mirrors.length} />

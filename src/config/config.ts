@@ -34,6 +34,8 @@ export interface CorvexConfig {
     conversationWorkspaceTtlMinutes: number;
     /** 对话常驻 worktree 的数量上限（按最近使用淘汰）。 */
     conversationWorkspaceMax: number;
+    /** 单个 worktree 目录的大小上限（MiB）；超限只警告记录，不自动删除。 */
+    conversationWorkspaceMaxMb: number;
   };
   agent: {
     responseLanguage: ResponseLanguage;
@@ -150,7 +152,7 @@ const defaults: CorvexConfig = {
     oauthClientSecret: "",
     oauthRedirectUri: "",
   },
-  storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365, conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8 },
+  storage: { root: "", database: "", retentionDays: 90, auditRetentionDays: 365, conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8, conversationWorkspaceMaxMb: 2048 },
   agent: {
     responseLanguage: "en",
     baseUrl: "https://api.openai.com/v1",
@@ -393,6 +395,10 @@ function parseConfig(raw: unknown): CorvexConfig {
         storage.conversation_workspace_max,
         defaults.storage.conversationWorkspaceMax,
       ),
+      conversationWorkspaceMaxMb: number(
+        storage.conversation_workspace_max_mb,
+        defaults.storage.conversationWorkspaceMaxMb,
+      ),
     },
     agent: {
       responseLanguage: responseLanguage(agent.response_language, defaults.agent.responseLanguage),
@@ -537,6 +543,9 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.storage.conversationWorkspaceMax < 1 || config.storage.conversationWorkspaceMax > 200) {
     problems.push("storage.conversation_workspace_max must be between 1 and 200");
+  }
+  if (config.storage.conversationWorkspaceMaxMb < 64 || config.storage.conversationWorkspaceMaxMb > 20_480) {
+    problems.push("storage.conversation_workspace_max_mb must be between 64 and 20480");
   }
   if (config.agent.webBlockedHosts.length > 100) {
     problems.push("agent.web_blocked_hosts must contain no more than 100 hostnames");

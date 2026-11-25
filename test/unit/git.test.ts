@@ -613,6 +613,39 @@ describe("Git workflows", () => {
     expect(description.truncated).toBe(false);
   });
 
+  it("measures one worktree and stops early once the limit is exceeded", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-worktree-size-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com");
+    await manager.initialize();
+    const conversationId = "123e4567-e89b-12d3-a456-426614174000";
+    const workspaceName = conversationWorkspaceName(conversationId);
+    const worktree = join(root, "workspaces", "7", workspaceName);
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, "small.txt"), "x".repeat(64));
+    const workspace: Workspace = {
+      projectId: 7,
+      workspaceName,
+      path: worktree,
+      headSha: "a".repeat(40),
+    };
+
+    const exact = await manager.measureWorkspace(workspace);
+    expect(exact.bytes).toBeGreaterThanOrEqual(64);
+    expect(exact.truncated).toBe(false);
+    expect(exact.exceeded).toBe(false);
+
+    const early = await manager.measureWorkspace(workspace, 32);
+    expect(early.bytes).toBeGreaterThanOrEqual(64);
+    expect(early.exceeded).toBe(true);
+
+    // 超过节点/深度上限时给出近似值，不抛错。
+    await writeFile(join(worktree, "big.txt"), "y".repeat(256));
+    const bounded = await manager.measureWorkspace(workspace, 1_000_000);
+    expect(bounded.bytes).toBeGreaterThanOrEqual(320);
+    expect(bounded.exceeded).toBe(false);
+  });
+
   it("keeps the worktree clean after saving so rebase works and its result survives", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-save-align-"));
     const root = join(directory, "storage");

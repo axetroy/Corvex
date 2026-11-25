@@ -225,13 +225,19 @@ export class GitManager {
   /**
    * 递归统计目录字节数；符号链接跳过，节点/深度超限时置 truncated 并停止深入。
    * 并发清理导致目录消失（ENOENT）时跳过该条目，不让整个管理页请求失败。
+   * 传入 stopAtBytes 时一旦累计超过该值立即停止遍历（只判断是否超限，不追求精确），
+   * 并用 exceeded 标记；这能让「每轮一次」的容量检查在超大 worktree 上快速返回。
    */
-  private async measureDirectory(directory: string): Promise<{ bytes: number; truncated: boolean }> {
+  private async measureDirectory(
+    directory: string,
+    stopAtBytes?: number,
+  ): Promise<{ bytes: number; truncated: boolean; exceeded: boolean }> {
     let nodes = 0;
     let truncated = false;
+    let exceeded = false;
     const walk = async (path: string, depth: number): Promise<number> => {
-      if (nodes >= maxStorageSizeNodes || depth > maxStorageSizeDepth) {
-        truncated = true;
+      if (exceeded || nodes >= maxStorageSizeNodes || depth > maxStorageSizeDepth) {
+        if (nodes >= maxStorageSizeNodes || depth > maxStorageSizeDepth) truncated = true;
         return 0;
       }
       let entries: Dirent[];
@@ -243,6 +249,7 @@ export class GitManager {
       }
       let total = 0;
       for (const entry of entries) {
+        if (exceeded) return total;
         if (nodes >= maxStorageSizeNodes) {
           truncated = true;
           break;
@@ -261,11 +268,29 @@ export class GitManager {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
             throw error;
           }
+          if (stopAtBytes !== undefined && total >= stopAtBytes) {
+            exceeded = true;
+            return total;
+          }
         }
       }
       return total;
     };
-    return { bytes: await walk(directory, 0), truncated };
+    const bytes = await walk(directory, 0);
+    return { bytes, truncated, exceeded };
+  }
+
+  /**
+   * 单个会话 worktree 的有界大小检查；超过节点/深度上限时 truncated 为真（结果为近似值）。
+   * 传入 stopAtBytes 可提前结束遍历（只关心是否超限）。
+   */
+  async measureWorkspace(
+    workspace: Workspace,
+    stopAtBytes?: number,
+  ): Promise<{ bytes: number; truncated: boolean; exceeded: boolean }> {
+    this.validateWorkspace(workspace);
+    const path = join(this.workspaceRoot, String(workspace.projectId), workspace.workspaceName);
+    return this.measureDirectory(path, stopAtBytes);
   }
 
   /**

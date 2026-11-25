@@ -103,6 +103,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "storage_audit_retention_days", section: "storage", field: "auditRetentionDays", type: "number", min: 1, max: 36_500 },
   { key: "conversation_workspace_ttl_minutes", section: "storage", field: "conversationWorkspaceTtlMinutes", type: "number", min: 1, max: 14_400 },
   { key: "conversation_workspace_max", section: "storage", field: "conversationWorkspaceMax", type: "number", min: 1, max: 200 },
+  // 单个会话 worktree 目录的大小上限（MiB）；命令执行后扫描，超限只警告记录，不自动删除。
+  { key: "conversation_workspace_max_mb", section: "storage", field: "conversationWorkspaceMaxMb", type: "number", min: 64, max: 20_480 },
 ];
 
 const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [definition.key, definition]));

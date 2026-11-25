@@ -22,6 +22,7 @@ function validConfig(): CorvexConfig {
     storage: {
       root: "./data", database: "./data/state.db", retentionDays: 90, auditRetentionDays: 365,
       conversationWorkspaceTtlMinutes: 60, conversationWorkspaceMax: 8,
+      conversationWorkspaceMaxMb: 2048,
     },
     agent: {
       responseLanguage: "en",
@@ -183,6 +184,15 @@ describe("validateConfig", () => {
   it("allows GitLab credentials to be configured later in the console", () => {
     const config = validConfig();
     expect(() => validateConfig(config, "server")).not.toThrow();
+  });
+
+  it("validates the per-conversation workspace size limit", () => {
+    const config = validConfig();
+    expect(() => validateConfig(config)).not.toThrow();
+    config.storage.conversationWorkspaceMaxMb = 0;
+    expect(() => validateConfig(config)).toThrow("conversation_workspace_max_mb");
+    config.storage.conversationWorkspaceMaxMb = 30_000;
+    expect(() => validateConfig(config)).toThrow("conversation_workspace_max_mb");
   });
 
   it("rejects credential-bearing model URLs", () => {

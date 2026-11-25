@@ -2484,6 +2484,25 @@ export class AppStore {
     );
   }
 
+  /** 记录一次会话工作区超限警告：resource 带会话/轮次，result 带实际字节/上限/是否截断。 */
+  insertWorkspaceSizeAudit(
+    actorId: number,
+    conversationId: string,
+    turnId: string,
+    bytes: number,
+    limitBytes: number,
+    truncated: boolean,
+    at?: string,
+  ): void {
+    this.insertAudit(
+      actorId,
+      "workspace_size_warning",
+      `${conversationId}:${turnId}`,
+      `${bytes}:${limitBytes}:${truncated ? "truncated" : "exact"}`,
+      at,
+    );
+  }
+
   private insertAudit(actorId: number, action: string, resource: string, result: string, at?: string): void {
     this.db
       .prepare("INSERT INTO audit_events(actor_id,action,resource,result,created_at) VALUES (?,?,?,?,?)")

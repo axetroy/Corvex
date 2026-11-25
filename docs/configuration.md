@@ -53,6 +53,7 @@ Each user's access token is encrypted in SQLite and used for that user's console
 | `storage.audit_retention_days` | `365` | 1–36500 | Retention for audit records. |
 | `storage.conversation_workspace_ttl_minutes` | `60` | 1–14400 | Idle time after which a conversation worktree may be released. |
 | `storage.conversation_workspace_max` | `8` | 1–200 | Maximum number of cached conversation worktrees (least-recently-used first). |
+| `storage.conversation_workspace_max_mb` | `2048` | 64–20480 | Size limit for one conversation worktree (MiB). After a turn that ran commands, Corvex scans the worktree and warns if it exceeds the limit; files are never deleted automatically. |
 
 Corvex creates the database parent directory, mirror directory, and workspace directory at startup. The process must have write access. Back up the database and Git storage separately. Worktree eviction never touches a conversation with a queued or running turn; an evicted idle worktree is rebuilt on the next turn.
 
@@ -142,6 +143,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `storage_audit_retention_days` | 1–36,500 | Retention for audit records. |
 | `conversation_workspace_ttl_minutes` | 1–14,400 | Idle worktree TTL. |
 | `conversation_workspace_max` | 1–200 | Cached worktree limit. |
+| `conversation_workspace_max_mb` | 64–20,480 | Per-conversation worktree size limit (MiB). Commands never delete files; a warning is recorded and shown in the conversation and Storage page. |
 
 There are no shared GitLab read/write token settings: every GitLab API and Git network operation uses the signed-in user's OAuth token. The model name, connection URL, API key, context window and output cap are managed in Settings → Model rather than as editable setting keys; older stored overrides (`model`, `model_base_url`, `model_api_key`, `context_window`, `max_output_tokens`) are read for upgrade compatibility but hidden from the console.
 

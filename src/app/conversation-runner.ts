@@ -65,6 +65,8 @@ export class ConversationRunner {
   private readonly execStops = new Map<string, { turnId: string; stop: (reason: string) => void }>();
   /** 每个对话只允许一个排队消费者，避免并发轮次重复取出同一条补充。 */
   private readonly draining = new Set<string>();
+  /** 上次检查 worktree 大小的时间：高频对话不必每轮都遍历（node_modules 可达百万文件）。 */
+  private readonly workspaceSizeCheckedAt = new Map<string, number>();
   /** Server 关闭信号；排队轮次也必须在关闭时中止。 */
   private shutdownSignal: AbortSignal | undefined;
 
@@ -229,6 +231,7 @@ export class ConversationRunner {
   async removeConversationWorkspace(conversationId: string, projectId: number): Promise<boolean> {
     if (this.running.has(conversationId)) return false;
     this.workspaces.delete(conversationId);
+    this.workspaceSizeCheckedAt.delete(conversationId);
     await this.repo.removeConversationWorkspaceById(projectId, conversationId);
     return true;
   }
@@ -373,6 +376,53 @@ export class ConversationRunner {
   }
 
   /** 查询/放弃会话的本地改动；放弃时同时清掉 worktree。 */
+  /**
+   * 命令执行后检查单个会话 worktree 的大小：超过配置上限只警告与记录，不删除任何文件。
+   * 只在轮末做一次、且每个会话有冷却时间；有界扫描且超限即提前结束，不阻断轮次。
+   */
+  private async checkWorkspaceSize(
+    workspace: Workspace,
+    conversationId: string,
+    turnId: string,
+    actorId: number,
+  ): Promise<void> {
+    const cooldownMs = 5 * 60_000;
+    const now = Date.now();
+    const last = this.workspaceSizeCheckedAt.get(conversationId);
+    if (last !== undefined && now - last < cooldownMs) return;
+    this.workspaceSizeCheckedAt.set(conversationId, now);
+
+    const limitBytes = this.config.storage.conversationWorkspaceMaxMb * 1024 * 1024;
+    try {
+      const { bytes, truncated, exceeded } = await this.repo.measureWorkspace(workspace, limitBytes);
+      const limited = exceeded || bytes > limitBytes;
+      if (limited || truncated) {
+        const sizeMb = Math.round(bytes / 1024 / 1024);
+        const limitMb = this.config.storage.conversationWorkspaceMaxMb;
+        const zh = this.config.agent.responseLanguage === "zh-CN";
+        const text = limited
+          ? zh
+            ? `会话工作区已占用约 ${sizeMb} MiB，超过上限 ${limitMb} MiB；请清理不再需要的文件或放弃改动。`
+            : `Conversation workspace uses about ${sizeMb} MiB, above the ${limitMb} MiB limit. Remove unneeded files or discard the changes.`
+          : zh
+            ? `会话工作区大小统计已达扫描上限（约 ${sizeMb} MiB），实际可能更大，请检查是否有大文件。`
+            : `Workspace size scan hit its bound (about ${sizeMb} MiB); the real size may be larger. Check for large files.`;
+        this.publishStream(turnId, {
+          type: "context",
+          context: { id: `workspace-size-${turnId}`, text },
+        });
+        this.store.insertWorkspaceSizeAudit(actorId, conversationId, turnId, bytes, limitBytes, truncated);
+        console.warn("conversation workspace size warning", {
+          conversationId, turnId, bytes, limitBytes, truncated, exceeded,
+        });
+      }
+    } catch (error) {
+      console.warn("conversation workspace size check failed", {
+        conversationId, turnId, error: errorMessage(error),
+      });
+    }
+  }
+
   getConversationChanges(conversationId: string, projectId: number) {
     return this.repo.getConversationChanges(projectId, conversationId);
   }
@@ -1195,6 +1245,10 @@ export class ConversationRunner {
       const toolEntries = this.store.getTraceEntries({ turnId: turn.turnId }, turn.attempt)
         .filter((entry) => entry.kind === "tool");
       const turnTools = toolEntries.map((entry) => entry.name);
+      // 只有本轮真的执行过命令才做有界大小扫描；普通问答不承担扫描开销。
+      if (turnTools.includes("run_command")) {
+        void this.checkWorkspaceSize(workspace, turn.conversationId, turn.turnId, turn.actorId);
+      }
       const successfulTools = toolEntries
         .filter((entry) => entry.status === "succeeded")
         .map((entry) => entry.name);

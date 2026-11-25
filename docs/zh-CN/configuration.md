@@ -52,6 +52,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `storage.audit_retention_days` | `365` | 1–36500 | 审计记录的保留天数。 |
 | `storage.conversation_workspace_ttl_minutes` | `60` | 1–14400 | 空闲对话 worktree 的存活时间（分钟）。 |
 | `storage.conversation_workspace_max` | `8` | 1–200 | 同时缓存的对话 worktree 数量上限（按最近使用淘汰）。 |
+| `storage.conversation_workspace_max_mb` | `2048` | 64–20480 | 单个会话 worktree 的容量上限（MiB）。执行过命令的轮次结束后会扫描目录，超限只警告记录，绝不自动删除文件。 |
 
 启动时 Corvex 会创建数据库父目录、镜像目录和工作区目录；运行进程必须拥有写权限。每个对话常驻一个 worktree 并跨轮复用，空闲后按 TTL 与数量上限淘汰；文件改动另持久化到项目镜像的 `refs/conversations/<id>`，因此 worktree 被清理后重建仍会恢复。淘汰与清理不会触碰仍有排队或运行中轮次的对话。数据库和 Git 存储需要分别备份。
 
@@ -104,7 +105,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 
 实际可编辑的运行时设置键（来自 `src/config/settings.ts` 的 `runtimeSettingDefinitions`）：
 
-`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`git_tool_call_limit`、`auto_create_merge_request`、`reasoning_enabled`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`。
+`response_language`、`auto_context_tune`、`max_input_tokens`、`history_token_budget`、`turn_tool_result_bytes`、`compaction_reserve_tokens`、`compaction_keep_recent_tokens`、`compaction_trigger_percent`、`compaction_dynamic_threshold`、`daily_token_budget`、`summary_enabled`、`project_agents_md`、`project_agents_md_max_bytes`、`web_enabled`、`web_blocked_hosts`、`web_search_enabled`、`web_search_max_queries`、`git_tool_call_limit`、`auto_create_merge_request`、`reasoning_enabled`、`agent_request_timeout`、`agent_session_timeout`、`agent_response_stall_timeout`、`skill_paths`、`gitlab_base_url`、`gitlab_oauth_client_id`、`gitlab_oauth_client_secret`、`gitlab_oauth_redirect_uri`、`storage_retention_days`、`storage_audit_retention_days`、`conversation_workspace_ttl_minutes`、`conversation_workspace_max`、`conversation_workspace_max_mb`。
 
 时间参数在界面以秒填写、以毫秒保存。模型名、Base URL、API Key、上下文窗口与输出上限的旧键（`model`、`model_base_url`、`model_api_key`、`context_window`、`max_output_tokens`）仅为升级兼容而保留，已由模型目录接管，不再在界面展示。响应语言与模型在每次请求和轮次读取，修改后无需重启即可作用于下一次。没有事件、审查、修复或 Issue 相关的运行时设置键。
 

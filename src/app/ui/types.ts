@@ -69,6 +69,12 @@ export interface OverviewResponse extends OperationsOverview {
   oldestQueueAgeSeconds: number | null;
   modelCalls: ModelCallMetric[];
   contextMetrics: ContextMetric[];
+  /** 单会话 worktree 大小上限（字节），超限只警告记录。 */
+  workspaceSizeLimitBytes: number;
+  /** 当前超过上限的 worktree 数量。 */
+  workspaceOverLimitCount: number;
+  /** 所有 worktree 字节数合计（有界扫描的近似值）。 */
+  workspaceTotalBytes: number;
 }
 
 /** 分页默认单页大小。 */
@@ -219,6 +225,7 @@ export const settingGroups: readonly SettingGroup[] = [
     fields: [
       { key: "conversation_workspace_ttl_minutes", kind: "number", min: 1, max: 14_400, step: 10, labelKey: "settingsWorkspaceTtl", hintKey: "settingsWorkspaceTtlHint" },
       { key: "conversation_workspace_max", kind: "number", min: 1, max: 200, step: 1, labelKey: "settingsWorkspaceMax", hintKey: "settingsWorkspaceMaxHint" },
+      { key: "conversation_workspace_max_mb", kind: "number", min: 64, max: 20_480, step: 128, labelKey: "settingsWorkspaceMaxMb", hintKey: "settingsWorkspaceMaxMbHint" },
       { key: "storage_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsRetentionDays", hintKey: "settingsRetentionDaysHint" },
       { key: "storage_audit_retention_days", kind: "number", min: 1, max: 36_500, step: 30, labelKey: "settingsAuditRetentionDays", hintKey: "settingsAuditRetentionDaysHint" },
     ],

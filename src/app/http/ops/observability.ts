@@ -14,12 +14,23 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
     if (oldestQueueAgeSeconds !== null && !Number.isFinite(oldestQueueAgeSeconds)) {
       throw new Error("SQLite returned an invalid oldest queued timestamp");
     }
+    // 会话 worktree 容量指标：describeStorage 是有界扫描（节点/深度/条目上限），
+    // 只用于概览页按需加载，不做持续轮询。
+    const storage = await ctx.conversations.describeStorage();
+    const workspaceSizeLimitBytes = ctx.config.storage.conversationWorkspaceMaxMb * 1024 * 1024;
+    const workspaceOverLimitCount = storage.workspaces.filter(
+      (entry) => entry.sizeBytes > workspaceSizeLimitBytes,
+    ).length;
+    const workspaceTotalBytes = storage.workspaces.reduce((sum, entry) => sum + entry.sizeBytes, 0);
     sendJson(reply, 200, {
       generatedAt: generatedAt.toISOString(),
       ...overview,
       oldestQueueAgeSeconds,
       modelCalls: ctx.store.modelCallMetrics(),
       contextMetrics: ctx.store.contextMetrics(),
+      workspaceSizeLimitBytes,
+      workspaceOverLimitCount,
+      workspaceTotalBytes,
     });
   });
 }
