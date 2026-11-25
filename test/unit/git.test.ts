@@ -543,6 +543,43 @@ describe("Git workflows", () => {
     // 这条用例包含多次 mirror/worktree 操作；CI 上比本地慢，默认 5s 不够。
   }, 30_000);
 
+  it("does not delete a project directory while a turn is creating its worktree", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-empty-race-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com");
+    await manager.initialize();
+    const projectRoot = join(root, "workspaces", "7");
+    await mkdir(projectRoot, { recursive: true });
+
+    // 模拟 prepareConversationWorkspace 持锁期间的窗口：目录刚建好还是空的，
+    // 另一个清理动作并发进来。由于两者共用项目锁，清理必须等到 worktree 建好才看到非空目录。
+    const worktree = join(projectRoot, "conversation-abc");
+    const prune = manager.pruneEmptyWorkspaceDirs();
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, "file.txt"), "work in progress");
+    await prune;
+
+    // worktree 未被清理误删。
+    expect((await lstat(worktree)).isDirectory()).toBe(true);
+    expect(await readFile(join(worktree, "file.txt"), "utf8")).toBe("work in progress");
+  });
+
+  it("prunes empty project workspace directories", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-empty-dirs-"));
+    const root = join(directory, "storage");
+    const manager = new GitManager(root, "https://gitlab.example.com");
+    await manager.initialize();
+    // 模拟删除 worktree 后残留的空项目目录，以及一个仍在使用的项目目录。
+    await mkdir(join(root, "workspaces", "7"), { recursive: true });
+    await mkdir(join(root, "workspaces", "8", "conversation-keep"), { recursive: true });
+    await writeFile(join(root, "workspaces", "8", "conversation-keep", "file.txt"), "keep");
+
+    expect(await manager.pruneEmptyWorkspaceDirs()).toBe(1);
+    // 空目录被删；非空目录保留。
+    await expect(lstat(join(root, "workspaces", "7"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(join(root, "workspaces", "8"))).isDirectory()).toBe(true);
+  });
+
   it("keeps the worktree clean after saving so rebase works and its result survives", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-save-align-"));
     const root = join(directory, "storage");

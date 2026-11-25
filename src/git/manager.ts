@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
 
@@ -236,6 +236,19 @@ export class GitManager {
       }
     }
 
+    // 空的项目目录（workspaces/<projectId>/ 下已无任何工作区）是删除 worktree 后的残留，
+    // 与超时无关：一旦为空就是垃圾，直接纳入本次清理。
+    const emptyProjectDirs: string[] = [];
+    for (const projectName of await readdir(this.workspaceRoot)) {
+      if (!/^[1-9]\d*$/.test(projectName)) continue;
+      const projectRoot = join(this.workspaceRoot, projectName);
+      const info = await lstat(projectRoot);
+      if (!info.isDirectory() || info.isSymbolicLink()) continue;
+      if ((await readdir(projectRoot)).length === 0 && !workspaces.some((path) => path.startsWith(`${projectRoot}${sep}`))) {
+        emptyProjectDirs.push(projectRoot);
+      }
+    }
+
     const mirrors: string[] = [];
     for (const name of await readdir(this.mirrorRoot)) {
       const match = /^([1-9]\d*)\.git$/.exec(name);
@@ -274,8 +287,55 @@ export class GitManager {
         }
         await rm(mirror, { recursive: true });
       }
+      // 删除空项目目录：本轮刚移除 worktree 的目录现在也可能为空，重新扫描一遍。
+      // 同样必须持有项目锁，避免误删正在准备 worktree 的空目录（见 pruneEmptyWorkspaceDirs 注释）。
+      for (const projectName of await readdir(this.workspaceRoot)) {
+        if (!/^[1-9]\d*$/.test(projectName)) continue;
+        const projectId = Number(projectName);
+        if (!Number.isSafeInteger(projectId)) continue;
+        const projectRoot = join(this.workspaceRoot, projectName);
+        await this.withProjectLock(projectId, async () => {
+          const info = await lstat(projectRoot).catch((error: unknown) => {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+            throw error;
+          });
+          if (!info || !info.isDirectory() || info.isSymbolicLink()) return;
+          if ((await readdir(projectRoot)).length === 0) await rm(projectRoot, { recursive: true });
+        });
+      }
     }
-    return { workspaces, mirrors, applied: apply };
+    return { workspaces: [...workspaces, ...emptyProjectDirs], mirrors, applied: apply };
+  }
+
+  /**
+   * 删除 workspaces 下已经空掉的项目目录；返回删除数量。
+   *
+   * 必须与 `prepareConversationWorkspace` 持有同一把项目锁：后者先 mkdir 空的项目目录，
+   * 再 worktree add，中间的窗口若被清理线程扫到就会误删正在准备中的目录，导致 worktree add
+   * 失败或写到一个已被删除的路径。加锁后二者串行，且在锁内二次确认仍然为空。
+   */
+  async pruneEmptyWorkspaceDirs(): Promise<number> {
+    await this.initialize();
+    let removed = 0;
+    for (const projectName of await readdir(this.workspaceRoot)) {
+      if (!/^[1-9]\d*$/.test(projectName)) continue;
+      const projectId = Number(projectName);
+      if (!Number.isSafeInteger(projectId)) continue;
+      const projectRoot = join(this.workspaceRoot, projectName);
+      await this.withProjectLock(projectId, async () => {
+        const info = await lstat(projectRoot).catch((error: unknown) => {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (!info || !info.isDirectory() || info.isSymbolicLink()) return;
+        // 锁内二次确认：进入锁之前可能有新 turn 创建了 worktree。
+        if ((await readdir(projectRoot)).length === 0) {
+          await rm(projectRoot, { recursive: true });
+          removed += 1;
+        }
+      });
+    }
+    return removed;
   }
 
   /**

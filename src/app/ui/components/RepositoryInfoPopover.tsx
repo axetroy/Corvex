@@ -94,6 +94,9 @@ export function RepositoryInfoPopover({
       ) : details ? (
         <>
           <dl className="repository-info-list">
+            <InfoRow label={copy.conversationRepositoryId} copy={copy}>
+              <code>{projectId}</code>
+            </InfoRow>
             <InfoRow label={copy.conversationRepositoryPath} copy={copy}>
               {details.path_with_namespace ?? details.name}
             </InfoRow>

@@ -144,6 +144,15 @@ export class CorvexServer {
         context.errors.push(errorMessage(error));
       }
     });
+    this.hooks.storageCleanup.tapPromise({ name: "prune-empty-workspace-dirs", stage: 500 }, async (context) => {
+      try {
+        // 删除 worktree 后残留的空项目目录，与超时无关；每次清理都执行。
+        const removed = await this.conversations.pruneEmptyWorkspaceDirs();
+        context.removedWorkspaces += removed;
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
     this.hooks.storageCleanup.tapPromise({ name: "record", stage: 900 }, async (context) => {
       this.store.recordStorageCleanup({
         startedAt: context.startedAt,

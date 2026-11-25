@@ -205,6 +205,13 @@ export class ConversationRunner {
     return result.removed;
   }
 
+  /** 清理 workspaces 下已空的项目目录（删除 worktree 后的残留）。 */
+  async pruneEmptyWorkspaceDirs(): Promise<number> {
+    const removed = await this.repo.pruneEmptyWorkspaceDirs();
+    if (removed > 0) console.info("removed empty workspace directories", { count: removed });
+    return removed;
+  }
+
   /** 删除一个对话的常驻工作区；正在执行的对话不能删除。 */
   async removeConversationWorkspace(conversationId: string, projectId: number): Promise<boolean> {
     if (this.running.has(conversationId)) return false;
