@@ -51,6 +51,7 @@ export function AdminConsole({
   const metricsActive = route === "admin/metrics";
   const executionsActive = route === "admin/executions";
   const storageActive = route === "admin/storage";
+  const settingsActive = sections.some((item) => route === `admin/settings/${item.key}`);
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
 
   useEffect(() => {
@@ -82,27 +83,36 @@ export function AdminConsole({
         </div>
         <div className="admin-console-label">{copy.adminTitle}</div>
         <nav className="admin-console-nav">
-          <Link className={usersActive ? "active" : ""} to={adminPath("users")}>
-            {copy.adminUsersTitle}
-          </Link>
-          {sections.map((item) => (
-            <Link
-              key={item.key}
-              className={!usersActive && section === item.key ? "active" : ""}
-              to={adminPath(`settings/${item.key}`)}
-            >
-              {copy[item.labelKey]}
+          <div className="admin-console-nav-group">
+            <div className="admin-console-nav-label">{copy.adminNavGroupManagement}</div>
+            <Link className={usersActive ? "active" : ""} to={adminPath("users")}>
+              {copy.adminUsersTitle}
             </Link>
-          ))}
-          <Link className={metricsActive ? "active" : ""} to={adminPath("metrics")}>
-            {copy.adminContextMetricsTitle}
-          </Link>
-          <Link className={executionsActive ? "active" : ""} to={adminPath("executions")}>
-            {copy.adminExecutionsTitle}
-          </Link>
-          <Link className={storageActive ? "active" : ""} to={adminPath("storage")}>
-            {copy.adminStorageTitle}
-          </Link>
+          </div>
+          <div className="admin-console-nav-group">
+            <div className="admin-console-nav-label">{copy.adminNavGroupSettings}</div>
+            {sections.map((item) => (
+              <Link
+                key={item.key}
+                className={settingsActive && section === item.key ? "active" : ""}
+                to={adminPath(`settings/${item.key}`)}
+              >
+                {copy[item.labelKey]}
+              </Link>
+            ))}
+          </div>
+          <div className="admin-console-nav-group">
+            <div className="admin-console-nav-label">{copy.adminNavGroupOperations}</div>
+            <Link className={executionsActive ? "active" : ""} to={adminPath("executions")}>
+              {copy.adminExecutionsTitle}
+            </Link>
+            <Link className={storageActive ? "active" : ""} to={adminPath("storage")}>
+              {copy.adminStorageTitle}
+            </Link>
+            <Link className={metricsActive ? "active" : ""} to={adminPath("metrics")}>
+              {copy.adminContextMetricsTitle}
+            </Link>
+          </div>
           <a className="admin-console-back" href="/ops">{copy.adminBackToConsole}</a>
         </nav>
       </aside>

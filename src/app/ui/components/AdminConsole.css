@@ -70,6 +70,23 @@
   gap: 6px;
 }
 
+.admin-console-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-console-nav-group + .admin-console-nav-group {
+  margin-top: 8px;
+}
+
+.admin-console-nav-label {
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
 .admin-console-nav a {
   padding: 8px 10px;
   border-radius: 7px;
