@@ -1,0 +1,105 @@
+/* 执行环境配置（管理员中心）：与设置页一致的字段网格与主题变量。 */
+.execution-config-panel {
+  display: flex;
+  max-width: 980px;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.execution-config-panel .page-heading {
+  margin-bottom: 0;
+}
+
+.execution-config-actions,
+.execution-config-footer {
+  display: flex;
+  gap: 8px;
+}
+
+.execution-config-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.execution-config-meta-time {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.execution-config-panel .panel + .panel {
+  margin-top: 16px;
+}
+
+/* 字段网格：标签占左列，控件占右列，紧凑对齐。 */
+.execution-config-field {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.execution-config-field:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.execution-config-field-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-config-field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.execution-config-field-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.execution-config-field-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.execution-config-control {
+  width: 100%;
+  max-width: 420px;
+}
+
+/* 本地后端警告在卡片内更醒目。 */
+.execution-config-local-warning {
+  margin-bottom: 16px;
+}
+
+.execution-config-footer {
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .execution-config-field {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .execution-config-control {
+    max-width: 100%;
+  }
+}

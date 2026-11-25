@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Button, InputNumber, Select, Space, Tag, Typography } from "antd";
+import { Alert, Button, Input, InputNumber, Select, Switch, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
+import "./ExecutionConfigPanel.css";
 
 interface ExecutionConfig {
   enabled: boolean;
@@ -35,6 +36,32 @@ interface Payload {
   effectiveImmediately: boolean;
 }
 
+/** 一行设置：左侧标签与说明，右侧控件。 */
+function Field({
+  label,
+  hint,
+  badge,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  badge?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="execution-config-field">
+      <div className="execution-config-field-text">
+        <div className="execution-config-field-label">
+          <Typography.Text strong>{label}</Typography.Text>
+          {badge}
+        </div>
+        {hint ? <Typography.Text type="secondary" className="execution-config-field-hint">{hint}</Typography.Text> : null}
+      </div>
+      <div className="execution-config-field-control">{children}</div>
+    </div>
+  );
+}
+
 /** 管理员执行环境配置面板：保存前服务端走完整 fail-closed 校验。 */
 export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdated: (value: string) => void }) {
   const [payload, setPayload] = useState<Payload>();
@@ -43,22 +70,24 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
-    fetchJson<Payload>("/api/ops/admin/execution", copy)
-      .then((value) => {
-        setPayload(value);
-        setDraft({
-          ...value.config,
-          sandbox: { ...value.config.sandbox, read_only_mounts: [...value.config.sandbox.read_only_mounts] },
-          local: { ...value.config.local },
-        });
-        setError("");
-        onUpdated(new Date().toISOString());
-      })
-      .catch((cause: unknown) => setError(errorMessage(cause)));
+  const applyPayload = (value: Payload) => {
+    setPayload(value);
+    setDraft({
+      ...value.config,
+      sandbox: { ...value.config.sandbox, read_only_mounts: [...value.config.sandbox.read_only_mounts] },
+      local: { ...value.config.local },
+    });
+    setError("");
+    onUpdated(new Date().toISOString());
   };
 
-  useEffect(load, [copy]);
+  useEffect(() => {
+    let active = true;
+    fetchJson<Payload>("/api/ops/admin/execution", copy)
+      .then((value) => { if (active) applyPayload(value); })
+      .catch((cause: unknown) => { if (active) setError(errorMessage(cause)); });
+    return () => { active = false; };
+  }, [copy]);
 
   if (error && !payload) return <ErrorBanner message={error} />;
   if (!payload || !draft) return <Loading>{copy.loading}</Loading>;
@@ -74,15 +103,8 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
     setError("");
     setNotice("");
     try {
-      const result = await sendJson<Payload>("/api/ops/admin/execution", draft, copy, "PUT");
-      setPayload(result);
-      setDraft({
-        ...result.config,
-        sandbox: { ...result.config.sandbox, read_only_mounts: [...result.config.sandbox.read_only_mounts] },
-        local: { ...result.config.local },
-      });
+      applyPayload(await sendJson<Payload>("/api/ops/admin/execution", draft, copy, "PUT"));
       setNotice(copy.executionConfigSaved);
-      onUpdated(new Date().toISOString());
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -93,16 +115,10 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
   const reset = async () => {
     setSaving(true);
     setError("");
+    setNotice("");
     try {
-      const result = await sendJson<Payload>("/api/ops/admin/execution", {}, copy, "DELETE");
-      setPayload(result);
-      setDraft({
-        ...result.config,
-        sandbox: { ...result.config.sandbox, read_only_mounts: [...result.config.sandbox.read_only_mounts] },
-        local: { ...result.config.local },
-      });
+      applyPayload(await sendJson<Payload>("/api/ops/admin/execution", {}, copy, "DELETE"));
       setNotice(copy.executionConfigReset);
-      onUpdated(new Date().toISOString());
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -113,34 +129,38 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
   const sourceTag = payload.source === "database"
     ? <Tag color="blue">{copy.executionConfigSourceDb}</Tag>
     : <Tag>{copy.executionConfigSourceFile}</Tag>;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(payload.config);
 
   return (
     <div className="execution-config-panel">
-      <PageHeading title={copy.executionConfigTitle} description={copy.executionConfigHint} />
-      <div className="execution-config-source">
-        <Typography.Text type="secondary">{copy.executionConfigSource}: </Typography.Text>{sourceTag}
+      <PageHeading
+        title={copy.executionConfigTitle}
+        description={copy.executionConfigHint}
+        actions={
+          <div className="execution-config-actions">
+            <Button onClick={() => applyPayload(payload)} disabled={!dirty || saving}>{copy.executionConfigCancel}</Button>
+            <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
+          </div>
+        }
+      />
+
+      <div className="execution-config-meta">
+        <span>{copy.executionConfigSource}</span>{sourceTag}
         {payload.updatedAt ? (
-          <Typography.Text type="secondary"> · {formatUpdated(payload.updatedAt, payload.updatedBy)}</Typography.Text>
+          <Typography.Text type="secondary" className="execution-config-meta-time">{payload.updatedAt}{payload.updatedBy ? ` · ${payload.updatedBy}` : ""}</Typography.Text>
         ) : null}
       </div>
-      {error ? <ErrorBanner message={error} /> : null}
-      {notice ? <div className="execution-config-notice">{notice}</div> : null}
+
+      {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
+      {notice ? <Alert type="success" showIcon message={notice} closable onClose={() => setNotice("")} /> : null}
 
       <Panel title={copy.executionConfigGeneral}>
-        <label className="execution-config-field">
-          <span>{copy.executionConfigEnabled}</span>
+        <Field label={copy.executionConfigEnabled} hint={copy.executionConfigEnabledHint}>
+          <Switch checked={draft.enabled} onChange={(value) => set({ enabled: value })} />
+        </Field>
+        <Field label={copy.executionConfigBackend} hint={copy.executionConfigBackendHint}>
           <Select
-            value={draft.enabled}
-            onChange={(value) => set({ enabled: value })}
-            options={[
-              { value: false, label: copy.executionConfigOff },
-              { value: true, label: copy.executionConfigOn },
-            ]}
-          />
-        </label>
-        <label className="execution-config-field">
-          <span>{copy.executionConfigBackend}</span>
-          <Select
+            className="execution-config-control"
             value={draft.backend}
             onChange={(value) => set({ backend: value })}
             options={[
@@ -148,30 +168,38 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
               { value: "local", label: copy.executionConfigBackendLocal },
             ]}
           />
-        </label>
+        </Field>
       </Panel>
 
       {draft.backend === "sandbox" ? (
         <Panel title={copy.executionConfigSandbox}>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigRuntime}</span>
+          <Field label={copy.executionConfigRuntime}>
             <Select
+              className="execution-config-control"
               value={draft.sandbox.runtime}
               onChange={(value) => setSandbox({ runtime: value })}
-              options={[{ value: "docker", label: "docker" }, { value: "podman", label: "podman" }]}
+              options={[{ value: "docker", label: "Docker" }, { value: "podman", label: "Podman" }]}
             />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigImage}</span>
-            <input value={draft.sandbox.image} onChange={(e) => setSandbox({ image: e.target.value })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigSocket}</span>
-            <input value={draft.sandbox.socket} onChange={(e) => setSandbox({ socket: e.target.value })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigNetwork}</span>
+          </Field>
+          <Field label={copy.executionConfigImage} hint={copy.executionConfigImageHint}>
+            <Input
+              className="execution-config-control"
+              value={draft.sandbox.image}
+              placeholder="corvex-exec:latest"
+              onChange={(event) => setSandbox({ image: event.target.value })}
+            />
+          </Field>
+          <Field label={copy.executionConfigSocket} hint={copy.executionConfigSocketHint}>
+            <Input
+              className="execution-config-control"
+              value={draft.sandbox.socket}
+              placeholder="/var/run/docker.sock"
+              onChange={(event) => setSandbox({ socket: event.target.value })}
+            />
+          </Field>
+          <Field label={copy.executionConfigNetwork} hint={copy.executionConfigNetworkHint}>
             <Select
+              className="execution-config-control"
               value={draft.sandbox.network}
               onChange={(value) => setSandbox({ network: value })}
               options={[
@@ -179,61 +207,47 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
                 { value: "none", label: copy.executionConfigNetworkNone },
               ]}
             />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigMemory}</span>
-            <input value={draft.sandbox.memory} onChange={(e) => setSandbox({ memory: e.target.value })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigCpus}</span>
-            <InputNumber min={1} value={draft.sandbox.cpus} onChange={(v) => v && setSandbox({ cpus: v })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigPids}</span>
-            <InputNumber min={1} value={draft.sandbox.pids_limit} onChange={(v) => v && setSandbox({ pids_limit: v })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigTimeout}</span>
-            <InputNumber min={1} value={draft.sandbox.timeout_ms} onChange={(v) => v && setSandbox({ timeout_ms: v })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigMaxOutput}</span>
-            <InputNumber min={1} value={draft.sandbox.max_output_bytes} onChange={(v) => v && setSandbox({ max_output_bytes: v })} />
-          </label>
+          </Field>
+          <Field label={copy.executionConfigMemory}>
+            <Input
+              className="execution-config-control"
+              value={draft.sandbox.memory}
+              placeholder="2g"
+              onChange={(event) => setSandbox({ memory: event.target.value })}
+            />
+          </Field>
+          <Field label={copy.executionConfigCpus}>
+            <InputNumber min={1} className="execution-config-control" value={draft.sandbox.cpus} onChange={(value) => value && setSandbox({ cpus: value })} />
+          </Field>
+          <Field label={copy.executionConfigPids}>
+            <InputNumber min={1} className="execution-config-control" value={draft.sandbox.pids_limit} onChange={(value) => value && setSandbox({ pids_limit: value })} />
+          </Field>
+          <Field label={copy.executionConfigTimeout} hint={copy.executionConfigTimeoutHint}>
+            <InputNumber min={1} addonAfter="ms" className="execution-config-control" value={draft.sandbox.timeout_ms} onChange={(value) => value && setSandbox({ timeout_ms: value })} />
+          </Field>
+          <Field label={copy.executionConfigMaxOutput} hint={copy.executionConfigMaxOutputHint}>
+            <InputNumber min={1} addonAfter="B" className="execution-config-control" value={draft.sandbox.max_output_bytes} onChange={(value) => value && setSandbox({ max_output_bytes: value })} />
+          </Field>
         </Panel>
       ) : (
         <Panel title={copy.executionConfigLocal}>
-          <div className="execution-config-warning">{copy.executionConfigLocalWarning}</div>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigAllowUnsafe}</span>
-            <Select
-              value={draft.local.allow_unsafe}
-              onChange={(value) => setLocal({ allow_unsafe: value })}
-              options={[
-                { value: false, label: copy.executionConfigOff },
-                { value: true, label: copy.executionConfigOn },
-              ]}
-            />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigTimeout}</span>
-            <InputNumber min={1} value={draft.local.timeout_ms} onChange={(v) => v && setLocal({ timeout_ms: v })} />
-          </label>
-          <label className="execution-config-field">
-            <span>{copy.executionConfigMaxOutput}</span>
-            <InputNumber min={1} value={draft.local.max_output_bytes} onChange={(v) => v && setLocal({ max_output_bytes: v })} />
-          </label>
+          <Alert type="warning" showIcon message={copy.executionConfigLocalWarning} className="execution-config-local-warning" />
+          <Field label={copy.executionConfigAllowUnsafe}>
+            <Switch checked={draft.local.allow_unsafe} onChange={(value) => setLocal({ allow_unsafe: value })} />
+          </Field>
+          <Field label={copy.executionConfigTimeout} hint={copy.executionConfigTimeoutHint}>
+            <InputNumber min={1} addonAfter="ms" className="execution-config-control" value={draft.local.timeout_ms} onChange={(value) => value && setLocal({ timeout_ms: value })} />
+          </Field>
+          <Field label={copy.executionConfigMaxOutput} hint={copy.executionConfigMaxOutputHint}>
+            <InputNumber min={1} addonAfter="B" className="execution-config-control" value={draft.local.max_output_bytes} onChange={(value) => value && setLocal({ max_output_bytes: value })} />
+          </Field>
         </Panel>
       )}
 
-      <Space>
-        <Button type="primary" loading={saving} onClick={() => void save()}>{copy.settingsSave}</Button>
-        <Button disabled={saving || payload.source === "file"} onClick={() => void reset()}>{copy.executionConfigResetButton}</Button>
-      </Space>
+      <div className="execution-config-footer">
+        <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
+        <Button onClick={() => void reset()} disabled={saving || payload.source === "file"}>{copy.executionConfigResetButton}</Button>
+      </div>
     </div>
   );
-}
-
-function formatUpdated(at: string, by?: string): string {
-  return `${at}${by ? ` · ${by}` : ""}`;
 }
