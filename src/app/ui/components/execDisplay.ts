@@ -15,6 +15,21 @@ export interface ExecDisplay {
   finishedAt?: number;
 }
 
+/**
+ * 把毫秒格式化为紧凑的耗时文本：未到 1 秒显示毫秒，之后用秒/分，便于运行中快速判读。
+ * 负值与非法值统一回退为 0ms，避免回放数据（无时间戳）出现负耗时。
+ */
+export function formatExecDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms < 1_000) return `${Math.floor(ms)}ms`;
+  const totalSeconds = Math.floor(ms / 1_000);
+  if (totalSeconds < 60) return `${(ms / 1_000).toFixed(1)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export function createExecDisplay(execId: string, command: string, now = Date.now()): ExecDisplay {
   return { execId, command, stdout: "", stderr: "", done: false, startedAt: now };
 }

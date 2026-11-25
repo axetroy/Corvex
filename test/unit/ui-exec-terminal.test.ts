@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { createExecDisplay, applyExecDelta, replayExecsFromProcess, commandFromToolInput } from "../../src/app/ui/components/execDisplay.js";
+import { createExecDisplay, applyExecDelta, replayExecsFromProcess, commandFromToolInput, formatExecDuration } from "../../src/app/ui/components/execDisplay.js";
 
 describe("operations UI exec terminal", () => {
+  it("formats elapsed time for a running command", () => {
+    expect(formatExecDuration(0)).toBe("0ms");
+    expect(formatExecDuration(850)).toBe("850ms");
+    expect(formatExecDuration(1_200)).toBe("1.2s");
+    expect(formatExecDuration(59_400)).toBe("59.4s");
+    expect(formatExecDuration(65_000)).toBe("1m 5s");
+    expect(formatExecDuration(3_660_000)).toBe("1h 1m");
+    expect(formatExecDuration(Number.NaN)).toBe("0ms");
+  });
+
   it("creates a running display and appends stdout/stderr chunks by exec id", () => {
     let entry = createExecDisplay("call-1", "npm test", 1_000);
     expect(entry).toMatchObject({ execId: "call-1", command: "npm test", done: false });

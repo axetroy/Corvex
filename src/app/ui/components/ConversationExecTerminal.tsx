@@ -5,11 +5,11 @@ import { Button, Tag, Typography } from "antd";
 import { sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
-import type { ExecDisplay } from "./execDisplay.js";
+import { formatExecDuration, type ExecDisplay } from "./execDisplay.js";
 import "@xterm/xterm/css/xterm.css";
 import "./ConversationExecTerminal.css";
 
-export { createExecDisplay, applyExecDelta, replayExecsFromProcess, commandFromToolInput } from "./execDisplay.js";
+export { createExecDisplay, applyExecDelta, replayExecsFromProcess, commandFromToolInput, formatExecDuration } from "./execDisplay.js";
 export type { ExecDisplay } from "./execDisplay.js";
 
 interface Props {
@@ -62,6 +62,8 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
   const pinnedRef = useRef(true);
   const wasDoneRef = useRef(entry.done);
   const [ready, setReady] = useState(false);
+  // 运行中每秒推进一次，让耗时持续更新；命令结束后停止定时器。
+  const [now, setNow] = useState(() => Date.now());
   // 历史记录里已成功结束的命令默认收起；正在运行的默认展开。
   const [collapsed, setCollapsed] = useState(entry.done && entry.exitCode === 0);
   const [stopping, setStopping] = useState(false);
@@ -147,6 +149,14 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     wasDoneRef.current = entry.done;
   }, [entry.done, entry.exitCode]);
 
+  // 运行中的耗时秒表：每秒刷新一次，结束后定格在落库的 finishedAt。
+  useEffect(() => {
+    if (entry.done) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [entry.done, entry.startedAt]);
+
   const stop = async () => {
     if (!conversationId || !turnId || stopping) return;
     setStopping(true);
@@ -170,7 +180,9 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         ? <Tag color="success">{copy.execExitOk}</Tag>
         : <Tag color="error">{copy.execExitFail.replace("{code}", String(entry.exitCode ?? "?"))}</Tag>
     : <Tag color="processing">{copy.execRunning}</Tag>;
-  const durationMs = (entry.finishedAt ?? Date.now()) - entry.startedAt;
+  const durationMs = (entry.finishedAt ?? now) - entry.startedAt;
+  // 回放数据没有时间戳，不显示耗时，避免误导性的 0ms。
+  const durationLabel = entry.startedAt ? formatExecDuration(durationMs) : "";
   const toggleTitle = collapsed ? copy.execExpand : copy.execCollapse;
 
   return (
@@ -188,7 +200,9 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         </Button>
         <Typography.Text code className="conversation-exec-command">$ {entry.command}</Typography.Text>
         {status}
-        <Typography.Text type="secondary" className="conversation-exec-duration">{durationMs}ms</Typography.Text>
+        {durationLabel ? (
+          <Typography.Text type="secondary" className="conversation-exec-duration">{durationLabel}</Typography.Text>
+        ) : null}
         {!entry.done && conversationId && turnId ? (
           <Button size="small" danger loading={stopping} onClick={() => void stop()}>
             {copy.execStop}
