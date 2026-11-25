@@ -60,7 +60,8 @@ interface ExecutionBackend {
 ### 4.2 沙箱后端（`sandbox`）
 
 - 通过容器运行时（docker / podman）执行，检测可用性。
-- 隔离参数：非 root、禁网（`--network=none`，默认）、只读 rootfs、只挂载 worktree（rw）、`--cap-drop=ALL`、CPU / 内存 / pids 限额、超时 kill。
+- 隔离参数：非 root、容器网络命名空间与宿主隔离（默认 bridge，**允许联网**以便安装依赖）、只读 rootfs、只挂载 worktree（rw）、`--cap-drop=ALL`、CPU / 内存 / pids 限额、超时 kill。需要完全禁网时显式配置 `network: none`。
+- 注意：bridge 网络下容器可通过网关访问宿主发布的服务；若要严格禁止访问宿主，需额外防火墙规则或 `network: none`，但后者会阻断依赖安装，按需取舍。
 - 镜像由配置指定，需包含项目所需工具（node / git / 依赖等）；依赖通过挂载 worktree 的 `node_modules` 带入。
 - 生产强制：容器运行时不可用时**直接拒绝执行**，不得静默回退到本地后端。
 
@@ -86,7 +87,7 @@ execution:
     memory: "2g"
     cpus: 1
     pids_limit: 256
-    network: none              # none | bridge（bridge 不推荐）
+    network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）
     read_only_mounts: []
     timeout: 120s
     max_output_bytes: 262144

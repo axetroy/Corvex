@@ -23,7 +23,7 @@ storage:
 #     memory: "2g"
 #     cpus: 1
 #     pids_limit: 256
-#     network: none              # none | bridge
+#     network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）
 #     timeout: 120s
 #     max_output_bytes: 262144
 #   local:

@@ -195,7 +195,8 @@ const defaults: CorvexConfig = {
       memory: "2g",
       cpus: 1,
       pidsLimit: 256,
-      network: "none",
+      // 默认 bridge：允许联网（装依赖等），但容器网络命名空间与宿主隔离。
+      network: "bridge",
       readOnlyMounts: [],
       timeoutMs: 120_000,
       maxOutputBytes: 256 << 10,

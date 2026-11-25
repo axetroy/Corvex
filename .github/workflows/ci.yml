@@ -53,6 +53,8 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+        env:
+          CORVEX_TEST_SANDBOX_IMAGE: corvex-exec:latest
 
       - name: Build
         run: pnpm run build
@@ -66,6 +68,9 @@ jobs:
 
       - name: Build production image
         run: docker build --tag corvex-smoke .
+
+      - name: Build execution sandbox image
+        run: docker build -f Dockerfile.exec --tag corvex-exec:latest .
 
       - name: Start server and check readiness
         shell: bash

@@ -1,0 +1,9 @@
+# 执行环境沙箱镜像：包含 node / git / sh 与常见构建工具。
+# 构建：docker build -f Dockerfile.exec -t corvex-exec:latest .
+FROM node:26.12.1-alpine
+
+RUN apk add --no-cache git bash ca-certificates python3 make g++ \
+    && mkdir -p /workspace /tmp
+
+WORKDIR /workspace
+USER node:node

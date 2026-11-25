@@ -48,9 +48,9 @@ Mainstream agents detect when the model repeats the same tool call with the same
 
 `src/agent/claim-verification.ts` now also treats "fixed / completed" claims as high-risk: they are unverified unless the turn's tool trace contains a read-back (`read_file`) or diff (`git_diff`) tool. The system prompt requires reading changes back before claiming completion; unverified claims surface as a `context` notice in the process snapshot.
 
-### P2 — Verification sandbox (design ready, implementation pending)
+### P2 — Verification sandbox (implemented)
 
-The largest structural gap: Corvex has no shell and never executes repository code (`design.md` non-goal), so it cannot close the edit → test → fix loop that mainstream agents rely on. The decision is to allow **free commands** (not an allowlist) through a new `run_command` tool that parses argv without a shell interpreter, with two backends: a development-only `local` backend and a mandatory `sandbox` backend for production. The full design lives in [execution-design.md](execution-design.md) (Chinese, binding contract): config is file-only and fail-closed, authorization and audit stay in Corvex code, results are redacted into traces. Implementation is staged P0 design → P1 core → P2 sandbox → P3 UI.
+The largest structural gap: Corvex has no shell and never executes repository code (`design.md` non-goal), so it cannot close the edit → test → fix loop that mainstream agents rely on. The decision is to allow **free commands** (not an allowlist) through a new `run_command` tool that parses argv without a shell interpreter, with two backends: a development-only `local` backend and a mandatory `sandbox` backend for production. The full design lives in [execution-design.md](execution-design.md) (Chinese, binding contract): config is file-only and fail-closed, authorization and audit stay in Corvex code, results are redacted into traces. The sandbox backend runs commands in a container (network namespace isolated from the host, bridge by default so dependencies can be installed, `none` for full isolation), drops capabilities, uses a read-only rootfs with only the worktree mounted, and enforces CPU/memory/pids limits plus timeouts. P0/P1/P2 are implemented; the remaining staged work is P3 UI (settings surface and result rendering).
 
 ### P2 — Sub-agents / parallel research
 
