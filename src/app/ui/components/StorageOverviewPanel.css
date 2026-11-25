@@ -162,31 +162,4 @@
   font-size: 14px;
 }
 
-/* Table：表头弱底、斑马纹与 hover 高亮，全部用主题变量，深浅色一致。 */
-.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-thead > tr > th {
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr > td {
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr:nth-child(even) > td {
-  background: var(--bg-subtle);
-}
-
-.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr:hover > td {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-cell .ant-typography-code {
-  color: var(--primary);
-  font-size: 12px;
-}
+/* 表格配色由 AdminConsole.css 的 .admin-console-main .ant-table 全局规则统一提供，这里不再重复。 */

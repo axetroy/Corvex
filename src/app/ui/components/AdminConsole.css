@@ -95,6 +95,38 @@
   font-weight: 600;
 }
 
+/*
+ * 管理中心所有表格共用一套配色：与「Git 存储清理」列表一致
+ * （弱底 --bg-subtle、次级文字、12px），斑马纹 + hover 高亮。
+ * Ant Design 运行时样式带三个 class 选择器，这里用四个 class 稳定覆盖。
+ */
+.admin-console .admin-console-main .ant-table .ant-table-thead > tr > th {
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-console .admin-console-main .ant-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.admin-console .admin-console-main .ant-table .ant-table-tbody > tr:nth-child(even) > td {
+  background: var(--bg-subtle);
+}
+
+.admin-console .admin-console-main .ant-table .ant-table-tbody > tr:hover > td {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.admin-console .admin-console-main .ant-table .ant-table-cell .ant-typography-code {
+  color: var(--primary);
+}
+
 .admin-console-nav .admin-console-back {
   margin-top: 12px;
   border-top: 1px solid var(--border);
