@@ -184,6 +184,17 @@ describe("CorvexServer", () => {
       expect((await fetch(`${base}/api/ops/admin/users`, { headers: viewerHeaders })).status).toBe(403);
       expect((await fetch(`${base}/api/ops/settings`, { headers: viewerHeaders })).status).toBe(403);
       expect((await fetch(`${base}/api/ops/admin/users`, { headers: authHeaders })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/admin/storage`, { headers: viewerHeaders })).status).toBe(403);
+      const storageResponse = await fetch(`${base}/api/ops/admin/storage`, { headers: authHeaders });
+      expect(storageResponse.status).toBe(200);
+      const storage = (await storageResponse.json()) as {
+        mirrors: unknown[];
+        workspaces: unknown[];
+        truncated: boolean;
+      };
+      expect(Array.isArray(storage.mirrors)).toBe(true);
+      expect(Array.isArray(storage.workspaces)).toBe(true);
+      expect(typeof storage.truncated).toBe("boolean");
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);

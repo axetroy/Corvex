@@ -194,6 +194,11 @@ export class ConversationRunner {
     return true;
   }
 
+  /** 只读统计镜像与工作树，供运维台存储管理页展示。 */
+  async describeStorage() {
+    return this.repo.describeStorage();
+  }
+
   /** 从控制台触发一次 Git 存储清理（可先 dry-run）。 */
   async cleanupStorage(olderThanDays: number, apply: boolean) {
     return this.repo.cleanupStorage(

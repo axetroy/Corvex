@@ -216,6 +216,15 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
       admin.delete("/execution", async (_request, reply) => {
         sendJson(reply, 200, ctx.executionConfig.reset());
       });
+
+      // 存储管理：只读扫描镜像与工作树目录，大小/修改时间为扫描瞬间的近似值。
+      admin.get("/storage", async (_request, reply) => {
+        try {
+          sendJson(reply, 200, await ctx.conversations.describeStorage());
+        } catch (error) {
+          sendJson(reply, 500, { error: error instanceof Error ? error.message.slice(0, 8000) : "storage scan failed" });
+        }
+      });
     },
     { prefix: "/api/ops/admin" },
   );
