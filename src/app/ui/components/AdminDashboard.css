@@ -159,6 +159,93 @@
   font-size: 12px;
 }
 
-.admin-dashboard-table .ant-table-cell {
+/* 模型调用列表：图标 + 任务/结果 + 次数耗时 + Token 量级。 */
+.admin-dashboard-calls .admin-dashboard-call {
+  align-items: center;
+  padding: 12px 0;
+}
+
+.admin-dashboard-call-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 16px;
+}
+
+.admin-dashboard-call-icon.is-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.admin-dashboard-call-icon.is-failure {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.admin-dashboard-call-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-dashboard-call-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-dashboard-call-meta,
+.admin-dashboard-call-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+  color: var(--text-muted);
   font-size: 12px;
+}
+
+.admin-dashboard-call-meta b,
+.admin-dashboard-call-tokens b {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard-call-tokens {
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+
+/* 上下文治理：紧凑数值网格替代窄表格。 */
+.admin-dashboard-context-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.admin-dashboard-context-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.admin-dashboard-context-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.admin-dashboard-context-value {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }

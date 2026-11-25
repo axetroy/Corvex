@@ -8,7 +8,6 @@ import { ThemeToggle } from "./ThemeToggle.js";
 import { AdminPanel } from "./AdminPanel.js";
 import { Loading, PageHeading } from "./common.js";
 import { SettingsPage, type SettingsSection } from "./SettingsPage.js";
-import { ContextMetricsPanel } from "./ContextMetricsPanel.js";
 import { ExecutionConfigPanel } from "./ExecutionConfigPanel.js";
 import { AdminDashboard } from "./AdminDashboard.js";
 import "./AdminConsole.css";
@@ -50,7 +49,6 @@ export function AdminConsole({
   // `#/admin` 与 `#/admin/dashboard` 都是管理后台首页。
   const dashboardActive = route === "admin" || route === "admin/dashboard";
   const usersActive = route === "admin/users";
-  const metricsActive = route === "admin/metrics";
   const executionsActive = route === "admin/executions";
   const settingsActive = sections.some((item) => route === `admin/settings/${item.key}`);
   const section = sections.find((item) => route === `admin/settings/${item.key}`)?.key ?? "basic";
@@ -109,9 +107,6 @@ export function AdminConsole({
             <Link className={executionsActive ? "active" : ""} to={adminPath("executions")}>
               {copy.adminExecutionsTitle}
             </Link>
-            <Link className={metricsActive ? "active" : ""} to={adminPath("metrics")}>
-              {copy.adminContextMetricsTitle}
-            </Link>
           </div>
           <a className="admin-console-back" href="/ops">{copy.adminBackToConsole}</a>
         </nav>
@@ -124,8 +119,6 @@ export function AdminConsole({
             <PageHeading title={copy.adminUsersTitle} description={copy.adminHint} />
             <AdminPanel copy={copy} />
           </>
-        ) : metricsActive ? (
-          <ContextMetricsPanel copy={copy} refreshToken={0} />
         ) : executionsActive ? (
           <ExecutionConfigPanel copy={copy} onUpdated={onUpdated} />
         ) : (

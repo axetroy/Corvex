@@ -1,13 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Alert, Button, Card, Col, Progress, Row, Table, Typography } from "antd";
-import { FiActivity, FiAlertCircle, FiBarChart2, FiClock, FiDatabase, FiMessageSquare, FiRefreshCw } from "react-icons/fi";
+import { Alert, Button, Card, Col, List, Progress, Row, Tag, Typography } from "antd";
+import {
+  FiActivity, FiAlertCircle, FiBarChart2, FiCheckCircle, FiClock,
+  FiCpu, FiDatabase, FiMessageSquare, FiRefreshCw,
+} from "react-icons/fi";
 import { fetchJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
 import { formatStorageBytes } from "../storage.js";
-import type { ConversationTurnStatus, ModelCallMetric } from "../../../model.js";
+import type { ConversationTurnStatus } from "../../../model.js";
 import type { OverviewResponse } from "../types.js";
-import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
+import { ErrorBanner, Loading, PageHeading } from "./common.js";
 import "./AdminDashboard.css";
 
 /** 指标卡：左侧彩色图标、右侧标签与大数字，底部可带一行辅助说明。 */
@@ -55,6 +58,11 @@ const statusOrder: ConversationTurnStatus[] = [
   "running", "queued", "completed", "failed", "stale", "cancelled",
 ];
 
+/** Token 数在概览卡片里只需量级，超过千时用 k 缩写，避免长数字挤破布局。 */
+function formatToken(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
+}
+
 /** 管理后台首页：Ant Design Pro 风格的只读指标概览。 */
 export function AdminDashboard({ copy }: { copy: Copy }) {
   const [data, setData] = useState<OverviewResponse>();
@@ -82,37 +90,11 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
     ? undefined
     : copy.adminDashboardOldestQueued.replace("{seconds}", String(data.oldestQueueAgeSeconds));
 
-  const modelColumns = [
-    { title: copy.adminDashboardColumnTaskType, dataIndex: "taskType", key: "taskType" },
-    {
-      title: copy.adminDashboardColumnOutcome,
-      dataIndex: "outcome",
-      key: "outcome",
-      render: (value: ModelCallMetric["outcome"]) => (
-        <Typography.Text type={value === "failure" ? "danger" : "success"}>{value}</Typography.Text>
-      ),
-    },
-    { title: copy.adminDashboardColumnCalls, dataIndex: "calls", key: "calls", align: "right" as const },
-    {
-      title: copy.adminDashboardColumnDuration,
-      dataIndex: "durationMs",
-      key: "durationMs",
-      align: "right" as const,
-      render: (value: number) => `${Math.round(value / 1000)}s`,
-    },
-    { title: copy.adminDashboardColumnInputTokens, dataIndex: "inputTokens", key: "inputTokens", align: "right" as const },
-    { title: copy.adminDashboardColumnOutputTokens, dataIndex: "outputTokens", key: "outputTokens", align: "right" as const },
-  ];
-
   const contextRows = Object.entries(copy.contextMetricLabels).map(([key, label]) => ({
     key,
     label,
     value: data.contextMetrics.find((metric) => metric.key === key)?.value ?? 0,
   }));
-  const contextColumns = [
-    { title: copy.contextMetricColumn, dataIndex: "label", key: "label" },
-    { title: copy.contextMetricValueColumn, dataIndex: "value", key: "value", align: "right" as const },
-  ];
 
   return (
     <div className="admin-dashboard">
@@ -219,30 +201,71 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <Panel title={copy.adminDashboardModelCalls}>
-            <Table
-              className="admin-dashboard-table"
-              rowKey={(row) => `${row.taskType}-${row.outcome}`}
-              size="small"
-              pagination={false}
-              dataSource={data.modelCalls}
-              columns={modelColumns}
-              locale={{ emptyText: copy.adminDashboardNoModelCalls }}
-            />
-          </Panel>
+          <Card
+            className="admin-dashboard-card"
+            size="small"
+            title={copy.adminDashboardModelCalls}
+            extra={<FiCpu className="admin-dashboard-card-icon" />}
+            styles={{
+              root: { border: "1px solid var(--border-soft)", borderRadius: 10, background: "var(--bg-panel)" },
+              body: { padding: 16 },
+            }}
+          >
+            {data.modelCalls.length === 0 ? (
+              <div className="admin-dashboard-empty">{copy.adminDashboardNoModelCalls}</div>
+            ) : (
+              <List
+                className="admin-dashboard-calls"
+                dataSource={data.modelCalls}
+                renderItem={(item) => (
+                  <List.Item className="admin-dashboard-call">
+                    <span className={`admin-dashboard-call-icon ${item.outcome === "failure" ? "is-failure" : "is-success"}`}>
+                      {item.outcome === "failure" ? <FiAlertCircle /> : <FiCheckCircle />}
+                    </span>
+                    <div className="admin-dashboard-call-body">
+                      <div className="admin-dashboard-call-head">
+                        <Typography.Text strong>{item.taskType}</Typography.Text>
+                        <Tag color={item.outcome === "failure" ? "error" : "success"}>{item.outcome}</Tag>
+                      </div>
+                      <div className="admin-dashboard-call-meta">
+                        <span>{copy.adminDashboardColumnCalls} <b>{item.calls}</b></span>
+                        <span>{copy.adminDashboardColumnDuration} <b>{Math.round(item.durationMs / 1000)}s</b></span>
+                      </div>
+                    </div>
+                    <div className="admin-dashboard-call-tokens">
+                      <span>{copy.adminDashboardColumnInputTokens} <b>{formatToken(item.inputTokens)}</b></span>
+                      <span>{copy.adminDashboardColumnOutputTokens} <b>{formatToken(item.outputTokens)}</b></span>
+                    </div>
+                  </List.Item>
+                )}
+              />
+            )}
+          </Card>
         </Col>
         <Col xs={24} xl={12}>
-          <Panel title={copy.adminDashboardContextMetrics}>
-            <Table
-              className="admin-dashboard-table"
-              rowKey="key"
-              size="small"
-              pagination={false}
-              dataSource={contextRows}
-              columns={contextColumns}
-              locale={{ emptyText: copy.adminDashboardNoContextMetrics }}
-            />
-          </Panel>
+          <Card
+            className="admin-dashboard-card"
+            size="small"
+            title={copy.adminDashboardContextMetrics}
+            extra={<FiBarChart2 className="admin-dashboard-card-icon" />}
+            styles={{
+              root: { border: "1px solid var(--border-soft)", borderRadius: 10, background: "var(--bg-panel)" },
+              body: { padding: 16 },
+            }}
+          >
+            {contextRows.every((row) => row.value === 0) ? (
+              <div className="admin-dashboard-empty">{copy.adminDashboardNoContextMetrics}</div>
+            ) : (
+              <div className="admin-dashboard-context-grid">
+                {contextRows.map((row) => (
+                  <div className="admin-dashboard-context-item" key={row.key}>
+                    <span className="admin-dashboard-context-label">{row.label}</span>
+                    <span className="admin-dashboard-context-value">{row.value.toLocaleString("en-US")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </Col>
       </Row>
     </div>
