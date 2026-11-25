@@ -142,6 +142,7 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
         actions={
           <div className="execution-config-actions">
             <Button onClick={() => applyPayload(payload)} disabled={!dirty || saving}>{copy.executionConfigCancel}</Button>
+            <Button onClick={() => void reset()} disabled={saving || payload.source === "file"}>{copy.executionConfigResetButton}</Button>
             <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
           </div>
         }
@@ -255,11 +256,6 @@ export function ExecutionConfigPanel({ copy, onUpdated }: { copy: Copy; onUpdate
           </Field>
         </Panel>
       )}
-
-      <div className="execution-config-footer">
-        <Button type="primary" loading={saving} onClick={() => void save()} disabled={!dirty}>{copy.settingsSave}</Button>
-        <Button onClick={() => void reset()} disabled={saving || payload.source === "file"}>{copy.executionConfigResetButton}</Button>
-      </div>
     </div>
   );
 }

@@ -10,8 +10,7 @@
   margin-bottom: 0;
 }
 
-.execution-config-actions,
-.execution-config-footer {
+.execution-config-actions {
   display: flex;
   gap: 8px;
 }
@@ -86,11 +85,6 @@
 /* 本地后端警告在卡片内更醒目。 */
 .execution-config-local-warning {
   margin-bottom: 16px;
-}
-
-.execution-config-footer {
-  justify-content: flex-end;
-  padding-top: 4px;
 }
 
 @media (max-width: 720px) {
