@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Input } from "antd";
 import { describeSessionTool, formatTraceDuration } from "../format.js";
 import { isAtScrollBottom } from "../scroll.js";
 import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../truncate.js";
@@ -8,6 +9,7 @@ import { parseTraceValue } from "../trace.js";
 import { parseDisplayPlanSteps } from "../planDisplay.js";
 import type { ConversationToolCall } from "../types.js";
 import { ConversationExecTerminal, type ExecDisplay } from "./ConversationExecTerminal.js";
+import { commandFromToolInput } from "./execDisplay.js";
 
 /**
  * 一轮对话中按发生顺序排列的展示项：模型每次开始新一轮输出时新增一条思考，
@@ -102,9 +104,22 @@ export const ConversationTimeline = memo(function ConversationTimeline({
   turnId?: string;
 }) {
   const [open, setOpen] = useState(active);
+  const [commandFilter, setCommandFilter] = useState("");
   useEffect(() => {
     setOpen(active);
   }, [active]);
+  // 一条轮次里命令较多时，允许按命令文本筛选要查看的终端；非命令步骤始终保留。
+  const execSegments = useMemo(
+    () => segments.filter((segment) => segment.kind === "tool" && segment.call.name === "run_command"),
+    [segments],
+  );
+  const filterText = commandFilter.trim().toLowerCase();
+  const hiddenExecCount = filterText
+    ? execSegments.filter((segment) => segment.kind === "tool" &&
+        !commandFromToolInput(segment.call.input).toLowerCase().includes(filterText)).length
+    : 0;
+  const matchesFilter = (segment: Extract<ConversationTimelineSegment, { kind: "tool" }>) =>
+    !filterText || commandFromToolInput(segment.call.input).toLowerCase().includes(filterText);
   if (segments.length === 0) return null;
   return (
     <details
@@ -121,6 +136,23 @@ export const ConversationTimeline = memo(function ConversationTimeline({
         {copy.conversationProcessTemplate.replace("{count}", String(segments.length))}
       </summary>
       <div className="conversation-process-body">
+        {execSegments.length >= 2 ? (
+          <div className="conversation-exec-filter">
+            <Input
+              size="small"
+              allowClear
+              value={commandFilter}
+              placeholder={copy.execFilterPlaceholder}
+              onChange={(event) => setCommandFilter(event.target.value)}
+              aria-label={copy.execFilterPlaceholder}
+            />
+            {hiddenExecCount > 0 ? (
+              <span className="conversation-exec-filter-count">
+                {copy.execFilterHidden.replace("{count}", String(hiddenExecCount))}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {segments.map((segment) => segment.kind === "thinking" ? (
           <div className="conversation-thinking" key={segment.key}>
             <div className="conversation-thinking-label">{copy.conversationThinking}</div>
@@ -139,7 +171,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
             ) : null}
           </div>
         ) : segment.kind === "tool" && segment.call.name === "run_command" ? (
-          execs?.get(segment.id) ? (
+          !matchesFilter(segment) ? null : execs?.get(segment.id) ? (
             <ConversationExecTerminal
               key={segment.key}
               entry={execs.get(segment.id)!}

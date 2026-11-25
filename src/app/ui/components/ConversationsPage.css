@@ -864,6 +864,24 @@
   pointer-events: none;
 }
 
+/* 多个命令时的按命令筛选条。 */
+.conversation-exec-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.conversation-exec-filter .ant-input {
+  max-width: 260px;
+  font-size: 12px;
+}
+
+.conversation-exec-filter-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .conversation-process-spinner {
   width: 9px;
   height: 9px;
