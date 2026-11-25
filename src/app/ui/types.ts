@@ -79,6 +79,8 @@ export interface OverviewResponse extends OperationsOverview {
   workspaceCount: number;
   mirrorCount: number;
   mirrorTotalBytes: number;
+  /** 单个最大 worktree 的字节数；上限针对单个 worktree，总量不受限。 */
+  largestWorkspaceBytes: number;
 }
 
 /** 分页默认单页大小。 */

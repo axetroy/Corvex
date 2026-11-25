@@ -141,7 +141,9 @@ export function StorageOverviewContent({ copy, locale }: Props) {
   const overLimitCount = data.workspaces.filter((row) => row.sizeBytes > sizeLimit).length;
   const mirrorBytes = totalStorageBytes(data.mirrors);
   const workspaceBytes = totalStorageBytes(data.workspaces);
-  const usedPercent = sizeLimit > 0 ? Math.min(100, Math.round((workspaceBytes / sizeLimit) * 100)) : 0;
+  // 上限只约束单个会话 worktree；总量不受限，仅作为信息展示。
+  const largestWorkspaceBytes = workspaceRows.reduce((max, row) => Math.max(max, row.sizeBytes), 0);
+  const usedPercent = sizeLimit > 0 ? Math.min(100, Math.round((largestWorkspaceBytes / sizeLimit) * 100)) : 0;
 
   const columns = [
     {
@@ -218,14 +220,15 @@ export function StorageOverviewContent({ copy, locale }: Props) {
             <div className="storage-usage">
               <Progress
                 type="dashboard"
+                size={120}
                 percent={usedPercent}
                 strokeColor="var(--primary)"
                 trailColor="var(--bg-inset)"
                 format={() => `${usedPercent}%`}
               />
               <div className="storage-usage-info">
-                <span className="storage-usage-label">{copy.adminStorageWorkspaceSize}</span>
-                <strong className="storage-usage-value">{formatStorageBytes(workspaceBytes)}</strong>
+                <span className="storage-usage-label">{copy.adminDashboardLargestWorkspace}</span>
+                <strong className="storage-usage-value">{formatStorageBytes(largestWorkspaceBytes)}</strong>
                 <span className="storage-usage-limit">
                   {copy.adminDashboardWorkspaceNote.replace("{limit}", formatStorageBytes(sizeLimit))}
                 </span>

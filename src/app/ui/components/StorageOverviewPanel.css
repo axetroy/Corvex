@@ -151,8 +151,8 @@
 
 /* 明细表 */
 .storage-detail-tables {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -162,10 +162,31 @@
   font-size: 14px;
 }
 
-.storage-overview-table .ant-table-cell {
+/* Table：表头弱底、斑马纹与 hover 高亮，全部用主题变量，深浅色一致。 */
+.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-thead > tr > th {
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
-.storage-overview-table .ant-typography-code {
+.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr:nth-child(even) > td {
+  background: var(--bg-subtle);
+}
+
+.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-tbody > tr:hover > td {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.storage-overview-panel .storage-detail-tables .storage-overview-table .ant-table-cell .ant-typography-code {
+  color: var(--primary);
   font-size: 12px;
 }

@@ -166,7 +166,7 @@
 
 .admin-dashboard-storage-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
   gap: 8px;
   margin-top: 16px;
   padding-top: 14px;

@@ -83,8 +83,9 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
 
   const { counts } = data;
   const turnTotal = statusOrder.reduce((sum, status) => sum + counts[status], 0);
+  // 上限针对单个 worktree，因此环图显示最大那个的占用，而不是所有 worktree 的总和。
   const capacityPercent = data.workspaceSizeLimitBytes > 0
-    ? Math.min(100, Math.round((data.workspaceTotalBytes / data.workspaceSizeLimitBytes) * 100))
+    ? Math.min(100, Math.round((data.largestWorkspaceBytes / data.workspaceSizeLimitBytes) * 100))
     : 0;
   const queuedNote = data.oldestQueueAgeSeconds === null
     ? undefined
@@ -113,22 +114,22 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
       ) : null}
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} xl={6}>
+        <Col xs={24} sm={12} lg={6}>
           <MetricCard icon={<FiMessageSquare />} label={copy.adminDashboardConversations} value={data.conversationCount} tone="primary" />
         </Col>
-        <Col xs={24} sm={12} xl={6}>
+        <Col xs={24} sm={12} lg={6}>
           <MetricCard icon={<FiActivity />} label={copy.adminDashboardTurnsRunning} value={counts.running} tone="blue" />
         </Col>
-        <Col xs={24} sm={12} xl={6}>
+        <Col xs={24} sm={12} lg={6}>
           <MetricCard icon={<FiClock />} label={copy.adminDashboardTurnsQueued} value={counts.queued} tone="warning" note={queuedNote} />
         </Col>
-        <Col xs={24} sm={12} xl={6}>
+        <Col xs={24} sm={12} lg={6}>
           <MetricCard icon={<FiAlertCircle />} label={copy.adminDashboardTurnsFailed} value={counts.failed} tone="danger" />
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={16}>
+        <Col xs={24} lg={16}>
           <Card
             className="admin-dashboard-card"
             size="small"
@@ -164,7 +165,7 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
             )}
           </Card>
         </Col>
-        <Col xs={24} xl={8}>
+        <Col xs={24} lg={8}>
           <Card
             className="admin-dashboard-card"
             size="small"
@@ -178,14 +179,15 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
             <div className="admin-dashboard-capacity">
               <Progress
                 type="dashboard"
+                size={120}
                 percent={capacityPercent}
                 strokeColor="var(--primary)"
                 trailColor="var(--bg-inset)"
                 format={() => `${capacityPercent}%`}
               />
               <div className="admin-dashboard-capacity-info">
-                <div className="admin-dashboard-capacity-label">{copy.adminStorageWorkspaceSize}</div>
-                <div className="admin-dashboard-capacity-value">{formatStorageBytes(data.workspaceTotalBytes)}</div>
+                <div className="admin-dashboard-capacity-label">{copy.adminDashboardLargestWorkspace}</div>
+                <div className="admin-dashboard-capacity-value">{formatStorageBytes(data.largestWorkspaceBytes)}</div>
                 <div className="admin-dashboard-capacity-limit">
                   {copy.adminDashboardWorkspaceNote.replace("{limit}", formatStorageBytes(data.workspaceSizeLimitBytes))}
                 </div>
@@ -200,13 +202,14 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
               <div><span>{copy.adminStorageMirrorCount}</span><b>{data.mirrorCount}</b></div>
               <div><span>{copy.adminStorageMirrorSize}</span><b>{formatStorageBytes(data.mirrorTotalBytes)}</b></div>
               <div><span>{copy.adminStorageWorkspaceCount}</span><b>{data.workspaceCount}</b></div>
+              <div><span>{copy.adminDashboardWorkspaceTotal}</span><b>{formatStorageBytes(data.workspaceTotalBytes)}</b></div>
             </div>
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
+        <Col xs={24} lg={12}>
           <Card
             className="admin-dashboard-card"
             size="small"
@@ -248,7 +251,7 @@ export function AdminDashboard({ copy }: { copy: Copy }) {
             )}
           </Card>
         </Col>
-        <Col xs={24} xl={12}>
+        <Col xs={24} lg={12}>
           <Card
             className="admin-dashboard-card"
             size="small"

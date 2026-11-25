@@ -23,6 +23,11 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
     ).length;
     const workspaceTotalBytes = storage.workspaces.reduce((sum, entry) => sum + entry.sizeBytes, 0);
     const mirrorTotalBytes = storage.mirrors.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+    // 上限约束的是单个会话 worktree，而不是所有 worktree 的总和。
+    const largestWorkspaceBytes = storage.workspaces.reduce(
+      (largest, entry) => Math.max(largest, entry.sizeBytes),
+      0,
+    );
     sendJson(reply, 200, {
       generatedAt: generatedAt.toISOString(),
       ...overview,
@@ -35,6 +40,7 @@ export function registerObservabilityRoutes(app: FastifyInstance, ctx: OpsContex
       workspaceCount: storage.workspaces.length,
       mirrorCount: storage.mirrors.length,
       mirrorTotalBytes,
+      largestWorkspaceBytes,
     });
   });
 }
