@@ -1,8 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { Terminal, ITheme } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
-import type { SearchAddon, ISearchResultChangeEvent } from "@xterm/addon-search";
-import { Button, Input, Tag, Tooltip, Typography } from "antd";
+import { Button, Tag, Typography } from "antd";
 import { sendJson } from "../api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../i18n.js";
@@ -19,8 +18,6 @@ interface Props {
   turnId?: string;
   copy: Copy;
 }
-
-type SearchResults = Pick<ISearchResultChangeEvent, "resultIndex" | "resultCount">;
 
 /** 从主题变量读取真实颜色；xterm 用 canvas 绘制，无法解析 CSS `var()`。 */
 function terminalTheme(): ITheme {
@@ -48,43 +45,25 @@ function terminalTheme(): ITheme {
   };
 }
 
-/** 搜索高亮色必须是 #RRGGBB；从主题变量读取，读取失败时给出安全回退值。 */
-function searchDecorations() {
-  const styles = getComputedStyle(document.documentElement);
-  const hex = (name: string, fallback: string) => {
-    const value = styles.getPropertyValue(name).trim();
-    return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
-  };
-  return {
-    matchBackground: hex("--primary-soft", "#fff3b0"),
-    matchBorder: hex("--primary", "#1769aa"),
-    matchOverviewRuler: hex("--primary", "#1769aa"),
-    activeMatchBackground: hex("--primary", "#1769aa"),
-    activeMatchBorder: hex("--primary", "#1769aa"),
-    activeMatchColorOverviewRuler: hex("--primary", "#1769aa"),
-  };
-}
-
 /**
- * 可读终端：用 VS Code 同款 xterm.js 渲染 ANSI 输出，内置虚拟滚动；
- * 支持输出内搜索、复制全部，并可在命令运行期间单独停止（不取消整轮）。
+ * 可读终端：用 VS Code 同款 xterm.js 渲染 ANSI 输出，内置虚拟滚动。
+ * 可折叠展开；命令成功结束（退出码 0）时自动收起，失败/被停止则保持展开。
+ * 运行期间可单独停止该命令（不取消整轮）。
  */
 export const ConversationExecTerminal = memo(function ConversationExecTerminal({ entry, conversationId, turnId, copy }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const searchRef = useRef<SearchAddon | null>(null);
   const disposersRef = useRef<Array<{ dispose(): void }>>([]);
   // 始终持有最新条目的引用：xterm 异步加载完成前到达的 chunk 不能丢。
   const latestRef = useRef(entry);
   latestRef.current = entry;
   const writtenRef = useRef({ stdout: 0, stderr: 0 });
   const pinnedRef = useRef(true);
+  const wasDoneRef = useRef(entry.done);
   const [ready, setReady] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResults>();
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  // 历史记录里已成功结束的命令默认收起；正在运行的默认展开。
+  const [collapsed, setCollapsed] = useState(entry.done && entry.exitCode === 0);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState("");
 
@@ -95,8 +74,7 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     void Promise.all([
       import("@xterm/xterm"),
       import("@xterm/addon-fit"),
-      import("@xterm/addon-search"),
-    ]).then(([{ Terminal: TerminalCtor }, { FitAddon: FitAddonCtor }, { SearchAddon: SearchAddonCtor }]) => {
+    ]).then(([{ Terminal: TerminalCtor }, { FitAddon: FitAddonCtor }]) => {
       if (cancelled || !hostRef.current) return;
       const term = new TerminalCtor({
         allowTransparency: false,
@@ -110,9 +88,7 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         theme: terminalTheme(),
       });
       const fit = new FitAddonCtor();
-      const search = new SearchAddonCtor();
       term.loadAddon(fit);
-      term.loadAddon(search);
       term.open(hostRef.current);
       try { fit.fit(); } catch { /* 容器尚未布局完成，ResizeObserver 会再试 */ }
 
@@ -126,11 +102,8 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
       const scrollSub = term.onScroll((position) => {
         pinnedRef.current = position >= term.buffer.active.baseY;
       });
-      const searchSub = search.onDidChangeResults((event) => {
-        setResults(event ? { resultIndex: event.resultIndex, resultCount: event.resultCount } : undefined);
-      });
       const resize = new ResizeObserver(() => {
-        try { fit.fit(); } catch { /* 尺寸为 0 时忽略 */ }
+        try { fit.fit(); } catch { /* 折叠或尺寸为 0 时忽略 */ }
       });
       resize.observe(host);
       const themeObserver = new MutationObserver(() => { term.options.theme = terminalTheme(); });
@@ -138,21 +111,17 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
 
       terminalRef.current = term;
       fitRef.current = fit;
-      searchRef.current = search;
-      disposersRef.current = [scrollSub, searchSub, { dispose: () => resize.disconnect() }, { dispose: () => themeObserver.disconnect() }];
+      disposersRef.current = [scrollSub, { dispose: () => resize.disconnect() }, { dispose: () => themeObserver.disconnect() }];
       setReady(true);
     });
     return () => {
       cancelled = true;
       for (const disposable of disposersRef.current) disposable.dispose();
       disposersRef.current = [];
-      searchRef.current?.clearDecorations();
-      searchRef.current?.dispose();
       fitRef.current?.dispose();
       terminalRef.current?.dispose();
       terminalRef.current = null;
       fitRef.current = null;
-      searchRef.current = null;
     };
   }, []);
 
@@ -172,46 +141,11 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     if (pinnedRef.current) term.scrollToBottom();
   }, [entry.stdout, entry.stderr, ready]);
 
-  // 搜索：输入变化即重新查找并高亮全部匹配。
+  // 命令成功结束的瞬间自动收起；失败、被停止或用户手动展开后不再改写。
   useEffect(() => {
-    const search = searchRef.current;
-    if (!search || !ready) return;
-    if (!query) {
-      search.clearDecorations();
-      setResults(undefined);
-      return;
-    }
-    search.findNext(query, { decorations: searchDecorations(), incremental: true });
-  }, [query, ready]);
-
-  useEffect(() => {
-    if (copyState === "idle") return;
-    const timer = window.setTimeout(() => setCopyState("idle"), 2_000);
-    return () => window.clearTimeout(timer);
-  }, [copyState]);
-
-  const find = (backwards: boolean) => {
-    if (!query || !searchRef.current) return;
-    const options = { decorations: searchDecorations() };
-    if (backwards) searchRef.current.findPrevious(query, options);
-    else searchRef.current.findNext(query, options);
-  };
-
-  const copyAll = async () => {
-    const term = terminalRef.current;
-    if (!term) return;
-    // 取渲染后的缓冲区文本：保留终端实际显示的顺序，且已去掉 ANSI 控制序列。
-    const lines: string[] = [];
-    for (let index = 0; index < term.buffer.active.length; index += 1) {
-      lines.push(term.buffer.active.getLine(index)?.translateToString(true) ?? "");
-    }
-    try {
-      await navigator.clipboard.writeText(lines.join("\n").replace(/\s+$/, ""));
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  };
+    if (entry.done && !wasDoneRef.current && entry.exitCode === 0) setCollapsed(true);
+    wasDoneRef.current = entry.done;
+  }, [entry.done, entry.exitCode]);
 
   const stop = async () => {
     if (!conversationId || !turnId || stopping) return;
@@ -237,63 +171,39 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         : <Tag color="error">{copy.execExitFail.replace("{code}", String(entry.exitCode ?? "?"))}</Tag>
     : <Tag color="processing">{copy.execRunning}</Tag>;
   const durationMs = (entry.finishedAt ?? Date.now()) - entry.startedAt;
-  const copyTitle = copyState === "copied" ? copy.execCopied : copyState === "failed" ? copy.execCopyFailed : copy.execCopy;
+  const toggleTitle = collapsed ? copy.execExpand : copy.execCollapse;
 
   return (
-    <div className={`conversation-exec-terminal${entry.done ? " is-done" : " is-running"}`}>
+    <div className="conversation-exec-terminal">
       <div className="conversation-exec-header">
+        <Button
+          size="small"
+          type="text"
+          className="conversation-exec-toggle"
+          onClick={() => setCollapsed((value) => !value)}
+          aria-label={toggleTitle}
+          title={toggleTitle}
+        >
+          {collapsed ? "▸" : "▾"}
+        </Button>
         <Typography.Text code className="conversation-exec-command">$ {entry.command}</Typography.Text>
         {status}
         <Typography.Text type="secondary" className="conversation-exec-duration">{durationMs}ms</Typography.Text>
-        <div className="conversation-exec-actions">
-          {ready ? (
-            <>
-              <Tooltip title={copyTitle}>
-                <Button size="small" type="text" onClick={() => void copyAll()} aria-label={copy.execCopy}>{copyState === "copied" ? copy.execCopied : copy.execCopy}</Button>
-              </Tooltip>
-              <Tooltip title={copy.execSearch}>
-                <Button size="small" type="text" onClick={() => setSearchOpen((value) => !value)} aria-label={copy.execSearch}>{copy.execSearch}</Button>
-              </Tooltip>
-            </>
-          ) : null}
-          {!entry.done && conversationId && turnId ? (
-            <Button size="small" danger loading={stopping} onClick={() => void stop()}>
-              {copy.execStop}
-            </Button>
-          ) : null}
-        </div>
+        {!entry.done && conversationId && turnId ? (
+          <Button size="small" danger loading={stopping} onClick={() => void stop()}>
+            {copy.execStop}
+          </Button>
+        ) : null}
       </div>
-      {searchOpen ? (
-        <div className="conversation-exec-search">
-          <Input
-            size="small"
-            allowClear
-            value={query}
-            placeholder={copy.execSearchPlaceholder}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") { event.preventDefault(); find(event.shiftKey); }
-              if (event.key === "Escape") { setQuery(""); setSearchOpen(false); }
-            }}
-          />
-          <span className="conversation-exec-search-count">
-            {results && results.resultCount > 0
-              ? copy.execMatchInfo.replace("{index}", String(results.resultIndex + 1)).replace("{count}", String(results.resultCount))
-              : query ? copy.execNoMatches : ""}
-          </span>
-          <Button size="small" disabled={!query} onClick={() => find(true)} aria-label={copy.execSearchPrev}>↑</Button>
-          <Button size="small" disabled={!query} onClick={() => find(false)} aria-label={copy.execSearchNext}>↓</Button>
-        </div>
-      ) : null}
-      <div className="conversation-exec-screen">
+      <div className={`conversation-exec-screen${collapsed ? " is-collapsed" : ""}`}>
         <div className="conversation-exec-body" ref={hostRef} />
-        {!entry.stdout && !entry.stderr ? (
+        {!entry.stdout && !entry.stderr && !collapsed ? (
           <span className="conversation-exec-placeholder">
             {entry.done ? copy.execNoOutput : copy.execWaiting}
           </span>
         ) : null}
       </div>
-      {entry.truncated ? <div className="conversation-exec-truncated">{copy.execTruncated}</div> : null}
+      {entry.truncated && !collapsed ? <div className="conversation-exec-truncated">{copy.execTruncated}</div> : null}
       {entry.aborted && entry.reason ? (
         <div className="conversation-exec-reason">{copy.execReason.replace("{reason}", entry.reason)}</div>
       ) : null}

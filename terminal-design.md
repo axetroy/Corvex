@@ -84,8 +84,8 @@
 新增 `ConversationExecTerminal`（对话工作区 Chat 过程块内，紧随对应工具调用显示）：
 
 - 终端正文由 xterm.js 渲染（ANSI 颜色、内置虚拟滚动），主题变量经 `getComputedStyle` 转成真实色值；
-- 头部：`$ <command>` + 状态徽标（running / exit 0 / exit N / aborted / truncated）+ 复制 / 搜索 / 停止按钮 + 耗时；
-- 搜索栏：输入即高亮全部匹配并显示 `index/count`，上/下箭头跳转，Enter 下一个、Shift+Enter 上一个、Esc 关闭；
+- 头部：`$ <command>` + 状态徽标（running / exit 0 / exit N / aborted / truncated）+ 折叠按钮 + 停止按钮 + 耗时；
+- 折叠/展开：命令成功结束（退出码 0）时自动收起，失败或被停止则保持展开；历史成功命令默认收起，用户可手动切换；
 - 一条轮次含多个命令时，过程块顶部提供按命令文本筛选（不区分大小写），非命令步骤不受影响；
 - 自动滚动到底，用户上翻时暂停跟随；超出字节上限显示"输出已截断"提示；
 - 过程块本身是 disclosure，执行中强制展开、结束后可收起。
@@ -98,7 +98,7 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 |---|---|---|
 | P0 | **已完成** | 事件模型 `exec` + 后端 `onChunk` + PiAgent/Runner/SSE/stream.ts 全链路；`ConversationExecTerminal` 渲染流式输出与状态；单命令停止 API + 按钮（停止原因 `user manually stopped this command` 经 `signal.reason` → `ExecutionResult.reason` 进入工具结果，供模型决策） |
 | P1 | **已完成** | `collectProcess` 把 exec 增量合并为完整输出写入过程快照 `execOutput`，刷新后由 `message.process` 还原终端；`streamSnapshots` 对连续 chunk 合并防膨胀 |
-| P2 | **已完成** | xterm.js 渲染（ANSI + 虚拟滚动）、输出搜索与前后跳转、复制全部、按命令筛选终端 |
+| P2 | **已完成（已简化）** | xterm.js 渲染（ANSI + 虚拟滚动）、按命令筛选终端、可折叠展开且成功结束自动收起；搜索/复制已移除 |
 
 ## 7. 测试策略
 
@@ -116,11 +116,11 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 
 ## 9. P2 渲染方案：xterm.js（架构决策）
 
-P2 采用 VS Code 同款的 **xterm.js**（`@xterm/xterm` 6.x）替换 P0 的手写 `<pre>` 输出区，配套 `@xterm/addon-search`（搜索高亮与逐个跳转）、`@xterm/addon-fit`（按容器自适应行列）。理由：
+P2 采用 VS Code 同款的 **xterm.js**（`@xterm/xterm` 6.x）替换 P0 的手写 `<pre>` 输出区，配套 `@xterm/addon-fit`（按容器自适应行列）。理由：
 
 - **ANSI 原生渲染**：构建工具、`ls --color` 等命令会输出颜色与光标控制序列，手写 `<pre>` 只会把转义序列显示成乱码；xterm 正确解析这些序列；
 - **虚拟滚动开箱即用**：xterm 的 viewport 只渲染可见行，长输出不会生成上万个 DOM 节点，直接满足 P2 的大输出性能目标；
-- **搜索/复制内置**：搜索插件提供高亮与前后匹配跳转，选中即复制（另有"复制全部"按钮）；不需要自研文本遍历与高亮；
-- **依赖面可控**：仅 3 个前端包，由 Vite 打包进独立的懒加载 chunk，不进入服务端运行时依赖集，不改变任何安全边界。
+- **依赖面可控**：仅 2 个前端包，由 Vite 打包进独立的懒加载 chunk，不进入服务端运行时依赖集，不改变任何安全边界。
+- **简化取舍**：搜索与复制按钮已移除，终端只负责渲染与折叠；用户需要完整输出时仍可在 Trace 标签查看落库的工具结果。
 
 与 React 的衔接：终端实例是命令式的，组件持有 `Terminal` 并按 execId 记录"已写入长度"，输出增量到达时只 `write()` 新增部分；主题切换经 `MutationObserver` 更新 `term.options.theme`，容器尺寸变化经 `ResizeObserver` 触发 `fit()`；用户上翻时暂停自动跟随（xterm `onScroll` 的 `viewportY < baseY` 判定），回到底部恢复跟随。纯数据变换（`createExecDisplay`/`applyExecDelta`）抽到不依赖 React/xterm 的模块，便于单测。

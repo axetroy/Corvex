@@ -58,7 +58,7 @@ Long tasks benefit from lightweight read-only sub-agents that investigate in par
 
 ## Readable terminal (P0/P1/P2 done)
 
-A readable terminal for `run_command`: stream command output to the console in real time and let the user stop a single command without cancelling the whole turn. Full design in [terminal-design.md](terminal-design.md) (Chinese). P0 (done): `exec` SSE event, backend `onChunk`, streaming UI terminal and per-command cancel API/UI (stop reason `user manually stopped this command` is reported to the model). P1 (done): offline replay from the persisted process snapshot (`execOutput`). P2 (done): xterm.js rendering (ANSI + virtual scrolling), in-terminal search, copy-all, and per-command filtering.
+A readable terminal for `run_command`: stream command output to the console in real time and let the user stop a single command without cancelling the whole turn. Full design in [terminal-design.md](terminal-design.md) (Chinese). P0 (done): `exec` SSE event, backend `onChunk`, streaming UI terminal and per-command cancel API/UI (stop reason `user manually stopped this command` is reported to the model). P1 (done): offline replay from the persisted process snapshot (`execOutput`). P2 (done, simplified): xterm.js rendering (ANSI + virtual scrolling), per-command filtering, and a collapsible terminal that auto-collapses on exit code 0; search/copy controls were removed.
 
 ## Other deferred items
 

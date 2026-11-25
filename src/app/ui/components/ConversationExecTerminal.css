@@ -1,4 +1,4 @@
-/* 可读终端：xterm.js 渲染 ANSI 输出，内置虚拟滚动；头部提供搜索与复制。 */
+/* 可读终端：xterm.js 渲染 ANSI 输出，内置虚拟滚动；头部可折叠展开。 */
 .conversation-exec-terminal {
   margin: 6px 0;
   overflow: hidden;
@@ -12,10 +12,20 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-subtle);
+}
+
+.conversation-exec-toggle {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 22px;
 }
 
 .conversation-exec-command {
@@ -32,40 +42,15 @@
   font-size: 11px;
 }
 
-.conversation-exec-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.conversation-exec-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-subtle);
-}
-
-.conversation-exec-search .ant-input-affix-wrapper,
-.conversation-exec-search > .ant-input {
-  max-width: 280px;
-  font-size: 12px;
-}
-
-.conversation-exec-search-count {
-  min-width: 64px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  text-align: right;
-  white-space: nowrap;
-}
-
 /* xterm 的 viewport 需要一个确定高度才能按行虚拟滚动。 */
 .conversation-exec-screen {
   position: relative;
   height: clamp(180px, 28vh, 320px);
   background: var(--bg-code, var(--bg-subtle));
+}
+
+.conversation-exec-screen.is-collapsed {
+  display: none;
 }
 
 .conversation-exec-body {
