@@ -2386,6 +2386,25 @@ export class AppStore {
     return new Set(rows.map((row) => row.conversation_id));
   }
 
+  /** 记录一次命令执行审计：resource 带会话/轮次，result 带后端/退出码；命令前缀已脱敏限长。 */
+  insertExecutionAudit(
+    actorId: number,
+    conversationId: string,
+    turnId: string,
+    commandPreview: string,
+    backend: string,
+    exitCode: number | null,
+    at?: string,
+  ): void {
+    this.insertAudit(
+      actorId,
+      "command_execution",
+      `${conversationId}:${turnId}`,
+      `${backend}:${exitCode ?? "aborted"}:${commandPreview}`,
+      at,
+    );
+  }
+
   private insertAudit(actorId: number, action: string, resource: string, result: string, at?: string): void {
     this.db
       .prepare("INSERT INTO audit_events(actor_id,action,resource,result,created_at) VALUES (?,?,?,?,?)")

@@ -1088,6 +1088,7 @@ export class ConversationRunner {
               conversationProjectId: turn.projectId,
               conversationId: turn.conversationId,
               turnId: turn.turnId,
+              actorId: turn.actorId,
               gitlab,
               systemPrompt,
               userPrompt,

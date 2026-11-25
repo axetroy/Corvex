@@ -34,8 +34,8 @@ run_command({
 
 关键规则：
 
-1. **不经 shell 解释器**：用 `spawn(command, { shell: false })` 解析 argv。`;`、`&&`、`|`、`$()`、`>` 等 shell 元字符不会获得特殊语义——它们要么成为普通参数、要么被拒绝。这杜绝了命令注入链。
-   - 代价：不支持管道与重定向。若后续需要，单独设计受限管道能力，不放开 shell。
+1. **命令由 shell 解释，隔离由后端提供**：自由命令用 `spawn(command, { shell: true })` 执行，支持管道、重定向、`&&` 等常规语法。安全边界不是"禁用 shell 元字符"，而是**沙箱后端**（生产强制）。此前设想的 argv-only 方案会破坏合法命令（箭头函数 `=>`、带引号的 JS 表达式），也不支持 `npm test | tail`，已废弃。
+   - 本地后端同样由 shell 解释，但它仅限开发、明确标注不安全，生产 fail-closed。
 2. **参数上限**：`command` 长度、可覆盖的 `timeoutMs` / `maxOutputBytes` 都有硬上限，超过即拒绝。
 3. **工作目录固定**：始终是会话的 pinned worktree，不接受路径参数越界。
 4. **结果回灌**：`{ command, exitCode, stdout, stderr, truncated, durationMs, backend }` 经 `src/redact.ts` 脱敏、限长后写入 `conversation_trace` 与过程快照。
@@ -142,7 +142,7 @@ CORVEX_EXECUTION_SANDBOX_SOCKET=/var/run/docker.sock
 
 ## 10. 测试策略
 
-- 本地后端：用无害命令（`echo`、`node -e`）做 hermetic 测试；验证 env 净化、超时、输出上限、取消、路径固定。
+- 本地后端：用无害命令（`echo`、`node -e`）做 hermetic 测试；验证 shell 语法（`&&`、管道）、env 净化、超时、输出上限、取消、路径固定。
 - 沙箱后端：无容器运行时时自动跳过（独立 docker-smoke job），验证隔离参数、禁网、资源限额。
 - 跨平台：Windows 路径与进程组 kill 需专门验证（CI 三平台矩阵）。
 - 工具层：验证 shell 元字符不被解释、`command` 长度上限、参数上限、结果脱敏。

@@ -102,6 +102,33 @@ export interface CorvexConfig {
     /** 单条预览的最大字符数。 */
     contextInspectMaxPreviewChars: number;
   };
+  execution: ExecutionConfig;
+}
+
+/**
+ * 执行环境配置（自由命令 + 双后端）。安全边界配置，只放 YAML / 环境变量，
+ * 不进运维台运行时设置，改后需重启。详见 execution-design.md。
+ */
+export interface ExecutionConfig {
+  enabled: boolean;
+  backend: "local" | "sandbox";
+  sandbox: {
+    runtime: "docker" | "podman";
+    image: string;
+    socket: string;
+    memory: string;
+    cpus: number;
+    pidsLimit: number;
+    network: "none" | "bridge";
+    readOnlyMounts: string[];
+    timeoutMs: number;
+    maxOutputBytes: number;
+  };
+  local: {
+    allowUnsafe: boolean;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  };
 }
 
 export type ConfigRole = "server" | "storage";
@@ -157,6 +184,27 @@ const defaults: CorvexConfig = {
     contextInspectEnabled: true,
     contextInspectMaxItems: 80,
     contextInspectMaxPreviewChars: 2_048,
+  },
+  execution: {
+    enabled: false,
+    backend: "sandbox",
+    sandbox: {
+      runtime: "docker",
+      image: "",
+      socket: "",
+      memory: "2g",
+      cpus: 1,
+      pidsLimit: 256,
+      network: "none",
+      readOnlyMounts: [],
+      timeoutMs: 120_000,
+      maxOutputBytes: 256 << 10,
+    },
+    local: {
+      allowUnsafe: false,
+      timeoutMs: 120_000,
+      maxOutputBytes: 256 << 10,
+    },
   },
 };
 
@@ -232,6 +280,55 @@ function duration(value: unknown, fallback: number, label: string): number {
     h: 3_600_000,
   };
   return amount * multipliers[match[2]!];
+}
+
+function enumValue<T extends string>(value: unknown, allowed: readonly T[], fallback: T, label: string): T {
+  if (value === undefined) return fallback;
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(`${label} must be one of ${allowed.join(", ")}`);
+}
+
+function parseExecution(raw: unknown): ExecutionConfig {
+  const execution = object(raw, "execution");
+  const sandbox = object(execution.sandbox, "execution.sandbox");
+  const local = object(execution.local, "execution.local");
+  return {
+    enabled: boolean(
+      process.env.CORVEX_EXECUTION_ENABLED === undefined
+        ? execution.enabled
+        : process.env.CORVEX_EXECUTION_ENABLED === "true",
+      defaults.execution.enabled,
+    ),
+    backend: enumValue(
+      process.env.CORVEX_EXECUTION_BACKEND ?? execution.backend,
+      ["local", "sandbox"] as const,
+      defaults.execution.backend,
+      "execution.backend",
+    ),
+    sandbox: {
+      runtime: enumValue(sandbox.runtime, ["docker", "podman"] as const, defaults.execution.sandbox.runtime, "execution.sandbox.runtime"),
+      image: string(
+        process.env.CORVEX_EXECUTION_SANDBOX_IMAGE ?? sandbox.image,
+        defaults.execution.sandbox.image,
+      ),
+      socket: string(
+        process.env.CORVEX_EXECUTION_SANDBOX_SOCKET ?? sandbox.socket,
+        defaults.execution.sandbox.socket,
+      ),
+      memory: string(sandbox.memory, defaults.execution.sandbox.memory),
+      cpus: number(sandbox.cpus, defaults.execution.sandbox.cpus),
+      pidsLimit: number(sandbox.pids_limit, defaults.execution.sandbox.pidsLimit),
+      network: enumValue(sandbox.network, ["none", "bridge"] as const, defaults.execution.sandbox.network, "execution.sandbox.network"),
+      readOnlyMounts: stringArray(sandbox.read_only_mounts, defaults.execution.sandbox.readOnlyMounts),
+      timeoutMs: duration(sandbox.timeout, defaults.execution.sandbox.timeoutMs, "execution.sandbox.timeout"),
+      maxOutputBytes: number(sandbox.max_output_bytes, defaults.execution.sandbox.maxOutputBytes),
+    },
+    local: {
+      allowUnsafe: boolean(local.allow_unsafe, defaults.execution.local.allowUnsafe),
+      timeoutMs: duration(local.timeout, defaults.execution.local.timeoutMs, "execution.local.timeout"),
+      maxOutputBytes: number(local.max_output_bytes, defaults.execution.local.maxOutputBytes),
+    },
+  };
 }
 
 function parseConfig(raw: unknown): CorvexConfig {
@@ -330,6 +427,7 @@ function parseConfig(raw: unknown): CorvexConfig {
       contextInspectMaxItems: number(agent.context_inspect_max_items, defaults.agent.contextInspectMaxItems),
       contextInspectMaxPreviewChars: number(agent.context_inspect_max_preview_chars, defaults.agent.contextInspectMaxPreviewChars),
     },
+    execution: parseExecution(root.execution),
   };
 }
 
@@ -432,6 +530,30 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.agent.gitToolCallLimit < 0 || config.agent.gitToolCallLimit > 200) {
     problems.push("agent.git_tool_call_limit must be between 0 and 200");
+  }
+  // 执行环境：安全边界配置，fail-closed。开发模式由环境变量显式声明。
+  const execution = config.execution;
+  const devMode = process.env.CORVEX_DEV === "1" || process.env.NODE_ENV === "development";
+  if (execution?.enabled) {
+    if (execution.backend === "local" && !devMode) {
+      problems.push("execution.backend=local is only allowed in development (set CORVEX_DEV=1); use sandbox in production");
+    }
+    if (execution.backend === "local" && !execution.local.allowUnsafe) {
+      problems.push("execution.local.allow_unsafe must be true to enable the local backend");
+    }
+    if (execution.backend === "sandbox") {
+      if (!execution.sandbox.image.trim()) problems.push("execution.sandbox.image is required when backend=sandbox");
+      if (!execution.sandbox.socket.trim()) problems.push("execution.sandbox.socket is required when backend=sandbox");
+      if (execution.sandbox.cpus <= 0) problems.push("execution.sandbox.cpus must be positive");
+      if (execution.sandbox.pidsLimit < 1) problems.push("execution.sandbox.pids_limit must be at least 1");
+    }
+    const limits = execution.backend === "sandbox" ? execution.sandbox : execution.local;
+    if (limits.timeoutMs < 1 || limits.timeoutMs > 3_600_000) {
+      problems.push(`execution.${execution.backend}.timeout must be between 1ms and 1h`);
+    }
+    if (limits.maxOutputBytes < 1 || limits.maxOutputBytes > 64 << 20) {
+      problems.push(`execution.${execution.backend}.max_output_bytes must be between 1 and 64 MiB`);
+    }
   }
   if (role !== "storage") {
     // 模型名、Base URL 与 API Key 可以在运维台运行时配置（或由环境变量提供），

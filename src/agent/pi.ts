@@ -41,6 +41,7 @@ import { estimateConservativeTokens } from "./budget.js";
 import { boundSessionEntries } from "./session-persistence.js";
 import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
 import { createTaskBudgetState, observeTaskBudget, wrapUpNotice } from "./task-budget.js";
+import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecutionBackend } from "./execution/index.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -269,6 +270,8 @@ export interface ModelRequest {
   conversationId?: string;
   /** 当前对话轮次 ID；上下文快照按轮次归属。 */
   turnId?: string;
+  /** 操作者 ID（审计用）；仅对话轮次提供。 */
+  actorId?: number;
   /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
   gitTools?: GitToolAdapter;
   /**
@@ -617,6 +620,15 @@ export class PiAgent {
     const toolAccess = getAgentToolAccess(request.taskType, config.agent);
     const gitlab = request.gitlab ?? this.gitlab;
     const workspace = trace?.workspace;
+    // 执行环境：自由命令在受控后端执行；仅对话轮次且有 worktree 时注册。
+    const execution = config.execution;
+    const executionBackend: ExecutionBackend | undefined
+      = execution?.enabled && request.taskType === "conversation" && workspace && request.conversationId && request.turnId
+        ? execution.backend === "local"
+          ? new LocalExecutionBackend()
+          : new SandboxExecutionBackend(execution.sandbox)
+        : undefined;
+    const executionLimits = execution?.backend === "sandbox" ? execution.sandbox : execution?.local;
     // 压缩阈值由工具结果预算推导：SDK 只能估算「最后一条回复之后新增的」工具结果，
     // 预留必须覆盖这段最坏增量加上输出预留，否则估算偏低的请求仍会超窗。
     const compactionReserveTokens = resolveCompactionReserveTokens(
@@ -733,6 +745,28 @@ export class PiAgent {
               config.agent.webBlockedHosts,
               signal,
             )]
+          : []),
+        ...(executionBackend
+          ? [createExecutionExtension({
+              backend: executionBackend,
+              cwd: repositoryRoot,
+              signal,
+              maxTimeoutMs: executionLimits.timeoutMs,
+              maxOutputBytes: executionLimits.maxOutputBytes,
+              onExecuted: (result) => {
+                // 审计：记录操作者/会话/轮次/命令前缀/后端/退出码，不记完整敏感命令。
+                if (this.store && request.actorId !== undefined) {
+                  this.store.insertExecutionAudit(
+                    request.actorId,
+                    request.conversationId ?? "",
+                    request.turnId ?? "",
+                    previewCommand(result.command),
+                    result.backend,
+                    result.exitCode,
+                  );
+                }
+              },
+            })]
           : []),
         ...(request.taskType === "conversation"
           ? [createPlanExtension({
