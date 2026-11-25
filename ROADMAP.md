@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks features that are intentionally deferred. Items here are not implemented in the current stage; they are kept as a design record and will be revisited in a later iteration.
+This document tracks features that were deferred or are still pending. Implemented items are marked as such and kept as a design record; the rest remain for a later iteration.
 
 ## GitLab webhook-driven events (deferred)
 
@@ -30,15 +30,15 @@ The current stage focuses on persistent, user-driven conversations in the ops co
 
 ## Long-running autonomous agent gaps
 
-Corvex already covers context governance (microcompaction, proactive compaction, real token counts, bounded tool results), human collaboration (steer/interject, queued follow-ups, Stop, notifications) and durable state (per-conversation full Pi session persistence, interrupted-turn recovery, rolling summaries). To match mainstream coding agents on **long, autonomous tasks**, the following gaps remain. They are ordered by impact and are not implemented in this stage (except where noted).
+Corvex already covers context governance (microcompaction, proactive compaction, real token counts, bounded tool results), human collaboration (steer/interject, queued follow-ups, Stop, notifications) and durable state (per-conversation full Pi session persistence, interrupted-turn recovery, rolling summaries). To match mainstream coding agents on **long, autonomous tasks**, the following gaps were identified. Most are now implemented (marked below); the remaining ones are ordered by impact.
 
 ### P0 — Tool loop detection and recovery (implemented)
 
-Mainstream agents detect when the model repeats the same tool call with the same arguments, stops making progress, or fails the same way repeatedly, and steer or stop it. Corvex only has narrow guards: a 40-call Git budget, a five-read hint for `read_file`, and a response-stall watchdog. A previous session still produced 253 turns re-reading the same files. Plan: record a bounded signature of `(toolName, normalized args)` per turn, inject a localized "you have repeated this N times — change strategy or report" context notice at a threshold, count repeats toward the turn's tool budget, and mark repeated identical failures as exhausted.
+Mainstream agents detect when the model repeats the same tool call with the same arguments, stops making progress, or fails the same way repeatedly, and steer or stop it. `src/agent/tool-loop.ts` records a bounded `(toolName, normalized args)` signature per session and injects a localized "you have repeated this N times — change strategy or report" steer at a threshold (4 consecutive / 8 total), treating repeated identical failures as exhausted. Git calls are separately capped per turn (`agent.git_tool_call_limit`), and a response-stall watchdog covers a silent model.
 
 ### P0 — Live plan state machine (implemented)
 
-`record_plan` currently stores an immutable text list in the process snapshot; the model cannot update a step's status and a resumed turn does not know its progress. Mainstream agents keep a persisted checklist with `pending / in_progress / completed` states, updated across turns and reflected in the UI. Plan: evolve `record_plan` into a persisted task list with per-step status, allow status-only updates, restore it on resume, and render progress in the console.
+`record_plan` persists a task checklist in `conversation_plans` (`ConversationPlan`) with `pending / in_progress / completed` steps. The model can rewrite the list or send status-only updates; progress survives across turns and resume, and the console renders step statuses in the Chat process block.
 
 ### P1 — Task-level round/token budget with forced wrap-up (implemented)
 
@@ -52,9 +52,9 @@ Mainstream agents detect when the model repeats the same tool call with the same
 
 The largest structural gap was that Corvex had no shell and never executed repository code, so it could not close the edit → test → fix loop that mainstream agents rely on. The decision is to allow **free commands** (not an allowlist) through a new `run_command` tool that supports shell syntax (pipes/redirects) in the configured backend, with two backends: a development-only `local` backend and a mandatory `sandbox` backend for production. The full design lives in [execution-design.md](execution-design.md) (Chinese, binding contract): config is admin-managed in SQLite with a YAML/env fallback and validated fail-closed, authorization and audit stay in Corvex code, results are redacted into traces. The sandbox backend runs commands in a container (network namespace isolated from the host, bridge by default so dependencies can be installed, `none` for full isolation), drops capabilities, uses a read-only rootfs with only the worktree mounted, and enforces CPU/memory/pids limits plus timeouts. P0/P1/P2/P3 are implemented: the process timeline renders `run_command` invocations with their command, the completion guard requires a successful `run_command` before claiming "tests/typecheck passed". Execution config is managed by admins at **Settings → Execution** (`GET/PUT/DELETE /api/ops/admin/execution`), stored in SQLite, validated fail-closed, and applies immediately; YAML/env remains the file fallback. The conversation workspace has an **Executions** tab listing past commands, backends and exit codes from audit events. End-to-end tests cover a real `run_command` call through PiAgent with the local backend. A future increment could reuse past results.
 
-### P2 — Sub-agents / parallel research
+### P2 — Sub-agents / parallel research (planned)
 
-Long tasks benefit from lightweight read-only sub-agents that investigate in parallel and return bounded findings, keeping the main session's context clean. Corvex runs one session per turn; delegation is deferred.
+Long tasks benefit from lightweight read-only sub-agents that investigate in parallel and return bounded findings, keeping the main session's context clean. Corvex still runs one session per turn; delegation is not implemented. The design is recorded in [subagent-design.md](subagent-design.md) (Chinese), based on how Claude Code, OpenCode, Cursor, Codex CLI and the Pi SDK example handle context isolation, tool scoping, delegation and result return. P0: a `spawn_subagent` tool with admin-defined agents, fresh context, a read-only tool subset, depth 1 and sidechain traces. P1: admin UI, resume and concurrency/token budgets. P2: background completion notifications and worktree-isolated writers.
 
 ## Readable terminal (P0/P1/P2 done)
 
