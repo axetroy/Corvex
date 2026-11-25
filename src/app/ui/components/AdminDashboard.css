@@ -1,4 +1,4 @@
-/* 管理后台首页仪表盘：只读指标卡片与两张小表，复用管理中心的主题变量。 */
+/* 管理后台首页仪表盘：Ant Design Pro 风格的指标卡与分析区，颜色全部取自主题变量。 */
 .admin-dashboard {
   display: flex;
   flex-direction: column;
@@ -9,10 +9,154 @@
   margin-bottom: 0;
 }
 
-.admin-dashboard-stats {
+/* 指标卡 */
+.admin-dashboard-metric-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-dashboard-metric-icon {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 17px;
+}
+
+.admin-dashboard-metric-primary {
+  background: var(--primary-tint);
+  color: var(--primary);
+}
+
+.admin-dashboard-metric-blue {
+  background: var(--primary-soft);
+  color: var(--blue);
+}
+
+.admin-dashboard-metric-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.admin-dashboard-metric-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.admin-dashboard-metric-label {
+  font-size: 13px;
+}
+
+.admin-dashboard-metric-value {
+  margin-top: 12px;
+  color: var(--text-strong);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard-metric-note {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* 分析区 */
+.admin-dashboard-card {
+  height: 100%;
+}
+
+.admin-dashboard-card-icon {
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.admin-dashboard-statuses {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  padding-top: 4px;
+}
+
+.admin-dashboard-status {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 44px 44px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.admin-dashboard-status-label {
+  color: var(--text-secondary);
+}
+
+.admin-dashboard-status-track {
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--bg-inset);
+}
+
+.admin-dashboard-status-fill {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
+  transition: width 0.3s ease;
+}
+
+.admin-dashboard-status-value {
+  color: var(--text-strong);
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard-status-percent {
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard-empty {
+  padding: 24px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* 容量仪表 */
+.admin-dashboard-capacity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.admin-dashboard-capacity-info {
+  min-width: 0;
+}
+
+.admin-dashboard-capacity-value {
+  color: var(--text-strong);
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-dashboard-capacity-limit {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.admin-dashboard-capacity-over {
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .admin-dashboard-table .ant-table-cell {
