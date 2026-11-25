@@ -24,7 +24,7 @@ Webhook 驱动的合并请求任务事件（review / chat / explain / fix / impl
 
 - 引入第二套控制平面运行时，或通过 TypeScript/Pi sidecar 与另一种运行时通信。
 - 向模型开放不受限制的 shell、文件系统、网络或 GitLab 访问。
-- 执行仓库脚本、测试或任意命令；若要增加执行器，必须单独设计沙箱与显式授权模型。
+- 执行仓库脚本、测试或任意命令；若要增加执行器，必须单独设计沙箱与显式授权模型。该设计已单独记录在 [execution-design.md](execution-design.md)：自由命令经受控 `run_command` 工具、本地/沙箱双后端、file-only fail-closed 配置与代码级授权审计实现，未实施前此非目标仍然生效。
 - 将 Pi 项目信任设置或提示词指令视作沙箱。
 - 在单机部署尚不需要时替换 SQLite 或引入分布式基础设施。
 

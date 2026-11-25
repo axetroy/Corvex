@@ -32,11 +32,11 @@ The current stage focuses on persistent, user-driven conversations in the ops co
 
 Corvex already covers context governance (microcompaction, proactive compaction, real token counts, bounded tool results), human collaboration (steer/interject, queued follow-ups, Stop, notifications) and durable state (per-conversation full Pi session persistence, interrupted-turn recovery, rolling summaries). To match mainstream coding agents on **long, autonomous tasks**, the following gaps remain. They are ordered by impact and are not implemented in this stage (except where noted).
 
-### P0 — Tool loop detection and recovery (in progress)
+### P0 — Tool loop detection and recovery (implemented)
 
 Mainstream agents detect when the model repeats the same tool call with the same arguments, stops making progress, or fails the same way repeatedly, and steer or stop it. Corvex only has narrow guards: a 40-call Git budget, a five-read hint for `read_file`, and a response-stall watchdog. A previous session still produced 253 turns re-reading the same files. Plan: record a bounded signature of `(toolName, normalized args)` per turn, inject a localized "you have repeated this N times — change strategy or report" context notice at a threshold, count repeats toward the turn's tool budget, and mark repeated identical failures as exhausted.
 
-### P0 — Live plan state machine (in progress)
+### P0 — Live plan state machine (implemented)
 
 `record_plan` currently stores an immutable text list in the process snapshot; the model cannot update a step's status and a resumed turn does not know its progress. Mainstream agents keep a persisted checklist with `pending / in_progress / completed` states, updated across turns and reflected in the UI. Plan: evolve `record_plan` into a persisted task list with per-step status, allow status-only updates, restore it on resume, and render progress in the console.
 
@@ -48,9 +48,9 @@ Mainstream agents detect when the model repeats the same tool call with the same
 
 `src/agent/claim-verification.ts` now also treats "fixed / completed" claims as high-risk: they are unverified unless the turn's tool trace contains a read-back (`read_file`) or diff (`git_diff`) tool. The system prompt requires reading changes back before claiming completion; unverified claims surface as a `context` notice in the process snapshot.
 
-### P2 — Verification sandbox
+### P2 — Verification sandbox (design ready, implementation pending)
 
-The largest structural gap: Corvex has no shell and never executes repository code (`design.md` non-goal), so it cannot close the edit → test → fix loop that mainstream agents rely on. Adding a read-only command allowlist (for example `tsc --noEmit` or a test runner) inside an isolated sandbox requires a separate authorization model and is deferred.
+The largest structural gap: Corvex has no shell and never executes repository code (`design.md` non-goal), so it cannot close the edit → test → fix loop that mainstream agents rely on. The decision is to allow **free commands** (not an allowlist) through a new `run_command` tool that parses argv without a shell interpreter, with two backends: a development-only `local` backend and a mandatory `sandbox` backend for production. The full design lives in [execution-design.md](execution-design.md) (Chinese, binding contract): config is file-only and fail-closed, authorization and audit stay in Corvex code, results are redacted into traces. Implementation is staged P0 design → P1 core → P2 sandbox → P3 UI.
 
 ### P2 — Sub-agents / parallel research
 
