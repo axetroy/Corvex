@@ -210,7 +210,7 @@ export class CorvexServer {
         const user = await this.oauth.refresh(saved);
         // 续期失败意味着用户在非请求路径上也需要重新登录，这里跳过该用户的队列恢复。
         if (!user) return undefined;
-        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken);
+        return this.createGitLabClient(userId, user.accessToken);
       }).catch((error: unknown) => {
         console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
       });
@@ -260,6 +260,20 @@ export class CorvexServer {
     registerRoutes(this.app, this.operationsContext());
   }
 
+  /**
+   * 构造按用户绑定动态 token 的 GitLab 客户端：每次请求现读 store 里的令牌，
+   * 因此长轮次运行中若 token 被后台刷新（旧 token 被 GitLab 吊销），后续调用立即用新令牌。
+   * provider 只读当前用户，不会跨用户泄漏。
+   */
+  private createGitLabClient(userId: string, fallbackToken: string): GitLabClient {
+    return new GitLabClient(
+      this.config.gitlab.baseUrl,
+      fallbackToken,
+      10_000,
+      () => this.store.readUser(userId, this.cipher)?.accessToken ?? fallbackToken,
+    );
+  }
+
   /** 提供给路由模块的依赖；只在注册阶段构造一次。 */
   private operationsContext(): OpsContext {
     return {
@@ -274,7 +288,7 @@ export class CorvexServer {
         const user = currentUser(request);
         // 受保护路由已经校验登录态；这里再兜一层，确保绝不产生无用户凭据的 GitLab 请求。
         if (!user) throw new Error("a signed-in user is required for GitLab access");
-        return new GitLabClient(this.config.gitlab.baseUrl, user.accessToken);
+        return this.createGitLabClient(user.id, user.accessToken);
       },
       conversationStreams: this.conversationStreams,
       startConversationTurn: (turnId, gitlab, responseLanguage) => {

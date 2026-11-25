@@ -304,8 +304,9 @@ export class ConversationRunner {
     targetBranch: string,
     gitlab: GitLabClient,
     signal?: AbortSignal,
-    authToken?: string,
   ): GitToolAdapter {
+    // 令牌在每次 Git 网络操作时现读，避免长轮次里后台刷新后仍用旧 token。
+    const authToken = () => gitlab.authToken;
     const onPublished = async (sha: string, branch: string): Promise<void> => {
       try {
         // 不管推到哪个分支，发布出去的提交都是新的同步基线：本轮后续 commit 以它为父提交。
@@ -332,8 +333,8 @@ export class ConversationRunner {
       createBranch: (name) => this.repo.createBranch(workspace, name, signal),
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
       checkout: (name) => this.repo.checkoutBranch(workspace, name, signal),
-      pull: () => this.repo.fetchFromMirror(workspace, signal, authToken),
-      sync: () => this.repo.syncMirrorFromGitLab(workspace.projectId, signal, authToken),
+      pull: () => this.repo.fetchFromMirror(workspace, signal, authToken()),
+      sync: () => this.repo.syncMirrorFromGitLab(workspace.projectId, signal, authToken()),
       merge: (ref) => this.repo.mergeRef(workspace, ref, signal),
       commit: (message) => this.repo.saveConversationChanges(workspace, conversationId, signal, message, turnId),
       push: async () => {
@@ -341,13 +342,13 @@ export class ConversationRunner {
         return result ? { ref: `refs/conversations/${conversationId}`, sha: result.sha } : undefined;
       },
       pushBranch: async (sha, branch) => {
-        const result = await this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal, authToken);
+        const result = await this.repo.pushBranchToGitLab(workspace.projectId, sha, branch, signal, authToken());
         await onPublished(result.sha, branch);
         return result;
       },
       publish: async (branch, message) => {
         const result = await this.repo.publishToGitLabBranch(
-          workspace.projectId, conversationId, workspace, branch, message, signal, authToken,
+          workspace.projectId, conversationId, workspace, branch, message, signal, authToken(),
         );
         await onPublished(result.sha, branch);
         return result;
@@ -1172,7 +1173,7 @@ export class ConversationRunner {
               steer,
               fs: this.workspaceFs(workspace.path),
               ...(conversationCapabilities(turn.mode).gitToolset
-                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, gitlab, signal, gitlab.authToken) }
+                ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, gitlab, signal) }
                 : {}),
             },
             workspace.path,

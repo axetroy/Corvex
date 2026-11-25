@@ -19,6 +19,28 @@ describe("GitLab credentials", () => {
     client.configure("https://gitlab.example.com", "rotated-token");
     expect(client.authToken).toBe("rotated-token");
   });
+
+  it("re-resolves the token from a provider on every read and request", async () => {
+    let current = "old-token";
+    const seen: string[] = [];
+    const server = createServer((_request, response) => {
+      seen.push(String(_request.headers["authorization"] ?? ""));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("[]");
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "old-token", 10_000, () => current);
+      expect(client.authToken).toBe("old-token");
+      // 模拟轮次运行中 token 被后台刷新：provider 立即返回新令牌，无需重建 client。
+      current = "fresh-token";
+      expect(client.authToken).toBe("fresh-token");
+      await client.listProjects("", 1);
+      expect(seen).toEqual(["Bearer fresh-token"]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 describe("GitLab base URL", () => {

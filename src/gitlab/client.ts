@@ -387,19 +387,31 @@ function optionalString(source: Record<string, unknown>, key: string, maxLength:
 
 export class GitLabClient {
   private baseUrl: string;
-  /** 当前登录用户的 OAuth access token；所有 GitLab 请求都必须带上它。 */
+  /** 构造时的令牌兜底值；配置了 tokenProvider 后以 provider 为准。 */
   private token: string;
+  /**
+   * 每次请求前重新解析令牌。长轮次可能在运行中遇到后台 token 刷新（GitLab 会吊销旧令牌），
+   * 若沿用轮次启动时捕获的快照，后续 GitLab / Git 写操作会拿到已失效的旧 token。
+   * 由 Server 注入，按当前登录用户从 store 现读现解密，不进入脚本或工具参数。
+   */
+  private readonly tokenProvider?: () => string;
 
-  constructor(baseUrl: string, token: string, private readonly requestTimeoutMs = 10_000) {
+  constructor(baseUrl: string, token: string, private readonly requestTimeoutMs = 10_000, tokenProvider?: () => string) {
     if (requestTimeoutMs <= 0) throw new Error("GitLab request timeout must be positive");
     this.baseUrl = "";
     this.token = "";
+    this.tokenProvider = tokenProvider;
     this.configure(baseUrl, token);
+  }
+
+  /** 本次请求实际使用的令牌：优先现读 provider，否则用构造时的静态值。 */
+  private currentToken(): string {
+    return this.tokenProvider?.() ?? this.token;
   }
 
   /** 当前登录用户的令牌，供 GitManager 的 clone/fetch/push 使用。 */
   get authToken(): string {
-    return this.token;
+    return this.currentToken();
   }
 
   /** 运维台修改 GitLab 地址后立即生效；下一次请求使用新地址。 */
@@ -792,7 +804,7 @@ export class GitLabClient {
       });
       const response = await this.request(
         `/projects/${projectId}/merge_requests/${mrIid}/notes?${query}`,
-        this.token,
+        this.currentToken(),
         "GET",
         signal,
       );
@@ -857,7 +869,7 @@ export class GitLabClient {
     const query = new URLSearchParams({ per_page: String(perPage), page: String(page) });
     const response = await this.request(
       `/projects/${projectId}/merge_requests/${mrIid}/commits?${query}`,
-      this.token,
+      this.currentToken(),
       "GET",
       signal,
     );
@@ -921,7 +933,7 @@ export class GitLabClient {
       });
       const response = await this.request(
         `/projects/${projectId}/issues/${issueIid}/notes?${query}`,
-        this.token,
+        this.currentToken(),
         "GET",
         signal,
       );
@@ -1091,7 +1103,7 @@ export class GitLabClient {
   ): Promise<CreatedIssue> {
     let response: Response;
     try {
-      response = await this.request(path, this.token, "POST", signal, form);
+      response = await this.request(path, this.currentToken(), "POST", signal, form);
     } catch (error) {
       throw new GitLabWriteError(`GitLab resource creation outcome is unknown: ${String(error)}`, error);
     }
@@ -1287,7 +1299,7 @@ export class GitLabClient {
   }
 
   private async getJson(path: string, signal?: AbortSignal): Promise<unknown> {
-    const response = await this.request(path, this.token, "GET", signal);
+    const response = await this.request(path, this.currentToken(), "GET", signal);
     const body = await this.successBody(response);
     try {
       return JSON.parse(new TextDecoder().decode(body)) as unknown;
@@ -1304,7 +1316,7 @@ export class GitLabClient {
   ): Promise<GitLabWriteReceipt> {
     let response: Response;
     try {
-      response = await this.request(path, this.token, method, signal, form);
+      response = await this.request(path, this.currentToken(), method, signal, form);
     } catch (error) {
       throw new GitLabWriteError(`GitLab write outcome is unknown: ${String(error)}`, error);
     }
