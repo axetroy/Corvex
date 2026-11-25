@@ -54,6 +54,15 @@ describe("sandbox container args", () => {
     const args = buildContainerArgs({ ...sandboxConfig, network: "none" }, request, "c");
     expect(args[args.indexOf("--network") + 1]).toBe("none");
   });
+
+  it("mounts the project mirror read-only at its host path so linked worktrees resolve", () => {
+    const mirrorPath = "/data/mirrors/7.git";
+    const args = buildContainerArgs(sandboxConfig, { ...request, mirrorPath }, "c");
+    expect(args).toContain(`type=bind,source=${mirrorPath},target=${mirrorPath},readonly`);
+    // 未指定镜像时不应额外挂载，避免暴露无关宿主路径。
+    const without = buildContainerArgs(sandboxConfig, request, "c");
+    expect(without.some((arg) => arg.includes(`${mirrorPath}`))).toBe(false);
+  });
 });
 
 describe("sandbox execution backend (requires docker)", () => {

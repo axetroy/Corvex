@@ -523,6 +523,11 @@ export class PiAgent {
       ? restoreSessionEntries(this.store?.conversationSessionEntries(sessionKey))
       : undefined;
     const repositoryRoot = await realpath(workingDirectory);
+    // linked worktree 的 `.git` 文件里写的是镜像裸库的 realpath（macOS 上 /var 会被解析到 /private/var），
+    // 沙箱必须按同一 realpath 只读挂载，否则容器里的 git 解析不到 gitdir。
+    const mirrorPath = request.conversationProjectId
+      ? await realpath(join(resolve(config.storage.root), "mirrors", `${request.conversationProjectId}.git`)).catch(() => undefined)
+      : undefined;
     const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
@@ -765,6 +770,7 @@ export class PiAgent {
           ? [createExecutionExtension({
               backend: executionBackend,
               cwd: repositoryRoot,
+              mirrorPath,
               signal,
               maxTimeoutMs: executionLimits.timeoutMs,
               maxOutputBytes: executionLimits.maxOutputBytes,

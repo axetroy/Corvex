@@ -46,6 +46,12 @@ export function buildContainerArgs(
     "--cpus", String(config.cpus),
     "--pids-limit", String(config.pidsLimit),
     "--mount", `type=bind,source=${request.cwd},target=${workspaceMount}`,
+    // linked worktree 的 `.git` 文件里是宿主机绝对路径（gitdir: <mirror>/worktrees/<name>）。
+    // 按同一路径只读挂入镜像，容器内的 git 才能解析 gitdir，否则 `git status` 报
+    // `fatal: not a git repository: (null)`。只读保证命令无法改动裸库或别人的会话 ref。
+    ...(request.mirrorPath
+      ? ["--mount", `type=bind,source=${request.mirrorPath},target=${request.mirrorPath},readonly`]
+      : []),
     "--workdir", workspaceMount,
     "--env", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     // HOME 与各类缓存变量都指向容器内的 tmpfs：既不污染宿主 worktree，也不把宿主路径暴露给命令。

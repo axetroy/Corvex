@@ -5,6 +5,12 @@ export interface ExecutionRequest {
   command: string;
   /** 工作目录：会话的 pinned worktree。 */
   cwd: string;
+  /**
+   * worktree 所属的项目镜像裸库路径（可选）。linked worktree 的 `.git` 文件指向它，
+   * 沙箱按原路径只读挂载，容器内的 git 才能解析 gitdir，否则 `git status` 报
+   * `fatal: not a git repository: (null)`。
+   */
+  mirrorPath?: string;
   /** 超时（毫秒），调用方已按配置上限裁剪。 */
   timeoutMs: number;
   /** 输出上限（字节），调用方已按配置上限裁剪。 */
