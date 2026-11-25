@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository. Read `design.md` before making architectural changes: it is the binding contract for the runtime, boundaries and security invariants. For the planned command-execution environment (free commands with local/sandbox backends), read `execution-design.md` before touching that area; it is the binding contract for that feature. The planned readable terminal (streaming command output + per-command stop) is specified in `terminal-design.md`.
+Guidance for coding agents working in this repository. Read `design.md` before making architectural changes: it is the binding contract for the runtime, boundaries and security invariants. For the planned command-execution environment (free commands with local/sandbox backends), read `execution-design.md` before touching that area; it is the binding contract for that feature. The readable terminal (streaming command output + per-command stop) is specified in `terminal-design.md`: `run_command` emits `exec` SSE events (incremental stdout/stderr plus terminal state) that `ConversationExecTerminal` renders as a live terminal; `POST /api/ops/conversations/:id/turns/:turnId/executions/:execId/cancel` stops only that command (never the whole turn) and reports `USER_STOPPED_REASON` in the tool result so the model decides the next step; `collectProcess` merges the chunks into `execOutput` on the process snapshot for offline replay after reload.
 
 ## Project overview
 

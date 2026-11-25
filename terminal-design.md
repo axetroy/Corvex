@@ -54,11 +54,11 @@
 4. **SSE 路由**：现有 `.../stream` 路由无需改协议，新事件类型随同一 SSE 推送（`parseSseFrames` 增加 `exec` 分支）。
 5. **离线回放**：命令输出已随工具结果落库到 `conversation_trace.trace_output`（完整 stdout/stderr，已脱敏限长）。历史回放时前端从过程快照的 `record_plan` 类似路径——更准确地说，从新增的 `GET .../turns/:turnId` 已返回的 trajectory 里读取该工具调用的 output，还原成终端行。这样刷新后仍能看到输出。
 
-### 3.3 持久化与回放
+### 3.3 持久化与回放（P1 实现）
 
-- 不新增数据库表：命令输出已在 `conversation_trace.trace_output`，工具调用有 `toolCallId`（即 execId）。
-- 回放格式：`trace_output` 里是 `{ content: [{type:"text", text: 完整结果文本}] }`，前端解析出 stdout/stderr 段落（沿用 `src/app/ui/trace.ts` 的 `parseTraceValue`）。
-- 流式期间前端用 `exec` 增量追加；`done` 后可用落库结果**校准**（避免 SSE 漏帧导致内容不一致）。
+- 不新增数据库表：`collectProcess` 在轮次落库时，把 `exec` 事件按 execId 合并为完整 `stdout`/`stderr` 及终态，写入过程快照 `conversation_messages.process` 的工具条目 `execOutput` 字段。
+- 回放：刷新后 `ConversationsPage` 从 `message.process` 的 `run_command` 条目重建 `ExecDisplay`，终端内容与流式期间一致；无需再请求轨迹接口。
+- `streamSnapshots` 对同一 execId/stream 的连续 chunk 合并为一条，避免重连快照随高频输出膨胀（不影响实时订阅者按帧接收）。
 
 ## 4. 停止单条命令
 
@@ -93,11 +93,11 @@ i18n：命令头、状态文案、停止按钮、截断提示、回放提示，�
 
 ## 6. 分阶段落地
 
-| 阶段 | 内容 |
-|---|---|
-| P0 | 事件模型 `exec` + 后端 `onChunk` + PiAgent/Runner/SSE/stream.ts 全链路；前端终端组件渲染流式输出与状态；单轮内可停止命令的 API + 前端按钮 |
-| P1 | 离线回放（从 trajectory 还原终端输出）；刷新后终端内容一致；短路 SSE 漏帧 |
-| P2 | 体验增强：输出搜索、复制、按命令过滤、大输出虚拟滚动 |
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| P0 | **已完成** | 事件模型 `exec` + 后端 `onChunk` + PiAgent/Runner/SSE/stream.ts 全链路；`ConversationExecTerminal` 渲染流式输出与状态；单命令停止 API + 按钮（停止原因 `user manually stopped this command` 经 `signal.reason` → `ExecutionResult.reason` 进入工具结果，供模型决策） |
+| P1 | **已完成** | `collectProcess` 把 exec 增量合并为完整输出写入过程快照 `execOutput`，刷新后由 `message.process` 还原终端；`streamSnapshots` 对连续 chunk 合并防膨胀 |
+| P2 | 待实现 | 体验增强：输出搜索、复制、按命令过滤、大输出虚拟滚动 |
 
 ## 7. 测试策略
 
