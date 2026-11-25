@@ -150,7 +150,23 @@ export type ConversationProcessEntry =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "context"; id: string; text: string }
-  | { kind: "tool"; id?: string; name: string; input: string | null; status: TraceStatus; durationMs: number | null };
+  | {
+      kind: "tool";
+      id?: string;
+      name: string;
+      input: string | null;
+      status: TraceStatus;
+      durationMs: number | null;
+      /** run_command 的脱敏输出，随过程快照落库，供刷新后回放终端（chunk 已拼接为完整文本）。 */
+      execOutput?: {
+        stdout: string;
+        stderr: string;
+        exitCode?: number | null;
+        aborted?: boolean;
+        reason?: string;
+        truncated?: boolean;
+      };
+    };
 
 export interface ConversationMessage {
   id: string;

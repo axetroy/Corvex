@@ -1,0 +1,68 @@
+/* 可读终端：命令输出流式展示，运行中可单独停止（不取消整轮）。 */
+.conversation-exec-terminal {
+  margin: 6px 0;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-code, var(--bg-subtle));
+  color: var(--text);
+}
+
+.conversation-exec-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
+}
+
+.conversation-exec-command {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-exec-duration {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.conversation-exec-body {
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.conversation-exec-body pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conversation-exec-stdout {
+  color: var(--text);
+}
+
+.conversation-exec-stderr {
+  color: var(--danger);
+}
+
+.conversation-exec-truncated,
+.conversation-exec-reason,
+.conversation-exec-error {
+  padding: 4px 10px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.conversation-exec-error {
+  color: var(--danger);
+}

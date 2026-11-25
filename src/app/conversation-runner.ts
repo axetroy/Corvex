@@ -61,8 +61,8 @@ export class ConversationRunner {
    * 思考与工具调用的相对次序因此不会因重连而改变。
    */
   private readonly streamSnapshots = new Map<string, ConversationStreamEvent[]>();
-  /** 本轮正在运行的命令：execId（工具调用 ID）→ 独立停止回调，用于 UI 单命令停止。 */
-  private readonly execStops = new Map<string, (reason: string) => void>();
+  /** 正在运行的命令：execId（工具调用 ID）→ 所属轮次 + 独立停止回调，用于 UI 单命令停止。 */
+  private readonly execStops = new Map<string, { turnId: string; stop: (reason: string) => void }>();
   /** 每个对话只允许一个排队消费者，避免并发轮次重复取出同一条补充。 */
   private readonly draining = new Set<string>();
   /** Server 关闭信号；排队轮次也必须在关闭时中止。 */
@@ -165,7 +165,10 @@ export class ConversationRunner {
       steer.close();
       this.running.delete(turnId);
       // 轮次结束兜底清理命令停止回调（命令信号已与 turn signal 关联，无需再次 abort）。
-      this.execStops.clear();
+      // 只清本轮，避免影响并发运行的其他轮次。
+      for (const [execId, entry] of this.execStops) {
+        if (entry.turnId === turnId) this.execStops.delete(execId);
+      }
       signal.removeEventListener("abort", abort);
       // 兜底：正常路径已在落库后推送 done；提前 return 的分支（快照过期）由这里收尾。
       try {
@@ -472,10 +475,10 @@ export class ConversationRunner {
 
   /** 停止一条正在运行的命令（不取消整轮）；reason 固定为用户手动停止，供模型据此决策。 */
   cancelExecution(turnId: string, execId: string): boolean {
-    // 只有属于该轮次的命令才能停止，避免跨轮次误停。
-    const stop = this.execStops.get(execId);
-    if (!stop || !this.running.has(turnId)) return false;
-    stop(USER_STOPPED_REASON);
+    // 只有属于该轮次且仍在运行的命令才能停止，避免跨轮次误停。
+    const entry = this.execStops.get(execId);
+    if (!entry || entry.turnId !== turnId || !this.running.has(turnId)) return false;
+    entry.stop(USER_STOPPED_REASON);
     return true;
   }
 
@@ -510,9 +513,17 @@ export class ConversationRunner {
       this.streamSnapshots.delete(turnId);
     } else {
       const events = this.streamSnapshots.get(turnId) ?? [];
+      const previous = events.at(-1);
       // 同一个 token 流里的连续文本事件只需保留最新一条，避免快照无限增长。
-      if (event.type === "text" && events.at(-1)?.type === "text") events[events.length - 1] = event;
-      else events.push(event);
+      if (event.type === "text" && previous?.type === "text") {
+        events[events.length - 1] = event;
+      } else if (event.type === "exec" && !event.done && previous?.type === "exec" &&
+        previous.execId === event.execId && previous.stream === event.stream && !previous.done) {
+        // 同一条命令的连续输出增量合并为一条，防止高频 chunk 撑大重连快照。
+        events[events.length - 1] = { ...previous, chunk: previous.chunk + event.chunk };
+      } else {
+        events.push(event);
+      }
       this.streamSnapshots.set(turnId, events);
     }
     for (const listener of [...(this.streamListeners.get(turnId) ?? [])]) {
@@ -834,6 +845,16 @@ export class ConversationRunner {
    */
   private collectProcess(turnId: string, finalAnswer?: string): ConversationProcessEntry[] {
     const entries: ConversationProcessEntry[] = [];
+    // 命令输出按 execId 汇总：SSE 里是增量 chunk，落库时拼成完整 stdout/stderr，
+    // 刷新后据此还原终端内容（见 UI 的 ConversationExecTerminal）。
+    const execAccum = new Map<string, {
+      stdout: string;
+      stderr: string;
+      exitCode?: number | null;
+      aborted?: boolean;
+      reason?: string;
+      truncated?: boolean;
+    }>();
     const updateText = (kind: "thinking" | "text", text: string) => {
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
@@ -845,7 +866,19 @@ export class ConversationRunner {
       entries.push({ kind, text });
     };
     for (const event of this.streamSnapshots.get(turnId) ?? []) {
-      if (event.type === "thinking") {
+      if (event.type === "exec") {
+        const output = execAccum.get(event.execId) ?? { stdout: "", stderr: "" };
+        if (event.done) {
+          output.exitCode = event.exitCode;
+          output.aborted = event.aborted;
+          output.reason = event.reason;
+          output.truncated = event.truncated;
+        } else if (event.chunk) {
+          if (event.stream === "stdout") output.stdout += event.chunk;
+          else output.stderr += event.chunk;
+        }
+        execAccum.set(event.execId, output);
+      } else if (event.type === "thinking") {
         if (event.reset) entries.push({ kind: "thinking", text: event.text });
         else updateText("thinking", event.text);
       } else if (event.type === "text") {
@@ -871,6 +904,13 @@ export class ConversationRunner {
             durationMs: tool.durationMs,
           });
         }
+      }
+    }
+    // 命令终态晚于工具开始事件，循环结束后再把完整输出挂到对应工具条目上。
+    for (const entry of entries) {
+      if (entry.kind === "tool" && entry.id) {
+        const output = execAccum.get(entry.id);
+        if (output) entry.execOutput = output;
       }
     }
     const answer = finalAnswer?.trim();
@@ -1121,7 +1161,7 @@ export class ConversationRunner {
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
-              onExecStart: (execId, stop) => this.execStops.set(execId, stop),
+              onExecStart: (execId, stop) => this.execStops.set(execId, { turnId: turn.turnId, stop }),
               onExecEnd: (execId) => this.execStops.delete(execId),
               onExecDelta: (delta) => this.publishStream(turn.turnId, { type: "exec", ...delta }),
               steer,

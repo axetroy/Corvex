@@ -7,6 +7,7 @@ import type { Copy } from "../i18n.js";
 import { parseTraceValue } from "../trace.js";
 import { parseDisplayPlanSteps } from "../planDisplay.js";
 import type { ConversationToolCall } from "../types.js";
+import { ConversationExecTerminal, type ExecDisplay } from "./ConversationExecTerminal.js";
 
 /**
  * 一轮对话中按发生顺序排列的展示项：模型每次开始新一轮输出时新增一条思考，
@@ -88,10 +89,17 @@ export const ConversationTimeline = memo(function ConversationTimeline({
   segments,
   active,
   copy,
+  execs,
+  conversationId,
+  turnId,
 }: {
   segments: readonly ConversationTimelineSegment[];
   active: boolean;
   copy: Copy;
+  /** 命令执行状态，按工具调用 ID（execId）索引；run_command 工具调用在此渲染为终端。 */
+  execs?: ReadonlyMap<string, ExecDisplay>;
+  conversationId?: string;
+  turnId?: string;
 }) {
   const [open, setOpen] = useState(active);
   useEffect(() => {
@@ -130,6 +138,27 @@ export const ConversationTimeline = memo(function ConversationTimeline({
               </span>
             ) : null}
           </div>
+        ) : segment.kind === "tool" && segment.call.name === "run_command" ? (
+          execs?.get(segment.id) ? (
+            <ConversationExecTerminal
+              key={segment.key}
+              entry={execs.get(segment.id)!}
+              conversationId={conversationId}
+              turnId={turnId}
+              copy={copy}
+              disabled={active}
+            />
+          ) : (
+            <details className="conversation-tool-call" key={segment.key}>
+              <summary className="conversation-tool-call-summary">
+                <ToolCallName text={describeSessionTool(segment.call.name, parseTraceValue(segment.call.input), null, copy)} />
+                <span className={`conversation-tool-call-status conversation-tool-call-status-${segment.call.status}`}>
+                  {translate(copy.traceStatuses, segment.call.status)}
+                </span>
+              </summary>
+              {segment.call.input ? <pre className="conversation-tool-call-input">{segment.call.input}</pre> : null}
+            </details>
+          )
         ) : segment.kind === "tool" && segment.call.name === "record_plan" ? (
           <div className="conversation-plan" key={segment.key}>
             <div className="conversation-plan-label">{copy.conversationPlan}</div>

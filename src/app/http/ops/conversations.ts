@@ -717,6 +717,11 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       return;
     }
     if (!ownedConversation(ctx, request, reply, conversationId)) return;
+    // 确认轮次属于该会话，避免用他人的 execId 跨会话停止命令。
+    if (!ctx.store.getConversationTurn(conversationId, turnId)) {
+      sendJson(reply, 404, { error: "conversation turn not found" });
+      return;
+    }
     if (!ctx.conversations.cancelExecution(turnId, execId)) {
       sendJson(reply, 409, { error: "command is not running in this turn" });
       return;

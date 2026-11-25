@@ -15,7 +15,7 @@ import { useTurnNotifications } from "../useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../format.js";
 import type { Copy, Locale } from "../i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamTool } from "../types.js";
+import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamEvent, ConversationStreamTool } from "../types.js";
 import type { ConversationFollowUp } from "../../../model.js";
 import { welcomePromptGroups, welcomePromptText } from "../conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../inputHistory.js";
@@ -33,6 +33,7 @@ import { RepositoryInfoPopover } from "./RepositoryInfoPopover.js";
 import { BookIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "./icons.js";
 import { ConversationFilePanel } from "./ConversationFilePanel.js";
 import { ExecutionHistoryTab } from "./ExecutionHistoryTab.js";
+import { applyExecDelta, createExecDisplay, type ExecDisplay } from "./ConversationExecTerminal.js";
 import { ConversationGitGraph } from "./ConversationGitGraph.js";
 import { ConversationGitChanges } from "./ConversationGitChanges.js";
 import { ConversationTurnNav } from "./ConversationTurnNav.js";
@@ -122,6 +123,40 @@ function ModelWaiting({ since, copy }: { since: number; copy: Copy }) {
   );
 }
 
+/** 从工具参数里取出命令原文（脱敏后的 JSON 文本），失败时回退到原文。 */
+function commandFromToolInput(input: string | null): string {
+  if (!input) return "";
+  try {
+    const parsed = JSON.parse(input) as { command?: unknown };
+    return typeof parsed.command === "string" ? parsed.command : input;
+  } catch {
+    return input;
+  }
+}
+
+/** 刷新后从落库的过程快照还原命令终端（输出已随 collectProcess 落库）。 */
+function replayExecsFromProcess(process: ReadonlyArray<ConversationMessage["process"][number]>): Map<string, ExecDisplay> {
+  const result = new Map<string, ExecDisplay>();
+  for (const entry of process) {
+    if (entry.kind !== "tool" || entry.name !== "run_command" || !entry.id || !entry.execOutput) continue;
+    const output = entry.execOutput;
+    result.set(entry.id, {
+      execId: entry.id,
+      command: commandFromToolInput(entry.input),
+      stdout: output.stdout,
+      stderr: output.stderr,
+      done: true,
+      exitCode: output.exitCode,
+      aborted: output.aborted,
+      reason: output.reason,
+      truncated: output.truncated,
+      startedAt: 0,
+      finishedAt: 0,
+    });
+  }
+  return result;
+}
+
 /** 单条消息的正文：助手回复按 Markdown 渲染并提供复制，用户消息保持纯文本。 */
 function MessageContent({
   message,
@@ -131,13 +166,18 @@ function MessageContent({
   waitingSince,
   onSuggestion,
   showSuggestions,
+  execs,
+  conversationId,
 }: {
   message: ConversationMessage;
   copy: Copy;
+  conversationId?: string;
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
   waitingSince?: number | null;
   onSuggestion?: (text: string) => void;
+  /** 命令终端状态：execId → 显示条目；流式期间用实时状态，刷新后从落库输出还原。 */
+  execs?: ReadonlyMap<string, ExecDisplay>;
   /** 只有最新一轮的回答才展示建议；用户发起下一轮后旧建议过期。 */
   showSuggestions?: boolean;
 }) {
@@ -158,7 +198,14 @@ function MessageContent({
   return (
     <div className={`conversation-message-markdown${streaming && message.content ? " is-streaming" : ""}`}>
       {/* 先按发生顺序展示每次思考与工具调用，再展示最终回答。 */}
-      <ConversationTimeline segments={timeline} active={Boolean(streaming)} copy={copy} />
+      <ConversationTimeline
+        segments={timeline}
+        active={Boolean(streaming)}
+        copy={copy}
+        execs={execs}
+        conversationId={conversationId}
+        turnId={message.turnId ?? undefined}
+      />
       {/* 放在过程块之后，长过程滚动时仍贴近屏幕底部；每次模型调用都会重新出现。 */}
       {streaming && waitingSince !== null && waitingSince !== undefined ? (
         <ModelWaiting since={waitingSince} copy={copy} />
@@ -269,6 +316,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
   /** 逐条思考与工具调用按轮次留在本次页面会话里，结束后仍可展开查看。 */
   const [timelineByTurn, setTimelineByTurn] = useState<Record<string, ConversationTimelineSegment[]>>({});
+  /** 命令执行状态：execId（工具调用 ID）→ 终端显示条目，由 SSE exec 事件逐段更新。 */
+  const [execsByTurn, setExecsByTurn] = useState<Record<string, Map<string, ExecDisplay>>>({});
   /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
   const transcriptPaneRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -419,12 +468,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     let closed = false;
     let latestText = "";
     const segments: ConversationTimelineSegment[] = [];
+    const execs = new Map<string, ExecDisplay>();
     let flushTimer: number | undefined;
     const flush = () => {
       flushTimer = undefined;
       if (!closed) {
         setStreamedReply({ turnId: activeTurnId, text: latestText });
         setTimelineByTurn((current) => ({ ...current, [activeTurnId]: [...segments] }));
+        setExecsByTurn((current) => ({ ...current, [activeTurnId]: new Map(execs) }));
       }
     };
     // 合并高频 token 事件：约 60ms 刷新一次，保持逐字观感的同时避免整段
@@ -461,12 +512,21 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const existing = segments.find((segment) => segment.kind === "tool" && segment.id === tool.id);
       if (existing?.kind === "tool") existing.call = call;
       else segments.push({ kind: "tool", key: `tool-${tool.id}`, id: tool.id, call });
+      // run_command 开始时先建终端条目，命令原文取自工具参数。
+      if (tool.name === "run_command" && tool.status === "running" && !execs.has(tool.id)) {
+        execs.set(tool.id, createExecDisplay(tool.id, commandFromToolInput(tool.input)));
+      }
       // 工具执行中不算等待模型；工具结束后模型会被再次调用，重新进入等待。
       setWaitingSince((current) => resolveWaitingSince(
         current,
         { type: tool.status === "running" ? "toolRunning" : "toolSettled" },
         Date.now(),
       ));
+      schedule();
+    };
+    const onExec = (delta: Extract<ConversationStreamEvent, { type: "exec" }>) => {
+      const entry = execs.get(delta.execId) ?? createExecDisplay(delta.execId, "");
+      execs.set(delta.execId, applyExecDelta(entry, delta));
       schedule();
     };
     setStreamedReply({ turnId: activeTurnId, text: "" });
@@ -489,6 +549,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         },
         onThinking,
         onTool,
+        onExec,
         onContext,
         onInterjection: () => setPollToken((value) => value + 1),
         onQueue: () => void loadFollowUps(),
@@ -940,6 +1001,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         // 最终回答已在助手气泡里展示，过程块里不再重复；中间回复照常保留。
         return !(streaming && segment.kind === "text" && streamedReply?.text.trim() === segment.text.trim());
       });
+    // 运行中展示实时 exec 流；已结束则从落库输出回放，刷新后终端仍在。
+    const execs = streaming
+      ? (message.turnId ? execsByTurn[message.turnId] : undefined)
+      : replayExecsFromProcess(message.process);
     return {
       key: message.id,
       role: message.role === "user" ? "user" : "ai",
@@ -956,6 +1021,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         streaming={streaming}
         timeline={timeline}
         waitingSince={streaming ? waitingSince : null}
+        execs={execs}
+        conversationId={selectedConversationId}
         onSuggestion={(text) => applySuggestion(text)}
         showSuggestions={message.id === lastMessageId}
       />,
