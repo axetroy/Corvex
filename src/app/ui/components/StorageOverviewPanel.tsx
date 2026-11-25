@@ -4,8 +4,7 @@ import { fetchJson } from "../api.js";
 import type { Copy, Locale } from "../i18n.js";
 import { formatDate } from "../format.js";
 import { formatStorageBytes, sortStorageRows, totalStorageBytes, type StorageRow } from "../storage.js";
-import { ErrorBanner, Loading, PageHeading, Panel, StatCard } from "./common.js";
-import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
+import { ErrorBanner, Loading, Panel, StatCard } from "./common.js";
 import "./StorageOverviewPanel.css";
 
 interface StorageResponse {
@@ -21,8 +20,11 @@ interface Props {
   locale: Locale;
 }
 
-/** 运维台「存储管理」：只读展示 Git 镜像与会话工作树的大小/修改时间，并可运行清理。 */
-export function StorageOverviewPanel({ copy, locale }: Props) {
+/**
+ * 磁盘占用概览：只读展示 Git 镜像与会话工作树的大小/修改时间。
+ * 内嵌在设置页「存储」分组中，因此不再自带页标题与清理面板。
+ */
+export function StorageOverviewContent({ copy, locale }: Props) {
   const [data, setData] = useState<StorageResponse>();
   const [error, setError] = useState("");
   const [token, setToken] = useState(0);
@@ -38,8 +40,18 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
     return () => { active = false; };
   }, [copy, token]);
 
-  if (error && !data) return <ErrorBanner message={error} />;
-  if (!data) return <Loading>{copy.loading}</Loading>;
+  const toolbar = (
+    <div className="storage-overview-toolbar">
+      <Button onClick={() => setToken((value) => value + 1)}>{copy.adminStorageRefresh}</Button>
+    </div>
+  );
+
+  if (error && !data) {
+    return <div className="storage-overview-panel">{toolbar}<ErrorBanner message={error} /></div>;
+  }
+  if (!data) {
+    return <div className="storage-overview-panel">{toolbar}<Loading>{copy.loading}</Loading></div>;
+  }
 
   const mirrorRows = sortStorageRows(data.mirrors);
   const workspaceRows = sortStorageRows(data.workspaces);
@@ -99,11 +111,7 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
 
   return (
     <div className="storage-overview-panel">
-      <PageHeading
-        title={copy.adminStorageTitle}
-        description={copy.adminStorageHint}
-        actions={<Button onClick={() => setToken((value) => value + 1)}>{copy.adminStorageRefresh}</Button>}
-      />
+      {toolbar}
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
       {data.truncated ? <Alert type="warning" showIcon message={copy.adminStorageTruncated} /> : null}
       {overLimitCount > 0 ? (
@@ -139,10 +147,6 @@ export function StorageOverviewPanel({ copy, locale }: Props) {
           columns={workspaceColumns}
           locale={{ emptyText: copy.adminStorageEmpty }}
         />
-      </Panel>
-
-      <Panel title={copy.settingsCleanupTitle}>
-        <StorageCleanupPanel copy={copy} locale={locale} retentionDays={30} />
       </Panel>
     </div>
   );

@@ -9,6 +9,7 @@ import { buildSettingsPayload } from "../settingsPayload.js";
 import type { SettingField, SettingValue, SettingsResponse } from "../types.js";
 import { ErrorBanner, Loading, PageHeading, Panel } from "./common.js";
 import { StorageCleanupPanel } from "./StorageCleanupPanel.js";
+import { StorageOverviewContent } from "./StorageOverviewPanel.js";
 import { ModelManager } from "./ModelManager.js";
 import { SkillManager } from "./SkillManager.js";
 
@@ -387,6 +388,10 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
       {section === "storage" ? (
         <>
           {renderGroup("settingsGroupStorage")}
+          <Panel title={copy.adminStorageTitle}>
+            <Typography.Paragraph type="secondary">{copy.adminStorageHint}</Typography.Paragraph>
+            <StorageOverviewContent copy={copy} locale={locale} />
+          </Panel>
           <StorageCleanupPanel
             copy={copy}
             locale={locale}

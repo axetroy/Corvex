@@ -1,4 +1,10 @@
-/* 存储管理页：镜像与工作树的只读统计，复用管理中心的主题变量。 */
+/* 设置页「存储」分组内嵌的磁盘概览：镜像与工作树的只读统计。 */
+.storage-overview-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
 .storage-overview-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
