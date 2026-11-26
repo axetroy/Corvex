@@ -1,6 +1,6 @@
 # AGENTS.md
 
-面向本仓库编码代理的准则。改动架构前先读 `design.md`，涉及命令执行读 `execution-design.md` 和 `terminal-design.md`，分代理计划见 `subagent-design.md`，计划任务实现见 `scheduled-tasks-design.md`。这些文档是契约，本文件只保留日常约定。
+面向本仓库编码代理的准则。改动架构前先读 `design.md`，涉及命令执行读 `execution-design.md` 和 `terminal-design.md`，分代理计划见 `subagent-design.md`，计划任务实现见 `scheduled-tasks-design.md`，外部文件附件规划见 `file-attachments-design.md`。这些文档是契约，本文件只保留日常约定。
 
 ## 项目
 

@@ -32,6 +32,10 @@
 
 用户可以说"每周一早上 9 点检查 CI"或"45 分钟后提醒我推送分支"，到点自动作为一次普通对话轮次执行。设计见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文），参考 Claude Code 的 `/loop` 与 `CronCreate/CronList/CronDelete`、Codex Automations 与 Cloud/Desktop 计划任务：自然语言 → 模型确认的 5 段 cron、不补跑、按用户 OAuth 令牌执行（绝不回退全局凭据）。P0（完成）：`scheduled_tasks` / `scheduled_task_runs` 表、严格 cron 解析与下次时间、Server 可中止到期循环与原子领取、一次性与循环任务经 `runTurn` 执行、启动恢复不补跑、模型侧 创建/列出/取消 工具。P1（完成）：`/api/ops/me/scheduled-tasks` 接口与运行记录、账号菜单里的运维台计划任务页、30 天过期。P2（完成）：按任务 ID 的确定性 jitter 错峰、IANA 用户时区（默认 UTC）、暂停/恢复与"立即运行"接口和按钮、运行历史气泡。GitLab Webhook 事件触发与"每次新建独立对话执行"仍延期（见上文 Webhook 事件章节）。
 
+## 上传外部文件作为上下文（规划中）
+
+用户应能把本地文件（先支持纯文本）附加到消息，让模型在该轮读取，类似 Claude Code 的 `+`/拖拽与 OpenCode 的附件。设计见 [file-attachments-design.md](file-attachments-design.md)（中文），参考 OpenCode 的 `file:`/`data:` URI 与按字节检测类型、Claude Code 的 `@` 引用。Corvex 特性：上传物放 `storage/uploads/<conversationId>/`（**绝不放 worktree**——`git add -A` 会提交、`git_publish` 可能推送到 GitLab），作为**仅本轮有效的只读根**配合有界提示词清单暴露给模型，复用现成 `read_file` 工具（不新增 Agent 工具、不新增运行时依赖）。P0：`conversation_uploads` 表 + 纯文本上传 API + 本轮只读根 + 消息关联。P1：composer 附件按钮/拖拽/chips + 双语 UI + `conversationDelete` 清理。P2：图片/PDF（模型能力检测 + 魔数校验）。尚未实现。
+
 ## 其他延期项
 
 当前没有其他记录项。
