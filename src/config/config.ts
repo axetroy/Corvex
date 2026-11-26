@@ -203,7 +203,8 @@ const defaults: CorvexConfig = {
       memory: "2g",
       cpus: 1,
       pidsLimit: 256,
-      tmpfsSizeMb: 512,
+      // 2 GiB：常见前端仓库全量 yarn/npm 安装的缓存与解压需要数 GiB，512 MiB 会 ENOSPC。
+      tmpfsSizeMb: 2048,
       logMaxSizeMb: 4,
       logMaxFile: 2,
       // 默认 bridge：允许联网（装依赖等），但容器网络命名空间与宿主隔离。
