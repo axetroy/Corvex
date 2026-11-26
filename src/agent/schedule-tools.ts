@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ScheduledTask } from "../model.js";
-import { nextRunAt, parseCron, parseRunAt } from "../app/schedule.js";
+import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt } from "../app/schedule.js";
 
 /** 计划任务工具所需的最小存储接口；由 PiAgent 注入现有 AppStore。 */
 export interface ScheduledTaskStore {
@@ -11,6 +11,7 @@ export interface ScheduledTaskStore {
     prompt: string;
     kind: "once" | "cron";
     cron: string;
+    timezone?: string;
     runAt: string;
     nextRunAt: string;
     expiresAt: string;
@@ -57,6 +58,7 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         prompt: Type.String({ minLength: 1, maxLength: maxPromptCharacters }),
         schedule: Type.String({ minLength: 1, maxLength: 200 }),
         recurring: Type.Optional(Type.Boolean()),
+        timezone: Type.Optional(Type.String({ maxLength: 64 })),
         conversationId: Type.Optional(Type.String({ maxLength: 128 })),
       }),
       execute: async (_toolCallId, params) => {
@@ -66,6 +68,10 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         }
         const prompt = params.prompt.trim().slice(0, maxPromptCharacters);
         const recurring = params.recurring === true;
+        const timezone = params.timezone?.trim() || "UTC";
+        if (!isValidTimeZone(timezone)) {
+          return { content: [{ type: "text", text: `Invalid IANA timezone: ${timezone}.` }], details: {} };
+        }
         const now = Date.now();
         let kind: "once" | "cron";
         let cron = "";
@@ -78,7 +84,9 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
           }
           kind = "cron";
           cron = params.schedule.trim();
-          next = nextRunAt(parsed, new Date(now));
+          next = timezone === "UTC"
+            ? nextRunAt(parsed, new Date(now))
+            : nextRunAtInZone(parsed, new Date(now), timezone);
         } else {
           const parsed = parseRunAt(params.schedule, new Date(now));
           if (!parsed || parsed.getTime() <= now) {
@@ -93,11 +101,11 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         }
         const expiresAt = recurring ? new Date(now + 30 * 86_400_000).toISOString() : "";
         const task = store.create({
-          ownerUserId, conversationId: targetConversation, prompt, kind, cron, runAt,
+          ownerUserId, conversationId: targetConversation, prompt, kind, cron, timezone, runAt,
           nextRunAt: next.toISOString(), expiresAt,
         });
         return {
-          content: [{ type: "text", text: `Scheduled ${kind} task ${task.id}. Next run: ${next.toISOString()} (UTC). Echo this schedule to the user to confirm.` }],
+          content: [{ type: "text", text: `Scheduled ${kind} task ${task.id}. Next run: ${next.toISOString()} (UTC, cron interpreted in ${timezone}). Echo this schedule to the user to confirm.` }],
           details: {},
         };
       },

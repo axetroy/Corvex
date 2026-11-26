@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextRunAt, parseCron, parseRunAt } from "../../src/app/schedule.js";
+import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt } from "../../src/app/schedule.js";
 
 describe("cron parsing", () => {
   it("parses the standard 5-field subset", () => {
@@ -36,6 +36,33 @@ describe("nextRunAt", () => {
 
   it("returns undefined for impossible dates", () => {
     expect(nextRunAt(parseCron("0 0 30 2 *")!, new Date("2026-01-01T00:00:00Z"))).toBeUndefined();
+  });
+});
+
+describe("timezone-aware scheduling", () => {
+  it("validates IANA timezones", () => {
+    expect(isValidTimeZone("Asia/Shanghai")).toBe(true);
+    expect(isValidTimeZone("UTC")).toBe(true);
+    expect(isValidTimeZone("Not/AZone")).toBe(false);
+    expect(isValidTimeZone("")).toBe(false);
+  });
+
+  it("interprets cron in the task's wall-clock timezone", () => {
+    // 上海 UTC+8：本地 9:00 = UTC 1:00。
+    const schedule = parseCron("0 9 * * *")!;
+    const after = new Date("2026-11-26T02:00:00.000Z");
+    expect(nextRunAtInZone(schedule, after, "Asia/Shanghai")?.toISOString())
+      .toBe("2026-11-27T01:00:00.000Z");
+    // UTC 下同样是 9:00 UTC，验证两者不同。
+    expect(nextRunAt(schedule, after)?.toISOString()).toBe("2026-11-26T09:00:00.000Z");
+  });
+
+  it("handles a negative-offset timezone", () => {
+    // 纽约 UTC-5（11 月为 EST）：本地 9:00 = UTC 14:00。
+    const schedule = parseCron("0 9 * * 1-5")!;
+    const after = new Date("2026-11-26T02:00:00.000Z");
+    expect(nextRunAtInZone(schedule, after, "America/New_York")?.toISOString())
+      .toBe("2026-11-26T14:00:00.000Z");
   });
 });
 

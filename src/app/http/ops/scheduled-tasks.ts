@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { requireUser } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import { readJsonObject, sendJson } from "../respond.js";
-import { nextRunAt, parseCron, parseRunAt } from "../../schedule.js";
+import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt } from "../../schedule.js";
 
 /** 个人计划任务 API：按 owner 隔离，任务只属于当前登录用户。 */
 export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContext): void {
@@ -38,6 +38,12 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
         const conversationId = typeof body.conversationId === "string" ? body.conversationId.trim() : "";
         const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
         const recurring = body.recurring === true;
+        const timezone = typeof body.timezone === "string" && body.timezone.trim()
+          ? body.timezone.trim() : "UTC";
+        if (!isValidTimeZone(timezone)) {
+          sendJson(reply, 400, { error: "invalid IANA timezone" });
+          return;
+        }
         const schedule = typeof body.schedule === "string" ? body.schedule.trim() : "";
         if (!conversationId || !prompt || prompt.length > 8_000 || !schedule || schedule.length > 200) {
           sendJson(reply, 400, { error: "conversationId, prompt and schedule are required" });
@@ -60,7 +66,7 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
           }
           kind = "cron";
           cron = schedule;
-          next = nextRunAt(parsed, new Date(now));
+          next = timezone === "UTC" ? nextRunAt(parsed, new Date(now)) : nextRunAtInZone(parsed, new Date(now), timezone);
         } else {
           const parsed = parseRunAt(schedule, new Date(now));
           if (!parsed || parsed.getTime() <= now) {
@@ -76,7 +82,7 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
           return;
         }
         const task = ctx.store.createScheduledTask({
-          ownerUserId: user.id, conversationId, prompt, kind, cron, runAt,
+          ownerUserId: user.id, conversationId, prompt, kind, cron, timezone, runAt,
           nextRunAt: next.toISOString(),
           expiresAt: recurring ? new Date(now + 30 * 86_400_000).toISOString() : "",
         });

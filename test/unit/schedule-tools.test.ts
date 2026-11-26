@@ -22,7 +22,7 @@ function fakeStore(owner = "u1", conversationId = "conv-1"): ScheduledTaskStore 
   return {
     create: (input) => {
       const task: ScheduledTask = {
-        ...input, id: `abcd123${counter++}`, timezone: "UTC", status: "active",
+        ...input, id: `abcd123${counter++}`, timezone: input.timezone ?? "UTC", status: "active",
         expiresAt: input.expiresAt, lastRunAt: "", lastStatus: "", lastError: "",
         createdAt: "now", updatedAt: "now",
       };
@@ -71,6 +71,20 @@ describe("schedule_task tool", () => {
     });
     expect(foreign.content[0]!.text).toContain("does not belong");
     expect(store.list("u1")).toHaveLength(0);
+  });
+
+  it("creates a cron task in an IANA timezone", async () => {
+    const store = fakeStore();
+    const tools = collectTools("u1", "conv-1", store);
+    const result = await tools.get("schedule_task")!.execute("c1", {
+      prompt: "check CI", schedule: "0 9 * * *", recurring: true, timezone: "Asia/Shanghai",
+    });
+    expect(result.content[0]!.text).toContain("cron interpreted in Asia/Shanghai");
+    expect(store.list("u1")[0]!.timezone).toBe("Asia/Shanghai");
+    const bad = await tools.get("schedule_task")!.execute("c2", {
+      prompt: "x", schedule: "0 9 * * *", recurring: true, timezone: "Not/AZone",
+    });
+    expect(bad.content[0]!.text).toContain("Invalid IANA timezone");
   });
 
   it("lists and cancels tasks", async () => {

@@ -84,7 +84,12 @@ export function ScheduledTasksPage({ copy, locale }: Props) {
               title: copy.scheduledTaskColumnSchedule,
               key: "schedule",
               render: (_: unknown, task: ScheduledTask) => (
-                <Typography.Text code>{task.kind === "cron" ? task.cron : task.runAt}</Typography.Text>
+                <span>
+                  <Typography.Text code>{task.kind === "cron" ? task.cron : task.runAt}</Typography.Text>
+                  {task.timezone && task.timezone !== "UTC" ? (
+                    <Tag className="scheduled-task-tz">{task.timezone}</Tag>
+                  ) : null}
+                </span>
               ),
             },
             {

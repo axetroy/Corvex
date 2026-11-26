@@ -1349,6 +1349,8 @@ export class AppStore {
     prompt: string;
     kind: ScheduleKind;
     cron: string;
+    /** IANA 时区；缺省 UTC。 */
+    timezone?: string;
     runAt: string;
     nextRunAt: string;
     expiresAt: string;
@@ -1356,11 +1358,11 @@ export class AppStore {
     const id = randomBytes(4).toString("hex");
     const now = new Date().toISOString();
     this.db.prepare(
-      `INSERT INTO scheduled_tasks(id,owner_user_id,conversation_id,prompt,kind,cron,run_at,next_run_at,status,expires_at,created_at,updated_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO scheduled_tasks(id,owner_user_id,conversation_id,prompt,kind,cron,timezone,run_at,next_run_at,status,expires_at,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       id, input.ownerUserId, input.conversationId, input.prompt, input.kind, input.cron,
-      input.runAt, input.nextRunAt, "active", input.expiresAt, now, now,
+      input.timezone ?? "UTC", input.runAt, input.nextRunAt, "active", input.expiresAt, now, now,
     );
     return this.getScheduledTask(id)!;
   }

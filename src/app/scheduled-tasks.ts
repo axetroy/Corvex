@@ -5,7 +5,7 @@ import type { AppStore } from "../store.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import type { ScheduledTask } from "../model.js";
 import { errorMessage } from "../errors.js";
-import { nextRunAt, parseCron } from "./schedule.js";
+import { nextRunAt, nextRunAtInZone, parseCron, type CronSchedule } from "./schedule.js";
 
 /** 调度器依赖；由 Server 注入，便于单测替换时间源与客户端解析。 */
 export interface ScheduledTasksContext {
@@ -137,8 +137,16 @@ export class ScheduledTasksScheduler {
   private advanceSchedule(task: ScheduledTask, dueAt: Date): string {
     if (task.kind === "once") return "9999-12-31T23:59:59.999Z";
     const schedule = parseCron(task.cron);
-    const next = schedule ? nextRunAt(schedule, dueAt) : undefined;
+    if (!schedule) return new Date(dueAt.getTime() + 86_400_000).toISOString();
+    const next = this.computeNext(schedule, task, dueAt);
     return (next ?? new Date(dueAt.getTime() + 86_400_000)).toISOString();
+  }
+
+  /** 按任务时区选择下次时间计算方式；UTC 走原来的快速路径。 */
+  private computeNext(schedule: CronSchedule, task: ScheduledTask, after: Date): Date | undefined {
+    return task.timezone && task.timezone !== "UTC"
+      ? nextRunAtInZone(schedule, after, task.timezone)
+      : nextRunAt(schedule, after);
   }
 }
 
