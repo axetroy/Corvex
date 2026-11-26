@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
@@ -24,6 +24,10 @@ import {
   type ConversationFollowUp,
   type ConversationMessage,
   type ConversationSkill,
+  type ScheduledTask,
+  type ScheduledTaskRun,
+  type ScheduleKind,
+  type ScheduledTaskStatus,
   type SkillPack,
   type ConversationPage,
   type ConversationProcessEntry,
@@ -1310,6 +1314,144 @@ export class AppStore {
   conversationsWithFollowUps(): string[] {
     return (this.db.prepare("SELECT DISTINCT conversation_id FROM conversation_followups").all() as { conversation_id: string }[])
       .map((row) => row.conversation_id);
+  }
+
+  /** 把 SQLite 行映射为计划任务；形状不满足时返回 undefined。 */
+  private readScheduledTaskRow(row: Record<string, unknown>): ScheduledTask | undefined {
+    const kind = String(row.kind ?? "");
+    const status = String(row.status ?? "");
+    if (kind !== "once" && kind !== "cron") return undefined;
+    if (status !== "active" && status !== "paused" && status !== "done") return undefined;
+    return {
+      id: String(row.id),
+      ownerUserId: String(row.owner_user_id ?? ""),
+      conversationId: String(row.conversation_id ?? ""),
+      prompt: String(row.prompt ?? ""),
+      kind: kind as ScheduleKind,
+      cron: String(row.cron ?? ""),
+      timezone: String(row.timezone ?? "UTC"),
+      runAt: String(row.run_at ?? ""),
+      nextRunAt: String(row.next_run_at ?? ""),
+      status: status as ScheduledTaskStatus,
+      expiresAt: String(row.expires_at ?? ""),
+      lastRunAt: String(row.last_run_at ?? ""),
+      lastStatus: String(row.last_status ?? ""),
+      lastError: String(row.last_error ?? ""),
+      createdAt: String(row.created_at ?? ""),
+      updatedAt: String(row.updated_at ?? ""),
+    };
+  }
+
+  /** 创建计划任务；ID 为 8 字符短 ID，按 owner 隔离。 */
+  createScheduledTask(input: {
+    ownerUserId: string;
+    conversationId: string;
+    prompt: string;
+    kind: ScheduleKind;
+    cron: string;
+    runAt: string;
+    nextRunAt: string;
+    expiresAt: string;
+  }): ScheduledTask {
+    const id = randomBytes(4).toString("hex");
+    const now = new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO scheduled_tasks(id,owner_user_id,conversation_id,prompt,kind,cron,run_at,next_run_at,status,expires_at,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      id, input.ownerUserId, input.conversationId, input.prompt, input.kind, input.cron,
+      input.runAt, input.nextRunAt, "active", input.expiresAt, now, now,
+    );
+    return this.getScheduledTask(id)!;
+  }
+
+  getScheduledTask(id: string): ScheduledTask | undefined {
+    const row = this.db.prepare("SELECT * FROM scheduled_tasks WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    return row ? this.readScheduledTaskRow(row) : undefined;
+  }
+
+  /** 列出某用户的计划任务（按创建时间）。 */
+  listScheduledTasks(ownerUserId: string): ScheduledTask[] {
+    return (this.db.prepare("SELECT * FROM scheduled_tasks WHERE owner_user_id=? ORDER BY created_at,id")
+      .all(ownerUserId) as Record<string, unknown>[])
+      .map((row) => this.readScheduledTaskRow(row))
+      .filter((task): task is ScheduledTask => Boolean(task));
+  }
+
+  setScheduledTaskStatus(id: string, ownerUserId: string, status: ScheduledTaskStatus): boolean {
+    return this.db.prepare("UPDATE scheduled_tasks SET status=?,updated_at=? WHERE id=? AND owner_user_id=?")
+      .run(status, new Date().toISOString(), id, ownerUserId).changes === 1;
+  }
+
+  deleteScheduledTask(id: string, ownerUserId: string): boolean {
+    return this.db.prepare("DELETE FROM scheduled_tasks WHERE id=? AND owner_user_id=?").run(id, ownerUserId).changes === 1;
+  }
+
+  /** 列出到期且启用的任务；只返回缺口，实际领取由 claimDueScheduledTask 原子完成。 */
+  dueScheduledTasks(now: string): ScheduledTask[] {
+    return (this.db.prepare(
+      "SELECT * FROM scheduled_tasks WHERE status='active' AND next_run_at<=? ORDER BY next_run_at,id LIMIT 100",
+    ).all(now) as Record<string, unknown>[])
+      .map((row) => this.readScheduledTaskRow(row))
+      .filter((task): task is ScheduledTask => Boolean(task));
+  }
+
+  /**
+   * 原子领取一次到期：先把 next_run_at 推进到给定值再返回任务，避免同一触发被重复执行。
+   * 一次性任务同时置为 done（执行完由 completeScheduledTask 删除）。
+   */
+  claimDueScheduledTask(id: string, expectedNextRunAt: string, advancedNextRunAt: string): ScheduledTask | undefined {
+    return this.transaction(() => {
+      const changes = this.db.prepare(
+        "UPDATE scheduled_tasks SET next_run_at=?,last_run_at=?,updated_at=? WHERE id=? AND status='active' AND next_run_at=?",
+      ).run(advancedNextRunAt, new Date().toISOString(), new Date().toISOString(), id, expectedNextRunAt).changes;
+      return changes === 1 ? this.getScheduledTask(id) : undefined;
+    });
+  }
+
+  /** 任务执行完成：写运行记录；一次性任务删除，循环任务更新最近状态与错误。 */
+  completeScheduledTask(input: {
+    id: string;
+    status: string;
+    turnId: string;
+    error: string;
+    delete: boolean;
+    finishedAt: string;
+  }): void {
+    this.transaction(() => {
+      const error = redactSensitiveText(input.error).slice(0, 8000);
+      this.db.prepare(
+        "INSERT INTO scheduled_task_runs(task_id,started_at,finished_at,status,turn_id,error) VALUES(?,?,?,?,?,?)",
+      ).run(input.id, input.finishedAt, input.finishedAt, input.status, input.turnId, error);
+      if (input.delete) {
+        this.db.prepare("DELETE FROM scheduled_tasks WHERE id=?").run(input.id);
+      } else {
+        this.db.prepare(
+          "UPDATE scheduled_tasks SET last_run_at=?,last_status=?,last_error=?,updated_at=? WHERE id=?",
+        ).run(input.finishedAt, input.status, error, input.finishedAt, input.id);
+      }
+    });
+  }
+
+  /** 启动恢复：把过期的 next_run_at 直接推进到 givenAfter，避免重启后批量补跑。 */
+  advanceOverdueScheduledTasks(now: string, nextRunAt: string): number {
+    return this.db.prepare(
+      "UPDATE scheduled_tasks SET next_run_at=?,updated_at=? WHERE status='active' AND next_run_at<=?",
+    ).run(nextRunAt, now, now).changes as number;
+  }
+
+  listScheduledTaskRuns(taskId: string, limit = 20): ScheduledTaskRun[] {
+    return (this.db.prepare(
+      "SELECT * FROM scheduled_task_runs WHERE task_id=? ORDER BY started_at DESC,id DESC LIMIT ?",
+    ).all(taskId, limit) as Record<string, unknown>[]).map((row) => ({
+      id: Number(row.id),
+      taskId: String(row.task_id),
+      startedAt: String(row.started_at),
+      finishedAt: String(row.finished_at),
+      status: String(row.status),
+      turnId: String(row.turn_id ?? ""),
+      error: String(row.error ?? ""),
+    }));
   }
 
   /** 领取指定的排队轮次并置为运行中，同时累加尝试次数；不可领取时返回 undefined。 */
@@ -2649,6 +2791,24 @@ export class AppStore {
         content TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_followups_order_idx ON conversation_followups(conversation_id,position);
+      CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        prompt TEXT NOT NULL, kind TEXT NOT NULL, cron TEXT NOT NULL DEFAULT '',
+        timezone TEXT NOT NULL DEFAULT 'UTC', run_at TEXT NOT NULL DEFAULT '',
+        next_run_at TEXT NOT NULL, status TEXT NOT NULL,
+        expires_at TEXT NOT NULL DEFAULT '', last_run_at TEXT NOT NULL DEFAULT '',
+        last_status TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS scheduled_tasks_due_idx ON scheduled_tasks(status,next_run_at);
+      CREATE INDEX IF NOT EXISTS scheduled_tasks_owner_idx ON scheduled_tasks(owner_user_id,created_at);
+      CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+        started_at TEXT NOT NULL, finished_at TEXT NOT NULL, status TEXT NOT NULL,
+        turn_id TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS scheduled_task_runs_order_idx ON scheduled_task_runs(task_id,started_at DESC,id DESC);
       CREATE TABLE IF NOT EXISTS storage_cleanup_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         started_at TEXT NOT NULL, finished_at TEXT NOT NULL, source TEXT NOT NULL,

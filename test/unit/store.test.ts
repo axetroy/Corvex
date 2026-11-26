@@ -396,6 +396,69 @@ describe("AppStore", () => {
     expect(store.readUser(user.id, cipher)?.disabled).toBe(false);
   });
 
+  it("manages scheduled tasks with atomic claim and run records", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "owner", ownerUserId: "u1",
+    });
+    const task = store.createScheduledTask({
+      ownerUserId: "u1",
+      conversationId: created.conversationId,
+      prompt: "check CI",
+      kind: "cron",
+      cron: "0 9 * * *",
+      runAt: "",
+      nextRunAt: "2026-11-27T09:00:00.000Z",
+      expiresAt: "2026-12-27T09:00:00.000Z",
+    });
+    expect(task.id).toMatch(/^[0-9a-f]{8}$/);
+    expect(task.status).toBe("active");
+    expect(store.getScheduledTask(task.id)).toMatchObject({ prompt: "check CI", cron: "0 9 * * *" });
+    expect(store.listScheduledTasks("u1")).toHaveLength(1);
+    expect(store.listScheduledTasks("other")).toHaveLength(0);
+
+    // 到期查询与原子领取：只有 next_run_at 精确匹配时才能领取，且先推进再执行。
+    expect(store.dueScheduledTasks("2026-11-27T09:00:00.000Z")).toHaveLength(1);
+    expect(store.claimDueScheduledTask(task.id, "2026-11-27T08:00:00.000Z", "2026-11-28T09:00:00.000Z")).toBeUndefined();
+    expect(store.claimDueScheduledTask(task.id, "2026-11-27T09:00:00.000Z", "2026-11-28T09:00:00.000Z"))
+      .toMatchObject({ id: task.id, nextRunAt: "2026-11-28T09:00:00.000Z" });
+    expect(store.claimDueScheduledTask(task.id, "2026-11-27T09:00:00.000Z", "2026-11-29T09:00:00.000Z")).toBeUndefined();
+
+    store.completeScheduledTask({
+      id: task.id, status: "succeeded", turnId: "turn-1", error: "Bearer secret-token leaked",
+      delete: false, finishedAt: "2026-11-27T09:01:00.000Z",
+    });
+    expect(store.getScheduledTask(task.id)).toMatchObject({ lastStatus: "succeeded", lastRunAt: "2026-11-27T09:01:00.000Z" });
+    expect(store.getScheduledTask(task.id)!.lastError).not.toContain("secret-token");
+    const runs = store.listScheduledTaskRuns(task.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "succeeded", turnId: "turn-1" });
+    expect(runs[0].error).not.toContain("secret-token");
+
+    // 暂停/删除按 owner 隔离。
+    expect(store.setScheduledTaskStatus(task.id, "other", "paused")).toBe(false);
+    expect(store.setScheduledTaskStatus(task.id, "u1", "paused")).toBe(true);
+    expect(store.dueScheduledTasks("2027-01-01T00:00:00.000Z")).toHaveLength(0);
+    expect(store.deleteScheduledTask(task.id, "other")).toBe(false);
+    expect(store.deleteScheduledTask(task.id, "u1")).toBe(true);
+    expect(store.getScheduledTask(task.id)).toBeUndefined();
+  });
+
+  it("advances overdue tasks on recovery without running them", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "owner", ownerUserId: "u1",
+    });
+    store.createScheduledTask({
+      ownerUserId: "u1", conversationId: created.conversationId, prompt: "once", kind: "once",
+      cron: "", runAt: "2026-11-20T09:00:00.000Z", nextRunAt: "2026-11-20T09:00:00.000Z", expiresAt: "",
+    });
+    expect(store.advanceOverdueScheduledTasks("2026-11-27T09:00:00.000Z", "2026-11-27T10:00:00.000Z")).toBe(1);
+    expect(store.dueScheduledTasks("2026-11-27T09:00:00.000Z")).toHaveLength(0);
+  });
+
   it("persists the conversation sync base independently of the turn snapshot", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({
