@@ -23,6 +23,7 @@ import { appendInputHistory, readInputHistory, writeInputHistory } from "../lib/
 import { ConversationRecordsTab } from "../components/ConversationRecordsTab.js";
 import { ConversationStatsTab } from "../components/ConversationStatsTab.js";
 import { ConversationTimeline, type ConversationTimelineSegment } from "../components/ConversationTimeline.js";
+import { MiddleEllipsis } from "../components/MiddleEllipsis.js";
 import { ConversationTraceTab } from "../components/ConversationTraceTab.js";
 import { ContextPanel } from "../components/ContextPanel.js";
 import { ContextBrief } from "../components/ContextBrief.js";
@@ -1301,9 +1302,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                           aria-label={copy.conversationRepositoryInfo}
                           aria-expanded={repoInfoOpen}
                         >
-                          <Typography.Text strong className="conversation-workspace-project" ellipsis title={currentConversation.projectName}>
-                            {currentConversation.projectName}
-                          </Typography.Text>
+                          <MiddleEllipsis text={currentConversation.projectName} className="conversation-workspace-project" />
                         </button>
                       </RepositoryInfoPopover>
                       {hasActiveTurn ? <Tag color="processing">{copy.statuses.running}</Tag> : null}

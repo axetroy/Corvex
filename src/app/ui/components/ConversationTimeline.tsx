@@ -2,13 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "antd";
 import { describeSessionTool, formatTraceDuration } from "../lib/format.js";
 import { isAtScrollBottom } from "../lib/scroll.js";
-import { fitMiddleEllipsis, splitForMiddleEllipsis } from "../lib/truncate.js";
 import { translate } from "../lib/i18n.js";
 import type { Copy } from "../lib/i18n.js";
 import { parseTraceValue } from "../lib/trace.js";
 import { parseDisplayPlanSteps } from "../lib/planDisplay.js";
 import type { ConversationToolCall } from "../lib/types.js";
 import { ConversationExecTerminal, type ExecDisplay } from "./ConversationExecTerminal.js";
+import { MiddleEllipsis } from "./MiddleEllipsis.js";
 import { commandFromToolInput } from "./execDisplay.js";
 
 /**
@@ -26,37 +26,7 @@ export type ConversationTimelineSegment =
 
 /** 工具描述很长时按实际字宽均分开头与结尾，中间用省略号；完整文本留在 title。 */
 const ToolCallName = memo(function ToolCallName({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [parts, setParts] = useState(() => splitForMiddleEllipsis(text));
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    const update = () => {
-      const context = document.createElement("canvas").getContext("2d");
-      if (!context) return;
-      context.font = getComputedStyle(node).font;
-      if (node.clientWidth <= 0) return;
-      setParts(fitMiddleEllipsis(text, (value) => context.measureText(value).width, node.clientWidth));
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [text]);
-
-  return (
-    <span className="conversation-tool-call-name" ref={ref} title={text}>
-      <span className="conversation-tool-call-name-head">{parts.head}</span>
-      {parts.tail ? (
-        <>
-          <span className="conversation-tool-call-name-ellipsis">...</span>
-          <span className="conversation-tool-call-name-tail">{parts.tail}</span>
-        </>
-      ) : null}
-    </span>
-  );
+  return <MiddleEllipsis text={text} className="conversation-tool-call-name" />;
 });
 
 /** 思考文本在流式输出时会自动贴底；一旦用户向上翻阅就停止跟随。 */

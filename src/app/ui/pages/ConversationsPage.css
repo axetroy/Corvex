@@ -381,12 +381,15 @@
   text-underline-offset: 3px;
 }
 
-.conversation-workspace-project.ant-typography {
+.conversation-workspace-project {
+  display: flex;
   flex: 0 1 auto;
   max-width: 240px;
   min-width: 0;
-  margin: 0;
+  overflow: hidden;
   color: var(--conversation-ink);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* 气泡被 portal 到 body，取全局主题变量而不是 .conversations-layout 的局部变量。 */
@@ -1239,14 +1242,14 @@
 }
 
 /* 前后两段由组件按实际字宽等分，中间的 "..." 是唯一省略号。 */
-.conversation-tool-call-name-head,
-.conversation-tool-call-name-tail {
+.middle-ellipsis-head,
+.middle-ellipsis-tail {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
 }
 
-.conversation-tool-call-name-ellipsis {
+.middle-ellipsis-ellipsis {
   flex: none;
   margin: 0 2px;
   color: var(--conversation-muted);
@@ -2552,7 +2555,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 @media (max-width: 900px) {
-  .conversation-workspace-project.ant-typography {
+  .conversation-workspace-project {
     max-width: 140px;
   }
 
