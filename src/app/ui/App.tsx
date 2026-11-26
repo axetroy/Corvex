@@ -429,7 +429,13 @@ export function App() {
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>
               <Routes>
                 <Route path="/settings" element={<UserSettingsPage copy={copy} onChanged={refresh} />} />
-                <Route path="/scheduled-tasks" element={<ScheduledTasksPage copy={copy} locale={locale} />} />
+                <Route path="/scheduled-tasks" element={
+                  <ScheduledTasksPage
+                    copy={copy}
+                    locale={locale}
+                    onNavigateToConversations={() => navigate(conversationsPath())}
+                  />
+                } />
                 <Route
                   path="/conversations"
                   element={

@@ -5,10 +5,65 @@
   gap: 16px;
 }
 
+/* 引导区：用序号步骤和示例语句告诉用户「在对话里创建」，而不是在这里新建。 */
+.scheduled-task-guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.scheduled-task-guide-steps li::marker {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.scheduled-task-guide-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.scheduled-task-example-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scheduled-task-example-list code {
+  padding: 4px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .scheduled-task-empty {
-  padding: 32px 16px;
-  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 36px 16px;
   text-align: center;
+}
+
+.scheduled-task-empty-title {
+  margin: 0 !important;
+}
+
+.scheduled-task-empty-hint {
+  max-width: 520px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .scheduled-task-grid {
