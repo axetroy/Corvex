@@ -34,12 +34,12 @@
 在 `ConversationStreamEvent` 增加一种命令输出事件（按调用 ID 归属到具体命令）：
 
 ```
-| { type: "exec"; execId: string; stream: "stdout" | "stderr"; chunk: string; done?: boolean; exitCode?: number | null; aborted?: boolean; truncated?: boolean }
+| { type: "exec"; execId: string; stream: "stdout" | "stderr"; chunk: string; done?: boolean; exitCode?: number | null; aborted?: boolean; reason?: string; truncated?: boolean }
 ```
 
 - `execId` = 工具调用 ID（SDK 的 toolCallId），一条命令一个；
 - `chunk` 是**增量**文本（不是累计），前端按 execId 追加；
-- `done: true` 带终态（exitCode / aborted / truncated），标志命令结束；
+- `done: true` 带终态（exitCode / aborted / reason / truncated），标志命令结束；用户手动停止时 `reason` 为 `user manually stopped this command`，随工具结果进入模型上下文供其决策；
 - 每段 chunk 在服务端已按 `redactSensitiveText` 脱敏、按总字节上限截断。
 
 工具开始事件 `tool` 仍按现有语义推送（status=running），终端 UI 以它为命令标题；`exec` 事件负责填充输出区。
@@ -52,7 +52,7 @@
 2. **PiAgent 桥接**：`createExecutionExtension` 拿到 `request.onExecDelta` 回调，在 `backend.run` 的 `onChunk` 里把 chunk 转成 `exec` 事件上抛；命令结束（`ExecutionResult`）时发 `done: true` 的终态事件。
 3. **Runner 发布**：`ConversationRunner` 把 `onExecDelta` 接到 `publishStream(turnId, { type: "exec", ... })`，与其他流事件走同一订阅通道。
 4. **SSE 路由**：现有 `.../stream` 路由无需改协议，新事件类型随同一 SSE 推送（`parseSseFrames` 增加 `exec` 分支）。
-5. **离线回放**：命令输出已随工具结果落库到 `conversation_trace.trace_output`（完整 stdout/stderr，已脱敏限长）。历史回放时前端从过程快照的 `record_plan` 类似路径——更准确地说，从新增的 `GET .../turns/:turnId` 已返回的 trajectory 里读取该工具调用的 output，还原成终端行。这样刷新后仍能看到输出。
+5. **离线回放**：现行做法见 3.3——`collectProcess` 把 exec 增量合并写入过程快照 `conversation_messages.process[].execOutput`，前端从 `message.process` 重建终端；不再走 `GET .../turns/:turnId` 的 trajectory 路径。`conversation_trace.trace_output` 仍保留完整脱敏输出供 Trace 标签查看。
 
 ### 3.3 持久化与回放（P1 实现）
 
@@ -67,7 +67,7 @@
 新增 `POST /api/ops/conversations/:id/turns/:turnId/executions/:execId/cancel`：
 
 - 校验会话归属与轮次存在；
-- 在 `ConversationRunner` 维护 `Map<execId, AbortController>`（命令启动时注册、结束时清理）；
+- 在 `ConversationRunner` 维护 `Map<execId, { turnId, stop }>`（命令启动时注册、结束时清理），按 turnId 隔离，跨轮次的 execId 不可被停止；
 - 找到对应 controller 就 `abort()`，后端 kill 子进程（本地/沙箱现有 signal 处理已支持）；
 - 返回 `{ cancelled: true }`；找不到返回 404/409（命令已结束）。
 
