@@ -4,6 +4,7 @@ import type { Dirent } from "node:fs";
 import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { needsCommitMessageRewrite } from "./commit-message.js";
 import { isValidBranchName } from "./refs.js";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
 
@@ -666,6 +667,63 @@ export class GitManager {
   }
 
   /**
+   * 轮末自动保存会用占位信息生成提交；用户随后给出明确提交信息时重写该提交的 message，
+   * 保证推送到 GitLab 的是实际改动说明。只重写占位提交，tree 与 parent 保持不变。
+   */
+  private async rewordAutoConversationCommit(
+    projectId: number,
+    conversationId: string,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    const mirror = join(this.mirrorRoot, `${projectId}.git`);
+    if (!(await this.pathExists(mirror))) return undefined;
+    const ref = conversationChangesRef(conversationId);
+    const current = await this.run(
+      mirror,
+      ["log", "-1", "--format=%B", ref],
+      undefined, maxErrorOutput, signal,
+      { timeoutMs: 10_000, allowExitCodes: [0, 128] },
+    );
+    if (current.exitCode !== 0) return undefined;
+    const currentMessage = current.stdout.toString().trim();
+    if (!needsCommitMessageRewrite(currentMessage, message)) return undefined;
+
+    const resolved = await this.run(mirror, ["rev-parse", ref], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const sha = resolved.stdout.toString().trim();
+    if (!shaPattern.test(sha)) throw new Error("conversation ref contains an invalid commit");
+    const treeResult = await this.run(mirror, ["rev-parse", `${sha}^{tree}`], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const tree = treeResult.stdout.toString().trim();
+    if (!shaPattern.test(tree)) throw new Error("git rev-parse returned an invalid tree id");
+    const parentsResult = await this.run(mirror, ["rev-list", "--parents", "-n", "1", sha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const parentShas = parentsResult.stdout.toString().trim().split(" ").slice(1);
+    const created = await this.run(
+      mirror,
+      [
+        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
+        "commit-tree", tree, ...parentShas.flatMap((parent) => ["-p", parent]), "-m", message.trim(),
+      ],
+      undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
+    );
+    const rewritten = created.stdout.toString().trim();
+    if (!shaPattern.test(rewritten)) throw new Error("git commit-tree returned an invalid object id");
+    await this.run(mirror, ["update-ref", ref, rewritten], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    // 每轮 ref 若指向被重写的占位提交，一并更新，避免按轮查看仍看到旧信息。
+    const turnRefs = await this.run(
+      mirror,
+      ["for-each-ref", "--format=%(refname) %(objectname)", `refs/conversation-turns/${conversationId}`],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    for (const line of turnRefs.stdout.toString().split("\n")) {
+      const [name, object] = line.split(" ");
+      if (name && object === sha) {
+        await this.run(mirror, ["update-ref", name, rewritten], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+      }
+    }
+    return rewritten;
+  }
+
+  /**
    * 把 worktree 的本地改动提交到镜像里的对话 ref。ref 的父提交是 pinned SHA，
    * 因此 worktree 被淘汰、重启或清理后都能按同一基线恢复，且不进入数据库。
    */
@@ -704,6 +762,12 @@ export class GitManager {
           );
         }
         return { sha: status.headSha, paths: [] };
+      }
+      // 工作区已干净但用户随后给出了明确的提交信息：重写轮末占位提交，
+      // 让 git_commit / git_publish 真正使用这条信息，而不是推送占位信息。
+      if (message?.trim()) {
+        const rewritten = await this.rewordAutoConversationCommit(workspace.projectId, conversationId, message, signal);
+        if (rewritten) return { sha: rewritten, paths: [] };
       }
       return undefined;
     }
