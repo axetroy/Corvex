@@ -66,6 +66,9 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
   const [now, setNow] = useState(() => Date.now());
   // 历史记录里已成功结束的命令默认收起；正在运行的默认展开。
   const [collapsed, setCollapsed] = useState(entry.done && entry.exitCode === 0);
+  const [commandExpanded, setCommandExpanded] = useState(false);
+  const [commandTruncated, setCommandTruncated] = useState(false);
+  const commandRef = useRef<HTMLButtonElement>(null);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState("");
 
@@ -143,6 +146,18 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     if (pinnedRef.current) term.scrollToBottom();
   }, [entry.stdout, entry.stderr, ready]);
 
+  // 头部命令默认省略显示；检测实际溢出后才提供“点击查看完整命令”的入口。
+  useEffect(() => {
+    if (commandExpanded) return;
+    const node = commandRef.current;
+    if (!node) return;
+    const measure = () => setCommandTruncated(node.scrollWidth > node.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [entry.command, commandExpanded]);
+
   // 命令成功结束的瞬间自动收起；失败、被停止或用户手动展开后不再改写。
   useEffect(() => {
     if (entry.done && !wasDoneRef.current && entry.exitCode === 0) setCollapsed(true);
@@ -198,7 +213,19 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         >
           {collapsed ? "▸" : "▾"}
         </Button>
-        <Typography.Text code className="conversation-exec-command">$ {entry.command}</Typography.Text>
+        {!commandExpanded ? (
+          <button
+            type="button"
+            ref={commandRef}
+            className={`conversation-exec-command${commandTruncated ? " is-truncated" : ""}`}
+            onClick={() => { if (commandTruncated) setCommandExpanded(true); }}
+            title={commandTruncated ? copy.execViewCommand : undefined}
+            aria-label={commandTruncated ? copy.execViewCommand : undefined}
+            tabIndex={commandTruncated ? 0 : -1}
+          >
+            $ {entry.command}
+          </button>
+        ) : null}
         {status}
         {durationLabel ? (
           <Typography.Text type="secondary" className="conversation-exec-duration">{durationLabel}</Typography.Text>
@@ -209,6 +236,14 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
           </Button>
         ) : null}
       </div>
+      {commandExpanded ? (
+        <div className="conversation-exec-command-detail">
+          <pre>$ {entry.command}</pre>
+          <Button size="small" type="link" onClick={() => setCommandExpanded(false)}>
+            {copy.execCollapseCommand}
+          </Button>
+        </div>
+      ) : null}
       <div className={`conversation-exec-screen${collapsed ? " is-collapsed" : ""}`}>
         <div className="conversation-exec-body" ref={hostRef} />
         {!entry.stdout && !entry.stderr && !collapsed ? (

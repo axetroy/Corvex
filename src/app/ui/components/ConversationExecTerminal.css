@@ -29,12 +29,49 @@
 }
 
 .conversation-exec-command {
+  display: inline-flex;
   min-width: 0;
   max-width: 52%;
+  align-items: center;
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.conversation-exec-command.is-truncated {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.conversation-exec-command.is-truncated:hover,
+.conversation-exec-command.is-truncated:focus-visible {
+  color: var(--primary);
+}
+
+/* 点击命令后就地展开完整命令：保留换行，限高可滚动，避免长命令撑破布局。 */
+.conversation-exec-command-detail {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
+}
+
+.conversation-exec-command-detail pre {
+  max-height: 200px;
+  margin: 0 0 4px;
+  overflow: auto;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .conversation-exec-duration {
