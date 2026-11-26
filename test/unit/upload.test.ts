@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUploadContext, maxUploadBytes, sanitizeUploadFilename, validateUpload } from "../../src/app/upload.js";
+import { buildUploadContext, maxUploadBytes, sanitizeUploadFilename, uploadUrl, validateUpload } from "../../src/app/upload.js";
 import type { ConversationUpload } from "../../src/model.js";
 
 const bytes = (value: string) => Buffer.from(value, "utf8");
@@ -24,6 +24,14 @@ describe("upload validation", () => {
     expect(sanitizeUploadFilename("dir\\sub\\notes.txt")).toBe("notes.txt");
     expect(sanitizeUploadFilename("bad\u0000name.md")).toBe("badname.md");
     expect(sanitizeUploadFilename("..")).toBe("");
+  });
+});
+
+describe("uploadUrl", () => {
+  it("encodes the conversation id, filename and MIME as query parameters", () => {
+    expect(uploadUrl("a/b", "report 2026.txt", "text/plain")).toBe(
+      "/api/ops/conversations/a%2Fb/uploads?filename=report+2026.txt&mime=text%2Fplain",
+    );
   });
 });
 

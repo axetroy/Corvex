@@ -34,7 +34,7 @@
 
 ## 上传外部文件作为上下文（规划中）
 
-用户应能把本地文件（先支持纯文本）附加到消息，让模型在该轮读取，类似 Claude Code 的 `+`/拖拽与 OpenCode 的附件。设计见 [file-attachments-design.md](file-attachments-design.md)（中文），参考 OpenCode 的 `file:`/`data:` URI 与按字节检测类型、Claude Code 的 `@` 引用。Corvex 特性：上传物放 `storage/uploads/<conversationId>/`（**绝不放 worktree**——`git add -A` 会提交、`git_publish` 可能推送到 GitLab），作为**仅本轮有效的只读根**配合有界提示词清单暴露给模型，复用现成 `read_file` 工具（不新增 Agent 工具、不新增运行时依赖）。P0：`conversation_uploads` 表 + 纯文本上传 API + 本轮只读根 + 消息关联。P1：composer 附件按钮/拖拽/chips + 双语 UI + `conversationDelete` 清理。P2：图片/PDF（模型能力检测 + 魔数校验）。尚未实现。
+用户应能把本地文件（先支持纯文本）附加到消息，让模型在该轮读取，类似 Claude Code 的 `+`/拖拽与 OpenCode 的附件。设计见 [file-attachments-design.md](file-attachments-design.md)（中文），参考 OpenCode 的 `file:`/`data:` URI 与按字节检测类型、Claude Code 的 `@` 引用。Corvex 特性：上传物放 `storage/uploads/<conversationId>/`（**绝不放 worktree**——`git add -A` 会提交、`git_publish` 可能推送到 GitLab），作为**仅本轮有效的只读根**配合有界提示词清单暴露给模型，复用现成 `read_file` 工具（不新增 Agent 工具、不新增运行时依赖）。P0（完成）：`conversation_uploads` 表 + 纯文本上传 API + 本轮只读根 + 消息关联。P1（完成）：composer 附件按钮/拖拽/chips + 双语 UI + `conversationDelete` 清理。P2（延期）：图片/PDF（模型能力检测 + 魔数校验）。
 
 ## 其他延期项
 

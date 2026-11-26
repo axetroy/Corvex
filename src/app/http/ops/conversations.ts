@@ -14,7 +14,7 @@ import { createConversationFileSource } from "../../files/factory.js";
 import { resolveWorktreePath } from "../../../agent/fs/index.js";
 import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
-import { maxUploadsPerMessage, sanitizeUploadFilename, uploadContentType, validateUpload } from "../../upload.js";
+import { maxUploadsPerConversation, maxUploadsPerMessage, sanitizeUploadFilename, uploadContentType, validateUpload } from "../../upload.js";
 import type { OpsContext } from "../context.js";
 import {
   idParam,
@@ -919,7 +919,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: validation.error });
       return;
     }
-    if (ctx.store.listConversationUploads(conversationId).length >= maxUploadsPerMessage) {
+    if (ctx.store.listConversationUploads(conversationId).length >= maxUploadsPerConversation) {
       sendJson(reply, 409, { error: "too many uploads for this conversation" });
       return;
     }

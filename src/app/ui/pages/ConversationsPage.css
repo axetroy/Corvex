@@ -2157,6 +2157,115 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   transform: translateX(-50%);
 }
 
+/* 拖拽文件时整块 composer 高亮，明确提示可以投放。 */
+.conversation-composer-area.is-dragging-attachment {
+  outline: 2px dashed var(--primary);
+  outline-offset: 8px;
+  border-radius: 12px;
+}
+
+.conversation-drop-overlay {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 6;
+  padding: 6px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 99px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* 待发附件 chips：发送后清空，失败保留以便重试。 */
+.conversation-attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.conversation-attachment-chip {
+  display: inline-flex;
+  max-width: 220px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 99px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.conversation-attachment-chip svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.conversation-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-attachment-chip button {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 16px;
+}
+
+.conversation-attachment-chip button:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
+
+.conversation-composer-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversation-attach-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.conversation-attach-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.conversation-attach-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.conversation-attach-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* 输入框下方的上下文简讯：一条紧凑的可点击状态栏，点击后打开完整上下文标签。 */
 .conversation-context-brief {
   display: flex;

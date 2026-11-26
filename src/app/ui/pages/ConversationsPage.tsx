@@ -7,7 +7,8 @@ import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
-import { fetchJson, handleUnauthorized, sendJson } from "../lib/api.js";
+import { fetchJson, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
+import { maxUploadBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../lib/attachments.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
@@ -30,7 +31,7 @@ import { BranchPicker } from "../components/BranchPicker.js";
 import { displayModelName } from "../lib/modelLabel.js";
 import { ProjectPicker } from "../components/ProjectPicker.js";
 import { RepositoryInfoPopover } from "../components/RepositoryInfoPopover.js";
-import { BookIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "../components/icons.js";
+import { AttachIcon, BookIcon, FileIcon, FilesIcon, InterjectIcon, MoreIcon, RocketIcon, ScrollBottomIcon, SearchIcon, StopIcon, WrenchIcon } from "../components/icons.js";
 import { ConversationFilePanel } from "../components/ConversationFilePanel.js";
 import { ExecutionHistoryTab } from "../components/ExecutionHistoryTab.js";
 import { applyExecDelta, createExecDisplay, replayExecsFromProcess, commandFromToolInput, type ExecDisplay } from "../components/execDisplay.js";
@@ -280,6 +281,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [filesCollapsed, setFilesCollapsed] = useState((savedLayout?.[filesPanelId] ?? 0) === 0);
   const filesPanelRef = usePanelRef();
   const replySubmitting = useRef(false);
+  /** 已上传、等待随下一条消息发送的附件；切换会话时清空，避免串到别的对话。 */
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [draggingAttachment, setDraggingAttachment] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
   /** 逐条思考与工具调用按轮次留在本次页面会话里，结束后仍可展开查看。 */
@@ -318,6 +324,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setConversation(undefined);
     setShowCreate(!conversationId);
     setDraftMessage("");
+    setAttachments([]);
     setDetailTab("chat");
     setError("");
     setTimelineByTurn({});
@@ -614,6 +621,61 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
+  /** 本地文本文件是纯文本首版：先做客户端限额/类型预检，服务端仍会按真实字节复核。 */
+  function isTextAttachment(file: File): boolean {
+    const mime = file.type.toLowerCase();
+    return mime.startsWith("text/") || mime === "application/json";
+  }
+
+  function uploadErrorToCopy(error: string): string {
+    if (error.includes("size limit") || error.includes("too large")) return copy.attachmentTooLarge;
+    if (error.includes("unsupported") || error.includes("UTF-8") || error.includes("binary") || error.includes("filename")) {
+      return copy.attachmentUnsupported;
+    }
+    return error;
+  }
+
+  async function uploadFiles(files: readonly File[]) {
+    if (showCreate || !currentConversation || files.length === 0) return;
+    const room = maxUploadsPerMessage - attachments.length;
+    if (room <= 0) {
+      setError(copy.attachmentLimit);
+      return;
+    }
+    setUploadingAttachment(true);
+    setError("");
+    try {
+      for (const file of files.slice(0, room)) {
+        if (file.size === 0 || file.size > maxUploadBytes) throw new Error(copy.attachmentTooLarge);
+        if (!isTextAttachment(file)) throw new Error(copy.attachmentUnsupported);
+        const created = await sendBinary<PendingAttachment>(
+          uploadUrl(currentConversation.id, file.name, file.type || "text/plain"),
+          await file.arrayBuffer(),
+          uploadContentType,
+          copy,
+        );
+        setAttachments((current) => [...current, {
+          id: created.id, filename: created.filename, sizeBytes: created.sizeBytes,
+        }]);
+      }
+    } catch (cause) {
+      setError(uploadErrorToCopy(errorMessage(cause)));
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }
+
+  async function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+    if (!currentConversation) return;
+    // 上传失败/取消不应阻断用户；服务端残留由会话删除清理兜底。
+    try {
+      await sendJson(`/api/ops/conversations/${encodeURIComponent(currentConversation.id)}/uploads/${encodeURIComponent(id)}`, {}, copy, "DELETE");
+    } catch {
+      // 已本地移除，不再打扰用户。
+    }
+  }
+
   async function sendReply(message: string, delivery?: "steer" | "queue" | "interrupt") {
     if (!currentConversation || !message.trim() || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
     const replyConversationId = currentConversation.id;
@@ -628,6 +690,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           message,
           responseLanguage: locale === "zh-CN" ? "zh-CN" : "en",
           ...(delivery ? { delivery } : {}),
+          uploadIds: attachments.map((item) => item.id),
         }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
@@ -645,6 +708,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           if (body.error === "conversation turn is not running") {
             throw new Error(copy.interruptUnavailable);
           }
+          if (typeof body.error === "string" && (
+            body.error.includes("uploads can only be attached") || body.error.includes("wait for the current turn")
+          )) {
+            throw new Error(copy.attachmentTurnActive);
+          }
           throw new Error(copy.targetChanged);
         }
         throw new Error(copy.requestFailedTemplate
@@ -652,6 +720,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           .replace("{message}", (await result.text()).trim() || result.statusText));
       }
       const queued = await result.json() as { turnId: string; delivery?: "steer" | "queued" | "queue" };
+      // 附件已随消息绑定到本轮，输入框上的待发列表清空（失败时保留，用户可重试）。
+      if (selectedConversationIdRef.current === replyConversationId) setAttachments([]);
       if (queued.delivery === "steer") {
         // 插话复用正在运行的轮次：没有新的 turnId，也不能进入 pendingReplyTurns。
         if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
@@ -1255,7 +1325,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         onSelect={scrollToTurn}
                       />
                     ) : null}
-                    <div className="conversation-composer-area">
+                    <div
+                      className={`conversation-composer-area${draggingAttachment ? " is-dragging-attachment" : ""}`}
+                      onDragOver={(event) => {
+                        if (showCreate || uploadingAttachment) return;
+                        event.preventDefault();
+                        setDraggingAttachment(true);
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingAttachment(false);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDraggingAttachment(false);
+                        void uploadFiles(Array.from(event.dataTransfer.files));
+                      }}
+                    >
+                    {draggingAttachment ? <div className="conversation-drop-overlay">{copy.dropFileHint}</div> : null}
                     {interjectNotice ? (
                       <div className={`conversation-interject-notice${interjectNotice === "delivered" ? " is-delivered" : ""}`} role="status">
                         {interjectNotice === "queued" ? copy.interjectQueued : copy.interjectDelivered}
@@ -1313,6 +1399,36 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         ))}
                       </div>
                     ) : null}
+                    {attachments.length ? (
+                      <div className="conversation-attachment-chips">
+                        {attachments.map((item) => (
+                          <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
+                            <FileIcon />
+                            <span className="conversation-attachment-name">{item.filename}</span>
+                            <button
+                              type="button"
+                              aria-label={`${copy.removeAttachment}: ${item.filename}`}
+                              title={copy.removeAttachment}
+                              onClick={() => void removeAttachment(item.id)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    <input
+                      ref={attachmentInputRef}
+                      type="file"
+                      multiple
+                      accept="text/*,application/json,.md,.txt,.csv,.json"
+                      style={{ display: "none" }}
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.target.value = "";
+                        void uploadFiles(files);
+                      }}
+                    />
                     <Sender
                       ref={composerRef}
                       className="conversation-composer"
@@ -1329,7 +1445,24 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       }}
                       onKeyDown={handleComposerKeyDown}
                       onSubmit={(message) => submitMessage(message)}
-                      footer={<ComposerModelPicker copy={copy} disabled={busy} />}
+                      footer={(
+                        <div className="conversation-composer-footer">
+                          {!showCreate ? (
+                            <button
+                              type="button"
+                              className="conversation-attach-button"
+                              aria-label={copy.attachFile}
+                              title={copy.attachFileHint}
+                              disabled={busy || uploadingAttachment || attachments.length >= maxUploadsPerMessage}
+                              onClick={() => attachmentInputRef.current?.click()}
+                            >
+                              <AttachIcon />
+                              <span>{uploadingAttachment ? copy.uploadingAttachment : copy.attachFile}</span>
+                            </button>
+                          ) : null}
+                          <ComposerModelPicker copy={copy} disabled={busy} />
+                        </div>
+                      )}
                       suffix={(_node, { components: { SendButton } }) => (isTurnActive ? (
                         <div className="conversation-active-actions">
                           <button

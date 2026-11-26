@@ -1,6 +1,6 @@
 # 外部文件作为上下文（附件）调研与设计方案
 
-本文调研主流编码 Agent 的"外部文件作为上下文"，并给出 Corvex 的落地方案。当前状态：**规划中，未实现**（见 `ROADMAP.md`）。附件复用对话轮次与按用户 OAuth 令牌的授权边界，不改变 `design.md` 的安全不变量。
+本文调研主流编码 Agent 的"外部文件作为上下文"，并给出 Corvex 的落地方案。当前状态：**P0（后端）与 P1（运维台 UI）已实现，P2 未实现**（见 `ROADMAP.md`）。附件复用对话轮次与按用户 OAuth 令牌的授权边界，不改变 `design.md` 的安全不变量。
 
 ## 1. 主流实现调研（2026-11）
 
@@ -98,9 +98,11 @@
 
 | 阶段 | 内容 |
 |---|---|
-| P0 | `conversation_uploads` 表 + 上传 API（纯文本、限额、归属校验）+ 本轮临时只读根 + 提示词清单 + 消息关联 |
-| P1 | composer 附件按钮/拖拽/chips UI + 双语 + `conversationDelete` 清理联动 |
+| P0（完成） | `conversation_uploads` 表 + 上传 API（纯文本、限额、归属校验）+ 本轮临时只读根 + 提示词清单 + 消息关联 |
+| P1（完成） | composer 附件按钮/拖拽/chips UI + 双语 + `conversationDelete` 清理联动 |
 | P2 | 图片/PDF（模型能力检测 + 魔数校验）、目录附件、运行时大小/数量设置 |
+
+实现补充：单文件 256 KiB、单消息 10 个、单会话累计 100 个；上传走专用 content-type `application/x-corvex-upload` 与独立 `bodyLimit`。附件只能随新建轮次发送，插话/排队路径明确拒绝（避免附件无法进入模型）。限额常量集中在 `src/app/ui/lib/attachments.ts`，前后端共用。
 
 ## 5. 测试
 

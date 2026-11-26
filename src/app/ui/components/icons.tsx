@@ -185,6 +185,15 @@ export function FileIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 附件图标：回形针，用于给消息附加本地文本文件。 */
+export function AttachIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M12.5 5.5 6.8 11.2a2.6 2.6 0 0 0 3.7 3.7l6-6a4.2 4.2 0 0 0-5.9-5.9l-6.3 6.3a5.8 5.8 0 0 0 8.2 8.2l5.4-5.4" />
+    </svg>
+  );
+}
+
 /** 中止图标：方块，用于停止正在执行的对话轮次。 */
 export function StopIcon(props: SVGProps<SVGSVGElement>) {
   return (

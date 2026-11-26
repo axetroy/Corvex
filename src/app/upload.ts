@@ -3,13 +3,9 @@
 import { dirname, resolve } from "node:path";
 import type { ConversationUpload, ResponseLanguage } from "../model.js";
 import { redactSensitiveText } from "../redact.js";
+import { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "./ui/lib/attachments.js";
 
-/** 单文件上限，与 read_file 的 maxReadBytes 对齐（256 KiB）。 */
-export const maxUploadBytes = 256 << 10;
-/** 单条消息最多附带的附件数。 */
-export const maxUploadsPerMessage = 10;
-/** 专用 content-type：避开 application/json（API body）与 application/zip（技能包）。 */
-export const uploadContentType = "application/x-corvex-upload";
+export { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
 
 /** 首版只接受纯文本 MIME；二进制/图片/PDF 留到 P2。 */
 const allowedMime = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
