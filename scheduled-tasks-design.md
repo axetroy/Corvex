@@ -1,6 +1,6 @@
 # 计划任务（scheduled tasks）调研与设计方案
 
-本文调研主流编码 Agent 的"定时/自然语言计划任务"，并给出 Corvex 的落地方案。当前状态：**P0/P1 已实现，P2 规划中**（见 `ROADMAP.md`）。已实现：数据表与 cron 解析、Server 到期循环与原子领取、模型侧创建/列出/取消工具、`/api/ops/me` 接口与管理页、30 天过期；待实现：jitter 错峰、用户时区（目前 UTC）、事件触发。计划任务复用对话轮次（`ConversationRunner`）与按用户 OAuth 令牌的授权边界，不引入新的执行器。
+本文调研主流编码 Agent 的"定时/自然语言计划任务"，并给出 Corvex 的落地方案。当前状态：**P0/P1/P2 已实现**（见 `ROADMAP.md`）。已实现：数据表与 cron 解析、Server 到期循环与原子领取、模型侧创建/列出/取消工具、`/api/ops/me` 接口与管理页、30 天过期、按 ID 确定性 jitter、IANA 用户时区、暂停/恢复与手动触发、运行历史气泡。Webhook 事件触发与"每次新建独立对话执行"仍延期（见 `ROADMAP.md` 的 Webhook 事件章节）.计划任务复用对话轮次（`ConversationRunner`）与按用户 OAuth 令牌的授权边界，不引入新的执行器。
 
 ## 1. 主流实现调研（2026-11）
 

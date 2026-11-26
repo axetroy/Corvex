@@ -28,9 +28,9 @@
 - 所有 Agent 输出都视为不可信；发布到 GitLab 前再次检查授权、取消状态和版本快照。
 - 恢复特性时同步恢复中英文文档与集成测试。
 
-## 计划任务 / 自然语言调度（P0/P1 已完成，P2 规划中）
+## 计划任务 / 自然语言调度（P0/P1/P2 已完成；Webhook/新建对话延期）
 
-用户可以说"每周一早上 9 点检查 CI"或"45 分钟后提醒我推送分支"，到点自动作为一次普通对话轮次执行。设计见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文），参考 Claude Code 的 `/loop` 与 `CronCreate/CronList/CronDelete`、Codex Automations 与 Cloud/Desktop 计划任务：自然语言 → 模型确认的 5 段 cron、不补跑、按用户 OAuth 令牌执行（绝不回退全局凭据）。P0（完成）：`scheduled_tasks` / `scheduled_task_runs` 表、严格 cron 解析与下次时间、Server 可中止到期循环与原子领取、一次性与循环任务经 `runTurn` 执行、启动恢复不补跑、模型侧 创建/列出/取消 工具。P1（完成）：`/api/ops/me/scheduled-tasks` 接口与运行记录、账号菜单里的运维台计划任务页、30 天过期。P2（规划）：jitter 错峰、用户时区（目前 UTC）、暂停/恢复 API、事件触发。
+用户可以说"每周一早上 9 点检查 CI"或"45 分钟后提醒我推送分支"，到点自动作为一次普通对话轮次执行。设计见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文），参考 Claude Code 的 `/loop` 与 `CronCreate/CronList/CronDelete`、Codex Automations 与 Cloud/Desktop 计划任务：自然语言 → 模型确认的 5 段 cron、不补跑、按用户 OAuth 令牌执行（绝不回退全局凭据）。P0（完成）：`scheduled_tasks` / `scheduled_task_runs` 表、严格 cron 解析与下次时间、Server 可中止到期循环与原子领取、一次性与循环任务经 `runTurn` 执行、启动恢复不补跑、模型侧 创建/列出/取消 工具。P1（完成）：`/api/ops/me/scheduled-tasks` 接口与运行记录、账号菜单里的运维台计划任务页、30 天过期。P2（完成）：按任务 ID 的确定性 jitter 错峰、IANA 用户时区（默认 UTC）、暂停/恢复与"立即运行"接口和按钮、运行历史气泡。GitLab Webhook 事件触发与"每次新建独立对话执行"仍延期（见上文 Webhook 事件章节）。
 
 ## 其他延期项
 
