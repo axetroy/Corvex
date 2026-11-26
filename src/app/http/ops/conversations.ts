@@ -14,7 +14,7 @@ import { createConversationFileSource } from "../../files/factory.js";
 import { resolveWorktreePath } from "../../../agent/fs/index.js";
 import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
-import { maxUploadsPerConversation, maxUploadsPerMessage, sanitizeUploadFilename, uploadContentType, validateUpload } from "../../upload.js";
+import { maxUploadBytesCeiling, sanitizeUploadFilename, uploadContentType, validateUpload } from "../../upload.js";
 import type { OpsContext } from "../context.js";
 import {
   idParam,
@@ -805,7 +805,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const uploadIds: string[] = [];
     if (body.uploadIds !== undefined) {
-      if (!Array.isArray(body.uploadIds) || body.uploadIds.length > maxUploadsPerMessage ||
+      if (!Array.isArray(body.uploadIds) || body.uploadIds.length > ctx.config.agent.uploadMaxPerMessage ||
           body.uploadIds.some((id) => typeof id !== "string" || id.length === 0 || id.length > 128)) {
         sendJson(reply, 400, { error: "invalid uploadIds" });
         return;
@@ -892,6 +892,17 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
   });
 
+  /** 当前生效的上传限额，供 composer 预检；无需管理员权限，任何登录用户可读。 */
+  app.get("/api/ops/me/upload-limits", async (request, reply) => {
+    if (!requireUser(request, reply)) return;
+    sendJson(reply, 200, {
+      maxBytes: ctx.config.agent.uploadMaxBytes,
+      ceilingBytes: maxUploadBytesCeiling,
+      maxPerMessage: ctx.config.agent.uploadMaxPerMessage,
+      maxPerConversation: ctx.config.agent.uploadMaxPerConversation,
+    });
+  });
+
   // 上传文本附件：落在 storage/uploads/<conversationId>/ 下，绝不进 worktree（避免被 git add 提交/推送）。
   app.post("/api/ops/conversations/:id/uploads", async (request, reply) => {
     const params = request.params as { id: string };
@@ -914,13 +925,13 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "upload body must be binary" });
       return;
     }
-    const validation = validateUpload({ filename, mime: declaredMime, bytes });
+    const validation = validateUpload({ filename, mime: declaredMime, bytes, maxBytes: ctx.config.agent.uploadMaxBytes });
     if (!validation.ok) {
       sendJson(reply, 400, { error: validation.error });
       return;
     }
-    if (ctx.store.listConversationUploads(conversationId).length >= maxUploadsPerConversation) {
-      sendJson(reply, 409, { error: "too many uploads for this conversation" });
+    if (ctx.store.listConversationUploads(conversationId).length >= ctx.config.agent.uploadMaxPerConversation) {
+      sendJson(reply, 409, { error: `too many uploads for this conversation (max ${ctx.config.agent.uploadMaxPerConversation})` });
       return;
     }
     const uploadId = randomUUID();

@@ -3,11 +3,13 @@
  * 避免前后端各写一份限额导致行为漂移。
  */
 
-/** 单文件上限，与 read_file 的 maxReadBytes 对齐（256 KiB）。 */
+/** 单文件默认上限，与 read_file 的 maxReadBytes 对齐（256 KiB）。 */
 export const maxUploadBytes = 256 << 10;
-/** 单条消息最多附带的附件数。 */
+/** 单文件上传上限的硬顶；Fastify bodyLimit 用它，运行时的实际值由配置决定。 */
+export const maxUploadBytesCeiling = 1 << 20;
+/** 单条消息默认最多附带的附件数。 */
 export const maxUploadsPerMessage = 10;
-/** 单个会话累计保留的附件数；已发送附件仍占额度，留足余量避免误伤多轮协作。 */
+/** 单个会话默认累计保留的附件数；已发送附件仍占额度，留足余量避免误伤多轮协作。 */
 export const maxUploadsPerConversation = 100;
 /** 专用 content-type：避开 application/json（API body）与 application/zip（技能包）。 */
 export const uploadContentType = "application/x-corvex-upload";

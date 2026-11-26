@@ -18,6 +18,7 @@ function config(root: string): CorvexConfig {
       responseLanguage: "en", baseUrl: "https://api.openai.com/v1", model: "test", apiKey: "",
       requestTimeout: 1000, sessionTimeout: 1000, maxOutputTokens: 4096, dailyTokenBudget: 0,
       webEnabled: false, webBlockedHosts: [], skillPaths: [],
+      uploadMaxBytes: 256 << 10, uploadMaxPerMessage: 10, uploadMaxPerConversation: 100,
     },
   };
 }
@@ -54,7 +55,8 @@ describe("upload API", () => {
     });
     const id = created.conversationId;
 
-    const application = new CorvexServer(config(temp), store);
+    const runtimeConfig = config(temp);
+    const application = new CorvexServer(runtimeConfig, store);
     const controller = new AbortController();
     const running = application.run(controller.signal);
     try {
@@ -64,6 +66,10 @@ describe("upload API", () => {
         catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
       }
       expect(base).not.toBe("");
+      const limits = await fetch(`${base}/api/ops/me/upload-limits`, { headers: ownerHeaders });
+      expect(limits.status).toBe(200);
+      expect((await limits.json()) as Record<string, unknown>).toMatchObject({ maxBytes: 262144, maxPerMessage: 10 });
+
       const url = `${base}/api/ops/conversations/${id}/uploads?filename=notes.txt&mime=text/plain`;
       const post = (headers: Record<string, string>, body: Buffer, contentType = uploadContentType) =>
         fetch(url, { method: "POST", headers: { ...headers, "content-type": contentType }, body });
@@ -90,6 +96,12 @@ describe("upload API", () => {
       expect(removed.status).toBe(200);
       expect(store.getConversationUpload(upload.id)).toBeUndefined();
       expect(store.listConversationUploads(id)).toHaveLength(0);
+
+      // 运行时设置改小后立即生效：Server 持有同一 config 对象引用。
+      runtimeConfig.agent.uploadMaxBytes = 4;
+      const tooLarge = await post(ownerHeaders, Buffer.from("hello"));
+      expect(tooLarge.status).toBe(400);
+      expect(((await tooLarge.json()) as { error: string }).error).toContain("4-byte limit");
     } finally {
       controller.abort();
       await running;

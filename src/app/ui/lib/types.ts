@@ -207,6 +207,9 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "skill_paths", kind: "list", item: "path", labelKey: "settingsSkillPaths", hintKey: "settingsSkillPathsHint" },
       { key: "project_agents_md", kind: "boolean", defaultValue: true, labelKey: "settingsProjectAgentsMd", hintKey: "settingsProjectAgentsMdHint" },
       { key: "project_agents_md_max_bytes", kind: "number", min: 1024, max: 262144, step: 1024, unit: "byte", defaultValue: 32 * 1024, labelKey: "settingsProjectAgentsMdMaxBytes", hintKey: "settingsProjectAgentsMdMaxBytesHint" },
+      { key: "upload_max_bytes", kind: "number", min: 1024, max: 1048576, step: 1024, unit: "byte", defaultValue: 256 * 1024, labelKey: "settingsUploadMaxBytes", hintKey: "settingsUploadMaxBytesHint" },
+      { key: "upload_max_per_message", kind: "number", min: 1, max: 50, step: 1, defaultValue: 10, labelKey: "settingsUploadMaxPerMessage", hintKey: "settingsUploadMaxPerMessageHint" },
+      { key: "upload_max_per_conversation", kind: "number", min: 1, max: 1000, step: 10, defaultValue: 100, labelKey: "settingsUploadMaxPerConversation", hintKey: "settingsUploadMaxPerConversationHint" },
     ],
   },
   {

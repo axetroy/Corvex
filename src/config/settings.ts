@@ -91,6 +91,10 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "agent_response_stall_timeout", section: "agent", field: "responseStallTimeout", type: "number", min: 0, max: 3_600, scale: 1_000 },
   // Skill 根目录：影响 read_file 的允许根，仅在下一轮 Session 创建时读取。
   { key: "skill_paths", section: "agent", field: "skillPaths", type: "list", item: "path" },
+  // 上传附件限额：Server 每次上传时读取，改后立即生效；Fastify bodyLimit 用硬顶兜底。
+  { key: "upload_max_bytes", section: "agent", field: "uploadMaxBytes", type: "number", min: 1_024, max: 1 << 20 },
+  { key: "upload_max_per_message", section: "agent", field: "uploadMaxPerMessage", type: "number", min: 1, max: 50 },
+  { key: "upload_max_per_conversation", section: "agent", field: "uploadMaxPerConversation", type: "number", min: 1, max: 1_000 },
   // GitLab 连接：Server 每次请求时读取。
   // 留空表示尚未配置 GitLab；与 config 层一致，只在非空时校验 URL。
   { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500, allowEmpty: true },

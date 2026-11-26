@@ -8,7 +8,7 @@ import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
-import { maxUploadBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
+import { maxUploadBytesCeiling, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
@@ -284,6 +284,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   /** 已上传、等待随下一条消息发送的附件；切换会话时清空，避免串到别的对话。 */
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  /** 服务端运行时限额；拉取失败时退回默认常量，避免阻塞输入框。 */
+  const [uploadLimits, setUploadLimits] = useState({ maxBytes: maxUploadBytesCeiling, maxPerMessage: maxUploadsPerMessage });
   const [draggingAttachment, setDraggingAttachment] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
@@ -399,6 +401,17 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     const timer = window.setInterval(() => setPollToken((value) => value + 1), 2_500);
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchJson<{ maxBytes: number; maxPerMessage: number }>("/api/ops/me/upload-limits", copy)
+      .then((limits) => {
+        if (!active) return;
+        setUploadLimits({ maxBytes: limits.maxBytes, maxPerMessage: limits.maxPerMessage });
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [copy]);
 
   // 「已送达」只短暂提示，避免长期占据界面；「等待模型处理」保留到送达为止。
   useEffect(() => {
@@ -628,8 +641,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   function uploadErrorToCopy(error: string): string {
-    if (error.includes("size limit") || error.includes("too large")) return copy.attachmentTooLarge;
-    if (error.includes("unsupported") || error.includes("UTF-8") || error.includes("binary") || error.includes("filename")) {
+    if (error.includes("exceeds") || error.includes("size limit") || error.includes("too large")) return copy.attachmentTooLarge;
+    if (["unsupported", "UTF-8", "binary", "filename", "executable", "script", "image", "PDF", "archive"]
+      .some((token) => error.toLowerCase().includes(token.toLowerCase()))) {
       return copy.attachmentUnsupported;
     }
     return error;
@@ -637,7 +651,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   async function uploadFiles(files: readonly File[]) {
     if (showCreate || !currentConversation || files.length === 0) return;
-    const room = maxUploadsPerMessage - attachments.length;
+    const room = uploadLimits.maxPerMessage - attachments.length;
     if (room <= 0) {
       setError(copy.attachmentLimit);
       return;
@@ -646,7 +660,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setError("");
     try {
       for (const file of files.slice(0, room)) {
-        if (file.size === 0 || file.size > maxUploadBytes) throw new Error(copy.attachmentTooLarge);
+        // 客户端只按硬顶预检；实际限额由服务端运行时设置决定，超限会返回明确错误。
+        if (file.size === 0 || file.size > uploadLimits.maxBytes) throw new Error(copy.attachmentTooLarge);
         if (!isTextAttachment(file)) throw new Error(copy.attachmentUnsupported);
         const created = await sendBinary<PendingAttachment>(
           uploadUrl(currentConversation.id, file.name, file.type || "text/plain"),
@@ -1453,7 +1468,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               className="conversation-attach-button"
                               aria-label={copy.attachFile}
                               title={copy.attachFileHint}
-                              disabled={busy || uploadingAttachment || attachments.length >= maxUploadsPerMessage}
+                              disabled={busy || uploadingAttachment || attachments.length >= uploadLimits.maxPerMessage}
                               onClick={() => attachmentInputRef.current?.click()}
                             >
                               <AttachIcon />

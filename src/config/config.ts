@@ -71,6 +71,12 @@ export interface CorvexConfig {
     /** 单任务输出 token 软上限，达到后要求收尾；0 表示不限制。 */
     taskMaxOutputTokens: number;
     skillPaths: string[];
+    /** 单个上传附件的字节上限；可由运维台覆盖。 */
+    uploadMaxBytes: number;
+    /** 单条消息最多附带的附件数。 */
+    uploadMaxPerMessage: number;
+    /** 单个会话累计保留的附件数。 */
+    uploadMaxPerConversation: number;
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
     /** 单次请求输入 token 上限；0 表示由上下文窗口与输出预留推导。 */
@@ -175,6 +181,9 @@ const defaults: CorvexConfig = {
     taskMaxRounds: 0,
     taskMaxOutputTokens: 0,
     skillPaths: [],
+    uploadMaxBytes: 256 << 10,
+    uploadMaxPerMessage: 10,
+    uploadMaxPerConversation: 100,
     contextWindow: 131_072,
     maxInputTokens: 0,
     historyTokenBudget: 24_000,
@@ -437,6 +446,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       taskMaxOutputTokens: number(agent.task_max_output_tokens, defaults.agent.taskMaxOutputTokens),
       reasoningEnabled: boolean(agent.reasoning_enabled, defaults.agent.reasoningEnabled),
       skillPaths: stringArray(agent.skill_paths, defaults.agent.skillPaths),
+      uploadMaxBytes: number(agent.upload_max_bytes, defaults.agent.uploadMaxBytes),
+      uploadMaxPerMessage: number(agent.upload_max_per_message, defaults.agent.uploadMaxPerMessage),
+      uploadMaxPerConversation: number(agent.upload_max_per_conversation, defaults.agent.uploadMaxPerConversation),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),
       historyTokenBudget: number(agent.history_token_budget, defaults.agent.historyTokenBudget),

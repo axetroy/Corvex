@@ -3,9 +3,10 @@
 import { dirname, resolve } from "node:path";
 import type { ConversationUpload, ResponseLanguage } from "../model.js";
 import { redactSensitiveText } from "../redact.js";
-import { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "../upload-constants.js";
+import { maxUploadBytes, maxUploadBytesCeiling, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "../upload-constants.js";
+import { detectUploadKind } from "./upload-magic.js";
 
-export { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
+export { maxUploadBytes, maxUploadBytesCeiling, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
 
 /** 首版只接受纯文本 MIME；二进制/图片/PDF 留到 P2。 */
 const allowedMime = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
@@ -72,7 +73,10 @@ export function validateUpload(input: {
   filename: string;
   mime: string;
   bytes: Buffer;
+  /** 由运行时设置决定；省略时用默认值，便于单测与内部调用。 */
+  maxBytes?: number;
 }): UploadValidation {
+  const maxBytes = input.maxBytes ?? maxUploadBytes;
   const mime = input.mime.trim().toLowerCase();
   if (!allowedMime.has(mime)) return { ok: false, error: "unsupported upload content type" };
   const filename = sanitizeUploadFilename(input.filename);
@@ -83,13 +87,18 @@ export function validateUpload(input: {
     return { ok: false, error: "executable/script filenames are not allowed" };
   }
   if (input.bytes.length === 0) return { ok: false, error: "upload is empty" };
-  if (input.bytes.length > maxUploadBytes) return { ok: false, error: "upload exceeds the size limit" };
-  if (input.bytes.includes(0)) return { ok: false, error: "binary content is not allowed" };
-  // TextDecoder 的 fatal 模式拒绝非法 UTF-8 字节序列。
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(input.bytes);
-  } catch {
-    return { ok: false, error: "content is not valid UTF-8" };
+  if (input.bytes.length > maxBytes) return { ok: false, error: `upload exceeds the ${maxBytes}-byte limit` };
+  // 魔数优先于扩展名与声明的 MIME：伪装的脚本/图片/压缩包一律拒绝。
+  const kind = detectUploadKind(input.bytes);
+  if (kind !== "text") {
+    const messages: Record<Exclude<typeof kind, "text">, string> = {
+      image: "image uploads are not supported yet",
+      pdf: "PDF uploads are not supported yet",
+      archive: "archive uploads are not supported",
+      executable: "executable or script content is not allowed",
+      binary: "binary content is not allowed",
+    };
+    return { ok: false, error: messages[kind] };
   }
   return { ok: true };
 }
