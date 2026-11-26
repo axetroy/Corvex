@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Popconfirm, Popover, Table, Tag, Typography } from "antd";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Alert, Button, Popconfirm, Popover, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, Locale } from "../lib/i18n.js";
@@ -13,7 +13,17 @@ interface Props {
   locale: Locale;
 }
 
-/** 计划任务管理页：查看任务、下次运行、最近记录，并可暂停或删除。新建主要通过在对话里用自然语言创建。 */
+/** 一张任务卡片里的「标签 + 值」，让密集的元数据有稳定的两列基线。 */
+function MetaItem({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="scheduled-task-meta-item">
+      <span className="scheduled-task-meta-label">{label}</span>
+      <span className="scheduled-task-meta-value">{children}</span>
+    </div>
+  );
+}
+
+/** 计划任务管理页：卡片式布局，查看任务、下次运行、最近记录，并可暂停或删除。新建主要通过在对话里用自然语言创建。 */
 export function ScheduledTasksPage({ copy, locale }: Props) {
   const [tasks, setTasks] = useState<ScheduledTask[]>();
   const [runs, setRuns] = useState<Record<string, ScheduledTaskRun[]>>({});
@@ -70,104 +80,97 @@ export function ScheduledTasksPage({ copy, locale }: Props) {
       <PageHeading title={copy.scheduledTaskTitle} description={copy.scheduledTaskHint} />
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
       <Panel title={copy.scheduledTaskListTitle}>
-        <Table
-          rowKey="id"
-          size="small"
-          pagination={false}
-          dataSource={tasks}
-          locale={{ emptyText: copy.scheduledTaskEmpty }}
-          columns={[
-            { title: copy.scheduledTaskColumnId, dataIndex: "id", key: "id", render: (id: string) => <Typography.Text code>{id}</Typography.Text> },
-            {
-              title: copy.scheduledTaskColumnPrompt,
-              dataIndex: "prompt",
-              key: "prompt",
-              render: (prompt: string) => <span title={prompt}>{prompt.replace(/\s+/g, " ").slice(0, 100)}</span>,
-            },
-            {
-              title: copy.scheduledTaskColumnSchedule,
-              key: "schedule",
-              render: (_: unknown, task: ScheduledTask) => (
-                <span>
-                  <Typography.Text code>{task.kind === "cron" ? task.cron : task.runAt}</Typography.Text>
-                  {task.timezone && task.timezone !== "UTC" ? (
-                    <Tag className="scheduled-task-tz">{task.timezone}</Tag>
-                  ) : null}
+        {tasks.length === 0 ? (
+          <div className="scheduled-task-empty">{copy.scheduledTaskEmpty}</div>
+        ) : (
+          <div className="scheduled-task-grid">
+            {tasks.map((task) => {
+              const history = runs[task.id] ?? [];
+              const latest = history[0];
+              const lastRun = latest ? (
+                <span className="scheduled-task-last-run" title={latest.error || undefined}>
+                  {formatDate(latest.finishedAt, copy, locale)} · {latest.status}
                 </span>
-              ),
-            },
-            {
-              title: copy.scheduledTaskColumnNext,
-              dataIndex: "nextRunAt",
-              key: "nextRunAt",
-              render: (value: string) => formatDate(value, copy, locale),
-            },
-            {
-              title: copy.scheduledTaskColumnStatus,
-              key: "status",
-              render: (_: unknown, task: ScheduledTask) => (
-                <Tag color={task.status === "active" ? "success" : task.status === "paused" ? "warning" : "default"}>
-                  {task.status === "active" ? copy.scheduledTaskActive : task.status === "paused" ? copy.scheduledTaskPaused : copy.scheduledTaskDone}
-                </Tag>
-              ),
-            },
-            {
-              title: copy.scheduledTaskColumnLastRun,
-              key: "lastRun",
-              render: (_: unknown, task: ScheduledTask) => {
-                const history = runs[task.id] ?? [];
-                const latest = history[0];
-                if (!latest) return copy.none;
-                const label = <span className="scheduled-task-last-run">{formatDate(latest.finishedAt, copy, locale)} · {latest.status}</span>;
-                if (history.length <= 1) return <span title={latest.error}>{label}</span>;
-                return (
-                  <Popover
-                    trigger="click"
-                    title={copy.scheduledTaskHistoryTitle}
-                    content={
-                      <div className="scheduled-task-history">
-                        {history.map((run) => (
-                          <div className="scheduled-task-history-row" key={run.id}>
-                            <span>{formatDate(run.finishedAt, copy, locale)}</span>
-                            <span>{run.status}</span>
-                            <span title={run.error}>{run.turnId || copy.none}</span>
-                          </div>
-                        ))}
-                      </div>
-                    }
-                  >
-                    {label}
-                  </Popover>
-                );
-              },
-            },
-            {
-              title: copy.scheduledTaskColumnActions,
-              key: "actions",
-              render: (_: unknown, task: ScheduledTask) => (
-                <div className="scheduled-task-actions">
-                  {task.status === "active" ? (
-                    <>
-                      <Popconfirm title={copy.scheduledTaskRunConfirm} onConfirm={() => void act(task, "run")}>
-                        <Button size="small" loading={busy === task.id}>{copy.scheduledTaskRunNow}</Button>
-                      </Popconfirm>
-                      <Popconfirm title={copy.scheduledTaskCancelConfirm} onConfirm={() => void act(task, "cancel")}>
-                        <Button size="small" loading={busy === task.id}>{copy.scheduledTaskPause}</Button>
-                      </Popconfirm>
-                    </>
-                  ) : (
-                    <Button size="small" loading={busy === task.id} onClick={() => void act(task, "resume")}>
-                      {copy.scheduledTaskResume}
-                    </Button>
-                  )}
-                  <Popconfirm title={copy.scheduledTaskDeleteConfirm} onConfirm={() => void act(task, "delete")}>
-                    <Button size="small" danger loading={busy === task.id}>{copy.scheduledTaskDelete}</Button>
-                  </Popconfirm>
-                </div>
-              ),
-            },
-          ]}
-        />
+              ) : (
+                <span>{copy.none}</span>
+              );
+              const statusLabel = task.status === "active"
+                ? copy.scheduledTaskActive
+                : task.status === "paused"
+                  ? copy.scheduledTaskPaused
+                  : copy.scheduledTaskDone;
+              return (
+                <article className="scheduled-task-card" key={task.id}>
+                  <div className="scheduled-task-card-head">
+                    <div className="scheduled-task-card-main">
+                      <span className="scheduled-task-meta-label">{copy.scheduledTaskColumnPrompt}</span>
+                      <span className="scheduled-task-card-title" title={task.prompt}>
+                        {task.prompt.replace(/\s+/g, " ")}
+                      </span>
+                    </div>
+                    <Tag className="scheduled-task-status" title={copy.scheduledTaskColumnStatus} color={task.status === "active" ? "success" : task.status === "paused" ? "warning" : "default"}>
+                      {statusLabel}
+                    </Tag>
+                  </div>
+                  <div className="scheduled-task-meta">
+                    <MetaItem label={copy.scheduledTaskColumnId}>
+                      <Typography.Text code className="scheduled-task-id" title={task.id}>{task.id.slice(0, 8)}</Typography.Text>
+                    </MetaItem>
+                    <MetaItem label={copy.scheduledTaskColumnSchedule}>
+                      <Typography.Text code>{task.kind === "cron" ? task.cron : task.runAt}</Typography.Text>
+                      {task.timezone && task.timezone !== "UTC" ? (
+                        <Tag className="scheduled-task-tz">{task.timezone}</Tag>
+                      ) : null}
+                    </MetaItem>
+                    <MetaItem label={copy.scheduledTaskColumnNext}>
+                      {formatDate(task.nextRunAt, copy, locale)}
+                    </MetaItem>
+                    <MetaItem label={copy.scheduledTaskColumnLastRun}>
+                      {history.length > 1 ? (
+                        <Popover
+                          trigger="click"
+                          title={copy.scheduledTaskHistoryTitle}
+                          content={
+                            <div className="scheduled-task-history">
+                              {history.map((run) => (
+                                <div className="scheduled-task-history-row" key={run.id}>
+                                  <span>{formatDate(run.finishedAt, copy, locale)}</span>
+                                  <span>{run.status}</span>
+                                  <span title={run.error}>{run.turnId || copy.none}</span>
+                                </div>
+                              ))}
+                            </div>
+                          }
+                        >
+                          {lastRun}
+                        </Popover>
+                      ) : lastRun}
+                    </MetaItem>
+                  </div>
+                  <div className="scheduled-task-actions" aria-label={copy.scheduledTaskColumnActions}>
+                    {task.status === "active" ? (
+                      <>
+                        <Popconfirm title={copy.scheduledTaskRunConfirm} onConfirm={() => void act(task, "run")}>
+                          <Button size="small" loading={busy === task.id}>{copy.scheduledTaskRunNow}</Button>
+                        </Popconfirm>
+                        <Popconfirm title={copy.scheduledTaskCancelConfirm} onConfirm={() => void act(task, "cancel")}>
+                          <Button size="small" loading={busy === task.id}>{copy.scheduledTaskPause}</Button>
+                        </Popconfirm>
+                      </>
+                    ) : (
+                      <Button size="small" loading={busy === task.id} onClick={() => void act(task, "resume")}>
+                        {copy.scheduledTaskResume}
+                      </Button>
+                    )}
+                    <Popconfirm title={copy.scheduledTaskDeleteConfirm} onConfirm={() => void act(task, "delete")}>
+                      <Button size="small" danger loading={busy === task.id}>{copy.scheduledTaskDelete}</Button>
+                    </Popconfirm>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </Panel>
     </div>
   );

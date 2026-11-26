@@ -1,12 +1,99 @@
-/* 计划任务管理页：表格配色沿用运维台统一变量。 */
+/* 计划任务管理页：卡片网格替代窄表格，信息分组留白，操作区独立沉底。 */
 .scheduled-tasks-page {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.scheduled-tasks-page .ant-table-cell {
+.scheduled-task-empty {
+  padding: 32px 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.scheduled-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.scheduled-task-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.scheduled-task-card-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scheduled-task-card-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 任务正文优先展示：最多两行，完整内容交给 title。 */
+.scheduled-task-card-title {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.scheduled-task-status {
+  flex: none;
+  margin: 0;
+}
+
+.scheduled-task-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.scheduled-task-meta-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.scheduled-task-meta-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.scheduled-task-meta-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-task-id {
+  font-size: 11px;
 }
 
 .scheduled-task-last-run {
@@ -35,11 +122,20 @@
 }
 
 .scheduled-task-tz {
-  margin-left: 6px;
+  margin-left: 0;
   font-size: 10px;
 }
 
 .scheduled-task-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+@media (max-width: 560px) {
+  .scheduled-task-grid {
+    grid-template-columns: 1fr;
+  }
 }
