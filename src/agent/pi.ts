@@ -553,6 +553,8 @@ export class PiAgent {
     // 任意模型活动（响应头、正文、思考、工具调用）都会重置看门狗计时。
     let lastActivityAt = performance.now();
     const markActivity = () => { lastActivityAt = performance.now(); };
+    // 工具执行期间模型本就在等待：工具自带 timeout，不能被"模型无输出"看门狗抢先中止。
+    let runningToolCount = 0;
     let activeModelCall: {
       traceId: number;
       startedAt: number;
@@ -1027,6 +1029,8 @@ export class PiAgent {
     } | undefined;
     const unsubscribe = session.subscribe((event) => {
       // 只在真正产出内容时重置看门狗：失败响应与 SDK 重试不算「模型有输出」。
+      if (event.type === "tool_execution_start") runningToolCount += 1;
+      if (event.type === "tool_execution_end") runningToolCount = Math.max(0, runningToolCount - 1);
       if (event.type === "message_update" || event.type === "tool_execution_start" ||
           event.type === "tool_execution_end" || event.type === "compaction_start" ||
           event.type === "compaction_end") {
@@ -1308,6 +1312,11 @@ export class PiAgent {
     let lastNoticeSecond = 0;
     const stallTimer = stallMs > 0
       ? setInterval(() => {
+          // 有工具在跑时不判 stall：模型的"沉默"是等工具结果，而工具自身有 timeout。
+          if (runningToolCount > 0) {
+            markActivity();
+            return;
+          }
           const idleMs = performance.now() - lastActivityAt;
           if (idleMs >= stallMs) {
             stallController.abort(new Error(config.agent.responseLanguage === "zh-CN"

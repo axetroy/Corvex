@@ -138,4 +138,88 @@ describe("PiAgent run_command integration", () => {
     const audit = realStore.listAuditEvents(20);
     expect(audit.some((entry) => entry.action === "command_execution" && entry.result.includes("EXEC_OK"))).toBe(true);
   });
+
+  it("does not apply the response stall watchdog while a tool is running", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-pi-stall-tool-"));
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      request.on("data", () => undefined);
+      request.on("end", () => {
+        const current = requestCount++;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        if (current === 0) {
+          // 模型调用一条耗时超过 stall 阈值、但低于工具 timeout 的命令。
+          response.write(`data: ${JSON.stringify({
+            id: "c1", object: "chat.completion.chunk", created: 1, model: "test-model",
+            choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call-sleep", type: "function", function: {
+              name: "run_command", arguments: JSON.stringify({ command: "sleep 1.2 && echo DONE" }),
+            } }] }, finish_reason: null }],
+          })}\n\n`);
+          response.write(`data: ${JSON.stringify({
+            id: "c1", object: "chat.completion.chunk", created: 1, model: "test-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+            usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+          })}\n\n`);
+        } else {
+          response.write(`data: ${JSON.stringify({
+            id: "c2", object: "chat.completion.chunk", created: 1, model: "test-model",
+            choices: [{ index: 0, delta: { role: "assistant", content: "Done." }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 30, completion_tokens: 2, total_tokens: 32 },
+          })}\n\n`);
+        }
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no address");
+
+    const config = {
+      operations: { username: "", password: "" },
+      gitlab: { baseUrl: "https://gitlab.example.com" },
+      storage: { root: directory, database: join(directory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        apiKey: "k", requestTimeout: 5_000, sessionTimeout: 10_000, maxOutputTokens: 256,
+        responseStallTimeout: 500, // 0.5s：命令执行 1.2s，若看门狗不暂停就会被误判。
+        dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [], webSearchEnabled: false,
+        webSearchMaxQueries: 5, skillPaths: [], contextWindow: 32_768, maxInputTokens: 0,
+        historyTokenBudget: 8_000, turnToolResultBytes: 64 << 10, compactionReserveTokens: 0,
+        compactionKeepRecentTokens: 4_000, summaryEnabled: false, reasoningEnabled: false,
+        contextInspectEnabled: false,
+      },
+      execution: {
+        enabled: true,
+        backend: "local",
+        sandbox: { runtime: "docker", image: "", socket: "", memory: "2g", cpus: 1, pidsLimit: 256, tmpfsSizeMb: 512, logMaxSizeMb: 4, logMaxFile: 2, network: "bridge", readOnlyMounts: [], timeoutMs: 10_000, maxOutputBytes: 4_096 },
+        local: { allowUnsafe: true, timeoutMs: 10_000, maxOutputBytes: 4_096 },
+      },
+    } as unknown as CorvexConfig;
+
+    const realStore = await AppStore.open(":memory:");
+    store = realStore;
+    const conversation = realStore.createConversation({
+      ownerUserId: "u1", projectId: 7, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 1, request: "run a slow command",
+    });
+    const agent = new PiAgent(config, realStore);
+    const result = await agent.generate(
+      {
+        taskType: "conversation", conversationMode: "gitlab", conversationProjectId: 7,
+        conversationId: conversation.conversationId, turnId: conversation.turnId, actorId: 1,
+        systemPrompt: "Be brief.", userPrompt: "Run the slow command.",
+      },
+      directory,
+      undefined,
+      {
+        scope: { turnId: conversation.turnId }, attempt: 1, taskType: "conversation",
+        workspace: { projectId: 7, workspaceName: `conversation-${conversation.conversationId}`, path: directory, headSha: "a".repeat(40) },
+      },
+    );
+    // 工具执行 1.2s > stall 0.5s，但不应被 stall 看门狗中止。
+    expect(result.content).toBe("Done.");
+  }, 15_000);
 });
