@@ -7,6 +7,7 @@ import type { CorvexConfig } from "../../src/config/config.js";
 import { PiAgent } from "../../src/agent/pi.js";
 import { AppStore } from "../../src/store.js";
 import type { ConversationStreamTool } from "../../src/model.js";
+import type { ExecDelta } from "../../src/agent/execution/tool.js";
 
 describe("PiAgent run_command integration", () => {
   let directory = "";
@@ -98,12 +99,14 @@ describe("PiAgent run_command integration", () => {
     });
     const agent = new PiAgent(config, realStore);
     const toolUpdates: ConversationStreamTool[] = [];
+    const execDeltas: ExecDelta[] = [];
     const result = await agent.generate(
       {
         taskType: "conversation", conversationMode: "gitlab", conversationProjectId: 7,
         conversationId: conversation.conversationId, turnId: conversation.turnId, actorId: 1,
         systemPrompt: "Be brief.", userPrompt: "Run the command.",
         onToolDelta: (tool) => toolUpdates.push(tool),
+        onExecDelta: (delta) => execDeltas.push(delta),
       },
       directory,
       undefined,
@@ -124,6 +127,13 @@ describe("PiAgent run_command integration", () => {
     expect(runCommands.length).toBeGreaterThan(0);
     // 工具事件按调用 ID 合并终态：最后一条应为成功。
     expect(runCommands.at(-1)?.status).toBe("succeeded");
+    // exec 链路：输出增量按 execId（即工具调用 ID）上抛，并以 done 终态收尾。
+    const execId = execDeltas[0]?.execId;
+    expect(execId).toBeTruthy();
+    expect(execDeltas.every((delta) => delta.execId === execId)).toBe(true);
+    expect(execDeltas.some((delta) => delta.stream === "stdout" && delta.chunk.includes("EXEC_OK"))).toBe(true);
+    const terminal = execDeltas.find((delta) => delta.done);
+    expect(terminal).toMatchObject({ done: true, exitCode: 0, aborted: false });
     // 审计记录应包含本次命令执行。
     const audit = realStore.listAuditEvents(20);
     expect(audit.some((entry) => entry.action === "command_execution" && entry.result.includes("EXEC_OK"))).toBe(true);
