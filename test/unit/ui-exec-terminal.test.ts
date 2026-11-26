@@ -5,10 +5,10 @@ describe("operations UI exec terminal", () => {
   it("formats elapsed time for a running command", () => {
     expect(formatExecDuration(0)).toBe("0ms");
     expect(formatExecDuration(850)).toBe("850ms");
-    expect(formatExecDuration(1_200)).toBe("1.2s");
-    expect(formatExecDuration(59_400)).toBe("59.4s");
-    expect(formatExecDuration(65_000)).toBe("1m 5s");
-    expect(formatExecDuration(3_660_000)).toBe("1h 1m");
+    expect(formatExecDuration(1_200)).toBe("1200ms");
+    expect(formatExecDuration(59_400)).toBe("59400ms");
+    expect(formatExecDuration(65_000)).toBe("65000ms");
+    expect(formatExecDuration(3_660_000)).toBe("3660000ms");
     expect(formatExecDuration(Number.NaN)).toBe("0ms");
   });
 

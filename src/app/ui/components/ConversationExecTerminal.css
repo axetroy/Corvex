@@ -70,7 +70,7 @@
 
 .conversation-exec-duration {
   display: inline-flex;
-  min-width: 62px;
+  min-width: 76px;
   align-items: center;
   justify-content: center;
   gap: 3px;
