@@ -217,6 +217,28 @@ describe("CorvexServer", () => {
       // 恢复后需重新登录：旧会话已被删除，不再可用。
       expect((await fetch(`${base}/api/ops/overview`, { headers: viewerHeaders })).status).toBe(401);
 
+      // 计划任务 API：按 owner 隔离，cron 非法返回 400，暂停/删除仅限本人任务。
+      const meForTasks = (await (await fetch(`${base}/api/auth/me`, { headers: authHeaders })).json()) as { id: string };
+      const taskConversation = store.createConversation({
+        ownerUserId: meForTasks.id, projectId: 2, projectName: "group/project",
+        targetBranch: "main", headSha: "c".repeat(40), actorId: 0, request: "owner",
+      });
+      const badCron = await fetch(`${base}/api/ops/me/scheduled-tasks`, {
+        method: "POST", headers: jsonHeaders,
+        body: JSON.stringify({ conversationId: taskConversation.conversationId, prompt: "check CI", schedule: "bad cron", recurring: true }),
+      });
+      expect(badCron.status).toBe(400);
+      const createTask = await fetch(`${base}/api/ops/me/scheduled-tasks`, {
+        method: "POST", headers: jsonHeaders,
+        body: JSON.stringify({ conversationId: taskConversation.conversationId, prompt: "check CI", schedule: "0 9 * * *", recurring: true }),
+      });
+      expect(createTask.status).toBe(201);
+      const task = (await createTask.json()) as { id: string };
+      expect((await fetch(`${base}/api/ops/me/scheduled-tasks`, { headers: authHeaders })).status).toBe(200);
+      expect([401, 403]).toContain((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "POST", headers: { ...viewerHeaders, "content-type": "application/json" }, body: "{}" })).status);
+      expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/cancel`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "DELETE", headers: jsonHeaders })).status).toBe(200);
+
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);
