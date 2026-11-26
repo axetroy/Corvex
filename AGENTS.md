@@ -50,6 +50,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - 页面有 nonce CSP：禁止静态 `Modal.confirm` / `message.*` / `notification.*`，改用 `Modal.useModal()` 或 `App.useApp()` 并把 contextHolder 渲染在页面内；动态 `<style>` 由 `src/app/ui/csp.ts` 盖章。
 - 布局：`.app-shell` 左侧栏 + 主内容区；会话列表在左栏；工作区用 `react-resizable-panels`，不要手写拖拽；布局状态存 `localStorage`。
 - 设置项 key 必须与 `runtimeSettingDefinitions` 完全一致（有测试校验）。运行时设置存 SQLite，配置文件只提供初始值。
+- 运行中执行中的插话属于当前轮次：带 `kind='interjection'` 的用户消息不生成顶层气泡，而是作为一段 `interjection` 过程条目插进该轮次时间线（实时 SSE 与刷新后的快照都要有）；历史插话由迁移按时间回填。
 
 ## 架构与安全不变量（不要为省事削弱）
 

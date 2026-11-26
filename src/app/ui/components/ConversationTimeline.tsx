@@ -20,6 +20,8 @@ export type ConversationTimelineSegment =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "text"; key: string; text: string }
   | { kind: "context"; key: string; text: string; count?: number }
+  /** 轮次运行期间用户的插话，和思考/工具调用按发生顺序排在同一条过程里。 */
+  | { kind: "interjection"; key: string; text: string }
   | { kind: "tool"; key: string; id: string; call: ConversationToolCall };
 
 /** 工具描述很长时按实际字宽均分开头与结尾，中间用省略号；完整文本留在 title。 */
@@ -169,6 +171,11 @@ export const ConversationTimeline = memo(function ConversationTimeline({
                 ×{segment.count}
               </span>
             ) : null}
+          </div>
+        ) : segment.kind === "interjection" ? (
+          <div className="conversation-interjection" key={segment.key}>
+            <span className="conversation-interjection-label">{copy.conversationInterjection}</span>
+            <span className="conversation-interjection-text">{segment.text}</span>
           </div>
         ) : segment.kind === "tool" && segment.call.name === "run_command" ? (
           !matchesFilter(segment) ? null : execs?.get(segment.id) ? (

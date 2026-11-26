@@ -1146,6 +1146,33 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 插话：和思考/工具调用同列在同一条过程里，用左侧强调色与正文区分。 */
+.conversation-interjection {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border-left: 2px solid var(--primary);
+  background: var(--primary-tint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.conversation-interjection-label {
+  flex: none;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.conversation-interjection-text {
+  min-width: 0;
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* 中间回复按正文直接展示，与最终回答保持同一套排版。 */
 .conversation-process-text {
   color: var(--conversation-ink);

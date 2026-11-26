@@ -859,7 +859,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       // 再次访问 GitLab。轮次刚好结束时 interject 返回 unavailable，自动降级为下一轮。
       if (activeTurnId && await ctx.conversations.interject(activeTurnId, message) === "steer") {
         try {
-          ctx.store.appendUserMessage(conversation.id, message);
+          ctx.store.appendUserMessage(conversation.id, message, activeTurnId);
           sendJson(reply, 202, {
             conversationId: conversation.id,
             turnId: activeTurnId,

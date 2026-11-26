@@ -557,8 +557,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onTool,
         onExec,
         onContext,
-        onInterjection: (_turnId, status) => {
+        onInterjection: (interjectionTurnId, status, text) => {
           setInterjectNotice(status);
+          // 插话属于当前轮次：插进同一条过程时间线，而不是另起一条用户消息。
+          const clean = text.trim();
+          if (clean) {
+            setTimelineByTurn((current) => {
+              const existing = current[interjectionTurnId] ?? [];
+              if (existing.some((segment) => segment.kind === "interjection" && segment.text === clean)) return current;
+              return {
+                ...current,
+                [interjectionTurnId]: [
+                  ...existing,
+                  { kind: "interjection", key: `interjection-${interjectionTurnId}-${existing.length}`, text: clean },
+                ],
+              };
+            });
+          }
           setPollToken((value) => value + 1);
         },
         onScheduledTaskCard: (card) => {
@@ -1038,7 +1053,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setFilesCollapsed((layout[filesPanelId] ?? 0) === 0);
   }
 
-  const transcriptMessages = (currentConversation?.messages ?? []).map((message) =>
+  // 插话显示在所属轮次的过程时间线里，不再作为顶层用户气泡出现，避免看起来像另开了一段对话。
+  const transcriptMessages = (currentConversation?.messages ?? [])
+    .filter((message) => message.kind !== "interjection")
+    .map((message) =>
     message.role === "assistant" && message.status === "running" && streamedReply?.turnId === message.turnId
       ? { ...message, content: streamedReply.text }
       : message,

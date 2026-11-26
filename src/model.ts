@@ -150,6 +150,7 @@ export type ConversationProcessEntry =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "context"; id: string; text: string }
+  | { kind: "interjection"; text: string }
   | { kind: "scheduleCard"; card: ScheduledTaskCard }
   | {
       kind: "tool";
@@ -172,6 +173,8 @@ export type ConversationProcessEntry =
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
+  /** 普通消息或运行中执行中的插话；插话不单独成轮，展示在所属轮次的过程里。 */
+  kind: "message" | "interjection";
   content: string;
   status: ConversationMessageStatus;
   /** 助手回复对应的轮次 ID；用户消息为空。 */
@@ -333,7 +336,7 @@ export type ConversationStreamEvent =
     }
   | { type: "context"; context: ConversationStreamContext }
   /** 插话状态：queued=已接收，等当前工具轮结束；delivered=已进入模型上下文。 */
-  | { type: "interjection"; turnId: string; status: "queued" | "delivered" }
+  | { type: "interjection"; turnId: string; status: "queued" | "delivered"; text: string }
   /** 计划任务工具的结构化结果，供对话里渲染可跳转的自定义卡片。 */
   | { type: "scheduled_task_card"; card: ScheduledTaskCard }
   /** 排队列表发生变化；只带数量，正文由详情接口按需拉取。 */

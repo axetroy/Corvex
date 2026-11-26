@@ -329,6 +329,9 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
     if (entry.kind === "context" && typeof entry.id === "string" && typeof entry.text === "string") {
       return [{ kind: "context", id: entry.id, text: entry.text }];
     }
+    if (entry.kind === "interjection" && typeof entry.text === "string") {
+      return [{ kind: "interjection", text: entry.text }];
+    }
     if (entry.kind === "scheduleCard") {
       const card = readStoredScheduleCard(entry.card);
       return card ? [{ kind: "scheduleCard", card }] : [];
@@ -1265,23 +1268,23 @@ export class AppStore {
     });
   }
 
-  /** 在运行中的轮次里追加一条用户补充消息；不创建新轮次，避免打断已固定的快照。 */
-  appendUserMessage(conversationId: string, content: string): void {
+  /** 在运行中的轮次里追加一条用户插话；不创建新轮次，避免打断已固定的快照。 */
+  appendUserMessage(conversationId: string, content: string, turnId: string): void {
     const request = content.trim();
     if (!request || request.length > 20_000) throw new Error("conversation message must be between 1 and 20000 characters");
     const exists = this.db.prepare("SELECT 1 FROM conversations WHERE id=?").get(conversationId);
     if (!exists) throw new Error(`conversation "${conversationId}" not found`);
     this.transaction(() => {
       const active = this.db.prepare(
-        "SELECT head_sha FROM conversation_turns WHERE conversation_id=? AND role='assistant' AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",
-      ).get(conversationId) as { head_sha: string } | undefined;
-      if (!active) throw new Error("conversation has no active turn");
+        "SELECT id,head_sha FROM conversation_turns WHERE conversation_id=? AND role='assistant' AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",
+      ).get(conversationId) as { id: string; head_sha: string } | undefined;
+      if (!active || active.id !== turnId) throw new Error("conversation has no matching active turn");
       const now = new Date().toISOString();
       this.db.prepare(
         `INSERT INTO conversation_messages
-           (id,conversation_id,role,content,status,turn_id,head_sha,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
-      ).run(randomUUID(), conversationId, "user", request, "completed", null, active.head_sha, now, now);
+           (id,conversation_id,role,kind,content,status,turn_id,head_sha,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ).run(randomUUID(), conversationId, "user", "interjection", request, "completed", turnId, active.head_sha, now, now);
       this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
     });
   }
@@ -2211,6 +2214,7 @@ export class AppStore {
     return {
       id: stringColumn(row, "id"),
       role,
+      kind: row.kind === "interjection" ? "interjection" : "message",
       content: stringColumn(row, "content"),
       status: status as ConversationMessage["status"],
       turnId,
@@ -2918,7 +2922,7 @@ export class AppStore {
       CREATE INDEX IF NOT EXISTS conversation_turns_queue_idx ON conversation_turns(status,created_at,id);
       CREATE TABLE IF NOT EXISTS conversation_messages (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, turn_id TEXT,
+        role TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'message', content TEXT NOT NULL, status TEXT NOT NULL, turn_id TEXT,
         head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_messages_order_idx ON conversation_messages(conversation_id,created_at,id);
@@ -3162,6 +3166,51 @@ export class AppStore {
     );
     if (!freshMessageColumns.has("suggestions")) {
       this.db.exec("ALTER TABLE conversation_messages ADD COLUMN suggestions TEXT NOT NULL DEFAULT '[]'");
+    }
+    // 插话与用户消息分开标记，旧库默认都是普通消息。
+    if (!freshMessageColumns.has("kind")) {
+      this.db.exec("ALTER TABLE conversation_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'");
+      // 回填历史插话：用户消息时间严格落在某个已开始轮次的起止时间之间，
+      // 而发起新轮次的用户消息与轮次 created_at 相同，不会被误判。
+      this.db.exec(`
+        UPDATE conversation_messages
+        SET kind = 'interjection',
+            turn_id = (
+              SELECT t.id FROM conversation_turns t
+              WHERE t.conversation_id = conversation_messages.conversation_id
+                AND t.role = 'assistant'
+                AND t.created_at < conversation_messages.created_at
+                AND conversation_messages.created_at <= t.updated_at
+              ORDER BY t.created_at DESC LIMIT 1
+            )
+        WHERE role = 'user' AND (turn_id IS NULL OR turn_id = '')
+          AND EXISTS (
+            SELECT 1 FROM conversation_turns t
+            WHERE t.conversation_id = conversation_messages.conversation_id
+              AND t.role = 'assistant'
+              AND t.created_at < conversation_messages.created_at
+              AND conversation_messages.created_at <= t.updated_at
+          )
+      `);
+      // 同步补一条过程条目，刷新后插话仍显示在所属轮次里，而不是顶层用户气泡。
+      const legacyInterjections = this.db.prepare(
+        "SELECT turn_id,content FROM conversation_messages WHERE kind='interjection' AND turn_id IS NOT NULL",
+      ).all() as { turn_id: string; content: string }[];
+      for (const item of legacyInterjections) {
+        const turn = this.db.prepare("SELECT process FROM conversation_turns WHERE id=?").get(item.turn_id) as
+          | { process: string }
+          | undefined;
+        let entries: ConversationProcessEntry[];
+        try {
+          entries = turn?.process ? readConversationProcess(turn.process) : [];
+        } catch {
+          entries = [];
+        }
+        if (entries.some((entry) => entry.kind === "interjection" && entry.text === item.content)) continue;
+        entries.push({ kind: "interjection", text: item.content });
+        this.db.prepare("UPDATE conversation_turns SET process=? WHERE id=?")
+          .run(JSON.stringify(sanitizeConversationProcess(entries)), item.turn_id);
+      }
     }
     // 对话现在只绑定仓库分支，移除旧版本按 Issue/MR 区分目标时留下的列。
     const conversationColumns = this.db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];

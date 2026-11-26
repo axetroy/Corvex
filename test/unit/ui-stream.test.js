@@ -66,13 +66,13 @@ describe("operations UI conversation stream", () => {
 
   it("parses interjection status events", () => {
     const parsed = parseSseFrames(
-      'data: {"type":"interjection","turnId":"t1","status":"queued"}\n\n' +
+      'data: {"type":"interjection","turnId":"t1","status":"queued","text":"补充一下"}\n\n' +
       'data: {"type":"interjection","turnId":"t1","status":"delivered"}\n\n' +
       'data: {"type":"interjection","turnId":"t1","status":"unknown"}\n\n',
     );
     expect(parsed.events).toEqual([
-      { type: "interjection", turnId: "t1", status: "queued" },
-      { type: "interjection", turnId: "t1", status: "delivered" },
+      { type: "interjection", turnId: "t1", status: "queued", text: "补充一下" },
+      { type: "interjection", turnId: "t1", status: "delivered", text: "" },
     ]);
   });
 

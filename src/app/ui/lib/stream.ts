@@ -54,7 +54,12 @@ export function parseSseFrames(buffer: string): {
       });
     } else if (event.type === "interjection" && typeof event.turnId === "string" &&
       (event.status === "queued" || event.status === "delivered")) {
-      events.push({ type: "interjection", turnId: event.turnId, status: event.status });
+      events.push({
+        type: "interjection",
+        turnId: event.turnId,
+        status: event.status,
+        text: typeof event.text === "string" ? event.text : "",
+      });
     } else if (event.type === "scheduled_task_card" && event.card && typeof event.card === "object" && !Array.isArray(event.card)) {
       // 服务端已逐字段校验，这里只做基本形状守卫，避免坏帧打断开流。
       events.push({ type: "scheduled_task_card", card: event.card as unknown as ScheduledTaskCard });
@@ -104,7 +109,7 @@ export interface ConversationStreamHandlers {
   /** 上下文压缩/裁剪通知；同一 id 的后续事件替换前面的提示。 */
   onContext?: (context: ConversationStreamContext) => void;
   /** 插话状态：queued=已接收等模型处理，delivered=已进入模型上下文；同时触发详情刷新显示气泡。 */
-  onInterjection?: (turnId: string, status: "queued" | "delivered") => void;
+  onInterjection?: (turnId: string, status: "queued" | "delivered", text: string) => void;
   /** 计划任务工具的结构化结果，供对话里渲染可跳转卡片。 */
   onScheduledTaskCard?: (card: ScheduledTaskCard) => void;
   /** 排队补充消息发生变化，携带当前数量。 */
@@ -159,7 +164,7 @@ export async function streamConversationTurn(
         } else if (event.type === "scheduled_task_card") {
           handlers.onScheduledTaskCard?.(event.card);
         } else if (event.type === "interjection") {
-          handlers.onInterjection?.(event.turnId, event.status);
+          handlers.onInterjection?.(event.turnId, event.status, event.text);
         } else if (event.type === "queue") {
           handlers.onQueue?.(event.count);
         } else {

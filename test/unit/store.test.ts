@@ -590,21 +590,22 @@ describe("AppStore", () => {
       request: "First turn",
     });
     store.claimConversationTurn(created.turnId);
-    store.appendUserMessage(created.conversationId, "  Also keep the tests.  ");
+    store.appendUserMessage(created.conversationId, "  Also keep the tests.  ", created.turnId);
     const conversation = store.getConversation(created.conversationId);
     expect(conversation?.messages).toHaveLength(3);
     expect(conversation?.messages[2]).toMatchObject({
       role: "user",
+      kind: "interjection",
       content: "Also keep the tests.",
       status: "completed",
-      turnId: null,
+      turnId: created.turnId,
       headSha: "a".repeat(40),
     });
     expect(conversation?.messages[1]).toMatchObject({ role: "assistant", status: "running" });
     expect(store.getConversationTurn(created.conversationId, created.turnId)?.request).toBe("First turn");
-    expect(() => store.appendUserMessage(created.conversationId, "  ")).toThrow("between 1 and 20000");
+    expect(() => store.appendUserMessage(created.conversationId, "  ", created.turnId)).toThrow("between 1 and 20000");
     store.finishConversationTurn(created.turnId, "Done", "test-model");
-    expect(() => store.appendUserMessage(created.conversationId, "After the turn")).toThrow("no active turn");
+    expect(() => store.appendUserMessage(created.conversationId, "After the turn", created.turnId)).toThrow("no matching active turn");
   });
 
   it("keeps a durable FIFO follow-up queue with reorder, removal and restore", async () => {

@@ -68,6 +68,8 @@ export class ConversationRunner {
   private readonly draining = new Set<string>();
   /** 上次检查 worktree 大小的时间：高频对话不必每轮都遍历（node_modules 可达百万文件）。 */
   private readonly workspaceSizeCheckedAt = new Map<string, number>();
+  /** 正在送进各轮次的插话正文，供 SSE delivered 事件复用（SDK 状态回调本身不带文本）。 */
+  private readonly steerTexts = new Map<string, string>();
   /** Server 关闭信号；排队轮次也必须在关闭时中止。 */
   private shutdownSignal: AbortSignal | undefined;
 
@@ -182,6 +184,7 @@ export class ConversationRunner {
       }
       if (undelivered.length > 0) this.publishQueue(turn.conversationId);
       this.running.delete(turnId);
+      this.steerTexts.delete(turnId);
       // 轮次结束兜底清理命令停止回调（命令信号已与 turn signal 关联，无需再次 abort）。
       // 只清本轮，避免影响并发运行的其他轮次。
       for (const [execId, entry] of this.execStops) {
@@ -707,9 +710,10 @@ export class ConversationRunner {
     if (!running) return "unavailable";
     const disposition = await running.steer.send(text);
     if (disposition === "unavailable") return "unavailable";
+    this.steerTexts.set(turnId, text);
     // "delivered" 由 onSteerStatus 回调在 SDK 真正消费补充时推送；这里只兜底推送一次 queued。
     if (disposition === "buffered") {
-      this.publishStream(turnId, { type: "interjection", turnId, status: "queued" });
+      this.publishStream(turnId, { type: "interjection", turnId, status: "queued", text });
     }
     return "steer";
   }
@@ -962,6 +966,13 @@ export class ConversationRunner {
         else updateText("text", event.text);
       } else if (event.type === "context") {
         entries.push({ kind: "context", id: event.context.id, text: event.context.text });
+      } else if (event.type === "interjection") {
+        // queued 与 delivered 可能描述同一条插话，按正文去重，保持它在过程里的先后顺序。
+        const text = event.text.trim();
+        const last = entries.at(-1);
+        if (text && !(last?.kind === "interjection" && last.text === text)) {
+          entries.push({ kind: "interjection", text });
+        }
       } else if (event.type === "scheduled_task_card") {
         entries.push({ kind: "scheduleCard", card: event.card });
       } else if (event.type === "tool") {
@@ -1241,7 +1252,11 @@ export class ConversationRunner {
               onThinkingDelta: (update) =>
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
-              onSteerStatus: (status) => this.publishStream(turn.turnId, { type: "interjection", turnId: turn.turnId, status }),
+              onSteerStatus: (status) => {
+                const text = this.steerTexts.get(turn.turnId) ?? "";
+                if (status === "delivered") this.steerTexts.delete(turn.turnId);
+                this.publishStream(turn.turnId, { type: "interjection", turnId: turn.turnId, status, text });
+              },
               onScheduleCard: (card) => this.publishStream(turn.turnId, { type: "scheduled_task_card", card }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               onExecStart: (execId, stop) => this.execStops.set(execId, { turnId: turn.turnId, stop }),
