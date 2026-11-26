@@ -670,22 +670,8 @@ export class GitLabClient {
     return result as unknown as Project;
   }
 
-  async listProjects(search: string, page: number, signal?: AbortSignal): Promise<Project[]> {
-    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
-      throw new Error("GitLab project page must be between 1 and 10000");
-    }
-    const query = new URLSearchParams({
-      per_page: "50",
-      page: String(page),
-      order_by: "name",
-      sort: "asc",
-    });
-    const normalizedSearch = search.trim();
-    if (normalizedSearch) {
-      if ([...normalizedSearch].length > 100) throw new Error("GitLab project search must be at most 100 characters");
-      query.set("search", normalizedSearch);
-    }
-    const result = await this.getJson(`/projects?${query}`, signal);
+  /** 校验 GitLab 项目列表；名字/路径必填，描述可空。 */
+  private parseProjectList(result: unknown): Project[] {
     if (!Array.isArray(result)) throw new Error("GitLab project list is not an array");
     return result.map((value) => {
       if (
@@ -701,6 +687,65 @@ export class GitLabClient {
       }
       return value as unknown as Project;
     });
+  }
+
+  /**
+   * GitLab 对 1-2 字符的 search 基本只返回同名项目，`im` 找不到 `cloudoc_im_pc`。
+   * 短词改为拉取可见项目列表并在本地按子串过滤；只处理有限页数，避免把大实例全量拉完。
+   */
+  private async listProjectsByLocalSearch(needle: string, page: number, signal?: AbortSignal): Promise<Project[]> {
+    const pageSize = 50;
+    const maxPages = 20;
+    const wantedEnd = page * pageSize;
+    const matches: Project[] = [];
+    const seen = new Set<number>();
+    for (let currentPage = 1; currentPage <= maxPages; currentPage += 1) {
+      const query = new URLSearchParams({
+        per_page: String(pageSize),
+        page: String(currentPage),
+        order_by: "name",
+        sort: "asc",
+      });
+      const projects = this.parseProjectList(await this.getJson(`/projects?${query}`, signal));
+      for (const project of projects) {
+        if (seen.has(project.id)) continue;
+        seen.add(project.id);
+        if (project.name?.toLowerCase().includes(needle) ||
+            project.path_with_namespace?.toLowerCase().includes(needle) ||
+            project.description?.toLowerCase().includes(needle)) {
+          matches.push(project);
+        }
+      }
+      if (matches.length >= wantedEnd || projects.length < pageSize) break;
+    }
+    return matches.slice((page - 1) * pageSize, page * pageSize);
+  }
+
+  async listProjects(search: string, page: number, signal?: AbortSignal): Promise<Project[]> {
+    if (!Number.isSafeInteger(page) || page < 1 || page > 10_000) {
+      throw new Error("GitLab project page must be between 1 and 10000");
+    }
+    const normalizedSearch = search.trim();
+    if ([...normalizedSearch].length > 100) throw new Error("GitLab project search must be at most 100 characters");
+    // 短词走本地过滤；长词仍用 GitLab 搜索，但过滤掉 search 的模糊命中（如 cloudoc_im 命中 cloudoc_app）。
+    if (normalizedSearch && [...normalizedSearch].length < 3) {
+      return this.listProjectsByLocalSearch(normalizedSearch.toLowerCase(), page, signal);
+    }
+    const query = new URLSearchParams({
+      per_page: "50",
+      page: String(page),
+      order_by: "name",
+      sort: "asc",
+    });
+    if (normalizedSearch) query.set("search", normalizedSearch);
+    const projects = this.parseProjectList(await this.getJson(`/projects?${query}`, signal));
+    if (!normalizedSearch) return projects;
+    const needle = normalizedSearch.toLowerCase();
+    return projects.filter((project) =>
+      project.name?.toLowerCase().includes(needle) ||
+      project.path_with_namespace?.toLowerCase().includes(needle) ||
+      project.description?.toLowerCase().includes(needle),
+    );
   }
 
   async getBranch(projectId: number, branchName: string, signal?: AbortSignal): Promise<GitLabBranch> {

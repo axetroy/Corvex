@@ -115,6 +115,32 @@ describe("GitLab write receipts", () => {
     }
   });
 
+  it("filters short project searches locally instead of relying on GitLab search", async () => {
+    const urls: string[] = [];
+    const server = createServer((request, response) => {
+      urls.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      // 模拟 GitLab：带 search=im 只返回同名项目，不带 search 才能看到完整列表。
+      const projects = (request.url ?? "").includes("search=im")
+        ? [{ id: 1, name: "im", path_with_namespace: "dhweicheng/im", http_url_to_repo: "https://gitlab.example.com/dhweicheng/im.git" }]
+        : [
+            { id: 1, name: "im", path_with_namespace: "dhweicheng/im", http_url_to_repo: "https://gitlab.example.com/dhweicheng/im.git" },
+            { id: 2, name: "cloudoc_im_pc", path_with_namespace: "digimaple/cloudoc_im_pc", http_url_to_repo: "https://gitlab.example.com/digimaple/cloudoc_im_pc.git" },
+            { id: 3, name: "unrelated", path_with_namespace: "other/unrelated", http_url_to_repo: "https://gitlab.example.com/other/unrelated.git" },
+          ];
+      response.end(JSON.stringify(projects));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
+      const found = await client.listProjects("im", 1);
+      expect(found.map((project) => project.id)).toEqual([1, 2]);
+      expect(urls.every((url) => !url.includes("search=im"))).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("resolves a branch name to a verified full commit SHA", async () => {
     let requestUrl = "";
     const server = createServer((request, response) => {
