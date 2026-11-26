@@ -882,21 +882,22 @@
   display: none;
 }
 
+/* 与终端头部、工具调用共用同一组三角图标。 */
 .conversation-process-summary::before {
-  content: "›";
+  content: "▸";
   display: inline-flex;
-  width: 12px;
-  height: 16px;
-  flex: 0 0 12px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   align-items: center;
   justify-content: center;
-  color: var(--conversation-muted);
-  font-weight: 700;
-  line-height: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 22px;
 }
 
 .conversation-process[open] > .conversation-process-summary::before {
-  content: "⌄";
+  content: "▾";
 }
 
 /* 执行中不响应收起点击：过程必须持续可见。 */
