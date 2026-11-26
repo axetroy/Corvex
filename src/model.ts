@@ -296,7 +296,8 @@ export type ConversationStreamEvent =
       truncated?: boolean;
     }
   | { type: "context"; context: ConversationStreamContext }
-  | { type: "interjection"; turnId: string }
+  /** 插话状态：queued=已接收，等当前工具轮结束；delivered=已进入模型上下文。 */
+  | { type: "interjection"; turnId: string; status: "queued" | "delivered" }
   /** 排队列表发生变化；只带数量，正文由详情接口按需拉取。 */
   | { type: "queue"; count: number }
   | { type: "done"; status: ConversationTurnStatus; error?: string };

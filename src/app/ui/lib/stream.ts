@@ -52,6 +52,9 @@ export function parseSseFrames(buffer: string): {
         ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
         ...(typeof event.truncated === "boolean" ? { truncated: event.truncated } : {}),
       });
+    } else if (event.type === "interjection" && typeof event.turnId === "string" &&
+      (event.status === "queued" || event.status === "delivered")) {
+      events.push({ type: "interjection", turnId: event.turnId, status: event.status });
     } else if (event.type === "context" && event.context && typeof event.context === "object" && !Array.isArray(event.context)) {
       const context = event.context as Record<string, unknown>;
       if (typeof context.id === "string" && typeof context.text === "string") {
@@ -97,8 +100,8 @@ export interface ConversationStreamHandlers {
   onExec?: (event: Extract<ConversationStreamEvent, { type: "exec" }>) => void;
   /** 上下文压缩/裁剪通知；同一 id 的后续事件替换前面的提示。 */
   onContext?: (context: ConversationStreamContext) => void;
-  /** 用户在执行期间追加了补充消息；详情刷新后即可看到该用户气泡。 */
-  onInterjection?: (turnId: string) => void;
+  /** 插话状态：queued=已接收等模型处理，delivered=已进入模型上下文；同时触发详情刷新显示气泡。 */
+  onInterjection?: (turnId: string, status: "queued" | "delivered") => void;
   /** 排队补充消息发生变化，携带当前数量。 */
   onQueue?: (count: number) => void;
   /** 轮次结束；服务端保证只发送一次。 */
@@ -149,7 +152,7 @@ export async function streamConversationTurn(
         } else if (event.type === "context") {
           handlers.onContext?.(event.context);
         } else if (event.type === "interjection") {
-          handlers.onInterjection?.(event.turnId);
+          handlers.onInterjection?.(event.turnId, event.status);
         } else if (event.type === "queue") {
           handlers.onQueue?.(event.count);
         } else {

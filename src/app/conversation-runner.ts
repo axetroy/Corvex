@@ -164,7 +164,13 @@ export class ConversationRunner {
       await this.execute(turn, controller.signal, gitlab, language, agent, steer);
       await callAsyncHook(this.hooks.conversationAfterTurn, turn);
     } finally {
-      steer.close();
+      // 会话尚未就绪就被终止时，缓冲的插话没有真正送达模型：降级为持久排队消息，
+      // 由下一轮消费，避免用户补充只留下一个没有回复的气泡。
+      const undelivered = steer.close();
+      for (const text of undelivered) {
+        this.store.enqueueFollowUp(turn.conversationId, text);
+      }
+      if (undelivered.length > 0) this.publishQueue(turn.conversationId);
       this.running.delete(turnId);
       // 轮次结束兜底清理命令停止回调（命令信号已与 turn signal 关联，无需再次 abort）。
       // 只清本轮，避免影响并发运行的其他轮次。
@@ -690,7 +696,10 @@ export class ConversationRunner {
     if (!running) return "unavailable";
     const disposition = await running.steer.send(text);
     if (disposition === "unavailable") return "unavailable";
-    this.publishStream(turnId, { type: "interjection", turnId });
+    // "delivered" 由 onSteerStatus 回调在 SDK 真正消费补充时推送；这里只兜底推送一次 queued。
+    if (disposition === "buffered") {
+      this.publishStream(turnId, { type: "interjection", turnId, status: "queued" });
+    }
     return "steer";
   }
 
@@ -1216,6 +1225,7 @@ export class ConversationRunner {
               onThinkingDelta: (update) =>
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
+              onSteerStatus: (status) => this.publishStream(turn.turnId, { type: "interjection", turnId: turn.turnId, status }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               onExecStart: (execId, stop) => this.execStops.set(execId, { turnId: turn.turnId, stop }),
               onExecEnd: (execId) => this.execStops.delete(execId),

@@ -162,6 +162,9 @@ function seedHistoryMessages(
 
 export type SteerDisposition = "handled" | "queued" | "buffered" | "unavailable";
 
+/** 插话状态：等待当前工具轮结束 / 已进入模型上下文。 */
+export type SteerStatus = "queued" | "delivered";
+
 /**
  * 轮次内插话通道：会话句柄只在 runSession 内部存在，Runner 通过它把用户的补充
  * 消息送进当前会话，而不必直接接触 Pi SDK 的 session。
@@ -171,10 +174,14 @@ export interface SteerChannel {
   bind(steer: (text: string) => Promise<"handled" | "queued">): void;
   /** 投递一条插话；会话未就绪时缓冲，轮次已结束时返回 unavailable。 */
   send(text: string): Promise<SteerDisposition>;
-  /** 轮次终结时关闭，丢弃尚未投递的缓冲。 */
-  close(): void;
+  /** 轮次终结时关闭并返回尚未投递的缓冲，交给上层降级为排队消息，避免丢失。 */
+  close(): readonly string[];
   /** 已投递的文本；上下文超限重试时重新注入新会话，避免补充丢失。 */
   delivered(): readonly string[];
+  /** 注册状态回调：排队（等当前工具轮结束）与送达（已进入模型上下文）。 */
+  onStatus(listener: (status: SteerStatus) => void): void;
+  /** 由 SDK 的 queue_update 事件驱动：pending 文本减少即视为已送达。 */
+  markDelivered(pendingSteering: readonly string[]): void;
 }
 
 /** 创建一个与模型会话生命周期解耦的插话通道。 */
@@ -183,8 +190,18 @@ export function createSteerChannel(): SteerChannel {
   let closed = false;
   const buffered: string[] = [];
   const sent: string[] = [];
+  /** 已经通知过 delivered 的条数，避免 SDK 重复 queue_update 时反复提示。 */
+  let deliveredNotified = 0;
+  const statusListeners: Array<(status: SteerStatus) => void> = [];
+  const notify = (status: SteerStatus) => {
+    if (closed) return;
+    for (const listener of statusListeners) {
+      try { listener(status); } catch { /* 通知失败不影响投递 */ }
+    }
+  };
   const deliverText = (steer: (text: string) => Promise<"handled" | "queued">, text: string) => {
     sent.push(text);
+    notify("queued");
     return steer(text);
   };
   return {
@@ -202,11 +219,13 @@ export function createSteerChannel(): SteerChannel {
       if (closed) return "unavailable";
       if (!deliver) {
         buffered.push(text);
+        notify("queued");
         return "buffered";
       }
       try {
         const result = await deliver(text);
         sent.push(text);
+        notify("queued");
         return result;
       } catch {
         return "unavailable";
@@ -215,10 +234,25 @@ export function createSteerChannel(): SteerChannel {
     close() {
       closed = true;
       deliver = undefined;
+      const undelivered = [...buffered];
       buffered.length = 0;
+      statusListeners.length = 0;
+      return undelivered;
     },
     delivered() {
       return sent;
+    },
+    onStatus(listener) {
+      statusListeners.push(listener);
+    },
+    markDelivered(pendingSteering) {
+      // SDK 从 steering 队列移除的文本 = 已被模型消费；按新增条数通知，避免重复提示。
+      const remaining = sent.filter((text) => pendingSteering.includes(text));
+      const newlyDelivered = sent.length - remaining.length - deliveredNotified;
+      if (newlyDelivered > 0) {
+        deliveredNotified += newlyDelivered;
+        notify("delivered");
+      }
     },
   };
 }
@@ -260,6 +294,8 @@ export interface ModelRequest {
    * 参数沿用轨迹的脱敏与限长结果；与正文、思考一样只用于展示，不影响执行。
    */
   onToolDelta?: (tool: ConversationStreamTool) => void;
+  /** 插话状态变化（排队 / 已进入模型上下文），供控制台提示用户。 */
+  onSteerStatus?: (status: SteerStatus) => void;
   /** 命令开始：登记独立停止回调（只停该命令，不取消整轮）。 */
   onExecStart?: (execId: string, stop: (reason: string) => void) => void;
   /** 命令结束：注销停止回调。 */
@@ -976,6 +1012,7 @@ export class PiAgent {
     if (request.steer) {
       session.setSteeringMode("all");
       request.steer.bind((text) => session.steer(text));
+      request.steer.onStatus((status) => request.onSteerStatus?.(status));
     }
     // 历史以独立消息注入：模型看到的是真实轮次，而不是一条巨型 user 消息，
     // SDK 的压缩切点也才能在正确的轮次边界上工作。恢复完整会话时已含这些消息，跳过注入。
@@ -1048,6 +1085,10 @@ export class PiAgent {
       // 只在真正产出内容时重置看门狗：失败响应与 SDK 重试不算「模型有输出」。
       if (event.type === "tool_execution_start") runningToolCount += 1;
       if (event.type === "tool_execution_end") runningToolCount = Math.max(0, runningToolCount - 1);
+      // 插话进入模型上下文：SDK 把它从 steering 队列移除时会再次发 queue_update。
+      if (event.type === "queue_update" && request.steer) {
+        request.steer.markDelivered(event.steering);
+      }
       if (event.type === "message_update" || event.type === "tool_execution_start" ||
           event.type === "tool_execution_end" || event.type === "compaction_start" ||
           event.type === "compaction_end") {

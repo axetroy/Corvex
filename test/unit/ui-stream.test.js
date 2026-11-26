@@ -58,6 +58,18 @@ describe("operations UI conversation stream", () => {
     ]);
   });
 
+  it("parses interjection status events", () => {
+    const parsed = parseSseFrames(
+      'data: {"type":"interjection","turnId":"t1","status":"queued"}\n\n' +
+      'data: {"type":"interjection","turnId":"t1","status":"delivered"}\n\n' +
+      'data: {"type":"interjection","turnId":"t1","status":"unknown"}\n\n',
+    );
+    expect(parsed.events).toEqual([
+      { type: "interjection", turnId: "t1", status: "queued" },
+      { type: "interjection", turnId: "t1", status: "delivered" },
+    ]);
+  });
+
   it("accepts CRLF framing and keeps the done error message", () => {
     const parsed = parseSseFrames('data: {"type":"done","status":"failed","error":"boom"}\r\n\r\n');
     expect(parsed.events).toEqual([{ type: "done", status: "failed", error: "boom" }]);
