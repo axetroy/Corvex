@@ -62,7 +62,7 @@ interface ExecutionBackend {
 - 通过容器运行时（docker / podman）执行，检测可用性。
 - 隔离参数：非 root、容器网络命名空间与宿主隔离（默认 bridge，**允许联网**以便安装依赖）、只读 rootfs、只挂载 worktree（rw）、`--cap-drop=ALL`、CPU / 内存 / pids 限额、超时 kill。需要完全禁网时显式配置 `network: none`。
 - 注意：bridge 网络下容器可通过网关访问宿主发布的服务；若要严格禁止访问宿主，需额外防火墙规则或 `network: none`，但后者会阻断依赖安装，按需取舍。
-- 镜像由配置指定（`execution.sandbox.image`，默认 `corvex-exec:latest`，由 `Dockerfile.exec` 构建）：包含 **git、node、npm/npx、经典版 yarn 1.22.22、pnpm 12.23.0、python3、bash、make/g++**（Node 25+ 不再自带 corepack，故 yarn/pnpm 用 `npm install -g` 显式安装，并在 `USER node` 之前以 root 完成）。不含 curl/wget/bun，需要时用 node 的 `fetch` 或 `npx`。依赖通过挂载 worktree 的 `node_modules` 带入；各包管理器缓存落在容器 tmpfs（`HOME=/tmp` 及各 `*_CACHE` 变量），不污染宿主 worktree。
+- 镜像由配置指定（`execution.sandbox.image`，默认 `corvex-exec:latest`，由 `Dockerfile.exec` 构建）：包含 **git、node、npm/npx、经典版 yarn 1.22.22、pnpm 12.23.0、python3、bash、make/g++**，以及常用 Linux 工具 **curl、wget、zip/unzip、xz、jq、file、rsync**（其余 sed/awk/grep/find/tar/gzip/nc/ping 等由 busybox 提供；Node 25+ 不再自带 corepack，故 yarn/pnpm 用 `npm install -g` 显式安装，并在 `USER node` 之前以 root 完成）。不含 bun，需要时用 `npx`。依赖通过挂载 worktree 的 `node_modules` 带入；各包管理器缓存落在容器 tmpfs（`HOME=/tmp` 及各 `*_CACHE` 变量），不污染宿主 worktree。
 - 生产强制：容器运行时不可用时**直接拒绝执行**，不得静默回退到本地后端。
 
 ### 4.3 后端选择
