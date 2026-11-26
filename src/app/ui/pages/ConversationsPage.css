@@ -1050,8 +1050,8 @@
   top: 6px;
   /* 圆点圆心要落在左侧 1px 竖线的中心：-14px(padding) - 0.5px(线中心) + 2.5px(半径) */
   left: -17px;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--conversation-border-strong);
 }
