@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { Terminal, ITheme } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
-import { Button, Popover, Tag, Typography } from "antd";
+import { Button, Popover, Tag } from "antd";
+import { FiClock } from "react-icons/fi";
 import { sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
@@ -240,7 +241,13 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         </Popover>
         {status}
         {durationLabel ? (
-          <Typography.Text type="secondary" className="conversation-exec-duration">{durationLabel}</Typography.Text>
+          <span
+            className={`conversation-exec-duration${entry.done ? "" : " is-running"}`}
+            title={copy.execDurationTitle}
+          >
+            <FiClock aria-hidden="true" />
+            {durationLabel}
+          </span>
         ) : null}
         {!entry.done && conversationId && turnId ? (
           <Button size="small" danger loading={stopping} onClick={() => void stop()}>
