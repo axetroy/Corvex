@@ -229,7 +229,6 @@ a:hover {
 }
 
 .sidebar-collapsed .sidebar-account-text,
-.sidebar-collapsed .sidebar-admin,
 .sidebar-collapsed .sidebar-logout,
 .sidebar-collapsed .user-avatar {
   display: none;
@@ -255,31 +254,7 @@ a:hover {
   font-size: 11px;
 }
 
-/* 管理员标签：缩小后紧跟用户名，保留链接跳转到管理后台。 */
-.sidebar-admin {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 0 4px;
-  border: 1px solid var(--purple-soft);
-  border-radius: 3px;
-  background: var(--purple-soft);
-  color: var(--purple);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 14px;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.sidebar-admin:hover {
-  border-color: var(--purple);
-  background: var(--purple-soft);
-  color: var(--purple);
-}
-
-/* 账号区右侧：设置齿轮与更多菜单入口。 */
-.sidebar-account-settings,
+/* 账号区右侧：更多菜单入口（设置与管理后台都在下拉菜单里）。 */
 .sidebar-account-more {
   display: grid;
   width: 26px;
@@ -293,12 +268,6 @@ a:hover {
   cursor: pointer;
 }
 
-.sidebar-account-settings.is-current {
-  color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.sidebar-account-settings:hover,
 .sidebar-account-more:hover {
   color: var(--text);
   background: var(--bg-hover);

@@ -13,6 +13,7 @@ import { UserAvatar } from "./components/UserAvatar.js";
 import { ThemeToggle } from "./components/ThemeToggle.js";
 import { NotificationToggle } from "./components/NotificationToggle.js";
 import {
+  AdminIcon,
   LanguageIcon,
   LogoutIcon,
   MoreIcon,
@@ -394,26 +395,9 @@ export function App() {
                 avatarUrl={account.avatarUrl}
               />
               <span className="sidebar-account-text">
-                <span className="sidebar-account-name">
-                  {account.name || account.username}
-                  {account.isAdmin ? (
-                    <a className="sidebar-admin" href="/ops#/admin/dashboard" target="_blank" rel="noopener" aria-label={copy.adminEntry} title={copy.adminEntry}>
-                      {copy.adminTag}
-                    </a>
-                  ) : null}
-                </span>
+                <span className="sidebar-account-name">{account.name || account.username}</span>
                 <span className="sidebar-account-username">@{account.username}</span>
               </span>
-              <button
-                type="button"
-                className={`sidebar-account-settings${pageKind === "settings" ? " is-current" : ""}`}
-                aria-label={copy.navSettings}
-                aria-current={pageKind === "settings" ? "page" : undefined}
-                title={copy.navSettings}
-                onClick={() => navigate("/settings")}
-              >
-                <SettingsIcon />
-              </button>
               <Dropdown
                 trigger={["click"]}
                 placement="topRight"
@@ -421,7 +405,7 @@ export function App() {
                   items: [
                     { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
                     ...(account.isAdmin
-                      ? [{ key: "admin", label: copy.adminEntry }]
+                      ? [{ key: "admin", icon: <AdminIcon />, label: copy.adminEntry }]
                       : []),
                     { type: "divider" as const },
                     { key: "logout", icon: <LogoutIcon />, label: copy.logout, danger: true },

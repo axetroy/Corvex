@@ -92,6 +92,16 @@ export function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 管理后台图标：带勾的盾牌，用于账号下拉菜单里的管理入口。 */
+export function AdminIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M8 1.6 13 3.4v4.1c0 3-2 5.3-5 6.9-3-1.6-5-3.9-5-6.9V3.4L8 1.6Z" />
+      <path d="m5.8 7.9 1.6 1.6 3-3.1" />
+    </svg>
+  );
+}
+
 /** 更多操作图标：竖向三点，用于账号下拉菜单入口。 */
 export function MoreIcon(props: SVGProps<SVGSVGElement>) {
   return (
