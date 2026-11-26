@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { currentUser } from "../auth/context.js";
-import type { GitLabOAuthService } from "../auth/service.js";
+import { UserDisabledError, type GitLabOAuthService } from "../auth/service.js";
 import type { AppStore } from "../../store.js";
 import {
   oauthStateCookieName,
@@ -54,6 +54,10 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AuthRoutesContext)
       );
       reply.code(302).header("location", "/ops#/conversations");
     } catch (error) {
+      if (error instanceof UserDisabledError) {
+        sendText(reply, 403, "This account has been disabled. Contact an administrator.\n");
+        return;
+      }
       console.error("GitLab OAuth callback failed", { error: String(error) });
       sendText(reply, 502, "GitLab login failed\n");
     }

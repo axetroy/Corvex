@@ -12,6 +12,14 @@ interface TokenResponse {
   token_type?: string;
 }
 
+/** 被禁用用户登录尝试：登录层据此拒绝创建会话，回调端给出明确提示。 */
+export class UserDisabledError extends Error {
+  constructor() {
+    super("user account is disabled");
+    this.name = "UserDisabledError";
+  }
+}
+
 /** GitLab `/api/v4/user` 的精简身份信息。 */
 interface GitLabUserResponse {
   id: number;
@@ -61,7 +69,7 @@ export class GitLabOAuthService {
     });
     const identity = await this.readIdentity(tokens);
     const user = this.store.upsertUser(identity, this.cipher);
-    if (user.disabled) throw new Error("user account is disabled");
+    if (user.disabled) throw new UserDisabledError();
     const sessionId = this.store.createUserSession(user.id, Date.now() + 7 * 24 * 60 * 60_000);
     return { user, sessionId };
   }
