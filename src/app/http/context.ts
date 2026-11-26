@@ -29,4 +29,6 @@ export interface OpsContext {
   readonly conversationStreams: Set<ServerResponse>;
   /** 在 Server 进程内联启动一轮对话。 */
   startConversationTurn(turnId: string, gitlab: GitLabClient, responseLanguage?: ResponseLanguage): void;
+  /** 手动触发一次计划任务（等价事件触发）。 */
+  runScheduledTaskNow(taskId: string): Promise<boolean>;
 }

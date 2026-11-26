@@ -102,6 +102,45 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
         sendJson(reply, 200, { id, paused: true });
       });
 
+      me.post("/scheduled-tasks/:id/resume", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
+        const id = (request.params as { id: string }).id;
+        const task = ctx.store.getScheduledTask(id);
+        if (!task || task.ownerUserId !== user.id) {
+          sendJson(reply, 404, { error: "scheduled task not found" });
+          return;
+        }
+        if (!ctx.store.setScheduledTaskStatus(id, user.id, "active")) {
+          sendJson(reply, 404, { error: "scheduled task not found" });
+          return;
+        }
+        // 暂停期间可能已错过触发：只把该任务的 next_run_at 推到未来，避免恢复后立刻补跑。
+        ctx.store.advanceScheduledTaskIfOverdue(id, new Date().toISOString(), new Date(Date.now() + 60_000).toISOString());
+        sendJson(reply, 200, { id, resumed: true });
+      });
+
+      me.post("/scheduled-tasks/:id/run", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
+        const id = (request.params as { id: string }).id;
+        const task = ctx.store.getScheduledTask(id);
+        if (!task || task.ownerUserId !== user.id) {
+          sendJson(reply, 404, { error: "scheduled task not found" });
+          return;
+        }
+        if (task.status !== "active") {
+          sendJson(reply, 409, { error: "only active tasks can be run" });
+          return;
+        }
+        const started = await ctx.runScheduledTaskNow(id);
+        if (!started) {
+          sendJson(reply, 409, { error: "task is already running" });
+          return;
+        }
+        sendJson(reply, 202, { id, started: true });
+      });
+
       me.delete("/scheduled-tasks/:id", async (request, reply) => {
         const user = requireUser(request, reply);
         if (!user) return;

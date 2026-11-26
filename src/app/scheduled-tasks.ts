@@ -48,6 +48,20 @@ export class ScheduledTasksScheduler {
     }
   }
 
+  /** 手动触发一次（等价事件触发），复用与到期执行相同的授权与快照逻辑。 */
+  async runNow(taskId: string): Promise<boolean> {
+    const task = this.ctx.store.getScheduledTask(taskId);
+    if (!task || task.status !== "active" || this.inFlight.has(taskId)) return false;
+    this.inFlight.add(taskId);
+    try {
+      // 一次性任务直接删除；循环任务只记录本次运行，不改动下次触发时间。
+      await this.execute(task, new Date(this.now()).toISOString(), true);
+      return true;
+    } finally {
+      this.inFlight.delete(taskId);
+    }
+  }
+
   /** 可中止的调度循环；由 Server.run() 的 finally abort 并 await。 */
   async run(signal: AbortSignal): Promise<void> {
     this.shutdownSignal = signal;
@@ -86,11 +100,13 @@ export class ScheduledTasksScheduler {
     }
   }
 
-  /** 处理单个已到期的任务。 */
-  private async execute(task: ScheduledTask, dueAt: string): Promise<void> {
-    const advanced = this.advanceSchedule(task, new Date(dueAt));
-    const claimed = this.ctx.store.claimDueScheduledTask(task.id, task.nextRunAt, advanced);
-    if (!claimed) return;
+  /** 处理单个已到期的任务；手动触发时 keepSchedule=true 不改动下次触发时间。 */
+  private async execute(task: ScheduledTask, dueAt: string, keepSchedule = false): Promise<void> {
+    if (!keepSchedule) {
+      const advanced = this.advanceSchedule(task, new Date(dueAt));
+      const claimed = this.ctx.store.claimDueScheduledTask(task.id, task.nextRunAt, advanced);
+      if (!claimed) return;
+    }
 
     let status = "failed";
     let turnId = "";

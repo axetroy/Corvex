@@ -1442,6 +1442,13 @@ export class AppStore {
     ).run(nextRunAt, now, now).changes as number;
   }
 
+  /** 恢复单个任务时把已错过的触发时间推到未来，避免恢复后立即补跑。 */
+  advanceScheduledTaskIfOverdue(id: string, now: string, nextRunAt: string): boolean {
+    return this.db.prepare(
+      "UPDATE scheduled_tasks SET next_run_at=?,updated_at=? WHERE id=? AND status='active' AND next_run_at<=?",
+    ).run(nextRunAt, now, id, now).changes === 1;
+  }
+
   listScheduledTaskRuns(taskId: string, limit = 20): ScheduledTaskRun[] {
     return (this.db.prepare(
       "SELECT * FROM scheduled_task_runs WHERE task_id=? ORDER BY started_at DESC,id DESC LIMIT ?",

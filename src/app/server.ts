@@ -309,6 +309,7 @@ export class CorvexServer {
       startConversationTurn: (turnId, gitlab, responseLanguage) => {
         this.startConversationTurn(turnId, gitlab, responseLanguage);
       },
+      runScheduledTaskNow: (taskId) => this.scheduledTasks.runNow(taskId),
     };
   }
 

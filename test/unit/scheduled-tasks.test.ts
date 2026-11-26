@@ -92,6 +92,25 @@ describe("ScheduledTasksScheduler", () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it("runNow executes once without changing the recurring schedule", async () => {
+    const nowMs = dueAt();
+    const { scheduler, store: s, created, runTurn } = await makeScheduler({
+      now: () => nowMs,
+      clientForUser: async () => fakeClient(),
+    });
+    const task = s.createScheduledTask({
+      ownerUserId: "u1", conversationId: created.conversationId, prompt: "check CI",
+      kind: "cron", cron: "0 9 * * *", runAt: "", nextRunAt: "2026-11-28T09:00:00.000Z",
+      expiresAt: "2026-12-27T09:00:00.000Z",
+    });
+    expect(await scheduler.runNow(task.id)).toBe(true);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(s.getScheduledTask(task.id)!.nextRunAt).toBe("2026-11-28T09:00:00.000Z");
+    expect(s.listScheduledTaskRuns(task.id)).toHaveLength(1);
+    // 重复触发被 inFlight 之外的状态检查拦截（任务仍 active，但这里验证不会并发重复启动模型轮）。
+    expect(await scheduler.runNow("missing")).toBe(false);
+  });
+
   it("recover advances overdue tasks without executing them", async () => {
     const nowMs = dueAt() + 12 * 60 * 60_000; // 触发时间过了 12 小时
     const { scheduler, store: s, created, runTurn } = await makeScheduler({

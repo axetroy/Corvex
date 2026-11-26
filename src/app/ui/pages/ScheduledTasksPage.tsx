@@ -42,12 +42,16 @@ export function ScheduledTasksPage({ copy, locale }: Props) {
 
   useEffect(load, [load]);
 
-  const act = async (task: ScheduledTask, action: "cancel" | "delete") => {
+  const act = async (task: ScheduledTask, action: "cancel" | "resume" | "run" | "delete") => {
     setBusy(task.id);
     setError("");
     try {
       if (action === "cancel") {
         await sendJson(`/api/ops/me/scheduled-tasks/${encodeURIComponent(task.id)}/cancel`, {}, copy, "POST");
+      } else if (action === "resume") {
+        await sendJson(`/api/ops/me/scheduled-tasks/${encodeURIComponent(task.id)}/resume`, {}, copy, "POST");
+      } else if (action === "run") {
+        await sendJson(`/api/ops/me/scheduled-tasks/${encodeURIComponent(task.id)}/run`, {}, copy, "POST");
       } else {
         await sendJson(`/api/ops/me/scheduled-tasks/${encodeURIComponent(task.id)}`, {}, copy, "DELETE");
       }
@@ -122,10 +126,19 @@ export function ScheduledTasksPage({ copy, locale }: Props) {
               render: (_: unknown, task: ScheduledTask) => (
                 <div className="scheduled-task-actions">
                   {task.status === "active" ? (
-                    <Popconfirm title={copy.scheduledTaskCancelConfirm} onConfirm={() => void act(task, "cancel")}>
-                      <Button size="small" loading={busy === task.id}>{copy.scheduledTaskPause}</Button>
-                    </Popconfirm>
-                  ) : null}
+                    <>
+                      <Popconfirm title={copy.scheduledTaskRunConfirm} onConfirm={() => void act(task, "run")}>
+                        <Button size="small" loading={busy === task.id}>{copy.scheduledTaskRunNow}</Button>
+                      </Popconfirm>
+                      <Popconfirm title={copy.scheduledTaskCancelConfirm} onConfirm={() => void act(task, "cancel")}>
+                        <Button size="small" loading={busy === task.id}>{copy.scheduledTaskPause}</Button>
+                      </Popconfirm>
+                    </>
+                  ) : (
+                    <Button size="small" loading={busy === task.id} onClick={() => void act(task, "resume")}>
+                      {copy.scheduledTaskResume}
+                    </Button>
+                  )}
                   <Popconfirm title={copy.scheduledTaskDeleteConfirm} onConfirm={() => void act(task, "delete")}>
                     <Button size="small" danger loading={busy === task.id}>{copy.scheduledTaskDelete}</Button>
                   </Popconfirm>

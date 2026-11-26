@@ -237,6 +237,8 @@ describe("CorvexServer", () => {
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks`, { headers: authHeaders })).status).toBe(200);
       expect([401, 403]).toContain((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "POST", headers: { ...viewerHeaders, "content-type": "application/json" }, body: "{}" })).status);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/cancel`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/resume`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
+      expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/run`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(202);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "DELETE", headers: jsonHeaders })).status).toBe(200);
 
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
