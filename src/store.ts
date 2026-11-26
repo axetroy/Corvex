@@ -44,6 +44,8 @@ import {
   type ConversationTurnStatus,
   type CreatedConversationTurn,
   type CreateConversationInput,
+  type AgentTurnDetail,
+  type AgentTurnSummary,
   type ExecutionStep,
   type ExecutionStepStatus,
   type TraceEntry,
@@ -1153,6 +1155,95 @@ export class AppStore {
       timeline: this.readTurnTimeline(turnId),
       trajectory: this.readTrajectory({ turnId }),
       events: this.readExecutionSteps({ turnId }),
+    };
+  }
+
+  /** Agent 回查当前会话历史时，把文本统一脱敏、压平并按字符上限截断。 */
+  private agentText(value: unknown, limit: number): { text: string; truncated: boolean } {
+    const raw = typeof value === "string" ? value : "";
+    const clean = redactModelFacingText(raw).replace(/\s+/g, " ").trim();
+    if (clean.length <= limit) return { text: clean, truncated: false };
+    return { text: `${clean.slice(0, limit)}…`, truncated: true };
+  }
+
+  /**
+   * 当前会话的轮次摘要，按创建顺序编号（序号 1 为最早一轮）；只返回已结束轮次，
+   * 避免把运行中的半成品喂给模型。结果按序号从大到小（最新在前），before 是上一页
+   * 最小序号，返回它之前的轮次。
+   */
+  listAgentTurns(conversationId: string, limit = 10, before?: number): AgentTurnSummary[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) throw new Error("turn list limit must be between 1 and 20");
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new Error("turn cursor must be a positive integer");
+    const total = (this.db.prepare(
+      "SELECT COUNT(*) AS count FROM conversation_turns WHERE conversation_id=? AND role='assistant' AND status IN ('completed','failed','stale','cancelled')",
+    ).get(conversationId) as { count: number }).count;
+    const end = before === undefined ? total : Math.min(total, before - 1);
+    const start = Math.max(1, end - limit + 1);
+    if (end < start) return [];
+    // 升序表里序号 i 位于位置 i-1；按降序取 [start,end] 需跳过 end 之后的 total-end 行。
+    const rows = this.db.prepare(
+      `SELECT t.id, t.status, t.created_at, t.request, m.content AS answer
+       FROM conversation_turns t
+       LEFT JOIN conversation_messages m ON m.id=t.message_id
+       WHERE t.conversation_id=? AND t.role='assistant' AND t.status IN ('completed','failed','stale','cancelled')
+       ORDER BY t.created_at DESC, t.rowid DESC LIMIT ? OFFSET ?`,
+    ).all(conversationId, end - start + 1, total - end) as Record<string, unknown>[];
+    return rows.map((row, offset) => {
+      const request = this.agentText(row.request, 500);
+      const answer = this.agentText(row.answer, 500);
+      const status = stringColumn(row, "status");
+      return {
+        index: end - offset,
+        turnId: stringColumn(row, "id"),
+        status: isConversationTurnStatus(status) ? status : "failed",
+        createdAt: stringColumn(row, "created_at"),
+        request: request.text,
+        answer: answer.text,
+        truncated: request.truncated || answer.truncated,
+      };
+    });
+  }
+
+  /** 按序号读取当前会话某一轮的完整摘要与工具证据；序号越界返回 undefined。 */
+  getAgentTurn(conversationId: string, index: number): AgentTurnDetail | undefined {
+    if (!Number.isSafeInteger(index) || index < 1) throw new Error("turn index must be a positive integer");
+    const total = (this.db.prepare(
+      "SELECT COUNT(*) AS count FROM conversation_turns WHERE conversation_id=? AND role='assistant' AND status IN ('completed','failed','stale','cancelled')",
+    ).get(conversationId) as { count: number }).count;
+    if (index > total) return undefined;
+    const row = this.db.prepare(
+      `SELECT t.id, t.status, t.created_at, t.request, t.process, m.content AS answer
+       FROM conversation_turns t
+       LEFT JOIN conversation_messages m ON m.id=t.message_id
+       WHERE t.conversation_id=? AND t.role='assistant' AND t.status IN ('completed','failed','stale','cancelled')
+       ORDER BY t.created_at, t.rowid LIMIT 1 OFFSET ?`,
+    ).get(conversationId, index - 1) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const request = this.agentText(row.request, 2_000);
+    const answer = this.agentText(row.answer, 2_000);
+    const turnId = stringColumn(row, "id");
+    const evidence = this.getToolEvidence([turnId]);
+    const tools = evidence.slice(0, 12).map((entry) => {
+      const input = this.agentText(entry.input, 240);
+      const output = this.agentText(entry.status === "failed" ? entry.error : entry.output, 240);
+      return { name: entry.name, status: entry.status, input: input.text, output: output.text };
+    });
+    const notes = readConversationProcess(stringColumn(row, "process"))
+      .filter((entry): entry is Extract<ConversationProcessEntry, { text: string }> =>
+        "text" in entry && (entry.kind === "thinking" || entry.kind === "text" || entry.kind === "context" || entry.kind === "interjection"))
+      .slice(0, 8)
+      .map((entry) => this.agentText(entry.text, 300).text);
+    const status = stringColumn(row, "status");
+    return {
+      index,
+      turnId,
+      status: isConversationTurnStatus(status) ? status : "failed",
+      createdAt: stringColumn(row, "created_at"),
+      request: request.text,
+      answer: answer.text,
+      tools,
+      notes,
+      truncated: request.truncated || answer.truncated || evidence.length > tools.length,
     };
   }
 

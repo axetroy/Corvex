@@ -55,6 +55,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - 仓库搜索：GitLab 的 `search` 对 1-2 字符短词只返回同名项目，短词改为分页拉取可见项目后本地子串过滤；分页按 4 路并发拉取而非逐页串行。候选集在服务端按「相似度（主导）+ `last_activity_at` 活跃度 + 最近会话」综合排序，归档项目降级；排序纯函数放在 `src/app/http/ops/project-ranking.ts`，路由只负责取候选、排序和按页切片。
 - 会话文件浏览只从当前 worktree 读取（`LocalFileSource`），不再回退到 GitLab 快照；worktree 被回收时返回 409 并提示先发起一轮对话。
 - 聊天框底部的上下文简讯显示窗口占用与缓存命中率，不显示压缩阈值；命中率由各轮缓存 token 和 LLM 输入 token 汇总计算。助手回复的动作行也显示单轮命中率，供应商未报告缓存读写时隐藏，不显示 0%。
+- Agent 可主动回查当前会话历史：`list_turns` / `get_turn` 由 Runner 注入固定 conversationId，只读已结束轮次，文本走脱敏与有界截断，内容按不可信历史数据处理；不支持跨会话读取或切换。
 
 ## 架构与安全不变量（不要为省事削弱）
 

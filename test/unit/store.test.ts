@@ -262,6 +262,74 @@ describe("AppStore", () => {
     expect(answer?.cacheHitRate).toBe(69.2);
   });
 
+  it("Agent 轮次查询只返回已结束轮次，按序号分页并脱敏截断", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "First question token=supersecret",
+    });
+    const first = store.claimConversationTurn(created.turnId);
+    if (!first) throw new Error("expected the first turn to be claimed");
+    const toolTrace = store.startTrace(
+      { kind: "conversation", turnId: first.turnId },
+      first.attempt,
+      "tool",
+      "git_diff",
+    );
+    store.finishTrace(toolTrace, "succeeded", 10, undefined, undefined, undefined, "diff --git a/x b/x\n+hello");
+    store.finishConversationTurn(first.turnId, "First answer.");
+
+    const added = store.addConversationMessage(created.conversationId, {
+      projectId: 7,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Second question",
+    });
+    const second = store.claimConversationTurn(added.turnId);
+    if (!second) throw new Error("expected the second turn to be claimed");
+    store.finishConversationTurn(second.turnId, "Second answer.");
+
+    // 第三轮仍在运行，不能出现在历史里。
+    const running = store.addConversationMessage(created.conversationId, {
+      projectId: 7,
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Running question",
+    });
+    store.claimConversationTurn(running.turnId);
+
+    const list = store.listAgentTurns(created.conversationId);
+    expect(list.map((entry) => entry.index)).toEqual([2, 1]);
+    expect(list.map((entry) => entry.request)).toEqual(["Second question", "First question token=[REDACTED]"]);
+    expect(list[0].turnId).toBe(second.turnId);
+    expect(list[0].status).toBe("completed");
+
+    // before 游标返回更小序号的轮次，越界返回空。
+    expect(store.listAgentTurns(created.conversationId, 10, 2).map((entry) => entry.index)).toEqual([1]);
+    expect(store.listAgentTurns(created.conversationId, 10, 1)).toEqual([]);
+
+    const detail = store.getAgentTurn(created.conversationId, 1);
+    expect(detail).toMatchObject({
+      index: 1,
+      turnId: first.turnId,
+      request: "First question token=[REDACTED]",
+      answer: "First answer.",
+    });
+    expect(detail?.tools).toEqual([
+      expect.objectContaining({ name: "git_diff", status: "succeeded", output: expect.stringContaining("+hello") }),
+    ]);
+    // 运行中的轮次按序号不可读。
+    expect(store.getAgentTurn(created.conversationId, 3)).toBeUndefined();
+    expect(() => store.listAgentTurns(created.conversationId, 0)).toThrow();
+    expect(() => store.getAgentTurn(created.conversationId, 0)).toThrow();
+  });
+
   it("过程快照保留命令输出并在读取时脱敏限长", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-exec-process-"));
     store = await AppStore.open(join(directory, "state.db"));

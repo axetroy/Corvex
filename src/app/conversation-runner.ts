@@ -1300,6 +1300,11 @@ export class ConversationRunner {
               conversationId: turn.conversationId,
               turnId: turn.turnId,
               actorId: turn.actorId,
+              // 历史回查工具固定到当前会话，工具参数不接受会话 ID，避免跨会话读取。
+              turnTools: {
+                listTurns: (limit, before) => this.store.listAgentTurns(turn.conversationId, limit, before),
+                getTurn: (index) => this.store.getAgentTurn(turn.conversationId, index),
+              },
               gitlab,
               // 上传目录作为仅本轮有效的只读根注入；模型侧只看到 upload://<id>/<filename>。
               uploads: uploadContext.uploads,

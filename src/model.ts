@@ -210,6 +210,30 @@ export interface Conversation extends ConversationSummary {
   messages: ConversationMessage[];
 }
 
+/** 供 Agent 回查当前会话历史的轮次摘要；序号按轮次创建顺序从 1 开始。 */
+export interface AgentTurnSummary {
+  index: number;
+  turnId: string;
+  status: ConversationTurnStatus;
+  createdAt: string;
+  request: string;
+  answer: string;
+  truncated: boolean;
+}
+
+/** 单轮详情：请求、最终回复、真实工具证据与有界过程记录。 */
+export interface AgentTurnDetail {
+  index: number;
+  turnId: string;
+  status: ConversationTurnStatus;
+  createdAt: string;
+  request: string;
+  answer: string;
+  tools: Array<{ name: string; status: string; input: string; output: string }>;
+  notes: string[];
+  truncated: boolean;
+}
+
 /**
  * 对话轮次的流式事件，经 SSE 推送给 Agent 控制台。
  *

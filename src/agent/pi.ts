@@ -30,6 +30,7 @@ import { readProjectGuidance } from "./project-guidance.js";
 import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, responseWaitNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
 import { createScheduledTaskExtension } from "./schedule-tools.js";
+import { createTurnToolsExtension, type TurnToolAdapter } from "./turn-tools.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
@@ -353,6 +354,8 @@ export interface ModelRequest {
   actorId?: number;
   /** 绑定当前会话 worktree 的 Git 工具集；只在对话轮次中提供。 */
   gitTools?: GitToolAdapter;
+  /** 当前会话历史的只读查询能力；只在对话轮次中提供。 */
+  turnTools?: TurnToolAdapter;
   /**
    * 轮次内插话通道；由 Runner 创建，PiAgent 在会话就绪后绑定。仅对话轮次提供，
    * 其余任务省略即可。
@@ -916,6 +919,9 @@ export class PiAgent {
                   }
                 : {}),
             })]
+          : []),
+        ...(request.taskType === "conversation" && request.turnTools
+          ? [createTurnToolsExtension(request.turnTools)]
           : []),
         ...(request.taskType === "conversation" && request.fs
           ? [createFsWriteExtension(request.fs)]
