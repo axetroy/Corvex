@@ -9,6 +9,31 @@
   font-size: 12px;
 }
 
+.scheduled-task-last-run {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--border-soft);
+}
+
+.scheduled-task-history {
+  display: flex;
+  min-width: 320px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scheduled-task-history-row {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.scheduled-task-history-row span:last-child {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scheduled-task-tz {
   margin-left: 6px;
   font-size: 10px;

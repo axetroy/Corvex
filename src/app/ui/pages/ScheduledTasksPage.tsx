@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Popconfirm, Table, Tag, Typography } from "antd";
+import { Alert, Button, Popconfirm, Popover, Table, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, Locale } from "../lib/i18n.js";
@@ -115,9 +115,30 @@ export function ScheduledTasksPage({ copy, locale }: Props) {
               title: copy.scheduledTaskColumnLastRun,
               key: "lastRun",
               render: (_: unknown, task: ScheduledTask) => {
-                const latest = runs[task.id]?.[0];
+                const history = runs[task.id] ?? [];
+                const latest = history[0];
                 if (!latest) return copy.none;
-                return <span title={latest.error}>{formatDate(latest.finishedAt, copy, locale)} · {latest.status}</span>;
+                const label = <span className="scheduled-task-last-run">{formatDate(latest.finishedAt, copy, locale)} · {latest.status}</span>;
+                if (history.length <= 1) return <span title={latest.error}>{label}</span>;
+                return (
+                  <Popover
+                    trigger="click"
+                    title={copy.scheduledTaskHistoryTitle}
+                    content={
+                      <div className="scheduled-task-history">
+                        {history.map((run) => (
+                          <div className="scheduled-task-history-row" key={run.id}>
+                            <span>{formatDate(run.finishedAt, copy, locale)}</span>
+                            <span>{run.status}</span>
+                            <span title={run.error}>{run.turnId || copy.none}</span>
+                          </div>
+                        ))}
+                      </div>
+                    }
+                  >
+                    {label}
+                  </Popover>
+                );
               },
             },
             {
