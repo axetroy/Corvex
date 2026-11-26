@@ -1589,12 +1589,18 @@ export class AppStore {
       }));
   }
 
-  /** 设置或取消管理员；不允许取消最后一个管理员，返回是否命中用户。 */
-  setUserAdmin(userId: string, admin: boolean): boolean {
+  /**
+   * 设置或取消管理员；不允许取消最后一个管理员，也不允许操作者取消自己的管理员身份。
+   * actorId 为发起操作的用户 ID（可选，非 HTTP 路径可省略）。
+   */
+  setUserAdmin(userId: string, admin: boolean, actorId?: string): boolean {
     const existing = this.db.prepare("SELECT is_admin FROM users WHERE id=?").get(userId) as
       | { is_admin: number }
       | undefined;
     if (!existing) return false;
+    if (!admin && actorId && actorId === userId) {
+      throw new Error("you cannot revoke your own administrator access");
+    }
     if (!admin && existing.is_admin === 1) {
       const count = (this.db.prepare("SELECT COUNT(*) AS count FROM users WHERE is_admin=1").get() as { count: number }).count;
       if (count <= 1) throw new Error("at least one administrator is required");

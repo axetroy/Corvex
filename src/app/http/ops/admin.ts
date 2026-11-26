@@ -67,7 +67,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
         }
         try {
           if (hasAdmin) {
-            if (!ctx.store.setUserAdmin(id, body.admin as boolean)) {
+            if (!ctx.store.setUserAdmin(id, body.admin as boolean, actor?.id)) {
               sendJson(reply, 404, { error: "user not found" });
               return;
             }

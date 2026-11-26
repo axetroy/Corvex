@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Tag, Typography } from "antd";
+import { Button, Modal, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
@@ -26,6 +26,8 @@ export function AdminPanel({ copy }: Props) {
   const [currentUserId, setCurrentUserId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  // CSP nonce 下不能用静态 Modal.confirm：必须走 useModal 并把 contextHolder 渲染在页面内。
+  const [modal, modalContextHolder] = Modal.useModal();
 
   const load = useCallback(() => {
     Promise.all([
@@ -42,7 +44,7 @@ export function AdminPanel({ copy }: Props) {
 
   useEffect(load, [load]);
 
-  const update = async (user: ManagedUser, patch: { admin?: boolean; disabled?: boolean }) => {
+  const request = async (user: ManagedUser, patch: { admin?: boolean; disabled?: boolean }) => {
     setBusy(user.id);
     setError("");
     try {
@@ -55,8 +57,27 @@ export function AdminPanel({ copy }: Props) {
     }
   };
 
+  // 禁用与撤销管理员属于破坏性操作，先二次确认再执行。
+  const update = (user: ManagedUser, patch: { admin?: boolean; disabled?: boolean }) => {
+    const destructive = patch.disabled === true || (patch.admin !== undefined && patch.admin === false);
+    if (!destructive) {
+      void request(user, patch);
+      return;
+    }
+    modal.confirm({
+      title: patch.disabled === true ? copy.adminDisableConfirmTitle : copy.adminDemoteConfirmTitle,
+      content: (patch.disabled === true ? copy.adminDisableConfirmContent : copy.adminDemoteConfirmContent)
+        .replace("{name}", user.name || user.username),
+      okText: patch.disabled === true ? copy.adminDisable : copy.adminDemote,
+      okButtonProps: { danger: true },
+      cancelText: copy.adminCancel,
+      onOk: () => request(user, patch),
+    });
+  };
+
   return (
     <Panel title={copy.adminUsersTitle}>
+      {modalContextHolder}
       <Typography.Paragraph type="secondary">{copy.adminHint}</Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       <div className="admin-users">

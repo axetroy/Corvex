@@ -338,6 +338,17 @@ describe("AppStore", () => {
     expect(() => store.setUserAdmin(second.id, false)).toThrow("at least one administrator");
   });
 
+  it("does not let an operator revoke their own administrator access", async () => {
+    store = await AppStore.open(":memory:");
+    const cipher = createTokenCipher(store.getOrCreateSessionSecret());
+    const user = store.upsertUser({
+      gitlabUserId: 70, username: "admin", name: "Admin", avatarUrl: "",
+      accessToken: "", refreshToken: "", expiresAt: 0,
+    }, cipher);
+    expect(() => store.setUserAdmin(user.id, false, user.id)).toThrow("your own administrator");
+    expect(store.readUser(user.id, cipher)?.isAdmin).toBe(true);
+  });
+
   it("disabling a user clears tokens, deletes sessions and cannot target an administrator", async () => {
     store = await AppStore.open(":memory:");
     const cipher = createTokenCipher(store.getOrCreateSessionSecret());
