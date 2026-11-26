@@ -92,6 +92,16 @@ export function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 计划任务图标：日历加时钟指针，用于账号下拉菜单里的计划任务入口。 */
+export function ScheduleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...iconProps(props)}>
+      <rect x="2" y="3.2" width="12" height="10.8" rx="1.6" />
+      <path d="M2 6.4h12M5 2v2.4M11 2v2.4M8 9v2l1.6 1" />
+    </svg>
+  );
+}
+
 /** 管理后台图标：带勾的盾牌，用于账号下拉菜单里的管理入口。 */
 export function AdminIcon(props: SVGProps<SVGSVGElement>) {
   return (

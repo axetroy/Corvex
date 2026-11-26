@@ -26,6 +26,8 @@ import type {
   ProviderModel,
   OperationsOverview,
   RepositoryDetails,
+  ScheduledTask,
+  ScheduledTaskRun,
   StorageCleanupRecord,
 } from "../../../model.js";
 
@@ -60,6 +62,8 @@ export type {
   ModelProviderDetails,
   ProviderModel,
   RepositoryDetails,
+  ScheduledTask,
+  ScheduledTaskRun,
   StorageCleanupRecord,
 };
 

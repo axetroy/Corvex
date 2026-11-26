@@ -1,0 +1,15 @@
+/* 计划任务管理页：表格配色沿用运维台统一变量。 */
+.scheduled-tasks-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scheduled-tasks-page .ant-table-cell {
+  font-size: 12px;
+}
+
+.scheduled-task-actions {
+  display: flex;
+  gap: 6px;
+}

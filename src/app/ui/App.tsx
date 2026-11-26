@@ -17,6 +17,7 @@ import {
   LanguageIcon,
   LogoutIcon,
   MoreIcon,
+  ScheduleIcon,
   SidebarCollapseIcon,
   SettingsIcon,
   SidebarExpandIcon,
@@ -32,6 +33,7 @@ import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode
 // 各路由页面按需加载，让首屏只包含外壳，其余页面在导航时再取用。
 const ConversationsPage = lazy(() => import("./pages/ConversationsPage.js").then((module) => ({ default: module.ConversationsPage })));
 const UserSettingsPage = lazy(() => import("./pages/UserSettingsPage.js").then((module) => ({ default: module.UserSettingsPage })));
+const ScheduledTasksPage = lazy(() => import("./pages/ScheduledTasksPage.js").then((module) => ({ default: module.ScheduledTasksPage })));
 
 /** localStorage 中保存语言偏好的键名。 */
 const localePreferenceKey = "corvex-ops-locale-mode";
@@ -404,6 +406,7 @@ export function App() {
                 menu={{
                   items: [
                     { key: "settings", icon: <SettingsIcon />, label: copy.navSettings },
+                    { key: "scheduled", icon: <ScheduleIcon />, label: copy.scheduledTaskTitle },
                     ...(account.isAdmin
                       ? [{ key: "admin", icon: <AdminIcon />, label: copy.adminEntry }]
                       : []),
@@ -412,6 +415,7 @@ export function App() {
                   ],
                   onClick: ({ key }) => {
                     if (key === "settings") navigate("/settings");
+                    else if (key === "scheduled") navigate("/scheduled-tasks");
                     else if (key === "admin") window.open("/ops#/admin/dashboard", "_blank", "noopener");
                     else if (key === "logout") void logout();
                   },
@@ -435,6 +439,7 @@ export function App() {
             <Suspense fallback={<Loading>{copy.loading}</Loading>}>
               <Routes>
                 <Route path="/settings" element={<UserSettingsPage copy={copy} onChanged={refresh} />} />
+                <Route path="/scheduled-tasks" element={<ScheduledTasksPage copy={copy} locale={locale} />} />
                 <Route
                   path="/conversations"
                   element={

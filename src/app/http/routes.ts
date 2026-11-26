@@ -8,6 +8,7 @@ import { registerConversationRoutes } from "./ops/conversations.js";
 import { registerAdminRoutes } from "./ops/admin.js";
 import { registerModelRoutes } from "./ops/models.js";
 import { registerUserModelRoutes } from "./ops/user-models.js";
+import { registerScheduledTaskRoutes } from "./ops/scheduled-tasks.js";
 import { registerProjectRoutes } from "./ops/projects.js";
 import { registerSettingsRoutes } from "./ops/settings.js";
 import { registerSkillRoutes } from "./ops/skills.js";
@@ -49,6 +50,7 @@ export function registerRoutes(app: FastifyInstance, ctx: OpsContext): void {
   registerConversationRoutes(app, ctx);
   registerModelRoutes(app, ctx);
   registerUserModelRoutes(app, ctx);
+  registerScheduledTaskRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   registerSkillRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
