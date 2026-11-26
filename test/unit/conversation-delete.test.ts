@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationRunner } from "../../src/app/conversation-runner.js";
 import { CorvexServer } from "../../src/app/server.js";
 import {
@@ -10,12 +13,19 @@ import {
 import type { CorvexConfig } from "../../src/config/config.js";
 import { AppStore } from "../../src/store.js";
 
-const config = {
-  server: { listen: "127.0.0.1:0" },
-  storage: { root: "data", database: "data/state.db" },
-  gitlab: { baseUrl: "https://gitlab.example.com" },
-  agent: { responseLanguage: "en", model: "test-model", contextWindow: 131_072 },
-} as unknown as CorvexConfig;
+let config: CorvexConfig;
+let storageRoot = "";
+
+beforeEach(async () => {
+  // 用临时目录作 storage root，避免 Server/清理钩子在仓库里留下 data/mirrors、data/workspaces。
+  storageRoot = await mkdtemp(join(tmpdir(), "corvex-delete-"));
+  config = {
+    server: { listen: "127.0.0.1:0" },
+    storage: { root: storageRoot, database: join(storageRoot, "state.db") },
+    gitlab: { baseUrl: "https://gitlab.example.com" },
+    agent: { responseLanguage: "en", model: "test-model", contextWindow: 131_072 },
+  } as unknown as CorvexConfig;
+});
 
 function deleteContext(conversationId: string, projectId = 7): ConversationDeleteContext {
   return {
@@ -30,10 +40,12 @@ function deleteContext(conversationId: string, projectId = 7): ConversationDelet
 describe("conversation delete cleanup hook", () => {
   let store: AppStore | undefined;
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
     store?.close();
     store = undefined;
+    if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
+    storageRoot = "";
   });
 
   it("runs the default git tap and plugin taps for every cleanup reason", async () => {
