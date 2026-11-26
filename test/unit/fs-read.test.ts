@@ -19,9 +19,11 @@ describe("readAllowedFile", () => {
   let root: string;
   let skills: string;
   let outside: string;
+  let base: string;
 
   beforeEach(async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "corvex-read-"));
+    base = temporaryRoot;
     root = join(temporaryRoot, "repository");
     skills = join(temporaryRoot, "skills");
     outside = join(temporaryRoot, "outside.txt");
@@ -40,6 +42,21 @@ describe("readAllowedFile", () => {
     await expect(readAllowedFile("README.md", [root, skills])).resolves.toBe("# Repository\n");
     await expect(readAllowedFile(join(skills, "SKILL.md"), [root, skills])).resolves.toBe(
       "# Trusted skill\n",
+    );
+  });
+
+  it("reads an uploaded file from a per-turn upload root but not from a foreign one", async () => {
+    // 附件的 UUID 目录作为第三个只读根注入；相对路径仍按 worktree 解析。
+    const uploadDir = join(base, "uploads", "c1", "u1");
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(join(uploadDir, "notes.txt"), "uploaded text\n");
+    const foreignDir = join(base, "uploads", "c1", "u2");
+    await mkdir(foreignDir, { recursive: true });
+    await writeFile(join(foreignDir, "secret.txt"), "foreign\n");
+
+    await expect(readAllowedFile(join(uploadDir, "notes.txt"), [root, skills, uploadDir])).resolves.toBe("uploaded text\n");
+    await expect(readAllowedFile(join(foreignDir, "secret.txt"), [root, skills, uploadDir])).rejects.toThrow(
+      "outside the configured read-only roots",
     );
   });
 
