@@ -13,22 +13,28 @@ interface ManagedUser {
   name: string;
   avatarUrl: string;
   isAdmin: boolean;
+  disabled: boolean;
 }
 
 interface Props {
   copy: Copy;
 }
 
-/** 管理员面板：列出所有登录用户并可授予或取消管理员权限。 */
+/** 管理员面板：列出所有登录用户，可授予/取消管理员权限，以及禁用/启用用户。 */
 export function AdminPanel({ copy }: Props) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [currentUserId, setCurrentUserId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
 
   const load = useCallback(() => {
-    fetchJson<{ items: ManagedUser[] }>("/api/ops/admin/users", copy)
-      .then((response) => {
+    Promise.all([
+      fetchJson<{ items: ManagedUser[] }>("/api/ops/admin/users", copy),
+      fetchJson<{ id: string }>("/api/auth/me", copy),
+    ])
+      .then(([response, me]) => {
         setUsers(response.items);
+        setCurrentUserId(me.id);
         setError("");
       })
       .catch((cause: unknown) => setError(errorMessage(cause)));
@@ -36,11 +42,11 @@ export function AdminPanel({ copy }: Props) {
 
   useEffect(load, [load]);
 
-  const toggle = async (user: ManagedUser) => {
+  const update = async (user: ManagedUser, patch: { admin?: boolean; disabled?: boolean }) => {
     setBusy(user.id);
     setError("");
     try {
-      await sendJson(`/api/ops/admin/users/${encodeURIComponent(user.id)}`, { admin: !user.isAdmin }, copy);
+      await sendJson(`/api/ops/admin/users/${encodeURIComponent(user.id)}`, patch, copy);
       load();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -54,27 +60,43 @@ export function AdminPanel({ copy }: Props) {
       <Typography.Paragraph type="secondary">{copy.adminHint}</Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       <div className="admin-users">
-        {users.map((user) => (
-          <div className="admin-user" key={user.id}>
-            <UserAvatar
-              className="user-avatar"
-              name={user.name}
-              username={user.username}
-              avatarUrl={user.avatarUrl}
-            />
-            <span className="admin-user-name">
-              {user.name || user.username} <small>@{user.username}</small>
-            </span>
-            {user.isAdmin ? <Tag color="purple">{copy.adminBadge}</Tag> : null}
-            <Button
-              size="small"
-              loading={busy === user.id}
-              onClick={() => void toggle(user)}
-            >
-              {user.isAdmin ? copy.adminDemote : copy.adminPromote}
-            </Button>
-          </div>
-        ))}
+        {users.map((user) => {
+          const isSelf = user.id === currentUserId;
+          return (
+            <div className={`admin-user${user.disabled ? " is-disabled" : ""}`} key={user.id}>
+              <UserAvatar
+                className="user-avatar"
+                name={user.name}
+                username={user.username}
+                avatarUrl={user.avatarUrl}
+              />
+              <span className="admin-user-name">
+                {user.name || user.username} <small>@{user.username}</small>
+              </span>
+              {user.isAdmin ? <Tag color="purple">{copy.adminBadge}</Tag> : null}
+              {user.disabled ? <Tag color="error">{copy.adminDisabledBadge}</Tag> : null}
+              <Button
+                size="small"
+                loading={busy === user.id}
+                disabled={isSelf && user.isAdmin}
+                title={isSelf && user.isAdmin ? copy.adminSelfDemoteHint : undefined}
+                onClick={() => void update(user, { admin: !user.isAdmin })}
+              >
+                {user.isAdmin ? copy.adminDemote : copy.adminPromote}
+              </Button>
+              <Button
+                size="small"
+                danger={!user.disabled}
+                loading={busy === user.id}
+                disabled={isSelf}
+                title={isSelf ? copy.adminSelfDisableHint : user.isAdmin ? copy.adminDisableAdminHint : undefined}
+                onClick={() => void update(user, { disabled: !user.disabled })}
+              >
+                {user.disabled ? copy.adminEnable : copy.adminDisable}
+              </Button>
+            </div>
+          );
+        })}
       </div>
     </Panel>
   );

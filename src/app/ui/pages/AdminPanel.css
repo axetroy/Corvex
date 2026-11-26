@@ -13,6 +13,11 @@
   border-radius: 8px;
 }
 
+.admin-user.is-disabled {
+  border-color: var(--danger);
+  opacity: 0.75;
+}
+
 .admin-user-name {
   display: flex;
   min-width: 0;
