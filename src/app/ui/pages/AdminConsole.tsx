@@ -117,7 +117,7 @@ export function AdminConsole({
           <AdminDashboard copy={copy} />
         ) : usersActive ? (
           <AdminPage title={copy.adminUsersTitle} description={copy.adminHint}>
-            <AdminPanel copy={copy} />
+            <AdminPanel copy={copy} locale={locale} />
           </AdminPage>
         ) : executionsActive ? (
           <ExecutionConfigPanel copy={copy} onUpdated={onUpdated} />

@@ -31,3 +31,10 @@
 .admin-user-name small {
   color: var(--text-muted);
 }
+
+.admin-user-last-login {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}

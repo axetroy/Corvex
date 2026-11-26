@@ -1572,6 +1572,7 @@ export class AppStore {
       tokenExpiresAt: Number(row.token_expires_at ?? 0),
       isAdmin: row.is_admin === 1 || row.is_admin === true,
       disabled: row.disabled === 1 || row.disabled === true,
+      lastLoginAt: String(row.last_login_at ?? ""),
     };
   }
 
@@ -1586,6 +1587,7 @@ export class AppStore {
         avatarUrl: String(row.avatar_url ?? ""),
         isAdmin: row.is_admin === 1 || row.is_admin === true,
         disabled: row.disabled === 1 || row.disabled === true,
+        lastLoginAt: String(row.last_login_at ?? ""),
       }));
   }
 
@@ -1641,6 +1643,12 @@ export class AppStore {
     this.db.prepare(
       "UPDATE users SET access_token=?,refresh_token=?,token_expires_at=?,updated_at=? WHERE id=?",
     ).run(cipher.encrypt(identity.accessToken), cipher.encrypt(identity.refreshToken), identity.expiresAt, new Date().toISOString(), userId);
+  }
+
+  /** 记录一次成功登录的时间（OAuth 回调创建会话时调用；令牌刷新与测试 upsert 不算登录）。 */
+  touchUserLogin(userId: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE users SET last_login_at=?,updated_at=? WHERE id=?").run(now, now, userId);
   }
 
   createUserSession(userId: string, expiresAt: number): string {
@@ -2595,7 +2603,7 @@ export class AppStore {
         username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
         access_token TEXT NOT NULL DEFAULT '', refresh_token TEXT NOT NULL DEFAULT '',
         token_expires_at INTEGER NOT NULL DEFAULT 0, is_admin INTEGER NOT NULL DEFAULT 0,
-        disabled INTEGER NOT NULL DEFAULT 0,
+        disabled INTEGER NOT NULL DEFAULT 0, last_login_at TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS user_sessions (
@@ -2823,6 +2831,8 @@ export class AppStore {
     if (!userColumns.has("is_admin")) this.db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
     // 被禁用用户：旧库默认全部启用，禁用时同时清空令牌与会话（见 setUserDisabled）。
     if (!userColumns.has("disabled")) this.db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
+    // 最近一次成功登录时间；旧库留空，界面显示“未登录过”。
+    if (!userColumns.has("last_login_at")) this.db.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT NOT NULL DEFAULT ''");
     // 供应商可属于某个用户；空 owner 表示系统级，迁移时把已有供应商都归为系统级。
     const providerColumns = new Set(
       (this.db.prepare("PRAGMA table_info(model_providers)").all() as { name: string }[]).map((column) => column.name),

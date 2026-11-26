@@ -12,6 +12,8 @@ export interface AuthUser {
   isAdmin: boolean;
   /** 被禁用的用户不能登录、不能调用接口；禁用时令牌与会话会被清除。 */
   disabled: boolean;
+  /** 最近一次成功登录时间（ISO）；未登录过为空字符串。 */
+  lastLoginAt: string;
 }
 
 /** 管理员视图中的用户摘要，不含任何令牌。 */
@@ -23,6 +25,7 @@ export interface ManagedUser {
   avatarUrl: string;
   isAdmin: boolean;
   disabled: boolean;
+  lastLoginAt: string;
 }
 
 /** GitLab OAuth 回调中取得的身份与令牌。 */

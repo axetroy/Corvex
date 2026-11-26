@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Modal, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
-import type { Copy } from "../lib/i18n.js";
+import type { Copy, Locale } from "../lib/i18n.js";
+import { formatDate, formatRelativeTime } from "../lib/format.js";
 import { Panel } from "../components/common.js";
 import { UserAvatar } from "../components/UserAvatar.js";
 import "./AdminPanel.css";
@@ -14,14 +15,16 @@ interface ManagedUser {
   avatarUrl: string;
   isAdmin: boolean;
   disabled: boolean;
+  lastLoginAt: string;
 }
 
 interface Props {
   copy: Copy;
+  locale: Locale;
 }
 
 /** 管理员面板：列出所有登录用户，可授予/取消管理员权限，以及禁用/启用用户。 */
-export function AdminPanel({ copy }: Props) {
+export function AdminPanel({ copy, locale }: Props) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [currentUserId, setCurrentUserId] = useState("");
   const [error, setError] = useState("");
@@ -93,6 +96,9 @@ export function AdminPanel({ copy }: Props) {
               />
               <span className="admin-user-name">
                 {user.name || user.username} <small>@{user.username}</small>
+              </span>
+              <span className="admin-user-last-login" title={formatDate(user.lastLoginAt, copy, locale)}>
+                {copy.adminLastLogin}: {formatRelativeTime(user.lastLoginAt, copy)}
               </span>
               {user.isAdmin ? <Tag color="purple">{copy.adminBadge}</Tag> : null}
               {user.disabled ? <Tag color="error">{copy.adminDisabledBadge}</Tag> : null}

@@ -65,4 +65,33 @@ describe("disabled users cannot sign in", () => {
     expect(store.listUsers().find((item) => item.id === user.id)?.disabled).toBe(true);
     expect(store.readUser(user.id, cipher)?.accessToken).toBe("");
   });
+
+  it("records the last login time on a successful sign-in", async () => {
+    gitlab = createServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      if (request.url?.includes("/oauth/token")) {
+        response.end(JSON.stringify({ access_token: "new-token", refresh_token: "new-refresh", expires_in: 3600 }));
+        return;
+      }
+      response.end(JSON.stringify({ id: 88, username: "fresh", name: "Fresh User", avatar_url: "" }));
+    });
+    const port = await listen(gitlab);
+    store = await AppStore.open(":memory:");
+    const cipher = createTokenCipher(store.getOrCreateSessionSecret());
+    // 首次 OAuth 登录：upsertUser 创建用户，complete 记录登录时间。
+    const config = {
+      gitlab: {
+        baseUrl: `http://127.0.0.1:${port}`,
+        oauthClientId: "client", oauthClientSecret: "secret",
+        oauthRedirectUri: "http://127.0.0.1/auth/gitlab/callback",
+      },
+    } as unknown as CorvexConfig;
+    const oauth = new GitLabOAuthService(config, store, cipher);
+    const before = Date.now();
+    const { user } = await oauth.complete("auth-code");
+    const lastLoginAt = store.listUsers().find((item) => item.id === user.id)?.lastLoginAt ?? "";
+    expect(lastLoginAt).toBeTruthy();
+    expect(Date.parse(lastLoginAt)).toBeGreaterThanOrEqual(before - 1000);
+    expect(store.readUser(user.id, cipher)?.lastLoginAt).toBe(lastLoginAt);
+  });
 });

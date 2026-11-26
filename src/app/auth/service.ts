@@ -71,6 +71,7 @@ export class GitLabOAuthService {
     const user = this.store.upsertUser(identity, this.cipher);
     if (user.disabled) throw new UserDisabledError();
     const sessionId = this.store.createUserSession(user.id, Date.now() + 7 * 24 * 60 * 60_000);
+    this.store.touchUserLogin(user.id);
     return { user, sessionId };
   }
 
