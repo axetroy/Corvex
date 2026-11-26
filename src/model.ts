@@ -150,6 +150,7 @@ export type ConversationProcessEntry =
   | { kind: "thinking"; text: string }
   | { kind: "text"; text: string }
   | { kind: "context"; id: string; text: string }
+  | { kind: "scheduleCard"; card: ScheduledTaskCard }
   | {
       kind: "tool";
       id?: string;
@@ -257,6 +258,23 @@ export interface ScheduledTask {
 }
 
 /** 一次任务触发的执行记录。 */
+/** 计划任务在对话里自定义渲染用的结构化卡片；字段来自服务端落库结果，不由模型生成。 */
+export interface ScheduledTaskCardItem {
+  id: string;
+  prompt: string;
+  kind: ScheduledTask["kind"];
+  cron: string;
+  runAt: string;
+  timezone: string;
+  nextRunAt: string;
+  status: string;
+}
+
+export type ScheduledTaskCard =
+  | { type: "created"; task: ScheduledTaskCardItem }
+  | { type: "list"; tasks: ScheduledTaskCardItem[] }
+  | { type: "cancelled"; taskId: string; found: boolean };
+
 export interface ScheduledTaskRun {
   id: number;
   taskId: string;
@@ -316,6 +334,8 @@ export type ConversationStreamEvent =
   | { type: "context"; context: ConversationStreamContext }
   /** 插话状态：queued=已接收，等当前工具轮结束；delivered=已进入模型上下文。 */
   | { type: "interjection"; turnId: string; status: "queued" | "delivered" }
+  /** 计划任务工具的结构化结果，供对话里渲染可跳转的自定义卡片。 */
+  | { type: "scheduled_task_card"; card: ScheduledTaskCard }
   /** 排队列表发生变化；只带数量，正文由详情接口按需拉取。 */
   | { type: "queue"; count: number }
   | { type: "done"; status: ConversationTurnStatus; error?: string };

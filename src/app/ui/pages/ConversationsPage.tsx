@@ -16,7 +16,7 @@ import { useTurnNotifications } from "../lib/useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
 import { formatDate, formatOutputTps, formatTraceDuration } from "../lib/format.js";
 import type { Copy, Locale } from "../lib/i18n.js";
-import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamEvent, ConversationStreamTool } from "../lib/types.js";
+import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamEvent, ConversationStreamTool, ScheduledTaskCard } from "../lib/types.js";
 import type { ConversationFollowUp } from "../../../model.js";
 import { welcomePromptGroups, welcomePromptText } from "../lib/conversationPrompts.js";
 import { appendInputHistory, readInputHistory, writeInputHistory } from "../lib/inputHistory.js";
@@ -38,6 +38,7 @@ import { applyExecDelta, createExecDisplay, replayExecsFromProcess, commandFromT
 import { ConversationGitGraph } from "../components/ConversationGitGraph.js";
 import { ConversationGitChanges } from "../components/ConversationGitChanges.js";
 import { ConversationTurnNav } from "../components/ConversationTurnNav.js";
+import { ScheduledTaskCardView } from "../components/ScheduledTaskCardView.js";
 import type { ProjectOption } from "../lib/projectPicker.js";
 import { ErrorBanner, ExpandableText } from "../components/common.js";
 
@@ -135,10 +136,15 @@ function MessageContent({
   showSuggestions,
   execs,
   conversationId,
+  cards,
+  locale,
 }: {
   message: ConversationMessage;
   copy: Copy;
+  locale: Locale;
   conversationId?: string;
+  /** 计划任务工具的结构化结果；在过程块之外始终可见，可点击跳转管理页。 */
+  cards?: readonly ScheduledTaskCard[];
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
   waitingSince?: number | null;
@@ -173,6 +179,9 @@ function MessageContent({
         conversationId={conversationId}
         turnId={message.turnId ?? undefined}
       />
+      {cards?.map((card, index) => (
+        <ScheduledTaskCardView key={`${message.id}-card-${index}`} card={card} copy={copy} locale={locale} />
+      ))}
       {/* 放在过程块之后，长过程滚动时仍贴近屏幕底部；每次模型调用都会重新出现。 */}
       {streaming && waitingSince !== null && waitingSince !== undefined ? (
         <ModelWaiting since={waitingSince} copy={copy} />
@@ -292,6 +301,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
   /** 逐条思考与工具调用按轮次留在本次页面会话里，结束后仍可展开查看。 */
   const [timelineByTurn, setTimelineByTurn] = useState<Record<string, ConversationTimelineSegment[]>>({});
+  /** 本页收到的计划任务结构化卡片，按轮次索引；刷新后由过程快照还原。 */
+  const [scheduleCardsByTurn, setScheduleCardsByTurn] = useState<Record<string, ScheduledTaskCard[]>>({});
   /** 命令执行状态：execId（工具调用 ID）→ 终端显示条目，由 SSE exec 事件逐段更新。 */
   const [execsByTurn, setExecsByTurn] = useState<Record<string, Map<string, ExecDisplay>>>({});
   /** 对话流滚动容器：未滚离底部时跟随新内容，向上翻阅时不打断阅读。 */
@@ -548,6 +559,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onContext,
         onInterjection: (_turnId, status) => {
           setInterjectNotice(status);
+          setPollToken((value) => value + 1);
+        },
+        onScheduledTaskCard: (card) => {
+          setScheduleCardsByTurn((current) => ({
+            ...current,
+            [activeTurnId]: [...(current[activeTurnId] ?? []), card],
+          }));
           setPollToken((value) => value + 1);
         },
         onQueue: () => void loadFollowUps(),
@@ -1049,6 +1067,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
           });
         } else if (entry.kind === "context") {
           mergeContextNotice(persistedSegments, entry.id, entry.text, (key, text): ConversationTimelineSegment => ({ kind: "context", key, text }));
+        } else if (entry.kind === "scheduleCard") {
+          // 卡片单独渲染在过程块之外，这里不重复放进时间线。
         } else {
           persistedSegments.push({ kind: entry.kind, key: `persisted-${index}`, text: entry.text });
         }
@@ -1072,6 +1092,19 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     const execs = streaming
       ? (message.turnId ? execsByTurn[message.turnId] : undefined)
       : replayExecsFromProcess(message.process);
+    // 实时事件与刷新后的过程快照可能同时存在，按内容去重。
+    const cards: ScheduledTaskCard[] = [];
+    const seenCards = new Set<string>();
+    const rawCards = [
+      ...(message.turnId ? scheduleCardsByTurn[message.turnId] ?? [] : []),
+      ...message.process.flatMap((entry) => entry.kind === "scheduleCard" ? [entry.card] : []),
+    ];
+    for (const card of rawCards) {
+      const key = JSON.stringify(card);
+      if (seenCards.has(key)) continue;
+      seenCards.add(key);
+      cards.push(card);
+    }
     return {
       key: message.id,
       role: message.role === "user" ? "user" : "ai",
@@ -1085,6 +1118,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       content: <MessageContent
         message={message}
         copy={copy}
+        locale={locale}
+        cards={cards}
         streaming={streaming}
         timeline={timeline}
         waitingSince={streaming ? waitingSince : null}

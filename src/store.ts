@@ -27,6 +27,7 @@ import {
   type ConversationMessage,
   type ConversationSkill,
   type ConversationUpload,
+  type ScheduledTaskCard,
   type ScheduledTask,
   type ScheduledTaskRun,
   type ScheduleKind,
@@ -231,6 +232,18 @@ function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[
         input: entry.input ? redactModelFacingText(entry.input).slice(0, maxConversationProcessInputChars) : null,
       };
     }
+    if (entry.kind === "scheduleCard") {
+      // 卡片字段都来自落库结果，只需对自由文本做脱敏与限长。
+      const cleanCard = { ...entry.card };
+      if (cleanCard.type === "created") {
+        cleanCard.task = { ...cleanCard.task, prompt: redactModelFacingText(cleanCard.task.prompt).slice(0, 2_000) };
+      } else if (cleanCard.type === "list") {
+        cleanCard.tasks = cleanCard.tasks.map((task) => ({
+          ...task, prompt: redactModelFacingText(task.prompt).slice(0, 2_000),
+        }));
+      }
+      return { ...entry, card: cleanCard };
+    }
     return { ...entry, text: redactModelFacingText(entry.text).slice(0, maxConversationProcessTextChars) };
   });
   let serialized = JSON.stringify(clean);
@@ -276,6 +289,28 @@ function readStoredExecOutput(value: unknown): NonNullable<Extract<ConversationP
   };
 }
 
+/** 读取落库的计划任务卡片；字段逐项校验，旧数据里形状不符的直接忽略。 */
+function readStoredScheduleCard(value: unknown): ScheduledTaskCard | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const card = value as Record<string, unknown>;
+  const isItem = (item: unknown): item is Extract<ScheduledTaskCard, { type: "created" }>["task"] => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as Record<string, unknown>;
+    return typeof row.id === "string" && typeof row.prompt === "string" &&
+      (row.kind === "once" || row.kind === "cron") && typeof row.cron === "string" &&
+      typeof row.runAt === "string" && typeof row.timezone === "string" &&
+      typeof row.nextRunAt === "string" && typeof row.status === "string";
+  };
+  if (card.type === "created" && isItem(card.task)) return { type: "created", task: card.task };
+  if (card.type === "list" && Array.isArray(card.tasks) && card.tasks.every(isItem)) {
+    return { type: "list", tasks: card.tasks };
+  }
+  if (card.type === "cancelled" && typeof card.taskId === "string" && typeof card.found === "boolean") {
+    return { type: "cancelled", taskId: card.taskId, found: card.found };
+  }
+  return undefined;
+}
+
 function readConversationProcess(raw: string): ConversationProcessEntry[] {
   if (!raw) return [];
   let parsed: unknown;
@@ -293,6 +328,10 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
     }
     if (entry.kind === "context" && typeof entry.id === "string" && typeof entry.text === "string") {
       return [{ kind: "context", id: entry.id, text: entry.text }];
+    }
+    if (entry.kind === "scheduleCard") {
+      const card = readStoredScheduleCard(entry.card);
+      return card ? [{ kind: "scheduleCard", card }] : [];
     }
     if (
       entry.kind === "tool" && typeof entry.name === "string" &&

@@ -272,6 +272,26 @@ describe("AppStore", () => {
     expect(entry.execOutput.exitCode).toBe(0);
   });
 
+  it("preserves scheduled task cards in the turn process snapshot", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 1, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "schedule", ownerUserId: "u1",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    const card = {
+      type: "created" as const,
+      task: {
+        id: "abcd1234", prompt: "check CI", kind: "cron" as const, cron: "0 9 * * 1",
+        runAt: "", timezone: "UTC", nextRunAt: "2026-11-30T09:00:00.000Z", status: "active",
+      },
+    };
+    store.saveConversationTurnProcess(claimed.turnId, [{ kind: "scheduleCard", card }]);
+    const entries = store.getConversationTurn(created.conversationId, claimed.turnId)?.process ?? [];
+    expect(entries).toEqual([{ kind: "scheduleCard", card }]);
+  });
+
   it("把旧的 model_profiles 表拆分为供应商与模型", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-store-"));
     const databasePath = join(directory, "state.db");

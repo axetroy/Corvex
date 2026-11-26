@@ -125,7 +125,8 @@ Claude Code 官方文档把调度分成三层，边界清晰：
 ### 3.5 API 与 UI
 
 - API：新增 `/api/ops/scheduled-tasks`（GET 列表、POST 创建、DELETE/PATCH 取消/启停），挂在现有路由注册模块（放 `ops/` 新文件或并入 `conversations.ts`），走既有登录鉴权；任务按 `ownerUserId` 过滤，管理员也不跨用户。
-- UI：运维台新增"计划任务"页（`src/app/ui/pages/ScheduledTasksPage.tsx`），列表展示 prompt、cron/可读计划、下次运行、状态、最近运行；提供删除/暂停。新建主入口仍是在对话里用自然语言创建（模型调 `schedule_task`），UI 只做管理与可见性。
+- UI：运维台新增"计划任务"页（`src/app/ui/pages/ScheduledTasksPage.tsx`），列表展示 prompt、cron/可读计划、下次运行、状态、最近运行；提供删除/暂停。新建主入口仍是在对话里用自然语言创建（模型调 `schedule_task`），UI 只做管理与可见性。任务页用卡片网格 + 常驻「怎么玩」引导与示例语句，空态可一键跳回对话。
+- **对话内结构化卡片**：三个工具的 `execute` 在 `details` 里返回由落库结果生成的结构化载荷（type 为 `scheduled_task_card`），`pi.ts` 在 `tool_execution_end` 逐字段校验后经 `onScheduleCard` → SSE `scheduled_task_card` 推送；Runner 把它写入过程快照（`kind: "scheduleCard"`），`store.readConversationProcess` 读取时同样校验，刷新后卡片不丢。`ScheduledTaskCardView` 在助手正文附近常驻渲染创建/列表/取消卡片，并带「查看计划任务」跳转。数据来自服务端而非模型自由文本，避免幻觉 ID/时间，也不依赖模型是否回显。
 - i18n：en/zhCN 同步加 `scheduledTask*` 文案。
 
 ### 3.6 待定问题（实现前需确认）

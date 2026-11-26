@@ -5,9 +5,10 @@ import type { ScheduledTask } from "../../src/model.js";
 
 /** 收集注册的工具，execute 可直接调用。 */
 function collectTools(owner: string, conversationId: string, store: ScheduledTaskStore) {
-  const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }>();
+  type ToolResult = { content: { text: string }[]; details?: Record<string, unknown> };
+  const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<ToolResult> }>();
   const pi = {
-    registerTool: (tool: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: { text: string }[] }> }) => {
+    registerTool: (tool: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<ToolResult> }) => {
       tools.set(tool.name, tool);
     },
   } as unknown as ExtensionAPI;
@@ -85,6 +86,29 @@ describe("schedule_task tool", () => {
       prompt: "x", schedule: "0 9 * * *", recurring: true, timezone: "Not/AZone",
     });
     expect(bad.content[0]!.text).toContain("Invalid IANA timezone");
+  });
+
+  it("returns structured card details for create, list and cancel", async () => {
+    const store = fakeStore();
+    const tools = collectTools("u1", "conv-1", store);
+    const created = await tools.get("schedule_task")!.execute("c1", {
+      prompt: "check CI", schedule: "0 9 * * 1", recurring: true, timezone: "Asia/Shanghai",
+    });
+    expect(created.details?.type).toBe("scheduled_task_card");
+    const createdCard = created.details?.card as { type: string; task: { id: string; prompt: string; timezone: string } };
+    expect(createdCard.type).toBe("created");
+    expect(createdCard.task.id).toBe(store.list("u1")[0]!.id);
+    expect(createdCard.task.prompt).toBe("check CI");
+    expect(createdCard.task.timezone).toBe("Asia/Shanghai");
+
+    const listed = await tools.get("list_scheduled_tasks")!.execute("c2", {});
+    const listCard = listed.details?.card as { type: string; tasks: unknown[] };
+    expect(listCard.type).toBe("list");
+    expect(listCard.tasks).toHaveLength(1);
+
+    const cancelled = await tools.get("cancel_scheduled_task")!.execute("c3", { id: createdCard.task.id });
+    const cancelCard = cancelled.details?.card as { type: string; taskId: string; found: boolean };
+    expect(cancelCard).toMatchObject({ type: "cancelled", taskId: createdCard.task.id, found: true });
   });
 
   it("lists and cancels tasks", async () => {

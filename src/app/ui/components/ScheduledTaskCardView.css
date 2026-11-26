@@ -1,0 +1,72 @@
+/* 对话里的计划任务卡片：与过程块区分，始终可见，不藏在折叠详情里。 */
+.chat-schedule-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.chat-schedule-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-schedule-card-title {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-schedule-card-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-schedule-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+}
+
+.chat-schedule-card-prompt {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.chat-schedule-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.chat-schedule-card-meta b {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.chat-schedule-card-tz {
+  margin: 0 0 0 4px;
+  font-size: 10px;
+}
+
+.chat-schedule-card-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}

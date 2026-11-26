@@ -1,6 +1,6 @@
 import { isConversationTurnStatus } from "../../../model.js";
 import type { ConversationStreamContext, ConversationStreamTool, ConversationTurnStatus } from "../../../model.js";
-import type { ConversationStreamEvent } from "./types.js";
+import type { ConversationStreamEvent, ScheduledTaskCard } from "./types.js";
 
 /**
  * 解析一段 SSE 缓冲，返回已完整的事件与尚未收到空行的剩余文本。
@@ -55,6 +55,9 @@ export function parseSseFrames(buffer: string): {
     } else if (event.type === "interjection" && typeof event.turnId === "string" &&
       (event.status === "queued" || event.status === "delivered")) {
       events.push({ type: "interjection", turnId: event.turnId, status: event.status });
+    } else if (event.type === "scheduled_task_card" && event.card && typeof event.card === "object" && !Array.isArray(event.card)) {
+      // 服务端已逐字段校验，这里只做基本形状守卫，避免坏帧打断开流。
+      events.push({ type: "scheduled_task_card", card: event.card as unknown as ScheduledTaskCard });
     } else if (event.type === "context" && event.context && typeof event.context === "object" && !Array.isArray(event.context)) {
       const context = event.context as Record<string, unknown>;
       if (typeof context.id === "string" && typeof context.text === "string") {
@@ -102,6 +105,8 @@ export interface ConversationStreamHandlers {
   onContext?: (context: ConversationStreamContext) => void;
   /** 插话状态：queued=已接收等模型处理，delivered=已进入模型上下文；同时触发详情刷新显示气泡。 */
   onInterjection?: (turnId: string, status: "queued" | "delivered") => void;
+  /** 计划任务工具的结构化结果，供对话里渲染可跳转卡片。 */
+  onScheduledTaskCard?: (card: ScheduledTaskCard) => void;
   /** 排队补充消息发生变化，携带当前数量。 */
   onQueue?: (count: number) => void;
   /** 轮次结束；服务端保证只发送一次。 */
@@ -151,6 +156,8 @@ export async function streamConversationTurn(
           handlers.onExec?.(event);
         } else if (event.type === "context") {
           handlers.onContext?.(event.context);
+        } else if (event.type === "scheduled_task_card") {
+          handlers.onScheduledTaskCard?.(event.card);
         } else if (event.type === "interjection") {
           handlers.onInterjection?.(event.turnId, event.status);
         } else if (event.type === "queue") {

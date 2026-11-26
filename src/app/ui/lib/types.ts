@@ -27,6 +27,7 @@ import type {
   OperationsOverview,
   RepositoryDetails,
   ScheduledTask,
+  ScheduledTaskCard,
   ScheduledTaskRun,
   StorageCleanupRecord,
 } from "../../../model.js";
@@ -63,6 +64,7 @@ export type {
   ProviderModel,
   RepositoryDetails,
   ScheduledTask,
+  ScheduledTaskCard,
   ScheduledTaskRun,
   StorageCleanupRecord,
 };

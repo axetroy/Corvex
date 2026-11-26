@@ -15,7 +15,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import type { AssistantMessageEvent, AssistantMessage, StreamOptions, ThinkingContent, UserMessage } from "@earendil-works/pi-ai";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
-import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, TraceEntry, TraceKind, ModelTaskType, TraceScope, ThinkingLevel } from "../model.js";
+import type { ConversationMode, ConversationStreamContext, ConversationStreamTool, ScheduledTaskCard, ScheduledTaskCardItem, TraceEntry, TraceKind, ModelTaskType, TraceScope, ThinkingLevel } from "../model.js";
 import type { AppStore } from "../store.js";
 import { callAsyncHook, type CorvexHooks } from "../app/hooks.js";
 
@@ -258,6 +258,32 @@ export function createSteerChannel(): SteerChannel {
   };
 }
 
+/** 工具结果里的 details 是不可信边界数据，逐字段校验后才交给前端渲染。 */
+function parseScheduleCard(value: unknown): ScheduledTaskCard | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const envelope = value as Record<string, unknown>;
+  if (envelope.type !== "scheduled_task_card") return undefined;
+  const card = envelope.card;
+  if (!card || typeof card !== "object") return undefined;
+  const raw = card as Record<string, unknown>;
+  const isItem = (item: unknown): item is ScheduledTaskCardItem => {
+    if (!item || typeof item !== "object") return false;
+    const value = item as Record<string, unknown>;
+    return typeof value.id === "string" && typeof value.prompt === "string" &&
+      (value.kind === "once" || value.kind === "cron") && typeof value.cron === "string" &&
+      typeof value.runAt === "string" && typeof value.timezone === "string" &&
+      typeof value.nextRunAt === "string" && typeof value.status === "string";
+  };
+  if (raw.type === "created" && isItem(raw.task)) return { type: "created", task: raw.task };
+  if (raw.type === "list" && Array.isArray(raw.tasks) && raw.tasks.every(isItem)) {
+    return { type: "list", tasks: raw.tasks };
+  }
+  if (raw.type === "cancelled" && typeof raw.taskId === "string" && typeof raw.found === "boolean") {
+    return { type: "cancelled", taskId: raw.taskId, found: raw.found };
+  }
+  return undefined;
+}
+
 export interface ModelRequest {
   taskType: ModelTaskType;
   systemPrompt: string;
@@ -302,6 +328,8 @@ export interface ModelRequest {
   onToolDelta?: (tool: ConversationStreamTool) => void;
   /** 插话状态变化（排队 / 已进入模型上下文），供控制台提示用户。 */
   onSteerStatus?: (status: SteerStatus) => void;
+  /** 计划任务工具的结构化结果，供对话里渲染可跳转卡片。 */
+  onScheduleCard?: (card: ScheduledTaskCard) => void;
   /** 命令开始：登记独立停止回调（只停该命令，不取消整轮）。 */
   onExecStart?: (execId: string, stop: (reason: string) => void) => void;
   /** 命令结束：注销停止回调。 */
@@ -1092,6 +1120,16 @@ export class PiAgent {
         console.warn("tool stream callback failed", { error: errorMessage(error) });
       }
     };
+    const emitScheduleCard = (details: unknown) => {
+      if (!request.onScheduleCard) return;
+      const card = parseScheduleCard(details);
+      if (!card) return;
+      try {
+        request.onScheduleCard(card);
+      } catch (error) {
+        console.warn("schedule card callback failed", { error: errorMessage(error) });
+      }
+    };
     let activeCompaction: {
       streamId: string;
       traceId?: number;
@@ -1224,6 +1262,9 @@ export class PiAgent {
           status: event.isError ? "failed" : "succeeded",
           durationMs: event.durationMs ?? null,
         });
+        if (!event.isError) {
+          emitScheduleCard((event.result as { details?: unknown } | undefined)?.details);
+        }
         streamToolInputs.delete(event.toolCallId);
       }
       if (event.type === "message_end" && event.message.role === "assistant") {

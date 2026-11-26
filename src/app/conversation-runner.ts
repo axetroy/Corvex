@@ -962,6 +962,8 @@ export class ConversationRunner {
         else updateText("text", event.text);
       } else if (event.type === "context") {
         entries.push({ kind: "context", id: event.context.id, text: event.context.text });
+      } else if (event.type === "scheduled_task_card") {
+        entries.push({ kind: "scheduleCard", card: event.card });
       } else if (event.type === "tool") {
         const { tool } = event;
         const existing = entries.find((entry) => entry.kind === "tool" && entry.id === tool.id);
@@ -991,7 +993,7 @@ export class ConversationRunner {
     }
     const answer = finalAnswer?.trim();
     return entries.filter((entry) => {
-      if (entry.kind === "tool") return true;
+      if (entry.kind === "tool" || entry.kind === "scheduleCard") return true;
       if (!entry.text.trim()) return false;
       // 最终回答在消息正文里已有，过程块不再重复；中间回复照常保留。
       return !(answer && entry.kind === "text" && entry.text.trim() === answer);
@@ -1240,6 +1242,7 @@ export class ConversationRunner {
                 this.publishStream(turn.turnId, { type: "thinking", reset: update.reset, text: update.text }),
               onToolDelta: (tool) => this.publishStream(turn.turnId, { type: "tool", tool }),
               onSteerStatus: (status) => this.publishStream(turn.turnId, { type: "interjection", turnId: turn.turnId, status }),
+              onScheduleCard: (card) => this.publishStream(turn.turnId, { type: "scheduled_task_card", card }),
               onContextDelta: (context) => this.publishStream(turn.turnId, { type: "context", context }),
               onExecStart: (execId, stop) => this.execStops.set(execId, { turnId: turn.turnId, stop }),
               onExecEnd: (execId) => this.execStops.delete(execId),

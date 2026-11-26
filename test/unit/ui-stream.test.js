@@ -58,6 +58,12 @@ describe("operations UI conversation stream", () => {
     ]);
   });
 
+  it("parses scheduled task card events", () => {
+    const card = { type: "created", task: { id: "abcd1234", prompt: "check CI", kind: "cron", cron: "0 9 * * 1", runAt: "", timezone: "UTC", nextRunAt: "2026-11-30T09:00:00.000Z", status: "active" } };
+    const parsed = parseSseFrames(`data: ${JSON.stringify({ type: "scheduled_task_card", card })}\n\n`);
+    expect(parsed.events).toEqual([{ type: "scheduled_task_card", card }]);
+  });
+
   it("parses interjection status events", () => {
     const parsed = parseSseFrames(
       'data: {"type":"interjection","turnId":"t1","status":"queued"}\n\n' +

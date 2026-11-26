@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ScheduledTask } from "../model.js";
+import type { ScheduledTask, ScheduledTaskCard, ScheduledTaskCardItem } from "../model.js";
 import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt } from "../app/schedule.js";
 
 /** 计划任务工具所需的最小存储接口；由 PiAgent 注入现有 AppStore。 */
@@ -37,6 +37,26 @@ function describeTask(task: ScheduledTask): string {
   return `${task.id} [${task.status}] ${schedule} — ${summary}`;
 }
 
+/** 工具结果里的结构化卡片载荷；只取落库字段，绝不回显模型自造的 ID/时间。 */
+export const scheduleCardDetailType = "scheduled_task_card" as const;
+
+/** 所有返回分支共用同一 details 形状，避免 SDK 从首分支推断出过窄的泛型。 */
+type ScheduleToolDetails = { type: string | undefined; card: ScheduledTaskCard | undefined };
+const emptyDetails: ScheduleToolDetails = { type: undefined, card: undefined };
+
+function toCardItem(task: ScheduledTask): ScheduledTaskCardItem {
+  return {
+    id: task.id,
+    prompt: task.prompt,
+    kind: task.kind,
+    cron: task.cron,
+    runAt: task.runAt,
+    timezone: task.timezone,
+    nextRunAt: task.nextRunAt,
+    status: task.status,
+  };
+}
+
 /**
  * 注册计划任务三工具：create / list / cancel。
  * 只在对话轮次且有 store + owner 时注册；无 store 时退化为空（不影响标题等非对话任务）。
@@ -64,13 +84,13 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
       execute: async (_toolCallId, params) => {
         const targetConversation = params.conversationId ?? conversationId;
         if (store.conversationOwner(targetConversation) !== ownerUserId) {
-          return { content: [{ type: "text", text: "That conversation does not belong to the current user." }], details: {} };
+          return { content: [{ type: "text", text: "That conversation does not belong to the current user." }], details: emptyDetails };
         }
         const prompt = params.prompt.trim().slice(0, maxPromptCharacters);
         const recurring = params.recurring === true;
         const timezone = params.timezone?.trim() || "UTC";
         if (!isValidTimeZone(timezone)) {
-          return { content: [{ type: "text", text: `Invalid IANA timezone: ${timezone}.` }], details: {} };
+          return { content: [{ type: "text", text: `Invalid IANA timezone: ${timezone}.` }], details: emptyDetails };
         }
         const now = Date.now();
         let kind: "once" | "cron";
@@ -80,7 +100,7 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         if (recurring) {
           const parsed = parseCron(params.schedule.trim());
           if (!parsed) {
-            return { content: [{ type: "text", text: `Invalid cron expression: ${params.schedule}. Use 5 fields: minute hour day-of-month month day-of-week.` }], details: {} };
+            return { content: [{ type: "text", text: `Invalid cron expression: ${params.schedule}. Use 5 fields: minute hour day-of-month month day-of-week.` }], details: emptyDetails };
           }
           kind = "cron";
           cron = params.schedule.trim();
@@ -90,14 +110,14 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         } else {
           const parsed = parseRunAt(params.schedule, new Date(now));
           if (!parsed || parsed.getTime() <= now) {
-            return { content: [{ type: "text", text: `Invalid or past time: ${params.schedule}. Use e.g. "in 45m" or an ISO timestamp.` }], details: {} };
+            return { content: [{ type: "text", text: `Invalid or past time: ${params.schedule}. Use e.g. "in 45m" or an ISO timestamp.` }], details: emptyDetails };
           }
           kind = "once";
           runAt = parsed.toISOString();
           next = parsed;
         }
         if (!next) {
-          return { content: [{ type: "text", text: "The schedule never fires; pick a different expression." }], details: {} };
+          return { content: [{ type: "text", text: "The schedule never fires; pick a different expression." }], details: emptyDetails };
         }
         const expiresAt = recurring ? new Date(now + 30 * 86_400_000).toISOString() : "";
         const task = store.create({
@@ -106,7 +126,7 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         });
         return {
           content: [{ type: "text", text: `Scheduled ${kind} task ${task.id}. Next run: ${next.toISOString()} (UTC, cron interpreted in ${timezone}). Echo this schedule to the user to confirm.` }],
-          details: {},
+          details: { type: scheduleCardDetailType, card: { type: "created", task: toCardItem(task) } } as ScheduleToolDetails,
         };
       },
     });
@@ -123,7 +143,10 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         const text = tasks.length > 0
           ? tasks.map(describeTask).join("\n")
           : "No scheduled tasks.";
-        return { content: [{ type: "text", text }], details: {} };
+        return {
+          content: [{ type: "text", text }],
+          details: { type: scheduleCardDetailType, card: { type: "list", tasks: tasks.map(toCardItem) } } as ScheduleToolDetails,
+        };
       },
     });
 
@@ -138,7 +161,10 @@ export function createScheduledTaskExtension(options: ScheduledTaskToolOptions =
         const removed = store.cancel(params.id, ownerUserId);
         return {
           content: [{ type: "text", text: removed ? `Cancelled task ${params.id}.` : `Task ${params.id} not found.` }],
-          details: {},
+          details: {
+            type: scheduleCardDetailType,
+            card: { type: "cancelled", taskId: params.id, found: removed },
+          } as ScheduleToolDetails,
         };
       },
     });
