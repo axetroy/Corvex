@@ -137,14 +137,13 @@
 .scheduled-task-meta-value {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  overflow: hidden;
+  gap: 4px 6px;
+  overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .scheduled-task-id {

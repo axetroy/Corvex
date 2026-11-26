@@ -145,7 +145,9 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                       <Typography.Text code className="scheduled-task-id" title={task.id}>{task.id.slice(0, 8)}</Typography.Text>
                     </MetaItem>
                     <MetaItem label={copy.scheduledTaskColumnSchedule}>
-                      <Typography.Text code>{task.kind === "cron" ? task.cron : task.runAt}</Typography.Text>
+                      <Typography.Text code title={task.kind === "cron" ? task.cron : task.runAt}>
+                        {task.kind === "cron" ? task.cron : formatDate(task.runAt, copy, locale)}
+                      </Typography.Text>
                       {task.timezone && task.timezone !== "UTC" ? (
                         <Tag className="scheduled-task-tz">{task.timezone}</Tag>
                       ) : null}
