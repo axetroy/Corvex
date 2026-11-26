@@ -1,0 +1,98 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CorvexServer } from "../../src/app/server.js";
+import { AppStore } from "../../src/store.js";
+import { createTokenCipher } from "../../src/tokens.js";
+import type { CorvexConfig } from "../../src/config/config.js";
+import { uploadContentType } from "../../src/app/upload.js";
+
+function config(root: string): CorvexConfig {
+  return {
+    server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
+    operations: { username: "", password: "" },
+    gitlab: { baseUrl: "http://127.0.0.1:1", blockedUserIds: [], botUsername: "" },
+    storage: { root, database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
+    agent: {
+      responseLanguage: "en", baseUrl: "https://api.openai.com/v1", model: "test", apiKey: "",
+      requestTimeout: 1000, sessionTimeout: 1000, maxOutputTokens: 4096, dailyTokenBudget: 0,
+      webEnabled: false, webBlockedHosts: [], skillPaths: [],
+    },
+  };
+}
+
+function login(store: AppStore, gitlabUserId: number, username: string): { headers: Record<string, string>; id: string } {
+  const cipher = createTokenCipher(store.getOrCreateSessionSecret());
+  const user = store.upsertUser({
+    gitlabUserId, username, name: username, avatarUrl: "", accessToken: "t",
+    refreshToken: "", expiresAt: Date.now() + 3_600_000,
+  }, cipher);
+  return {
+    headers: { cookie: `corvex_session=${store.createUserSession(user.id, Date.now() + 3_600_000)}` },
+    id: user.id,
+  };
+}
+
+describe("upload API", () => {
+  let temp = "";
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (temp) await rm(temp, { recursive: true, force: true });
+  });
+
+  it("uploads text, validates it, isolates owners and deletes the file", async () => {
+    temp = await mkdtemp(join(tmpdir(), "corvex-upload-"));
+    const store = await AppStore.open(":memory:");
+    const owner = login(store, 1, "owner");
+    const other = login(store, 2, "other");
+    const ownerHeaders = owner.headers;
+    const otherHeaders = other.headers;
+    const created = store.createConversation({
+      ownerUserId: owner.id, projectId: 2, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 1, request: "hi",
+    });
+    const id = created.conversationId;
+
+    const application = new CorvexServer(config(temp), store);
+    const controller = new AbortController();
+    const running = application.run(controller.signal);
+    try {
+      let base = "";
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try { base = `http://127.0.0.1:${application.getListeningAddress().port}`; break; }
+        catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+      }
+      expect(base).not.toBe("");
+      const url = `${base}/api/ops/conversations/${id}/uploads?filename=notes.txt&mime=text/plain`;
+      const post = (headers: Record<string, string>, body: Buffer, contentType = uploadContentType) =>
+        fetch(url, { method: "POST", headers: { ...headers, "content-type": contentType }, body });
+
+      expect((await post(ownerHeaders, Buffer.from(""), uploadContentType)).status).toBe(400);
+      expect((await post(ownerHeaders, Buffer.from([0, 1]), uploadContentType)).status).toBe(400);
+      expect((await post(ownerHeaders, Buffer.from("ok"), "text/plain")).status).toBe(415);
+      expect((await post(otherHeaders, Buffer.from("ok"))).status).toBe(404);
+
+      const createdResponse = await post(ownerHeaders, Buffer.from("hello 世界"));
+      expect(createdResponse.status).toBe(201);
+      const upload = (await createdResponse.json()) as { id: string; filename: string; storagePath: string };
+      expect(upload.filename).toBe("notes.txt");
+      expect(upload.storagePath).toContain(`uploads/${id}/${upload.id}/notes.txt`);
+
+      const list = await fetch(`${base}/api/ops/conversations/${id}/uploads`, { headers: ownerHeaders });
+      expect(list.status).toBe(200);
+      expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(1);
+      expect((await fetch(`${base}/api/ops/conversations/${id}/uploads`, { headers: otherHeaders })).status).toBe(404);
+
+      const removed = await fetch(`${base}/api/ops/conversations/${id}/uploads/${upload.id}`, {
+        method: "DELETE", headers: ownerHeaders,
+      });
+      expect(removed.status).toBe(200);
+      expect(store.getConversationUpload(upload.id)).toBeUndefined();
+      expect(store.listConversationUploads(id)).toHaveLength(0);
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+});

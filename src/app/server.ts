@@ -6,6 +6,7 @@ import type { AppStore } from "../store.js";
 import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
 import { skillImportLimits } from "../agent/skill-import.js";
+import { maxUploadBytes, uploadContentType } from "./upload.js";
 import { currentUser } from "./auth/context.js";
 import { GitLabOAuthService } from "./auth/service.js";
 import type { FastifyRequest } from "fastify";
@@ -239,6 +240,12 @@ export class CorvexServer {
     this.app.addContentTypeParser(
       "application/zip",
       { parseAs: "buffer", bodyLimit: skillImportLimits.maxArchiveBytes },
+      (_request, body, done) => done(null, body),
+    );
+    // 会话文本附件走专用 content-type，独立限额且不与 JSON API / 技能包 ZIP 冲突。
+    this.app.addContentTypeParser(
+      uploadContentType,
+      { parseAs: "buffer", bodyLimit: maxUploadBytes },
       (_request, body, done) => done(null, body),
     );
     this.app.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {

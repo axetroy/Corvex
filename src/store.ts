@@ -1086,6 +1086,27 @@ export class AppStore {
     };
   }
 
+  /** 读取本轮绑定的上传附件；只返回仍然存在的行（可能已被用户删除）。 */
+  getTurnUploads(turnId: string): ConversationUpload[] {
+    const row = this.db.prepare("SELECT upload_ids FROM conversation_turns WHERE id=?").get(turnId) as
+      { upload_ids: string } | undefined;
+    if (!row) return [];
+    let ids: unknown;
+    try {
+      ids = JSON.parse(row.upload_ids);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(ids)) return [];
+    const result: ConversationUpload[] = [];
+    for (const id of ids) {
+      if (typeof id !== "string") continue;
+      const upload = this.getConversationUpload(id);
+      if (upload) result.push(upload);
+    }
+    return result;
+  }
+
   /**
    * 读取整段对话的轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
    * 并按轮次创建时间给出分组边界。对话不存在时返回 undefined。
@@ -2062,8 +2083,8 @@ export class AppStore {
     const request = input.request.trim();
     this.db.prepare(
       `INSERT INTO conversation_turns
-         (id,conversation_id,message_id,user_message_id,role,status,request,head_sha,actor_id,attempt_count,last_error,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (id,conversation_id,message_id,user_message_id,role,status,request,head_sha,actor_id,attempt_count,last_error,upload_ids,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       turnId,
       conversationId,
@@ -2076,6 +2097,7 @@ export class AppStore {
       input.actorId,
       0,
       "",
+      JSON.stringify(input.uploadIds ?? []),
       now,
       now,
     );
@@ -2735,6 +2757,11 @@ export class AppStore {
     );
   }
 
+  /** 记录一次会话附件变更：resource 带会话/附件，result 为 created/deleted/rejected。 */
+  insertUploadAudit(actorId: number, conversationId: string, uploadId: string, result: string): void {
+    this.insertAudit(actorId, "conversation_upload", `${conversationId}:${uploadId}`, result);
+  }
+
   /** 记录一次会话工作区超限警告：resource 带会话/轮次，result 带实际字节/上限/是否截断。 */
   insertWorkspaceSizeAudit(
     actorId: number,
@@ -2841,6 +2868,7 @@ export class AppStore {
         status TEXT NOT NULL, request TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '',
         actor_id INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
+        upload_ids TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_turns_order_idx ON conversation_turns(conversation_id,created_at,id);
@@ -3083,6 +3111,8 @@ export class AppStore {
     if (!turnColumns.has("process")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN process TEXT NOT NULL DEFAULT ''");
     // 落库回复使用的模型名，供控制台在复制按钮旁展示；旧库补齐这一列。
     if (!turnColumns.has("model")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN model TEXT NOT NULL DEFAULT ''");
+    // 本轮绑定的上传附件 ID（JSON 数组）；旧库留空表示没有附件。
+    if (!turnColumns.has("upload_ids")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN upload_ids TEXT NOT NULL DEFAULT '[]'");
     // 回复末尾的下一步建议，作为 JSON 数组落库；旧库留空由界面隐藏。
     const freshMessageColumns = new Set(
       (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((column) => column.name),

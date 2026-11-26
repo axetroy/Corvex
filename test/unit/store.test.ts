@@ -413,6 +413,23 @@ describe("AppStore", () => {
     expect(store.deleteConversationUpload("upload1")).toBe(true);
     expect(store.getConversationUpload("upload1")).toBeUndefined();
 
+    // 附件绑定到轮次：只有该轮能读到，且用户删除后自动从清单消失。
+    // 先结束 createConversation 自带的首轮，否则 addConversationMessage 会拒绝。
+    store.claimConversationTurn(created.turnId);
+    store.finishConversationTurn(created.turnId, "ok");
+    store.createConversationUpload({
+      id: "turn-upload", conversationId: created.conversationId, ownerUserId: "u1",
+      filename: "turn.txt", mime: "text/plain", sizeBytes: 3,
+      storagePath: "uploads/c1/turn-upload/turn.txt", sha256: "y",
+    });
+    const turn = store.addConversationMessage(created.conversationId, {
+      ownerUserId: "u1", projectId: 7, targetBranch: "main", headSha: "a".repeat(40),
+      actorId: 0, request: "read it", uploadIds: ["turn-upload"],
+    });
+    expect(store.getTurnUploads(turn.turnId).map((item) => item.id)).toEqual(["turn-upload"]);
+    store.deleteConversationUpload("turn-upload");
+    expect(store.getTurnUploads(turn.turnId)).toEqual([]);
+
     // 重新建一条，验证会话删除时从表清空（落盘目录由 hook 清理）。
     store.createConversationUpload({
       id: "upload2", conversationId: created.conversationId, ownerUserId: "u1",

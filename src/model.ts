@@ -588,6 +588,8 @@ export interface CreateConversationInput {
   headSha: string;
   actorId: number;
   request: string;
+  /** 随本轮传入的上传附件 ID；服务端已校验归属，缺省为空。 */
+  uploadIds?: string[];
   /** 对话模式；省略时使用 `defaultConversationMode`。 */
   mode?: ConversationMode;
 }

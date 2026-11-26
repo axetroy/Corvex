@@ -1,5 +1,5 @@
 import { copyFile as copyFileFs, lstat, mkdir, readFile as readFileFs, rename, rm, writeFile as writeFileFs } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
@@ -20,6 +20,7 @@ import { resolveTurnBaseSha } from "./conversation-base.js";
 import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-conflict.js";
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { buildToolEvidence } from "../agent/tool-evidence.js";
+import { buildUploadContext } from "./upload.js";
 import { verifyAnswerClaims } from "../agent/claim-verification.js";
 import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
@@ -106,6 +107,15 @@ export class ConversationRunner {
           this.streamSnapshots.delete(turnId);
           this.streamListeners.delete(turnId);
         }
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    // 上传附件随会话删除/保留裁剪一起清理；「放弃改动」只处理 Git 改动，不动用户附件。
+    this.hooks.conversationDelete.tapPromise({ name: "uploads", stage: 300 }, async (context) => {
+      if (context.reason === "changes") return;
+      try {
+        await rm(resolve(this.config.storage.root, "uploads", context.conversationId), { recursive: true, force: true });
       } catch (error) {
         context.errors.push(errorMessage(error));
       }
@@ -1159,6 +1169,7 @@ export class ConversationRunner {
         .map((message) => message.turnId!)
         .slice(-10);
       const toolEvidence = buildToolEvidence(this.store.getToolEvidence(historyTurnIds));
+      const uploadContext = buildUploadContext(this.store.getTurnUploads(turn.turnId), this.config.storage.root, language);
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -1168,7 +1179,7 @@ export class ConversationRunner {
         summary: turn.summary,
         currentRequest: effectiveRequest,
         toolEvidence,
-      });
+      }) + (uploadContext.manifest ? `\n\n${uploadContext.manifest}` : "");
       // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
       // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受
       // `agent.max_input_tokens` 约束，使这个配置真正限制单次请求的输入。
@@ -1216,6 +1227,8 @@ export class ConversationRunner {
               turnId: turn.turnId,
               actorId: turn.actorId,
               gitlab,
+              // 上传目录作为仅本轮有效的只读根注入；不进全局 skill roots，避免跨会话泄露。
+              uploadRoots: uploadContext.roots,
               systemPrompt,
               userPrompt,
               history,

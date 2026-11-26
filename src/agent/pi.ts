@@ -278,6 +278,11 @@ export interface ModelRequest {
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
+   * 本轮上传附件的独立只读根目录（每个附件一个 UUID 目录）；仅对话轮次提供。
+   * 不加入全局 skill roots，避免跨会话/跨用户泄露；模型用现成 read_file 读取。
+   */
+  uploadRoots?: string[];
+  /**
    * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
    * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
    * 其余任务省略即可。
@@ -571,7 +576,10 @@ export class PiAgent {
       : undefined;
     if (cacheDir) await mkdir(cacheDir, { recursive: true, mode: 0o750 });
     const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
-    const allowedRoots = [repositoryRoot, ...skillRoots];
+    // 上传附件是仅本轮有效的只读根；realpath 失败（已被用户删除）时跳过，不让整轮失败。
+    const uploadRoots = (await Promise.all((request.uploadRoots ?? []).map((path) => realpath(resolve(path)).catch(() => undefined))))
+      .filter((path): path is string => path !== undefined);
+    const allowedRoots = [repositoryRoot, ...skillRoots, ...uploadRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
     // 内部 Provider ID 只用于注册 SDK Provider；展示给用户的名称来自控制台的供应商设置。
