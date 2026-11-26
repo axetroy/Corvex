@@ -1,10 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LocalFileSource, WorkspaceUnavailableError } from "../../src/app/files/local-source.js";
 import { createConversationFileSource } from "../../src/app/files/factory.js";
-import type { GitLabClient } from "../../src/gitlab/client.js";
 
 describe("local worktree file source", () => {
   let root = "";
@@ -30,7 +29,6 @@ describe("local worktree file source", () => {
     expect(result.entries.map((entry) => entry.path)).toEqual(["src", "readme.md"]);
     expect(result.entries[0]?.type).toBe("directory");
     expect(result.truncated).toBe(false);
-    expect(result.source).toBe("local");
     expect((await source.listDirectory("src")).entries).toEqual([
       { name: "a.ts", path: "src/a.ts", type: "file" },
     ]);
@@ -49,7 +47,6 @@ describe("local worktree file source", () => {
     const result = await source.readImage("logo.png");
     expect(result.mimeType).toBe("image/png");
     expect(result.data.equals(png)).toBe(true);
-    expect(result.source).toBe("local");
   });
 
   it("rejects absolute paths, traversal, .git and missing files", async () => {
@@ -64,26 +61,11 @@ describe("local worktree file source", () => {
     await expect(missing.listDirectory("")).rejects.toBeInstanceOf(WorkspaceUnavailableError);
   });
 
-  it("defaults to local and falls back to GitLab only when the worktree is gone", async () => {
-    const gitlab = {
-      listRepositoryTree: vi.fn(async () => ({ entries: [], truncated: false })),
-      getRepositoryFile: vi.fn(async () => ({ path: "a.txt", size: 0, encoding: "base64", content: "" })),
-    } as unknown as GitLabClient;
-    const options = {
-      projectId: 7,
-      sha: "a".repeat(40),
-      workspacePath: root,
-      gitlab,
-      fallbackToGitLab: true,
-    };
-    const present = createConversationFileSource(options);
-    expect(present.kind).toBe("local");
+  it("reads only the worktree and reports when it is gone", async () => {
+    const present = createConversationFileSource({ workspacePath: root });
     expect((await present.listDirectory("")).entries.length).toBe(2);
-    expect(gitlab.listRepositoryTree).not.toHaveBeenCalled();
 
-    const absent = createConversationFileSource({ ...options, workspacePath: join(root, "gone") });
-    const fallbackResult = await absent.listDirectory("");
-    expect(fallbackResult.source).toBe("gitlab");
-    expect(gitlab.listRepositoryTree).toHaveBeenCalledWith(7, { path: "", ref: "a".repeat(40) }, undefined);
+    const absent = createConversationFileSource({ workspacePath: join(root, "gone") });
+    await expect(absent.listDirectory("")).rejects.toBeInstanceOf(WorkspaceUnavailableError);
   });
 });

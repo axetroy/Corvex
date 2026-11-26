@@ -6,7 +6,7 @@ import type { TreeDataNode } from "antd";
 import { fetchJson, handleUnauthorized } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
-import type { FileContentResult, FileListResult, FileSourceKind } from "../../files/source.js";
+import type { FileContentResult, FileListResult } from "../../files/source.js";
 import { isImagePath } from "../../files/image.js";
 import { entriesToTreeNodes, mergeTreeChildren, pathSegments } from "../lib/fileTree.js";
 import type { FileTreeNode } from "../lib/fileTree.js";
@@ -59,7 +59,6 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [treeError, setTreeError] = useState("");
-  const [sourceKind, setSourceKind] = useState<FileSourceKind | "">("");
   const [loadingRoot, setLoadingRoot] = useState(false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [activeFile, setActiveFile] = useState("");
@@ -77,12 +76,14 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
       );
       const nodes = entriesToTreeNodes(response.entries, path);
       setTreeData((current) => (path ? mergeTreeChildren(current, path, nodes) : nodes));
-      setSourceKind((current) => response.source ?? current);
       setTreeError("");
       return response;
     } catch (cause) {
       const message = errorMessage(cause);
-      setTreeError(message.includes("no pinned commit") ? copy.filePanelNoPinnedCommit : message);
+      setTreeError(
+        message.includes("worktree is not available") ? copy.filePanelNoWorktree :
+          message.includes("no pinned commit") ? copy.filePanelNoPinnedCommit : message,
+      );
       return { entries: [], truncated: false };
     }
   }, [conversationId, copy]);
@@ -95,7 +96,6 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
     setActiveFile("");
     setContents({});
     setTreeError("");
-    setSourceKind("");
     if (!conversationId) {
       setLoadingRoot(false);
       return () => {
@@ -129,7 +129,6 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
         ...current,
         [path]: { ...response, loading: false, error: "", startLine: startLine ?? 1 },
       }));
-      setSourceKind((current) => response.source ?? current);
     } catch (cause) {
       setContents((current) => ({
         ...current,
@@ -295,15 +294,6 @@ export function ConversationFileExplorer({ conversationId, copy }: Props) {
                 placeholder={copy.filePanelSearch}
                 onChange={(event) => setSearch(event.target.value)}
               />
-              {sourceKind ? (
-                <div className="conversation-file-source">
-                  <span className={`conversation-file-source-dot is-${sourceKind}`} aria-hidden="true" />
-                  {copy.filePanelSourceTemplate.replace(
-                    "{value}",
-                    sourceKind === "local" ? copy.filePanelSourceLocal : copy.filePanelSourceGitlab,
-                  )}
-                </div>
-              ) : null}
             </div>
             {treeError ? <Typography.Text type="danger" className="conversation-file-error">{treeError}</Typography.Text> : null}
             <div

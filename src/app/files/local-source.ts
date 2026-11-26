@@ -19,7 +19,7 @@ const MAX_LINES_PER_READ = 2_000;
 /** 单次目录列举上限，与 GitLab tree 接口一致。 */
 const MAX_DIRECTORY_ENTRIES = 200;
 
-/** 本地 worktree 尚未准备或已被回收；调用方可据此回退到 GitLab 源。 */
+/** 本地 worktree 尚未准备或已被回收；调用方应提示用户先发起一轮对话。 */
 export class WorkspaceUnavailableError extends Error {
   constructor(readonly path: string) {
     super(`conversation worktree is not available: ${path}`);
@@ -32,8 +32,6 @@ export class WorkspaceUnavailableError extends Error {
  * 所有路径都走与写入工具共享的守卫，拒绝绝对路径、上层遍历、.git 与符号链接。
  */
 export class LocalFileSource implements ConversationFileSource {
-  readonly kind = "local" as const;
-
   constructor(private readonly workspacePath: string) {}
 
   private async ensureWorkspace(): Promise<string> {
@@ -97,7 +95,7 @@ export class LocalFileSource implements ConversationFileSource {
           : entry.isSymbolicLink() ? "symlink" as const
           : "other" as const,
       }));
-    return { entries, truncated: names.length > MAX_DIRECTORY_ENTRIES, source: this.kind };
+    return { entries, truncated: names.length > MAX_DIRECTORY_ENTRIES };
   }
 
   async readFile(path: RepoPath, range?: FileRange): Promise<FileContentResult> {
@@ -105,11 +103,11 @@ export class LocalFileSource implements ConversationFileSource {
     const { target, path: normalized } = await this.resolvePath(path);
     const raw = await this.readBytes(target);
     if (raw.includes(0)) {
-      return { path: normalized, content: "[二进制文件，无法以文本预览]", truncated: false, source: this.kind };
+      return { path: normalized, content: "[二进制文件，无法以文本预览]", truncated: false };
     }
     const bytesCapped = raw.length > MAX_FILE_BYTES;
     if (range?.full) {
-      return { path: normalized, content: raw.subarray(0, MAX_FILE_BYTES).toString("utf8"), truncated: bytesCapped, source: this.kind };
+      return { path: normalized, content: raw.subarray(0, MAX_FILE_BYTES).toString("utf8"), truncated: bytesCapped };
     }
     const allLines = raw.subarray(0, MAX_FILE_BYTES).toString("utf8").split("\n");
     const totalLines = allLines.length;
@@ -122,7 +120,6 @@ export class LocalFileSource implements ConversationFileSource {
       content: selected.map((line) => line.replace(/\r$/, "")).join("\n"),
       truncated: bytesCapped || moreLines,
       ...(bytesCapped || moreLines ? { totalLines } : {}),
-      source: this.kind,
     };
   }
 
@@ -136,6 +133,6 @@ export class LocalFileSource implements ConversationFileSource {
     }
     const mimeType = detectImageMime(normalized, raw);
     if (!mimeType) throw new FilePreviewError(415, "file is not a supported image");
-    return { path: normalized, mimeType, data: raw, size: raw.length, source: this.kind };
+    return { path: normalized, mimeType, data: raw, size: raw.length };
   }
 }

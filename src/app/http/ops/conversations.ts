@@ -11,6 +11,7 @@ import { callAsyncHook, type ConversationDeleteContext } from "../../hooks.js";
 import { resolveCommandRequest } from "../../conversation-command.js";
 import { getConversationSystemPrompt } from "../../../agent/prompts.js";
 import { createConversationFileSource } from "../../files/factory.js";
+import { WorkspaceUnavailableError } from "../../files/local-source.js";
 import { resolveWorktreePath } from "../../../agent/fs/index.js";
 import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
@@ -230,23 +231,27 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     });
   });
 
-  // 文件浏览默认读取本地 worktree（含会话本地改动）；worktree 被淘汰或首轮尚未
-  // 准备时自动回退到 GitLab API。路由与界面都不依赖具体实现。
-  const fileSource = (request: FastifyRequest, conversation: Conversation) => {
-    const sha = ctx.store.getConversationTurns(conversation.id)?.turns.at(-1)?.headSha ?? "";
-    if (!sha) return undefined;
-    return createConversationFileSource({
-      projectId: conversation.projectId,
-      sha,
-      workspacePath: join(
-        ctx.config.storage.root,
-        "workspaces",
-        String(conversation.projectId),
-        conversationWorkspaceName(conversation.id),
-      ),
-      gitlab: ctx.gitlabForRequest(request),
-      fallbackToGitLab: true,
-    });
+  // 文件浏览只读取当前会话的 worktree：如果已被回收或首轮尚未准备，明确报错，
+  // 不回退到 GitLab 快照，避免看到的不是本会话实际改动过的文件。
+  const fileSource = (conversation: Conversation) => createConversationFileSource({
+    workspacePath: join(
+      ctx.config.storage.root,
+      "workspaces",
+      String(conversation.projectId),
+      conversationWorkspaceName(conversation.id),
+    ),
+  });
+  const sendFileReadError = (reply: FastifyReply, error: unknown): void => {
+    if (error instanceof FilePreviewError) {
+      sendJson(reply, error.status, { error: error.message });
+      return;
+    }
+    if (error instanceof WorkspaceUnavailableError) {
+      sendJson(reply, 409, { error: "conversation worktree is not available" });
+      return;
+    }
+    console.warn("conversation file read failed", { error: errorMessage(error) });
+    sendJson(reply, 502, { error: "file preview failed" });
   };
 
   app.get("/api/ops/conversations/:id/files/tree", async (request, reply) => {
@@ -257,15 +262,11 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
-    const source = fileSource(request, conversation);
-    if (!source) {
-      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
-      return;
-    }
+    const source = fileSource(conversation);
     try {
       sendJson(reply, 200, await source.listDirectory(queryParam(request.query, "path") ?? ""));
     } catch (error) {
-      sendGitLabReadError(reply, error);
+      sendFileReadError(reply, error);
     }
   });
 
@@ -277,11 +278,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
-    const source = fileSource(request, conversation);
-    if (!source) {
-      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
-      return;
-    }
+    const source = fileSource(conversation);
     const path = queryParam(request.query, "path") ?? "";
     const full = queryParam(request.query, "full") === "1";
     const startLine = optionalInteger(queryParam(request.query, "startLine"), 1, 1_000_000);
@@ -297,7 +294,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         ...(full ? { full: true } : {}),
       }));
     } catch (error) {
-      sendGitLabReadError(reply, error);
+      sendFileReadError(reply, error);
     }
   });
 
@@ -309,11 +306,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     const conversation = ownedConversation(ctx, request, reply, conversationId);
     if (!conversation) return;
-    const source = fileSource(request, conversation);
-    if (!source) {
-      sendJson(reply, 409, { error: "conversation has no pinned commit yet" });
-      return;
-    }
+    const source = fileSource(conversation);
     const path = queryParam(request.query, "path") ?? "";
     if (!path) {
       sendJson(reply, 400, { error: "invalid file path" });
@@ -321,15 +314,9 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     }
     try {
       const image = await source.readImage(path);
-      sendBinary(reply, image.data, image.mimeType, image.source
-        ? { "x-corvex-file-source": image.source }
-        : {});
+      sendBinary(reply, image.data, image.mimeType);
     } catch (error) {
-      if (error instanceof FilePreviewError) {
-        sendJson(reply, error.status, { error: error.message });
-        return;
-      }
-      sendGitLabReadError(reply, error);
+      sendFileReadError(reply, error);
     }
   });
 
