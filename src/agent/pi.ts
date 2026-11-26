@@ -29,6 +29,7 @@ import { redactSensitiveText } from "../redact.js";
 import { readProjectGuidance } from "./project-guidance.js";
 import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, responseWaitNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
+import { createScheduledTaskExtension } from "./schedule-tools.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
@@ -798,6 +799,22 @@ export class PiAgent {
                   );
                 }
               },
+            })]
+          : []),
+        ...(request.taskType === "conversation"
+          ? [createScheduledTaskExtension({
+              ...(request.conversationId && this.store
+                ? {
+                    conversationId: request.conversationId,
+                    store: {
+                      create: (input) => this.store!.createScheduledTask(input),
+                      list: (ownerUserId) => this.store!.listScheduledTasks(ownerUserId),
+                      get: (id) => this.store!.getScheduledTask(id),
+                      cancel: (id, ownerUserId) => this.store!.deleteScheduledTask(id, ownerUserId),
+                      conversationOwner: (conversationId) => this.store!.getConversation(conversationId)?.ownerUserId,
+                    },
+                  }
+                : {}),
             })]
           : []),
         ...(request.taskType === "conversation"
