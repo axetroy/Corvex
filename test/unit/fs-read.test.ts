@@ -64,6 +64,10 @@ describe("readAllowedFile", () => {
     await expect(readAllowedFile(outside, [root, skills])).rejects.toThrow(
       "outside the configured read-only roots",
     );
+    // 绝对路径本身不是放行条件：realpath 后必须仍落在允许根内。
+    await expect(readAllowedFile("/etc/passwd", [root, skills])).rejects.toThrow(
+      "outside the configured read-only roots",
+    );
     await expect(readAllowedFile("../outside.txt", [root, skills])).rejects.toThrow(
       "outside the configured read-only roots",
     );
