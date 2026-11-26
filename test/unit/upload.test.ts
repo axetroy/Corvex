@@ -43,15 +43,15 @@ describe("buildUploadContext", () => {
   });
 
   it("returns empty context when there are no uploads", () => {
-    expect(buildUploadContext([], "/storage", "en")).toEqual({ roots: [], paths: [], manifest: "" });
+    expect(buildUploadContext([], "/storage", "en")).toEqual({ uploads: [], manifest: "" });
   });
 
-  it("builds per-upload roots and a bounded, labelled manifest", () => {
+  it("returns internal roots but only virtual URIs in the manifest", () => {
     const result = buildUploadContext([upload()], "/storage", "en");
-    expect(result.roots).toEqual(["/storage/uploads/c1/u1"]);
-    expect(result.paths).toEqual(["/storage/uploads/c1/u1/notes.txt"]);
+    expect(result.uploads).toEqual([{ id: "u1", path: "/storage/uploads/c1/u1" }]);
     expect(result.manifest).toContain("untrusted data");
-    expect(result.manifest).toContain("/storage/uploads/c1/u1/notes.txt");
+    expect(result.manifest).toContain("upload://u1/notes.txt");
+    expect(result.manifest).not.toContain("/storage/");
     expect(result.manifest).toContain("12 bytes");
   });
 

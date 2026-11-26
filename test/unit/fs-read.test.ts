@@ -304,6 +304,44 @@ describe("readAllowedFile", () => {
     await expect(treeTool.execute("call-2", { path: "../outside" })).rejects.toThrow("outside");
   });
 
+  it("reads via virtual URIs and never puts host paths in tool schemas or errors", async () => {
+    const uploadDir = join(base, "uploads", "u-1");
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(join(uploadDir, "notes.txt"), "attachment body\n");
+    const tools = new Map<string, { description: string; execute: (...args: unknown[]) => Promise<unknown> }>();
+    createFsReadExtension([
+      { scheme: "worktree", label: "", path: root },
+      { scheme: "upload", label: "u-1", path: uploadDir },
+    ])({
+      registerTool: (tool: { name: string; description: string; execute: (...args: unknown[]) => Promise<unknown> }) => {
+        tools.set(tool.name, tool);
+      },
+    } as unknown as ExtensionAPI);
+
+    const readFile = tools.get("read_file")!;
+    expect(readFile.description).not.toContain(root);
+    expect(readFile.description).not.toContain(uploadDir);
+    expect(readFile.description).toContain("worktree://");
+    expect(readFile.description).toContain("upload://");
+
+    const fromWorktree = await readFile.execute("call-1", { path: "worktree://README.md" });
+    expect(fromWorktree).toMatchObject({ content: [{ text: "# Repository\n" }] });
+    const fromUpload = await readFile.execute("call-2", { path: "upload://u-1/notes.txt" });
+    expect(fromUpload).toMatchObject({ content: [{ text: "attachment body\n" }] });
+
+    // 宿主绝对路径与错误文本都不泄露。
+    await expect(readFile.execute("call-3", { path: "/etc/passwd" })).rejects.toThrow("absolute host paths");
+    try {
+      await readFile.execute("call-4", { path: "upload://u-1/missing.txt" });
+      throw new Error("expected failure");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain(root);
+      expect(message).not.toContain(uploadDir);
+      expect(message).toContain("inspect the parent directory");
+    }
+  });
+
   it("stops at the node limit and marks the tree truncated", async () => {
     for (let index = 0; index < 12; index += 1) await writeFile(join(root, `file-${index}.ts`), "x");
     const result = await readAllowedTree(".", [root], { maxNodes: 5 });

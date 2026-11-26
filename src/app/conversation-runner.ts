@@ -347,7 +347,8 @@ export class ConversationRunner {
       show: (sha, path) => this.repo.showCommit(workspace, sha, path, signal),
       diff: (path) => this.repo.getWorkspaceDiff(workspace, path, signal),
       // worktree 已由 Runner 准备到同步基线；这里只返回当前位置，不克隆任意 URL。
-      clone: async () => ({ path: workspace.path, headSha: workspace.headSha }),
+      // 只回虚拟根，绝不把宿主机 worktree 绝对路径交给模型。
+      clone: async () => ({ path: "worktree://", headSha: workspace.headSha }),
       branches: () => this.repo.listBranches(workspace, signal),
       createBranch: (name) => this.repo.createBranch(workspace, name, signal),
       switchBranch: (name) => this.repo.switchBranch(workspace, name, signal),
@@ -1227,8 +1228,8 @@ export class ConversationRunner {
               turnId: turn.turnId,
               actorId: turn.actorId,
               gitlab,
-              // 上传目录作为仅本轮有效的只读根注入；不进全局 skill roots，避免跨会话泄露。
-              uploadRoots: uploadContext.roots,
+              // 上传目录作为仅本轮有效的只读根注入；模型侧只看到 upload://<id>/<filename>。
+              uploads: uploadContext.uploads,
               systemPrompt,
               userPrompt,
               history,

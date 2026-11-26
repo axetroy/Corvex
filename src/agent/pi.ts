@@ -46,6 +46,7 @@ import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtensio
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
+import { assignSkillLabels, type ReadRoot } from "./fs/virtual-path.js";
 import { getToolBudgetWarningPrompt } from "./prompts.js";
 import {
   createToolResultBudgetExtension,
@@ -278,10 +279,10 @@ export interface ModelRequest {
   /** 当前登录用户的 GitLab 客户端；仅对话轮次提供，用于以该用户令牌访问 GitLab。 */
   gitlab?: GitLabClient;
   /**
-   * 本轮上传附件的独立只读根目录（每个附件一个 UUID 目录）；仅对话轮次提供。
-   * 不加入全局 skill roots，避免跨会话/跨用户泄露；模型用现成 read_file 读取。
+   * 本轮上传附件（ID + 内部物理目录）；仅对话轮次提供。物理路径只用于构造只读根，
+   * 模型侧只看到 upload://<id>/<filename>，不接触宿主机路径。
    */
-  uploadRoots?: string[];
+  uploads?: { id: string; path: string }[];
   /**
    * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
    * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
@@ -575,11 +576,20 @@ export class PiAgent {
       ? join(resolve(config.storage.root), "exec-cache", String(request.conversationProjectId))
       : undefined;
     if (cacheDir) await mkdir(cacheDir, { recursive: true, mode: 0o750 });
-    const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
+    const skillPathsResolved = config.agent.skillPaths.map((path) => resolve(path));
+    const skillRoots = await Promise.all(skillPathsResolved.map((path) => realpath(path)));
+    const skillLabels = assignSkillLabels(skillPathsResolved);
     // 上传附件是仅本轮有效的只读根；realpath 失败（已被用户删除）时跳过，不让整轮失败。
-    const uploadRoots = (await Promise.all((request.uploadRoots ?? []).map((path) => realpath(resolve(path)).catch(() => undefined))))
-      .filter((path): path is string => path !== undefined);
-    const allowedRoots = [repositoryRoot, ...skillRoots, ...uploadRoots];
+    const uploadEntries = (await Promise.all((request.uploads ?? []).map(async (upload) => {
+      const root = await realpath(resolve(upload.path)).catch(() => undefined);
+      return root ? { id: upload.id, path: root } : undefined;
+    }))).filter((entry): entry is { id: string; path: string } => entry !== undefined);
+    // 虚拟路径协议的根表：模型只看到 worktree:// / skill://<alias> / upload://<id>。
+    const readRoots: ReadRoot[] = [
+      { scheme: "worktree", label: "", path: repositoryRoot },
+      ...skillRoots.map((path, index) => ({ scheme: "skill" as const, label: skillLabels[index]!, path })),
+      ...uploadEntries.map((upload) => ({ scheme: "upload" as const, label: upload.id, path: upload.path })),
+    ];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
     const providerId = "corvex-openai-compatible";
     // 内部 Provider ID 只用于注册 SDK Provider；展示给用户的名称来自控制台的供应商设置。
@@ -796,7 +806,7 @@ export class PiAgent {
         // 在 SDK 下一次压缩检查之前把窗口顶爆。
         createToolResultBudgetExtension(config.agent.contextWindow),
         createFsReadExtension(
-          allowedRoots,
+          readRoots,
           workspace && this.git
             ? (query, path) => this.git!.grep(workspace, query, path, signal)
             : undefined,

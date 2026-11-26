@@ -281,9 +281,9 @@ describe("PiAgent", () => {
       round: 1,
       input: JSON.stringify({ path: "../outside-missing.txt" }),
       schema: expect.stringContaining("path"),
-      output: expect.stringContaining("repository-relative path"),
+      output: expect.stringContaining("outside the configured read-only roots"),
       rawContent: JSON.stringify({ path: "../outside-missing.txt" }),
-      errorDetail: expect.stringContaining("repository-relative path"),
+      errorDetail: expect.stringContaining("outside the configured read-only roots"),
     });
     const llmTraces = trajectory?.filter((entry) => entry.kind === "llm").sort((left, right) => left.id - right.id);
     expect(llmTraces).toHaveLength(2);

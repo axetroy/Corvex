@@ -2,8 +2,8 @@ import type { ResponseLanguage } from "../../model.js";
 
 /** 仓库文件路径规则：对话系统提示词与用户可见指令共同复用。 */
 const relativePaths = {
-  en: "Use repository-relative paths with read_file, read_dir, stat and search_text. Absolute paths for repository files are rejected; only trusted skill-root paths may be absolute.",
-  "zh-CN": "read_file、read_dir、stat 和 search_text 必须使用仓库相对路径。仓库文件的绝对路径会被拒绝；只有可信 Skill 根目录允许使用绝对路径。",
+  en: "All file tools (read_file, read_dir, stat, search_text, glob, write_file, edit_file, delete_file, move_file, copy_file) and path-taking git tools use one unified virtual path scheme: worktree://<repo-relative-path> (a plain relative path is also accepted as worktree-relative), upload://<id>/<filename> for files uploaded for this turn, and skill://<alias>/<path> for trusted skill roots. Host absolute paths are always rejected and never revealed; virtual URIs cannot be used as shell paths in run_command.",
+  "zh-CN": "所有文件工具（read_file、read_dir、stat、search_text、glob、write_file、edit_file、delete_file、move_file、copy_file）与带路径的 git 工具统一使用虚拟路径协议：worktree://<仓库相对路径>（纯相对路径也按 worktree 处理）、本轮附件的 upload://<id>/<文件名>、可信 Skill 的 skill://<别名>/<路径>。宿主机绝对路径一律拒绝且不会暴露；虚拟 URI 不能当作 run_command 的 shell 路径。",
 } as const;
 
 /** 下一步建议指令：模型只给动作短语，客服腔反问由 parseFollowups 在代码层过滤。 */

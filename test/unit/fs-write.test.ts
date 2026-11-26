@@ -21,6 +21,15 @@ describe("worktree path guard", () => {
     // macOS 的 /var 与 Windows 的短路径都可能是符号链接，统一按 realpath 比较。
     expect(resolved.target).toBe(await realpath(join(root, "a.txt")));
   });
+
+  it("accepts worktree:// URIs as the same protocol used by reads", async () => {
+    root = await mkdtemp(join(tmpdir(), "corvex-fs-write-"));
+    await writeFile(join(root, "a.txt"), "a");
+    await expect(resolveWorktreePath(root, "worktree://a.txt")).resolves.toMatchObject({ path: "a.txt" });
+    await expect(resolveWorktreePath(root, "worktree://../escape")).rejects.toThrow("invalid repository-relative path");
+    await expect(resolveWorktreePath(root, "/etc/passwd")).rejects.toThrow("absolute host paths");
+    await expect(resolveWorktreePath(root, "upload://u-1/a.txt")).rejects.toThrow("unsupported path scheme");
+  });
 });
 
 describe("exact text replacement", () => {

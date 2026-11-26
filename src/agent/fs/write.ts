@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { toWorktreeRelative, virtualizeError } from "./virtual-path.js";
 
 /** 单次写入的内容上限：与仓库只读工具的输出预算保持一致。 */
 export const maxWriteBytes = 256 << 10;
@@ -24,25 +25,25 @@ export interface WorkspaceFs {
 }
 
 /**
- * 写入路径守卫：worktree 内只允许相对路径，拒绝绝对路径、上层遍历、.git 与符号链接。
+ * 写入路径守卫：与读取工具共用虚拟协议，接受 worktree:// 或纯相对路径，
+ * 拒绝宿主绝对路径、其它协议、上层遍历、.git 与符号链接。
  * Runner 与工具共用同一份实现，避免新增工具时漏掉校验。
  */
 export async function resolveWorktreePath(
   workspacePath: string,
   requested: string,
 ): Promise<{ root: string; target: string; path: string }> {
-  if (!requested || [...requested].length > 4096 || requested.includes("\0")) {
-    throw new Error("invalid file path");
-  }
-  if (isAbsolute(requested) || /^[a-zA-Z]:/.test(requested)) {
-    throw new Error("absolute paths are not allowed; use a repository-relative path");
-  }
-  const parts = requested.replace(/\\/g, "/").replace(/^\/+/, "").split("/");
+  const relativePath = toWorktreeRelative(requested);
+  if ([...relativePath].length > 4096) throw new Error("invalid file path");
+  const parts = relativePath.replace(/\\/g, "/").replace(/^\/+/, "").split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) {
     throw new Error("invalid repository-relative path");
   }
   if (parts[0] === ".git") throw new Error("writing .git is not allowed");
-  const root = await realpath(workspacePath);
+  // realpath 的异常信息会带 cwd 绝对路径，统一改成不含宿主机路径的文案。
+  const root = await realpath(workspacePath).catch((error: unknown) => {
+    throw new Error("conversation worktree is unavailable", { cause: error });
+  });
   const target = resolve(root, ...parts);
   const parent = await realpath(dirname(target)).catch(() => dirname(target));
   const inside = relative(root, parent);
@@ -82,6 +83,14 @@ const pathField = Type.String({ minLength: 1, maxLength: 4096 });
 
 /** 对话场景的文件写入工具集：路径与内容限制由 WorkspaceFs 在边界处强制。 */
 export function createFsWriteExtension(fs: WorkspaceFs): (pi: ExtensionAPI) => void {
+  // 写工具统一在错误出口脱敏，避免底层 fs/git 异常把宿主机路径带进模型上下文。
+  const result = async (action: Promise<FsWriteResult>) => {
+    try {
+      return textResult(await action);
+    } catch (error) {
+      throw new Error(virtualizeError(error, []), { cause: error });
+    }
+  };
   return (pi) => {
     pi.registerTool({
       name: "write_file",
@@ -89,13 +98,13 @@ export function createFsWriteExtension(fs: WorkspaceFs): (pi: ExtensionAPI) => v
       executionMode: "sequential",
       description:
         `Create or overwrite a UTF-8 text file inside this conversation's worktree. ` +
-        `Use a repository-relative path; absolute paths are rejected. Content is limited to ${maxWriteBytes} bytes. ` +
+        `Use a worktree:// URI (or a plain worktree-relative path); host absolute paths are rejected. Content is limited to ${maxWriteBytes} bytes. ` +
         "Use edit_file for small changes to existing files instead of rewriting the whole file. " +
         "Changes are saved to this conversation only and are never pushed to GitLab. " +
         "Do not write binary files, build output, or dependency directories.",
-      promptSnippet: "write_file: Create or overwrite one UTF-8 text file in the pinned conversation worktree.",
+      promptSnippet: "write_file: Create or overwrite one UTF-8 text file via worktree:// URI in the pinned conversation worktree.",
       parameters: Type.Object({ path: pathField, content: Type.String({ maxLength: maxWriteBytes }) }),
-      execute: async (_id, params) => textResult(await fs.writeFile(params.path, params.content)),
+      execute: async (_id, params) => result(fs.writeFile(params.path, params.content)),
     });
     pi.registerTool({
       name: "edit_file",
@@ -114,7 +123,7 @@ export function createFsWriteExtension(fs: WorkspaceFs): (pi: ExtensionAPI) => v
         new_string: Type.String({ maxLength: maxReplaceBytes }),
         replace_all: Type.Optional(Type.Boolean()),
       }),
-      execute: async (_id, params) => textResult(await fs.editFile(
+      execute: async (_id, params) => result(fs.editFile(
         params.path, params.old_string, params.new_string, params.replace_all ?? false,
       )),
     });
@@ -123,47 +132,49 @@ export function createFsWriteExtension(fs: WorkspaceFs): (pi: ExtensionAPI) => v
       label: "Delete file",
       executionMode: "sequential",
       description:
-        "Delete one file in the conversation worktree. The path must be repository-relative; " +
+        "Delete one file in the conversation worktree. The path must be a worktree:// URI or worktree-relative; " +
         "symlinks and .git paths are rejected. Use it to remove files you created or obsolete files.",
-      promptSnippet: "delete_file: Remove one worktree file by repository-relative path.",
+      promptSnippet: "delete_file: Remove one worktree file by worktree:// URI or relative path.",
       parameters: Type.Object({ path: pathField }),
-      execute: async (_id, params) => textResult(await fs.deleteFile(params.path)),
+      execute: async (_id, params) => result(fs.deleteFile(params.path)),
     });
     pi.registerTool({
       name: "move_file",
       label: "Move file",
       executionMode: "sequential",
       description:
-        "Move or rename one file in the conversation worktree. Both paths must be repository-relative. " +
+        "Move or rename one file in the conversation worktree. Both paths must use worktree:// URIs or be worktree-relative. " +
         "If the destination exists, the move fails; use overwrite only when you intend to replace it. " +
         "The file content is never read into the conversation context.",
-      promptSnippet: "move_file: Rename or move one worktree file between repository-relative paths.",
+      promptSnippet: "move_file: Rename or move one worktree file between worktree:// URIs or relative paths.",
       parameters: Type.Object({
         from: pathField,
         to: pathField,
         overwrite: Type.Optional(Type.Boolean()),
       }),
-      execute: async (_id, params) => textResult(await fs.moveFile(params.from, params.to, params.overwrite ?? false)),
+      execute: async (_id, params) => result(fs.moveFile(params.from, params.to, params.overwrite ?? false)),
     });
     pi.registerTool({
       name: "copy_file",
       label: "Copy file",
       executionMode: "sequential",
       description:
-        "Copy one file in the conversation worktree to another repository-relative path. " +
+        "Copy one file in the conversation worktree to another worktree:// URI or relative path. " +
         "If the destination exists, the copy fails; set overwrite only when you intend to replace it. " +
         "The file content is never read into the conversation context.",
-      promptSnippet: "copy_file: Copy one worktree file to another repository-relative path.",
+      promptSnippet: "copy_file: Copy one worktree file to another worktree:// URI or relative path.",
       parameters: Type.Object({
         from: pathField,
         to: pathField,
         overwrite: Type.Optional(Type.Boolean()),
       }),
-      execute: async (_id, params) => textResult(await fs.copyFile(params.from, params.to, params.overwrite ?? false)),
+      execute: async (_id, params) => result(fs.copyFile(params.from, params.to, params.overwrite ?? false)),
     });
   };
 }
 
 function textResult(result: FsWriteResult) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(result) }], details: {} };
+  // 返回值统一用虚拟路径，与读取工具保持同一协议。
+  const displayed = { ...result, path: `worktree://${result.path}` };
+  return { content: [{ type: "text" as const, text: JSON.stringify(displayed) }], details: {} };
 }

@@ -3,6 +3,13 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage } from "../../errors.js";
+import {
+  isWithinRoot,
+  normalizeRoots,
+  parseVirtualPath,
+  virtualizeError,
+  type ReadRootInput,
+} from "./virtual-path.js";
 
 /** 目录树默认最大深度；只展示骨架，避免把整个仓库铺进上下文。 */
 const maxTreeDepth = 4;
@@ -105,9 +112,10 @@ async function resolveAllowedPath(requestedPath: string, allowedRoots: string[])
     canonicalPath = await realpath(candidate);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      // 不使用 error.message：Node 的 realpath 错误会带上宿主机绝对路径。
       // 不猜测文件命名规则，引导模型先核对父目录条目和候选路径状态。
       throw new Error(
-        `${error.message}; inspect the parent directory with read_dir and verify the intended path with stat before retrying`,
+        "no such file or directory; inspect the parent directory with read_dir and verify the intended path with stat before retrying",
         { cause: error },
       );
     }
@@ -820,12 +828,43 @@ export async function readAllowedFile(
 }
 
 export function createFsReadExtension(
-  allowedRoots: string[],
+  allowedRoots: readonly ReadRootInput[],
   gitGrep?: GitGrep,
   gitDiff?: (path?: string) => Promise<{ diff: string; truncated: boolean }>,
   repeatReadHintAfter = 5,
 ): (pi: ExtensionAPI) => void {
-  const roots = allowedRoots.map((root) => resolve(root));
+  const roots = normalizeRoots(allowedRoots);
+  const physicalRoots = roots.map((root) => root.path);
+  /** 虚拟路径 → 内部物理路径；宿主绝对路径一律拒绝，错误信息也不会外泄。 */
+  const resolveForRead = (input: string): string => {
+    const parsed = parseVirtualPath(input, roots);
+    if ("error" in parsed) throw new Error(parsed.error);
+    const target = resolve(parsed.root.path, parsed.relative === "." ? "" : parsed.relative);
+    // 先按规范化结果判边界：../outside 这类路径在 realpath 之前就应明确报越界，
+    // 否则会退化成 ENOENT，既难排查也丢失「范围外」语义。
+    if (!roots.some((root) => isWithinRoot(root.path, target))) {
+      throw new Error("file path is outside the configured read-only roots");
+    }
+    return target;
+  };
+  /** git 工具只接受 worktree 相对路径；worktree:// 前缀会被剥掉，其它协议一律拒绝。 */
+  const worktreeRelative = (input: string | undefined): string | undefined => {
+    if (input === undefined) return undefined;
+    const worktreeRoot = roots[0] ?? { scheme: "worktree" as const, label: "", path: "" };
+    const parsed = parseVirtualPath(input, [worktreeRoot]);
+    if ("error" in parsed || parsed.root.scheme !== "worktree") {
+      throw new Error("git tools only accept worktree-relative paths or worktree:// URIs");
+    }
+    return parsed.relative;
+  };
+  /** 所有工具错误在抛给 SDK 前脱敏，避免 realpath/git 的绝对路径进入轨迹。 */
+  const safely = async <T>(action: () => Promise<T>): Promise<T> => {
+    try {
+      return await action();
+    } catch (error) {
+      throw new Error(virtualizeError(error, roots), { cause: error });
+    }
+  };
   return (pi) => {
     const fileCursors = new Map<string, ReadFileCursor>();
     /** 同一轮内按规范化路径累计读取次数，避免模型因上下文裁剪反复重读同一文件。 */
@@ -834,22 +873,22 @@ export function createFsReadExtension(
       name: "read_file",
       label: "Read file",
       executionMode: "parallel",
-      description: `Read a UTF-8 text file without modifying it. Use repository-relative paths for repository files; absolute paths are rejected for the worktree and are only accepted for trusted skill roots: ${roots.slice(1).join(", ") || "(none)"}. Files are limited to ${maxReadBytes} output bytes per call and each line is capped at ${maxLineBytes} bytes (longer lines are truncated with a marker, which is normal for minified bundles). For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
-      promptSnippet: "read_file: Read a UTF-8 text file from the fixed repository worktree or trusted skill roots. Use startLine and maxLines to read large files in bounded ranges.",
+      description: `Read a UTF-8 text file without modifying it. Paths use virtual URIs: worktree://<repo-relative-path> for repository files (a plain relative path is also treated as worktree-relative), upload://<id>/<filename> for files uploaded for this turn, and skill://<alias>/<path> for trusted skill roots. Absolute host paths are never accepted. Files are limited to ${maxReadBytes} output bytes per call and each line is capped at ${maxLineBytes} bytes (longer lines are truncated with a marker, which is normal for minified bundles). For large files, set startLine and maxLines (up to ${maxLinesPerRead}) and request subsequent ranges as needed.`,
+      promptSnippet: "read_file: Read a UTF-8 text file by virtual URI (worktree://, upload://, skill://) or a worktree-relative path; use startLine/maxLines for large files.",
       parameters: Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
         startLine: Type.Optional(Type.Integer({ minimum: 1 })),
         maxLines: Type.Optional(Type.Integer({ minimum: 1, maximum: maxLinesPerRead })),
       }),
-      execute: async (_toolCallId, params) => {
-        const path = await requireRelativeRepoPath(params.path, roots);
+      execute: async (_toolCallId, params) => safely(async () => {
+        const path = resolveForRead(params.path);
         const range = {
           startLine: params.startLine,
           maxLines: params.maxLines,
         };
         const hasRange = range.startLine !== undefined || range.maxLines !== undefined;
         const cached = hasRange ? fileCursors.get(path) : undefined;
-        const result = await readAllowedFileChunk(path, roots, maxReadBytes, range, cached);
+        const result = await readAllowedFileChunk(path, physicalRoots, maxReadBytes, range, cached);
         if (hasRange && result.hasMore) {
           fileCursors.set(path, {
             nextLine: result.nextLine,
@@ -870,61 +909,61 @@ export function createFsReadExtension(
           content: [{ type: "text", text: `${result.text}${hint}` }],
           details: {},
         };
-      },
+      }),
     });
     pi.registerTool({
       name: "read_dir",
       label: "List directory",
       executionMode: "parallel",
-      description: `List up to ${maxDirectoryEntries} immediate entries in a directory under the fixed repository worktree or trusted skill roots. Use this to inspect actual names after a read_file ENOENT; entries are not followed recursively.`,
+      description: `List up to ${maxDirectoryEntries} immediate entries in a directory under a virtual root (worktree://, upload:// or skill://). Use this to inspect actual names after a read_file ENOENT; entries are not followed recursively.`,
       promptSnippet: "read_dir: List immediate directory entries when a requested path is missing or its actual name is uncertain.",
       parameters: Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
-      execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(await requireRelativeRepoPath(params.path, roots), roots)) }],
+      execute: async (_toolCallId, params) => safely(async () => ({
+        content: [{ type: "text", text: JSON.stringify(await readAllowedDirectory(resolveForRead(params.path), physicalRoots)) }],
         details: {},
-      }),
+      })),
     });
     pi.registerTool({
       name: "tree",
       label: "List bounded directory tree",
       executionMode: "parallel",
-      description: `Show a bounded directory skeleton under a repository-relative path to understand the layout before reading files. Depth is limited to ${maxTreeDepth} levels, ${maxTreeNodes} nodes and ${maxTreeBytes} output bytes; .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are never followed. Results are sorted and marked truncated when a limit is hit, so narrow the path or use read_dir for the rest.`,
+      description: `Show a bounded directory skeleton under a virtual root path to understand the layout before reading files. Depth is limited to ${maxTreeDepth} levels, ${maxTreeNodes} nodes and ${maxTreeBytes} output bytes; .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are never followed. Results are sorted and marked truncated when a limit is hit, so narrow the path or use read_dir for the rest.`,
       promptSnippet: "tree: Get a bounded directory skeleton once to orient, then read only the files you need.",
       parameters: Type.Object({
         path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
         maxDepth: Type.Optional(Type.Integer({ minimum: 1, maximum: maxTreeDepth })),
       }),
-      execute: async (_toolCallId, params) => ({
+      execute: async (_toolCallId, params) => safely(async () => ({
         content: [{
           type: "text",
           text: renderDirectoryTree(await readAllowedTree(
-            await requireRelativeRepoPath(params.path ?? ".", roots), roots, { maxDepth: params.maxDepth },
+            resolveForRead(params.path ?? "."), physicalRoots, { maxDepth: params.maxDepth },
           )),
         }],
         details: {},
-      }),
+      })),
     });
     pi.registerTool({
       name: "stat",
       label: "Inspect path",
       executionMode: "parallel",
-      description: "Inspect a file or directory under the fixed repository worktree or trusted skill roots. Returns the canonical repository-relative path and whether it is a file, directory, or other entry.",
+      description: "Inspect a file or directory under a virtual root. Returns its root-relative path and whether it is a file, directory, or other entry.",
       promptSnippet: "stat: Verify an exact candidate path and determine whether it is a file or directory before retrying read_file.",
       parameters: Type.Object({
         path: Type.String({ minLength: 1, maxLength: 4096 }),
       }),
-      execute: async (_toolCallId, params) => ({
-        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(await requireRelativeRepoPath(params.path, roots), roots)) }],
+      execute: async (_toolCallId, params) => safely(async () => ({
+        content: [{ type: "text", text: JSON.stringify(await statAllowedPath(resolveForRead(params.path), physicalRoots)) }],
         details: {},
-      }),
+      })),
     });
     pi.registerTool({
       name: "search_text",
       label: "Search repository text",
       executionMode: "parallel",
-      description: `Search for text in UTF-8 files under the fixed repository worktree or trusted skill roots. By default the query is a LITERAL string: parentheses, dots and backslashes have no special meaning, so search for "pause(" rather than "pause\\(\\)". Set regex to true only when you need a pattern (max ${maxRegexPatternCharacters} chars, matched against the first 2 KiB of each line). Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use path to narrow the search and treat truncated results as incomplete.`,
+      description: `Search for text in UTF-8 files under virtual roots. By default the query is a LITERAL string: parentheses, dots and backslashes have no special meaning, so search for "pause(" rather than "pause\\(\\)". Set regex to true only when you need a pattern (max ${maxRegexPatternCharacters} chars, matched against the first 2 KiB of each line). Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use a virtual path to narrow the search and treat truncated results as incomplete.`,
       promptSnippet: "search_text: Find text in bounded repository files; literal by default, regex:true for patterns, narrow with path.",
       parameters: Type.Object({
         query: Type.String({ minLength: 1, maxLength: maxSearchQueryCharacters }),
@@ -932,57 +971,57 @@ export function createFsReadExtension(
         caseSensitive: Type.Optional(Type.Boolean()),
         regex: Type.Optional(Type.Boolean()),
       }),
-      execute: async (_toolCallId, params) => ({
+      execute: async (_toolCallId, params) => safely(async () => ({
         content: [{
           type: "text",
           text: JSON.stringify(await searchAllowedFiles(
             params.query,
-            await requireRelativeRepoPath(params.path ?? ".", roots),
-            roots,
+            resolveForRead(params.path ?? "."),
+            physicalRoots,
             { caseSensitive: params.caseSensitive, regex: params.regex },
           )),
         }],
         details: {},
-      }),
+      })),
     });
     pi.registerTool({
       name: "glob",
       label: "Find files by name pattern",
       executionMode: "parallel",
-      description: `Find files by a bounded glob pattern under a repository-relative directory. Use * for a single path segment, ** for any depth, and ? for one character; patterns without "/" match file names anywhere below the starting directory. Only paths are returned, never file contents, and results are capped at ${maxGlobResults} entries / ${maxGlobBytes} bytes. .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are not followed.`,
-      promptSnippet: "glob: Find files by name pattern (*, **, ?) without reading their contents; use a path to narrow.",
+      description: `Find files by a bounded glob pattern under a virtual root path. Use * for a single path segment, ** for any depth, and ? for one character; patterns without "/" match file names anywhere below the starting directory. Only paths are returned, never file contents, and results are capped at ${maxGlobResults} entries / ${maxGlobBytes} bytes. .git, node_modules, dist, coverage, .next and .turbo are skipped and symlinks are not followed.`,
+      promptSnippet: "glob: Find files by name pattern (*, **, ?) without reading their contents; use a virtual path to narrow.",
       parameters: Type.Object({
         pattern: Type.String({ minLength: 1, maxLength: maxGlobPatternCharacters }),
         path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
       }),
-      execute: async (_toolCallId, params) => ({
+      execute: async (_toolCallId, params) => safely(async () => ({
         content: [{
           type: "text",
           text: JSON.stringify(await findAllowedFiles(
-            await requireRelativeRepoPath(params.path ?? ".", roots), roots, params.pattern,
+            resolveForRead(params.path ?? "."), physicalRoots, params.pattern,
           )),
         }],
         details: {},
-      }),
+      })),
     });
     if (gitGrep) {
       pi.registerTool({
         name: "git_grep",
         label: "Search pinned Git tree",
         executionMode: "parallel",
-        description: "Search tracked files in the exact pinned workspace HEAD using a bounded literal query. This does not inspect working-tree or untracked content. Narrow the search with a repository-relative path and inspect results with read_file.",
+        description: "Search tracked files in the exact pinned workspace HEAD using a bounded literal query. This does not inspect working-tree or untracked content. Narrow the search with a worktree-relative path (or worktree:// URI) and inspect results with read_file.",
         promptSnippet: "git_grep: Search tracked files at the pinned HEAD with a literal query; use path to narrow results and read_file to inspect matches.",
         parameters: Type.Object({
           query: Type.String({ minLength: 1, maxLength: maxSearchQueryCharacters }),
           path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
         }),
-        execute: async (_toolCallId, params) => ({
+        execute: async (_toolCallId, params) => safely(async () => ({
           content: [{
             type: "text",
-            text: JSON.stringify(await gitGrep(params.query, params.path ?? ".")),
+            text: JSON.stringify(await gitGrep(params.query, worktreeRelative(params.path) ?? ".")),
           }],
           details: {},
-        }),
+        })),
       });
     }
     if (gitDiff) {
@@ -990,15 +1029,15 @@ export function createFsReadExtension(
         name: "git_diff",
         label: "Inspect workspace diff",
         executionMode: "sequential",
-        description: "Read staged and unstaged changes in the current isolated Git worktree compared with HEAD. Output is capped at 32 KiB; provide a repository-relative path to narrow a large diff.",
+        description: "Read staged and unstaged changes in the current isolated Git worktree compared with HEAD. Output is capped at 32 KiB; provide a worktree-relative path (or worktree:// URI) to narrow a large diff.",
         promptSnippet: "git_diff: Inspect current staged and unstaged worktree changes. If truncated, request a narrower path.",
         parameters: Type.Object({
           path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
         }),
-        execute: async (_toolCallId, params) => ({
-          content: [{ type: "text", text: JSON.stringify(await gitDiff(params.path)) }],
+        execute: async (_toolCallId, params) => safely(async () => ({
+          content: [{ type: "text", text: JSON.stringify(await gitDiff(worktreeRelative(params.path))) }],
           details: {},
-        }),
+        })),
       });
     }
   };

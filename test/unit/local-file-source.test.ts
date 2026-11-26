@@ -54,7 +54,7 @@ describe("local worktree file source", () => {
 
   it("rejects absolute paths, traversal, .git and missing files", async () => {
     await expect(source.readFile("../outside")).rejects.toThrow("invalid repository-relative path");
-    await expect(source.readFile("/etc/passwd")).rejects.toThrow("absolute paths");
+    await expect(source.readFile("/etc/passwd")).rejects.toThrow("absolute host paths");
     await expect(source.readFile(".git/config")).rejects.toThrow(".git");
     await expect(source.readFile("missing.txt")).rejects.toThrow("file not found");
   });

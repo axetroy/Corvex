@@ -13,6 +13,17 @@ describe("conversation prompt contracts", () => {
     expect(getConversationSystemPrompt("zh-CN", "gitlab")).toContain("用户的请求就是授权");
   });
 
+  it("teaches one unified virtual path protocol in both languages", () => {
+    for (const language of ["en", "zh-CN"] as const) {
+      const prompt = getConversationSystemPrompt(language, "gitlab");
+      expect(prompt).toContain("worktree://");
+      expect(prompt).toContain("upload://");
+      expect(prompt).toContain("skill://");
+      expect(prompt).not.toContain("only trusted skill-root paths may be absolute");
+      expect(prompt).not.toContain("只有可信 Skill 根目录允许使用绝对路径");
+    }
+  });
+
   it("does not tell the model to keep asking for in-scope approval", () => {
     for (const language of ["en", "zh-CN"] as const) {
       const prompt = getConversationSystemPrompt(language, "gitlab");
