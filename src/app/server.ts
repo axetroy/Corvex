@@ -12,6 +12,7 @@ import type { FastifyRequest } from "fastify";
 import { createTokenCipher, type TokenCipher } from "../tokens.js";
 import { GitLabClient } from "../gitlab/client.js";
 import { ConversationRunner } from "./conversation-runner.js";
+import { ScheduledTasksScheduler } from "./scheduled-tasks.js";
 import { attachOperationsAuth, readCookie, sessionCookieName } from "./http/auth.js";
 import {
   callAsyncHook,
@@ -59,6 +60,7 @@ export class CorvexServer {
   private readonly conversationAbort = new AbortController();
   /** 正在推送的对话流连接；关闭 Server 时主动结束，避免长连接拖住 `app.close()`。 */
   private readonly conversationStreams = new Set<ServerResponse>();
+  private readonly scheduledTasks: ScheduledTasksScheduler;
 
   constructor(
     private readonly config: CorvexConfig,
@@ -72,6 +74,10 @@ export class CorvexServer {
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
     this.conversations = new ConversationRunner(config, store, this.hooks);
+    this.scheduledTasks = new ScheduledTasksScheduler({
+      config, store, conversations: this.conversations,
+      clientForUser: (userId) => this.clientForUser(userId),
+    });
     // 启动恢复的排队轮次没有 HTTP 请求传入信号，统一用 Server 的关闭信号中止。
     this.conversations.setShutdownSignal(this.conversationAbort.signal);
     // 默认行为也走钩子：认证会话解析与设置热更新都可被插件扩展或替换。
@@ -209,16 +215,11 @@ export class CorvexServer {
         console.warn("storage cleanup hook failed", { error: errorMessage(error) });
       }
       // 上次进程留下的排队补充消息没有在途轮次触发，启动时主动消费一次。
-      void this.conversations.resumeFollowUps(async (userId) => {
-        const saved = this.store.readUser(userId, this.cipher);
-        if (!saved) return undefined;
-        const user = await this.oauth.refresh(saved);
-        // 续期失败意味着用户在非请求路径上也需要重新登录，这里跳过该用户的队列恢复。
-        if (!user) return undefined;
-        return this.createGitLabClient(userId, user.accessToken);
-      }).catch((error: unknown) => {
+      void this.conversations.resumeFollowUps((userId) => this.clientForUser(userId)).catch((error: unknown) => {
         console.warn("queued conversation follow-ups could not resume", { error: errorMessage(error) });
       });
+      // 计划任务启动时只推进错过的触发，不批量补跑。
+      this.scheduledTasks.recover();
     });
     // 启动时的配置快照：写入设置时以它为基准重新计算，避免旧覆盖项残留。
     this.settings = new SettingsService(config, store, structuredClone(config), configPath, (applied) => {
@@ -270,6 +271,15 @@ export class CorvexServer {
    * 因此长轮次运行中若 token 被后台刷新（旧 token 被 GitLab 吊销），后续调用立即用新令牌。
    * provider 只读当前用户，不会跨用户泄漏。
    */
+  /** 非请求路径（启动恢复、计划任务）按用户解析有效令牌；失败/禁用返回 undefined，绝不回退全局凭据。 */
+  private async clientForUser(userId: string): Promise<GitLabClient | undefined> {
+    const saved = this.store.readUser(userId, this.cipher);
+    if (!saved || saved.disabled) return undefined;
+    const user = await this.oauth.refresh(saved);
+    if (!user) return undefined;
+    return this.createGitLabClient(userId, user.accessToken);
+  }
+
   private createGitLabClient(userId: string, fallbackToken: string): GitLabClient {
     return new GitLabClient(
       this.config.gitlab.baseUrl,
@@ -331,6 +341,7 @@ export class CorvexServer {
       this.conversationStreams.clear();
     };
     const retentionTask = this.runRetention(retention.signal);
+    const scheduledTask = this.scheduledTasks.run(retention.signal);
     signal.addEventListener("abort", stopRetention, { once: true });
     try {
       await new Promise<void>((resolvePromise, rejectPromise) => {
@@ -370,6 +381,11 @@ export class CorvexServer {
         await retentionTask;
       } catch (error) {
         console.error("retention task ended unexpectedly", { error: errorMessage(error) });
+      }
+      try {
+        await scheduledTask;
+      } catch (error) {
+        console.error("scheduled tasks ended unexpectedly", { error: errorMessage(error) });
       }
       await this.conversations.releaseAll();
     }
