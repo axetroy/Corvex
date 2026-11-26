@@ -4,6 +4,7 @@ import type { Dirent } from "node:fs";
 import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { isValidBranchName } from "./refs.js";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
 
 /** 单条 Git 命令允许捕获的标准输出上限。 */
@@ -821,11 +822,7 @@ export class GitManager {
   ): Promise<{ branch: string; sha: string }> {
     if (!Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("project ID must be positive");
     if (!shaPattern.test(sha)) throw new Error("pushed commit must be a full SHA");
-    if (
-      !branch || branch.length > 200 ||
-      !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) ||
-      branch.includes("..") || branch.endsWith(".lock") || branch.includes("@{")
-    ) {
+    if (!isValidBranchName(branch)) {
       throw new Error("invalid GitLab branch name");
     }
     if (!authToken) throw new Error("the logged-in user's GitLab token is required");
@@ -1129,9 +1126,7 @@ export class GitManager {
   }
 
   private validateBranchName(name: string): void {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(name) || name.includes("..") || name.endsWith("/") || name.endsWith(".")) {
-      throw new Error("invalid branch name");
-    }
+    if (!isValidBranchName(name, 128)) throw new Error("invalid branch name");
   }
 
   /** 在 worktree 的当前提交上创建本地分支，不切换 HEAD。 */

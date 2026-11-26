@@ -60,6 +60,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - `run_command` 仅在 `execution.enabled` 时按轮注册，并限制在配置的后端与 worktree 内；换执行器需要单独的沙箱和授权设计。
 - 轮次状态机在 `AppStore` 强制执行（`queued → running → completed`，另有 `failed` / `stale` / `cancelled`）；失败不自动重试，因为 GitLab 写入结果可能不确定。
 - 配置按角色校验；启动不需要 GitLab 凭据，因为 API 与 Git 调用都用登录用户 token。
+- 分支/ref 名称允许 Unicode（含中文），统一用 `src/git/refs.ts` 的 `isValidBranchName` / `branchNamePatternSource`，工具 schema 与运行时校验共用；不要在各处写死 ASCII 正则，否则中文分支会「工具放行、执行拒绝」。
 
 ## 测试
 

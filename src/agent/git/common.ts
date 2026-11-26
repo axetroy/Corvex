@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { toWorktreeRelative, virtualizeError } from "../fs/virtual-path.js";
 import type { GitCommitLogResult, GitWorkspaceStatus } from "../../git/manager.js";
+import { branchNamePatternSource } from "../../git/refs.js";
 
 /**
  * Git 工具适配器：所有实现都绑定当前会话的项目与 worktree，
@@ -46,13 +47,13 @@ export const pathParam = Type.Optional(Type.String({ minLength: 1, maxLength: 40
 export const branchNameParam = Type.String({
   minLength: 1,
   maxLength: 128,
-  pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+  pattern: branchNamePatternSource,
 });
 /** 变基目标：完整提交 SHA 或本地/远端跟踪分支名。 */
 export const rebaseTargetParam = Type.String({
   minLength: 1,
   maxLength: 128,
-  pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[A-Za-z0-9][A-Za-z0-9._/-]*)$",
+  pattern: `^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|${branchNamePatternSource.slice(1, -1)})$`,
 });
 
 /** git 工具统一入口：路径走虚拟协议，异常统一脱敏后再交给模型。 */
