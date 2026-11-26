@@ -105,6 +105,45 @@
 
 实现补充：默认单文件 256 KiB、单消息 10 个、单会话累计 100 个；三个值都是运维台运行时设置（`upload_max_bytes` / `upload_max_per_message` / `upload_max_per_conversation`），通过 `GET /api/ops/me/upload-limits` 暴露给 composer 预检。Fastify 的 parser `bodyLimit` 用 1 MiB 硬顶，路由按运行时值复核，改设置无需重启。上传走专用 content-type `application/x-corvex-upload`。附件只能随新建轮次发送，插话/排队路径明确拒绝。魔数检测在 `src/app/upload-magic.ts`，按字节识别 text/image/pdf/archive/executable/binary，伪装成 `.txt` 的图片、脚本、ELF、ZIP 一律拒绝。限额常量集中在 `src/upload-constants.ts`，前后端共用（必须放在 `src/app/ui/` 之外，否则 `tsconfig.json` 排除 UI 目录会导致 `dist/app/upload.js` 找不到模块）。
 
+## 4.1 P2-b 图片支持详细方案（尚未实现）
+
+### SDK 能力（已确认，无需替代方案）
+
+`@earendil-works/pi-ai@1.4.0` / `pi-coding-agent@1.4.0` 已完整支持图片：
+
+- `ImageContent = { type: "image"; data: string; mimeType: string }`，`data` 必须是**裸 Base64**（不带 `data:` 前缀，SDK 自己拼 `data:${mimeType};base64,${data}`）。
+- `session.prompt(text, { images?: ImageContent[] })`、`session.steer(text, images)`、`session.sendUserMessage([...])` 都能注入图片；SDK 内部会按模型限制自动缩放（默认 2000×2000 / 4.5 MiB Base64）。
+- 能力检测唯一权威是 `model.input`，即模型注册时的 `input: ["text", "image"]`。**不支持图片的模型会把图片降级成占位文本** `(image omitted: model does not support images)`，所以必须正确注册能力，而不是依赖 SDK 静默处理。
+- MIME 只支持 PNG/JPEG/GIF/WebP；其它格式 SDK 会尝试转换，失败则省略。
+
+### 四个阶段与精确落点
+
+**A. 模型视觉能力**
+- `ProviderModel` / `ProviderModelInput` 加 `supportsVision: boolean`（默认 false）；`provider_models` 表加 `supports_vision INTEGER NOT NULL DEFAULT 0` 并提供旧库迁移，`createProviderModel` / `updateProviderModel` SQL 同步。
+- 运维台与用户级模型表单/选择器增加该开关；`applyActiveModel()` 同步到 `config.agent.visionEnabled`。
+- `pi.ts` 注册模型处改为 `input: config.agent.visionEnabled ? ["text","image"] : ["text"]`。
+- `/api/ops/me/upload-limits`（或模型列表）透出 `visionSupported` 供 composer 判断。
+
+**B. 上传校验与预览**
+- 新增独立图片限额（建议 4–5 MiB，与 SDK 的 4.5 MiB Base64 上限对齐）与每消息图片数；复用 `detectImageMime(filename, bytes)` 做魔数 + 扩展名一致性校验，只放行 png/jpeg/gif/webp。
+- 提高专用 content-type 的 `bodyLimit` 或增加图片专用 content-type，不能放宽 JSON/ZIP parser。
+- 新增鉴权端点 `GET …/uploads/:uploadId/image`，复用 `/files/image` 的 `sendBinary` 与归属校验，供 chips 缩略图使用。
+
+**C. 多模态注入（核心）**
+- `ModelRequest` 加 `images?: { data: string; mimeType: string; filename: string }[]`（裸 Base64）。
+- Runner 仅当 `visionEnabled` 时读盘转 Base64 放进 `images`；非视觉模型只保留文件名清单并提示用户，不发送图片。
+- `session.prompt(request.userPrompt, { images: request.images.map(...) })` 替换现有纯字符串调用。
+- `generate()` 的 `promptBytes` 预算加入图片字节数；超限重试不重复读盘。
+
+**D. 轨迹/会话隔离与 UI**
+- **Base64 绝不进轨迹或跨轮会话**：`pi.ts` 的 `rawContent = JSON.stringify(request)`、`trace_input` 的会话条目、`finishTrace` 的 output，以及 `store` 的会话持久化，写入前统一把 image 块替换为 `{type:"image", data:"[OMITTED]", mimeType, byteLength}`；`redact.ts` 增加 `redactImageBlocks()` 并单测。
+- 图片**不能**靠 `read_file` 读 `upload://` 实现——文本工具明确拒绝二进制；`upload://` 清单对图片仅作文件引用/说明。
+- composer accept 扩到图片后缀、chips 显示缩略图，非视觉模型给出明确降级提示；i18n 双语同步。
+
+### 必须避免的坑
+
+`data:` URL 前缀（会被 SDK 错误解码）、`model.input` 未声明导致占位符降级、SVG/AVIF 等非四格式进 prompt、Base64 落入轨迹/过程快照/会话持久化、图片字节未计入 prompt 预算、跨轮重放图片重复计费、把 `upload://` 当成图片读取协议。
+
 ## 5. 测试
 
 - 上传校验：字节类型检测（任意 UTF-8 文本，含常见源码文件）、大小/数量、文件名净化、二进制扩展名拒绝；
