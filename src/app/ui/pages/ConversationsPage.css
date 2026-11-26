@@ -1179,8 +1179,8 @@
 
 .conversation-tool-call-name {
   display: flex;
-  /* 名称独占一行：状态、耗时与参数提示换到下一行，避免把名称挤成几十像素。 */
-  flex: 1 1 100%;
+  /* 与折叠箭头同行；空间不足时由中间省略号截断，状态/耗时自然换到下一行。 */
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--conversation-ink);
