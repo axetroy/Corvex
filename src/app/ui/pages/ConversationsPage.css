@@ -872,8 +872,15 @@
 
 .conversation-process-summary::before {
   content: "›";
+  display: inline-flex;
+  width: 12px;
+  height: 16px;
+  flex: 0 0 12px;
+  align-items: center;
+  justify-content: center;
   color: var(--conversation-muted);
   font-weight: 700;
+  line-height: 1;
 }
 
 .conversation-process[open] > .conversation-process-summary::before {
@@ -1155,7 +1162,7 @@
 .conversation-tool-call-summary {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 2px 8px;
   min-width: 0;
   cursor: pointer;
@@ -1168,9 +1175,15 @@
 
 .conversation-tool-call-summary::before {
   content: "›";
-  flex: 0 0 auto;
+  display: inline-flex;
+  width: 12px;
+  height: 16px;
+  flex: 0 0 12px;
+  align-items: center;
+  justify-content: center;
   color: var(--conversation-muted);
   font-weight: 700;
+  line-height: 1;
 }
 
 .conversation-tool-call[open] > .conversation-tool-call-summary::before {
