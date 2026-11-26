@@ -2,7 +2,10 @@
 # 构建：docker build -f Dockerfile.exec -t corvex-exec:latest .
 FROM node:26.12.1-alpine
 
+# 全局安装经典版 yarn 与 pnpm（Node 25+ 不再自带 corepack，必须显式安装）。
+# 必须在 USER node 之前以 root 安装：npm 全局目录 /usr/local/lib/node_modules 需要写权限。
 RUN apk add --no-cache git bash ca-certificates python3 make g++ \
+    && npm install --global yarn@1.22.22 pnpm@12.23.0 \
     && mkdir -p /workspace /tmp
 
 WORKDIR /workspace
