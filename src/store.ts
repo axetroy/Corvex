@@ -10,6 +10,8 @@ import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
 import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument, validateSkillDocument, SKILL_SEED_VERSION } from "./agent/skills.js";
 import {
+  redactHostPaths,
+  redactModelFacingText,
   redactSensitiveText,
   sanitizeSensitiveText,
   sanitizeSensitiveValue,
@@ -183,8 +185,10 @@ function serializeContextItems(items: ContextSnapshotData["items"]): string {
 function serializeTraceValue(value: unknown): string | null {
   if (value === undefined) return null;
   const serialized = JSON.stringify(sanitizeSensitiveValue(value));
-  if (Buffer.byteLength(serialized) <= maxExecutionPayloadBytes) return serialized;
-  const bytes = Buffer.from(serialized);
+  // 轨迹会被 tool-evidence 回灌到提示词，必须连带脱敏宿主绝对路径。
+  const safe = redactHostPaths(serialized);
+  if (Buffer.byteLength(safe) <= maxExecutionPayloadBytes) return safe;
+  const bytes = Buffer.from(safe);
   let previewBytes = maxExecutionPayloadBytes - 1024;
   let truncated = JSON.stringify({
     truncated: true,
@@ -209,7 +213,7 @@ function serializeTraceValue(value: unknown): string | null {
  */
 function sanitizeTraceString(value: string | null): string | null {
   if (value === null) return null;
-  const sanitized = sanitizeSensitiveText(value);
+  const sanitized = redactHostPaths(sanitizeSensitiveText(value));
   if (Buffer.byteLength(sanitized) <= maxExecutionPayloadBytes) return sanitized;
   return serializeTraceValue(sanitized);
 }
@@ -224,10 +228,10 @@ function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[
       return {
         ...entry,
         name: redactSensitiveText(entry.name).slice(0, 512),
-        input: entry.input ? redactSensitiveText(entry.input).slice(0, maxConversationProcessInputChars) : null,
+        input: entry.input ? redactModelFacingText(entry.input).slice(0, maxConversationProcessInputChars) : null,
       };
     }
-    return { ...entry, text: redactSensitiveText(entry.text).slice(0, maxConversationProcessTextChars) };
+    return { ...entry, text: redactModelFacingText(entry.text).slice(0, maxConversationProcessTextChars) };
   });
   let serialized = JSON.stringify(clean);
   while (Buffer.byteLength(serialized) > maxConversationProcessBytes && clean.length > 1) {
@@ -262,11 +266,11 @@ function readStoredExecOutput(value: unknown): NonNullable<Extract<ConversationP
   if (typeof raw.stdout !== "string" || typeof raw.stderr !== "string") return undefined;
   const tooLong = raw.stdout.length > maxConversationExecOutputChars || raw.stderr.length > maxConversationExecOutputChars;
   return {
-    stdout: redactSensitiveText(raw.stdout).slice(0, maxConversationExecOutputChars),
-    stderr: redactSensitiveText(raw.stderr).slice(0, maxConversationExecOutputChars),
+    stdout: redactModelFacingText(raw.stdout).slice(0, maxConversationExecOutputChars),
+    stderr: redactModelFacingText(raw.stderr).slice(0, maxConversationExecOutputChars),
     ...(raw.exitCode === null || typeof raw.exitCode === "number" ? { exitCode: raw.exitCode } : {}),
     ...(typeof raw.aborted === "boolean" ? { aborted: raw.aborted } : {}),
-    ...(typeof raw.reason === "string" ? { reason: redactSensitiveText(raw.reason).slice(0, 200) } : {}),
+    ...(typeof raw.reason === "string" ? { reason: redactModelFacingText(raw.reason).slice(0, 200) } : {}),
     ...(typeof raw.truncated === "boolean" ? { truncated: raw.truncated } : {}),
     ...(tooLong ? { truncated: true } : {}),
   };

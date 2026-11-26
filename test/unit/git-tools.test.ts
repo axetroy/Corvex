@@ -54,6 +54,8 @@ describe("consolidated Git tools", () => {
     const find = (name: string) => registered.find((tool) => tool.name === name)!;
     await find("git_log").execute("1", { limit: 5, path: "src/a.ts" });
     expect(adapter.log).toHaveBeenCalledWith(5, "src/a.ts");
+    await find("git_log").execute("1b", { limit: 5, path: "worktree://src/a.ts" });
+    expect(adapter.log).toHaveBeenCalledWith(5, "src/a.ts");
     await find("git_branch").execute("2", { action: "create", name: "corvex/task" });
     expect(adapter.createBranch).toHaveBeenCalledWith("corvex/task");
     await find("git_checkout").execute("2b", { name: "feature/mr" });
@@ -72,6 +74,15 @@ describe("consolidated Git tools", () => {
     expect(adapter.cherryPick).toHaveBeenCalledWith("a".repeat(40));
     await find("git_revert").execute("5", { sha: "a".repeat(40) });
     expect(adapter.revert).toHaveBeenCalledWith("a".repeat(40));
+  });
+
+  it("sanitizes host paths from git errors before they reach the model", async () => {
+    const adapter = fakeAdapter();
+    adapter.status = vi.fn(async () => {
+      throw new Error("fatal: /Users/me/project: permission denied");
+    });
+    const statusTool = collect(adapter).find((tool) => tool.name === "git_status")!;
+    await expect(statusTool.execute("1", {})).rejects.toThrow("fatal: <path>: permission denied");
   });
 
   it("serializes an empty result as a text string instead of undefined", () => {

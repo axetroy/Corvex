@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { branchNameParam, iidSha, rebaseTargetParam, text, type GitToolAdapter } from "./common.js";
+import { branchNameParam, gitResult, iidSha, rebaseTargetParam, text, type GitToolAdapter } from "./common.js";
 
 /** 变更写入：提交、写入会话 ref（push）与回滚，全部限定在当前对话。 */
 export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAPI) => void {
@@ -35,7 +35,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Fast-forward a commit from this project's local mirror to a named GitLab branch so merge requests can see the changes. Never force-push. Uses the signed-in user's GitLab token. The branch must be a valid name and the push is rejected if it would rewrite the remote branch. A successful push to this conversation's target branch advances the sync baseline: later commits in this turn are based on the published commit, and already-published changes stop appearing as local changes.",
       promptSnippet: "git_push_branch: Explicitly publish a commit to a GitLab branch (fast-forward only); use git_push first to save the commit in the mirror, then create or update the MR.",
       parameters: Type.Object({ sha: iidSha, branch: branchNameParam }),
-      execute: async (_id, params) => text(await git.pushBranch(params.sha, params.branch)),
+      execute: async (_id, params) => gitResult(git.pushBranch(params.sha, params.branch)),
     });
     pi.registerTool({
       name: "git_publish",
@@ -47,7 +47,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
         branch: branchNameParam,
         message: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
       }),
-      execute: async (_id, params) => text(await git.publish(params.branch, params.message)),
+      execute: async (_id, params) => gitResult(git.publish(params.branch, params.message)),
     });
     pi.registerTool({
       name: "git_rebase",
@@ -56,7 +56,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Rebase the current worktree commits onto a local or origin branch, or onto a full commit SHA. The worktree must be clean; conflicts abort automatically.",
       promptSnippet: "git_rebase: Rebase clean worktree commits onto a named branch or commit; conflicts are aborted.",
       parameters: Type.Object({ onto: rebaseTargetParam }),
-      execute: async (_id, params) => text(await git.rebase(params.onto)),
+      execute: async (_id, params) => gitResult(git.rebase(params.onto)),
     });
     pi.registerTool({
       name: "git_cherry_pick",
@@ -65,7 +65,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Apply one full commit SHA from this project's mirror onto the current worktree as a new commit. The worktree must be clean; conflicts abort automatically.",
       promptSnippet: "git_cherry_pick: Apply one known commit to the current branch; conflicts are aborted.",
       parameters: Type.Object({ sha: iidSha }),
-      execute: async (_id, params) => text(await git.cherryPick(params.sha)),
+      execute: async (_id, params) => gitResult(git.cherryPick(params.sha)),
     });
     pi.registerTool({
       name: "git_revert",
@@ -74,7 +74,7 @@ export function createGitChangesExtension(git: GitToolAdapter): (pi: ExtensionAP
       description: "Undo one commit by adding a new revert commit in the bound worktree. Requires a full SHA from git_log; history is never rewritten.",
       promptSnippet: "git_revert: Revert one full SHA with a new commit; never rewrite history.",
       parameters: Type.Object({ sha: iidSha }),
-      execute: async (_id, params) => text(await git.revert(params.sha)),
+      execute: async (_id, params) => gitResult(git.revert(params.sha)),
     });
   };
 }

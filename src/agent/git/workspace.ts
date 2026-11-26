@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { branchNameParam, iidSha, text, type GitToolAdapter } from "./common.js";
+import { branchNameParam, gitResult, iidSha, text, type GitToolAdapter } from "./common.js";
 
 /** worktree 级操作：clone/refresh、分支、抓取与合并，全部限定在当前项目与本地镜像。 */
 export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: ExtensionAPI) => void {
@@ -12,7 +12,7 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       description: "Ensure the bound conversation worktree exists at its pinned snapshot. Takes no repository URL and never clones arbitrary remotes; it only rebuilds the current project's worktree if it was evicted.",
       promptSnippet: "git_clone: Rebuild the current bound worktree when it is missing; no URL arguments.",
       parameters: Type.Object({}),
-      execute: async () => text(await git.clone()),
+      execute: async () => gitResult(git.clone()),
     });
     pi.registerTool({
       name: "git_branch",
@@ -35,7 +35,7 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       description: "Check out a branch in the bound worktree. Switches to an existing local branch, or creates and tracks a local branch from origin/<name> when it does not exist locally. No arbitrary remote URLs and no force operations. Use this to prepare a branch before creating a merge request.",
       promptSnippet: "git_checkout: Switch to a local branch or track origin/<name> to prepare for a merge request.",
       parameters: Type.Object({ name: branchNameParam }),
-      execute: async (_id, params) => text(await git.checkout(params.name)),
+      execute: async (_id, params) => gitResult(git.checkout(params.name)),
     });
     pi.registerTool({
       name: "git_pull",
@@ -44,7 +44,7 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       description: "Fetch objects from the configured local project mirror. The worktree stays on its pinned revision; this tool never changes HEAD or pulls from an arbitrary remote.",
       promptSnippet: "git_pull: Fetch from the configured local mirror; the pinned revision is unchanged.",
       parameters: Type.Object({}),
-      execute: async () => text(await git.pull()),
+      execute: async () => gitResult(git.pull()),
     });
     pi.registerTool({
       name: "git_sync",
@@ -53,7 +53,7 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       description: "Refresh the bound project's mirror from GitLab so remote branch tips become available as origin/<branch> in the worktree. Use this when a push was rejected as non-fast-forward or before rebasing onto an updated branch. Uses the signed-in user's GitLab token; no arbitrary remote or force option.",
       promptSnippet: "git_sync: Refresh GitLab branch tips in the mirror (origin/<branch>) before rebasing or after a non-fast-forward push.",
       parameters: Type.Object({}),
-      execute: async () => text(await git.sync()),
+      execute: async () => gitResult(git.sync()),
     });
     pi.registerTool({
       name: "git_merge",
@@ -62,7 +62,7 @@ export function createGitWorkspaceExtension(git: GitToolAdapter): (pi: Extension
       description: "Merge a local branch or full commit SHA into the bound worktree. Only refs already present in this repository are accepted; conflicts abort the merge. No remote merge or force option is available.",
       promptSnippet: "git_merge: Merge a local branch or full SHA into the current worktree; conflicts abort.",
       parameters: Type.Object({ ref: Type.Union([branchNameParam, iidSha]) }),
-      execute: async (_id, params) => text(await git.merge(params.ref)),
+      execute: async (_id, params) => gitResult(git.merge(params.ref)),
     });
   };
 }

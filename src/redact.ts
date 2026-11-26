@@ -2,6 +2,19 @@
 export const sensitiveField = /token|secret|password|api[_-]?key|authorization|cookie|credential/i;
 
 /**
+ * 脱敏宿主机绝对路径。虚拟协议 URI（worktree:// / upload:// / skill://）不含这些前缀，不受影响。
+ * 用于轨迹、过程快照与命令输出等一切会二次进入模型上下文的文本。
+ */
+export function redactHostPaths(value: string): string {
+  return value
+    // Windows 盘符路径与 POSIX 常见宿主家目录/临时目录。
+    .replace(/[A-Za-z]:[\\/](?![\\/])[^\s"'`,)\]}]+/g, "<path>")
+    .replace(/(?:\/Users\/|\/home\/|\/private\/var\/|\/var\/folders\/|\/root\/)[^\s"'`,)\]}]+/g, "<path>")
+    // JSON.stringify 后斜杠可能被转义为 \\/。
+    .replace(/(?:\\\/Users\\\/|\\\/home\\\/|\\\/private\\\/var\\\/)[^\s"'`,)\]}]+/g, "<path>");
+}
+
+/**
  * 对自由文本做凭证脱敏：Bearer、常见 token 前缀、key=value、JSON 字段、URL 查询参数与内嵌认证。
  * 只做保守匹配，宁可漏掉未知格式的密钥，也不破坏正常内容。
  */
@@ -14,6 +27,11 @@ export function redactSensitiveText(value: string): string {
     .replace(/("(?:[^"]*(?:token|secret|api[_-]?key|password|authorization|cookie|credential)[^"]*)"\s*:\s*)("(?:[^"\\]|\\.)*"|[^\s,}]+)/gi, "$1\"[REDACTED]\"")
     .replace(/([?&](?:access[_-]?token|token|key|secret|password|signature|auth)=)[^&#\s]*/gi, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^/\s@]+@/gi, "$1[REDACTED]@");
+}
+
+/** 凭证 + 宿主路径的统一脱敏入口：所有写入轨迹/过程/命令输出的文本都走它。 */
+export function redactModelFacingText(value: string): string {
+  return redactHostPaths(redactSensitiveText(value));
 }
 
 /** 深度优先清洗结构化数据：敏感字段名整值替换，其余字符串做文本脱敏。 */

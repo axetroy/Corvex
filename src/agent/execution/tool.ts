@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage } from "../../errors.js";
-import { redactSensitiveText } from "../../redact.js";
+import { redactModelFacingText, redactSensitiveText } from "../../redact.js";
 import type { ExecStream, ExecutionBackend, ExecutionResult } from "./types.js";
 
 /** 一条命令的流式事件；execId 即工具调用 ID，逐段追加输出，done 带终态。 */
@@ -98,7 +98,7 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
               maxOutputBytes: params.maxOutputBytes ?? options.maxOutputBytes,
             },
             commandSignal,
-            (stream, text) => emit({ execId: toolCallId, stream, chunk: redactSensitiveText(text) }),
+            (stream, text) => emit({ execId: toolCallId, stream, chunk: redactModelFacingText(text) }),
           );
         } finally {
           options.onExecEnd?.(toolCallId);
@@ -122,9 +122,9 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
           `durationMs: ${result.durationMs}`,
           result.truncated ? "output: TRUNCATED" : "",
           "--- stdout ---",
-          redactSensitiveText(result.stdout),
+          redactModelFacingText(result.stdout),
           "--- stderr ---",
-          redactSensitiveText(result.stderr),
+          redactModelFacingText(result.stderr),
         ].filter(Boolean).join("\n");
         return {
           content: [{ type: "text" as const, text: body }],

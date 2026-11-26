@@ -6,10 +6,13 @@
  * 模型才能核实「我发过链接吗 / 评论发在哪」这类问题而不凭空编造。
  */
 
+import { redactHostPaths } from "../redact.js";
+
 /** 结果正文里只提取 text 片段，避免把 JSON 包装结构也塞进提示词。 */
 export function resultText(raw: string | null, limit: number): string {
   if (!raw) return "";
-  let text = raw;
+  // 旧轨迹可能是在路径脱敏上线前写入的，回灌前再清一次。
+  let text = redactHostPaths(raw);
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {

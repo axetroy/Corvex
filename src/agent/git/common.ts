@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { toWorktreeRelative, virtualizeError } from "../fs/virtual-path.js";
 import type { GitCommitLogResult, GitWorkspaceStatus } from "../../git/manager.js";
 
 /**
@@ -53,6 +54,20 @@ export const rebaseTargetParam = Type.String({
   maxLength: 128,
   pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[A-Za-z0-9][A-Za-z0-9._/-]*)$",
 });
+
+/** git 工具统一入口：路径走虚拟协议，异常统一脱敏后再交给模型。 */
+export function optionalWorktreePath(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : toWorktreeRelative(value);
+}
+
+/** 包装 git 调用，避免 spawn/stderr 里的宿主机绝对路径进入模型上下文。 */
+export async function gitResult(action: Promise<unknown>) {
+  try {
+    return text(await action);
+  } catch (error) {
+    throw new Error(virtualizeError(error, []), { cause: error });
+  }
+}
 
 export function text(value: unknown): { content: { type: "text"; text: string }[]; details: Record<string, never> } {
   // JSON.stringify(undefined) 返回 undefined，会让工具结果里出现没有 text 的 content 项，
