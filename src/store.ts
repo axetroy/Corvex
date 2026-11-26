@@ -664,6 +664,26 @@ export class AppStore {
     return row ? this.readContextSnapshot(row) : undefined;
   }
 
+  /**
+   * 会话的缓存命中统计：缓存 token 记在轮次上， uncached 输入 token 来自 LLM 轨迹。
+   * 三者相加即模型实际看到的输入 token，命中率 = cacheRead / (input + cacheRead + cacheWrite)。
+   */
+  conversationCacheStats(conversationId: string): { inputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
+    const input = this.db.prepare(
+      `SELECT COALESCE(SUM(t.input_tokens), 0) AS total FROM conversation_trace t
+       JOIN conversation_turns turn ON turn.id=t.turn_id
+       WHERE turn.conversation_id=? AND t.kind='llm' AND t.status='succeeded'`,
+    ).get(conversationId) as { total: number };
+    const cached = this.db.prepare(
+      "SELECT COALESCE(SUM(cache_read_tokens), 0) AS read, COALESCE(SUM(cache_write_tokens), 0) AS write FROM conversation_turns WHERE conversation_id=?",
+    ).get(conversationId) as { read: number; write: number };
+    return {
+      inputTokens: Number(input.total),
+      cacheReadTokens: Number(cached.read),
+      cacheWriteTokens: Number(cached.write),
+    };
+  }
+
   private readContextSnapshot(row: Record<string, unknown>): ContextSnapshotData {
     const parseObject = (value: unknown): Record<string, unknown> => {
       if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
@@ -1672,7 +1692,13 @@ export class AppStore {
   }
 
   /** 完成一轮对话：写入助手回复正文并把轮次置为完成。 */
-  finishConversationTurn(turnId: string, content: string, model = "", suggestions: readonly string[] = []): void {
+  finishConversationTurn(
+    turnId: string,
+    content: string,
+    model = "",
+    suggestions: readonly string[] = [],
+    cacheTokens: { read: number; write: number } = { read: 0, write: 0 },
+  ): void {
     const now = new Date().toISOString();
     this.transaction(() => {
       const row = this.db.prepare("SELECT * FROM conversation_turns WHERE id=?").get(turnId) as
@@ -1681,8 +1707,10 @@ export class AppStore {
       const turn = row ? readConversationTurnRow(row) : undefined;
       if (!turn) throw new Error(`conversation turn "${turnId}" not found`);
       const result = this.db.prepare(
-        "UPDATE conversation_turns SET status='completed',last_error='',model=?,updated_at=? WHERE id=? AND status='running'",
-      ).run(model, now, turnId);
+        `UPDATE conversation_turns
+         SET status='completed',last_error='',model=?,updated_at=?,cache_read_tokens=?,cache_write_tokens=?
+         WHERE id=? AND status='running'`,
+      ).run(model, now, Math.max(0, cacheTokens.read), Math.max(0, cacheTokens.write), turnId);
       if (result.changes !== 1) throw new Error(`conversation turn "${turnId}" is not running`);
       this.insertAudit(turn.actor_id, "conversation_turn", turnId, "running->completed", now);
       if (turn.message_id) {
@@ -2926,6 +2954,7 @@ export class AppStore {
         status TEXT NOT NULL, request TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL DEFAULT '',
         actor_id INTEGER NOT NULL DEFAULT 0, attempt_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
         upload_ids TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -3171,6 +3200,8 @@ export class AppStore {
     if (!turnColumns.has("model")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN model TEXT NOT NULL DEFAULT ''");
     // 本轮绑定的上传附件 ID（JSON 数组）；旧库留空表示没有附件。
     if (!turnColumns.has("upload_ids")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN upload_ids TEXT NOT NULL DEFAULT '[]'");
+    if (!turnColumns.has("cache_read_tokens")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0");
+    if (!turnColumns.has("cache_write_tokens")) this.db.exec("ALTER TABLE conversation_turns ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0");
     // 回复末尾的下一步建议，作为 JSON 数组落库；旧库留空由界面隐藏。
     const freshMessageColumns = new Set(
       (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((column) => column.name),

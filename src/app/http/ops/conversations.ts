@@ -567,6 +567,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const snapshots = ctx.store.contextSnapshots(conversationId);
     sendJson(reply, 200, {
       conversationId,
+      cacheStats: ctx.store.conversationCacheStats(conversationId),
       snapshots: snapshots.map((snapshot) => ({
         conversationId: snapshot.conversationId,
         turnId: snapshot.turnId,

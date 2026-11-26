@@ -231,6 +231,34 @@ describe("AppStore", () => {
       .toEqual([{ kind: "context", id: "ctx-1", text: "上下文已压缩：42000 → 12000 token" }]);
   });
 
+  it("按轮次缓存 token 与 LLM 输入 token 统计会话缓存命中", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7,
+      projectName: "group/project",
+      targetBranch: "main",
+      headSha: "a".repeat(40),
+      actorId: 0,
+      request: "Check cache stats",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    const traceId = store.startTrace(
+      { kind: "conversation", turnId: claimed.turnId },
+      claimed.attempt,
+      "llm",
+      "conversation",
+      "test-model",
+    );
+    store.finishTrace(traceId, "succeeded", 100, 120, 30);
+    store.finishConversationTurn(claimed.turnId, "done", "test-model", [], { read: 360, write: 40 });
+    expect(store.conversationCacheStats(created.conversationId)).toEqual({
+      inputTokens: 120,
+      cacheReadTokens: 360,
+      cacheWriteTokens: 40,
+    });
+  });
+
   it("过程快照保留命令输出并在读取时脱敏限长", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-exec-process-"));
     store = await AppStore.open(join(directory, "state.db"));

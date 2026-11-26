@@ -1369,7 +1369,10 @@ export class ConversationRunner {
       const parsed = this.config.agent.followupsEnabled
         ? parseFollowups(answer.content, this.config.agent.followupsCount)
         : { content: answer.content, suggestions: [] };
-      this.store.finishConversationTurn(turn.turnId, parsed.content, answer.model, parsed.suggestions);
+      this.store.finishConversationTurn(turn.turnId, parsed.content, answer.model, parsed.suggestions, {
+        read: answer.usage.cacheReadTokens,
+        write: answer.usage.cacheWriteTokens,
+      });
       this.store.saveConversationTurnProcess(turn.turnId, this.collectProcess(turn.turnId, answer.content));
       // 先展示创建时从用户消息派生的标题；done 后再用 LLM 精炼，失败则保留原标题。
       this.publishStream(turn.turnId, { type: "done", status: "completed" });

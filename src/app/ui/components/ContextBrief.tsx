@@ -11,6 +11,12 @@ interface SnapshotSummary {
   threshold: number | null;
 }
 
+interface CacheStats {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 interface Props {
   conversationId: string;
   copy: Copy;
@@ -28,20 +34,23 @@ function percent(value: number, total: number): number {
 /** 输入框下方的上下文简讯：只读取概要接口，点击可进入完整的上下文标签。 */
 export function ContextBrief({ conversationId, copy, locale, refreshToken, onOpen }: Props) {
   const [latest, setLatest] = useState<SnapshotSummary>();
+  const [cacheStats, setCacheStats] = useState<CacheStats>();
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     let active = true;
-    fetchJson<{ snapshots: SnapshotSummary[] }>(
+    fetchJson<{ snapshots: SnapshotSummary[]; cacheStats?: CacheStats }>(
       `/api/ops/conversations/${encodeURIComponent(conversationId)}/context`, copy,
     ).then((result) => {
       if (!active) return;
       setLatest(result.snapshots?.[0]);
+      setCacheStats(result.cacheStats);
       setCount(result.snapshots?.length ?? 0);
     }).catch(() => {
       // 简讯是可选信息；读取失败时静默隐藏，不影响输入与发送。
       if (active) {
         setLatest(undefined);
+        setCacheStats(undefined);
         setCount(0);
       }
     });
@@ -51,11 +60,14 @@ export function ContextBrief({ conversationId, copy, locale, refreshToken, onOpe
   if (!latest) return null;
 
   const usage = percent(latest.estimatedTokens, latest.contextWindow);
-  const threshold = latest.threshold ? percent(latest.threshold, latest.contextWindow) : null;
+  const promptTokens = cacheStats
+    ? cacheStats.inputTokens + cacheStats.cacheReadTokens + cacheStats.cacheWriteTokens
+    : 0;
+  const cacheHit = promptTokens > 0 ? percent(cacheStats!.cacheReadTokens, promptTokens) : null;
   const detail = [
+    cacheHit === null ? null : `${copy.contextPanelCacheHit} ${cacheHit}%`,
     `${copy.contextPanelEstimated} ${numberFormat.format(latest.estimatedTokens)}`,
     `${copy.contextPanelWindow} ${numberFormat.format(latest.contextWindow)}`,
-    threshold === null ? null : `${copy.contextPanelThreshold} ${threshold}%`,
     `${copy.contextPanelRequests} ${count}`,
   ].filter(Boolean).join(" · ");
 

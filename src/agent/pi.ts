@@ -156,6 +156,8 @@ function seedHistoryMessages(
         provider: providerId,
         model,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
         stopReason: "stop" as const,
         timestamp: Date.now(),
       });
@@ -362,6 +364,9 @@ export interface ModelUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  /** 本轮命中缓存的输入 token；缓存 token 不计入 inputTokens。 */
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 export interface ModelResponse {
@@ -1080,6 +1085,9 @@ export class PiAgent {
     }
     const activeTools = new Map<string, { traceId: number; startedAt: number }>();
     let modelCallCount = 0;
+    // 缓存命中按本轮所有模型响应累加；SDK 的 session 统计是跨轮累计值，不能直接当本轮用量。
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
     let currentRound = 0;
     // 单轮内工具结果累计字节：仅作为软提醒阈值，不再中止本轮。阈值收敛到
     // 「四个单轮工具预算」，让提醒在压缩发生前就能到达模型。
@@ -1317,6 +1325,8 @@ export class PiAgent {
       } else if (event.type === "message_end" && event.message.role === "assistant") {
         if (!activeModelCall) return;
         const message = event.message;
+        cacheReadTokens += message.usage.cacheRead ?? 0;
+        cacheWriteTokens += message.usage.cacheWrite ?? 0;
         const failed = message.stopReason === "error" || message.stopReason === "aborted";
         const endedAt = performance.now();
         const durationMs = activeModelCall.requestStartedAtMono === undefined
@@ -1547,6 +1557,8 @@ export class PiAgent {
           inputTokens: usage.input,
           outputTokens: usage.output,
           totalTokens: usage.total,
+          cacheReadTokens,
+          cacheWriteTokens,
         },
         ...(lastCompactionSummary ? { compactionSummary: lastCompactionSummary } : {}),
       };
