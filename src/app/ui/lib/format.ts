@@ -53,6 +53,13 @@ export function formatTraceDuration(durationMs: number | null | undefined, copy:
 }
 
 /** 格式化输出速度，未记录时显示占位文案。 */
+const integerFormat = new Intl.NumberFormat("en-US");
+
+/** token Count 用固定千分位，避免不同 locale 下数字宽度跳动。 */
+export function formatTokenCount(value: number): string {
+  return integerFormat.format(value);
+}
+
 export function formatOutputTps(value: number | null, copy: Copy): string {
   return value === null ? copy.none : copy.traceTpsTemplate.replace("{value}", value.toFixed(1));
 }

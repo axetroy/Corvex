@@ -194,6 +194,10 @@ export interface ConversationMessage {
   durationMs: number | null;
   /** 已记录成功模型调用的输出速度（tokens/s）；无有效样本时为空。 */
   tps: number | null;
+  /** 本轮缓存命中率（0–100）；供应商未报告缓存读写时为空。 */
+  cacheHitRate: number | null;
+  /** 命中率分母与分子，供界面提示明细；未报告时为空。 */
+  cacheTokens: { input: number; read: number; write: number } | null;
   /** 助手回复已记录的工具调用摘要，按调用时间排序；用户消息为空数组。 */
   toolCalls: ConversationToolCall[];
   /** 该轮落库的过程条目（思考、中间回复、工具调用），按发生顺序排列。 */

@@ -1089,6 +1089,10 @@ export class AppStore {
           WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_output_tokens,
          (SELECT COALESCE(SUM(COALESCE(generation_duration_ms, 0)), 0) FROM conversation_trace
           WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_duration_ms,
+         (SELECT COALESCE(SUM(COALESCE(input_tokens, 0)), 0) FROM conversation_trace
+          WHERE turn_id=conversation_messages.turn_id AND kind='llm' AND status='succeeded') AS generation_input_tokens,
+         conversation_turns.cache_read_tokens AS turn_cache_read_tokens,
+         conversation_turns.cache_write_tokens AS turn_cache_write_tokens,
          (SELECT COUNT(*) FROM conversation_trace WHERE turn_id=conversation_messages.turn_id) AS trace_count,
          (SELECT COUNT(*) FROM execution_steps WHERE turn_id=conversation_messages.turn_id) AS step_count
        FROM conversation_messages
@@ -2250,6 +2254,20 @@ export class AppStore {
     const tps = generationDurationMs > 0 && generationOutputTokens > 0
       ? generationOutputTokens * 1000 / generationDurationMs
       : null;
+    const generationInputTokens = row.generation_input_tokens === undefined ? 0 : numberColumn(row, "generation_input_tokens");
+    const cacheRead = typeof row.turn_cache_read_tokens === "number"
+      ? numberColumn(row, "turn_cache_read_tokens")
+      : 0;
+    const cacheWrite = typeof row.turn_cache_write_tokens === "number"
+      ? numberColumn(row, "turn_cache_write_tokens")
+      : 0;
+    // 供应商没报告任何缓存读写时不要显示 0%，避免把「不支持统计」误读成「没命中」。
+    const cacheTokens = cacheRead + cacheWrite > 0
+      ? { input: generationInputTokens, read: cacheRead, write: cacheWrite }
+      : null;
+    const cacheHitRate = cacheTokens
+      ? Math.round(cacheRead / (generationInputTokens + cacheRead + cacheWrite) * 1000) / 10
+      : null;
     return {
       id: stringColumn(row, "id"),
       role,
@@ -2266,6 +2284,8 @@ export class AppStore {
       model: typeof row.turn_model === "string" ? row.turn_model : "",
       durationMs,
       tps,
+      cacheHitRate,
+      cacheTokens,
       toolCalls: [],
       process: typeof row.turn_process === "string" ? readConversationProcess(row.turn_process) : [],
       suggestions: typeof row.suggestions === "string" ? parseStoredSuggestions(row.suggestions) : [],

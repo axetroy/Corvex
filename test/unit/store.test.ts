@@ -257,6 +257,9 @@ describe("AppStore", () => {
       cacheReadTokens: 360,
       cacheWriteTokens: 40,
     });
+    const answer = store.getConversation(created.conversationId)?.messages.find((message) => message.role === "assistant");
+    expect(answer?.cacheTokens).toEqual({ input: 120, read: 360, write: 40 });
+    expect(answer?.cacheHitRate).toBe(69.2);
   });
 
   it("过程快照保留命令输出并在读取时脱敏限长", async () => {

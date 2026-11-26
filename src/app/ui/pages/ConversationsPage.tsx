@@ -14,7 +14,7 @@ import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWai
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
 import { useTurnNotifications } from "../lib/useTurnNotifications.js";
 import { errorMessage } from "../../../errors.js";
-import { formatDate, formatOutputTps, formatTraceDuration } from "../lib/format.js";
+import { formatDate, formatOutputTps, formatTokenCount, formatTraceDuration } from "../lib/format.js";
 import type { Copy, Locale } from "../lib/i18n.js";
 import type { ConversationDetail, ConversationMessage, ConversationSkill, ConversationStreamContext, ConversationStreamEvent, ConversationStreamTool, ScheduledTaskCard } from "../lib/types.js";
 import type { ConversationFollowUp } from "../../../model.js";
@@ -213,6 +213,20 @@ function MessageContent({
             <Typography.Text type="secondary" className="conversation-message-metric" title={copy.traceTps}>
               <span className="conversation-message-metric-label">{copy.conversationMessageTps}</span>{" "}
               {formatOutputTps(message.tps, copy)}
+            </Typography.Text>
+          ) : null}
+          {message.cacheHitRate !== null && message.cacheTokens ? (
+            <Typography.Text
+              type="secondary"
+              className="conversation-message-metric"
+              title={copy.conversationMessageCacheHint
+                .replace("{read}", formatTokenCount(message.cacheTokens.read))
+                .replace("{total}", formatTokenCount(
+                  message.cacheTokens.input + message.cacheTokens.read + message.cacheTokens.write,
+                ))}
+            >
+              <span className="conversation-message-metric-label">{copy.conversationMessageCache}</span>{" "}
+              {message.cacheHitRate}%
             </Typography.Text>
           ) : null}
           {message.durationMs !== null ? (
