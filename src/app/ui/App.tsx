@@ -27,7 +27,7 @@ import { fetchJson } from "./lib/api.js";
 import { formatDate } from "./lib/format.js";
 import { en, resolveLocale, resolveLocaleMode, zhCN } from "./lib/i18n.js";
 import type { LocaleMode } from "./lib/i18n.js";
-import { conversationsPath } from "./lib/routing.js";
+import { conversationsPath, pageKindOf } from "./lib/routing.js";
 import { prefersDark, readThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./lib/theme.js";
 
 // 各路由页面按需加载，让首屏只包含外壳，其余页面在导航时再取用。
@@ -90,16 +90,6 @@ function saveNavigationCollapsed(collapsed: boolean): void {
   } catch (error) {
     window.console.warn("save agent console navigation preference failed", error);
   }
-}
-
-/** 页面种类，供侧栏选中态与主区域布局使用。 */
-type PageKind = "conversations" | "settings" | "unknown";
-
-function pageKindOf(pathname: string): PageKind {
-  const path = pathname.replace(/^\/+/, "");
-  if (path === "" || path === "conversations" || path.startsWith("conversations/")) return "conversations";
-  if (path === "settings") return "settings";
-  return "unknown";
 }
 
 function ConversationRoute(props: Omit<ComponentProps<typeof ConversationsPage>, "conversationId">) {

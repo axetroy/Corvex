@@ -12,3 +12,15 @@ export function conversationsPath(id = ""): string {
 export function adminPath(section: string): string {
   return `/admin/${section}`;
 }
+
+/** 页面种类，供侧栏选中态、主区域布局与“未知路由回对话页”守卫使用。 */
+export type PageKind = "conversations" | "settings" | "scheduled" | "unknown";
+
+/** 把 hash 路由路径归类；计划任务必须被识别为已知页面，否则会被守卫重定向到对话页。 */
+export function pageKindOf(pathname: string): PageKind {
+  const path = pathname.replace(/^\/+/, "");
+  if (path === "" || path === "conversations" || path.startsWith("conversations/")) return "conversations";
+  if (path === "settings") return "settings";
+  if (path === "scheduled-tasks") return "scheduled";
+  return "unknown";
+}
