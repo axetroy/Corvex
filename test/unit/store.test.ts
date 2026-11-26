@@ -396,6 +396,33 @@ describe("AppStore", () => {
     expect(store.readUser(user.id, cipher)?.disabled).toBe(false);
   });
 
+  it("stores conversation uploads and cascades them on delete", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 7, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "owner", ownerUserId: "u1",
+    });
+    const upload = store.createConversationUpload({
+      id: "upload1", conversationId: created.conversationId, ownerUserId: "u1",
+      filename: "notes.txt", mime: "text/plain", sizeBytes: 12,
+      storagePath: "uploads/c1/upload1/notes.txt", sha256: "abc",
+    });
+    expect(upload).toMatchObject({ filename: "notes.txt", mime: "text/plain", sizeBytes: 12 });
+    expect(store.listConversationUploads(created.conversationId)).toHaveLength(1);
+    expect(store.getConversationUpload("upload1")?.conversationId).toBe(created.conversationId);
+    expect(store.deleteConversationUpload("upload1")).toBe(true);
+    expect(store.getConversationUpload("upload1")).toBeUndefined();
+
+    // 重新建一条，验证会话删除时从表清空（落盘目录由 hook 清理）。
+    store.createConversationUpload({
+      id: "upload2", conversationId: created.conversationId, ownerUserId: "u1",
+      filename: "a.txt", mime: "text/plain", sizeBytes: 1,
+      storagePath: "uploads/c1/upload2/a.txt", sha256: "x",
+    });
+    store.deleteConversation(created.conversationId);
+    expect(store.listConversationUploads(created.conversationId)).toHaveLength(0);
+  });
+
   it("manages scheduled tasks with atomic claim and run records", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

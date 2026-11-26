@@ -24,6 +24,7 @@ import {
   type ConversationFollowUp,
   type ConversationMessage,
   type ConversationSkill,
+  type ConversationUpload,
   type ScheduledTask,
   type ScheduledTaskRun,
   type ScheduleKind,
@@ -888,6 +889,9 @@ export class AppStore {
           .prepare(`DELETE FROM conversation_followups WHERE conversation_id IN (${placeholders})`)
           .run(...ids);
         this.db
+          .prepare(`DELETE FROM conversation_uploads WHERE conversation_id IN (${placeholders})`)
+          .run(...ids);
+        this.db
           .prepare(`DELETE FROM conversation_messages WHERE conversation_id IN (${placeholders})`)
           .run(...ids);
         this.db
@@ -1230,6 +1234,57 @@ export class AppStore {
       position: Number(row.position),
       createdAt: String(row.created_at),
     }));
+  }
+
+  /** 列出某对话的上传附件，按创建时间升序。 */
+  listConversationUploads(conversationId: string): ConversationUpload[] {
+    return (this.db.prepare(
+      "SELECT * FROM conversation_uploads WHERE conversation_id=? ORDER BY created_at,id",
+    ).all(conversationId) as Record<string, unknown>[]).map((row) => ({
+      id: String(row.id),
+      conversationId: String(row.conversation_id),
+      ownerUserId: String(row.owner_user_id),
+      filename: String(row.filename),
+      mime: String(row.mime),
+      sizeBytes: Number(row.size_bytes),
+      storagePath: String(row.storage_path),
+      sha256: String(row.sha256),
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  /** 按 ID 读取上传附件；调用方必须再校验 conversationId 与 ownerUserId。 */
+  getConversationUpload(id: string): ConversationUpload | undefined {
+    const row = this.db.prepare("SELECT * FROM conversation_uploads WHERE id=?").get(id) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      conversationId: String(row.conversation_id),
+      ownerUserId: String(row.owner_user_id),
+      filename: String(row.filename),
+      mime: String(row.mime),
+      sizeBytes: Number(row.size_bytes),
+      storagePath: String(row.storage_path),
+      sha256: String(row.sha256),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  /** 写入一条上传附件元数据；调用方负责先落盘再写库。 */
+  createConversationUpload(input: Omit<ConversationUpload, "createdAt"> & { createdAt?: string }): ConversationUpload {
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO conversation_uploads(id,conversation_id,owner_user_id,filename,mime,size_bytes,storage_path,sha256,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      input.id, input.conversationId, input.ownerUserId, input.filename, input.mime,
+      input.sizeBytes, input.storagePath, input.sha256, createdAt,
+    );
+    return this.getConversationUpload(input.id)!;
+  }
+
+  deleteConversationUpload(id: string): boolean {
+    return this.db.prepare("DELETE FROM conversation_uploads WHERE id=?").run(id).changes === 1;
   }
 
   /** 追加一条排队消息；数量有上限，避免误操作攒出过长的执行队列。 */
@@ -1919,6 +1974,7 @@ export class AppStore {
       }
       this.db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_followups WHERE conversation_id=?").run(conversationId);
+      this.db.prepare("DELETE FROM conversation_uploads WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_context_snapshots WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_sessions WHERE conversation_id=?").run(conversationId);
       this.db.prepare("DELETE FROM conversation_plans WHERE conversation_id=?").run(conversationId);
@@ -2800,6 +2856,12 @@ export class AppStore {
         content TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_followups_order_idx ON conversation_followups(conversation_id,position);
+      CREATE TABLE IF NOT EXISTS conversation_uploads (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        owner_user_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL, storage_path TEXT NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS conversation_uploads_order_idx ON conversation_uploads(conversation_id,created_at);
       CREATE TABLE IF NOT EXISTS scheduled_tasks (
         id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL,
         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,

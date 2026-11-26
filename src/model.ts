@@ -267,6 +267,24 @@ export interface ScheduledTaskRun {
   error: string;
 }
 
+/**
+ * 用户上传的文本附件：落盘在 storage/uploads/<conversationId>/ 下，不进入 worktree。
+ * 作为仅本轮有效的只读根暴露给模型，用现成 read_file 读取。
+ */
+export interface ConversationUpload {
+  id: string;
+  conversationId: string;
+  ownerUserId: string;
+  /** 原始文件名（仅展示，不参与落盘路径）。 */
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  /** 相对 storage.root 的路径，绝不把用户提供的路径拼进去。 */
+  storagePath: string;
+  sha256: string;
+  createdAt: string;
+}
+
 /** 排队等待下一轮执行的补充消息；顺序由 position 决定，不依赖创建时间。 */
 export interface ConversationFollowUp {
   id: string;
