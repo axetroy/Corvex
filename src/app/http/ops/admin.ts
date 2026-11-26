@@ -40,18 +40,47 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
         const id = (request.params as { id: string }).id;
         const body = readJsonObject(request, reply);
         if (!body) return;
-        if (typeof body.admin !== "boolean") {
+        const hasAdmin = body.admin !== undefined;
+        const hasDisabled = body.disabled !== undefined;
+        if (!hasAdmin && !hasDisabled) {
+          sendJson(reply, 400, { error: "admin or disabled is required" });
+          return;
+        }
+        if (hasAdmin && typeof body.admin !== "boolean") {
           sendJson(reply, 400, { error: "admin must be a boolean" });
           return;
         }
+        if (hasDisabled && typeof body.disabled !== "boolean") {
+          sendJson(reply, 400, { error: "disabled must be a boolean" });
+          return;
+        }
+        const actor = currentUser(request);
+        // 管理员不能取消自己的管理员身份，避免把自己锁在管理后台之外。
+        if (hasAdmin && body.admin === false && actor?.id === id) {
+          sendJson(reply, 403, { error: "you cannot revoke your own administrator access" });
+          return;
+        }
+        // 管理员不能禁用自己；要禁用必须先由他人取消管理员身份。
+        if (hasDisabled && body.disabled === true && actor?.id === id) {
+          sendJson(reply, 403, { error: "an administrator cannot disable itself; revoke admin first" });
+          return;
+        }
         try {
-          if (!ctx.store.setUserAdmin(id, body.admin)) {
-            sendJson(reply, 404, { error: "user not found" });
-            return;
+          if (hasAdmin) {
+            if (!ctx.store.setUserAdmin(id, body.admin as boolean)) {
+              sendJson(reply, 404, { error: "user not found" });
+              return;
+            }
           }
-          sendJson(reply, 200, { userId: id, admin: body.admin });
+          if (hasDisabled) {
+            if (!ctx.store.setUserDisabled(id, body.disabled as boolean)) {
+              sendJson(reply, 404, { error: "user not found" });
+              return;
+            }
+          }
+          sendJson(reply, 200, { userId: id, ...(hasAdmin ? { admin: body.admin } : {}), ...(hasDisabled ? { disabled: body.disabled } : {}) });
         } catch (error) {
-          sendJson(reply, 409, { error: error instanceof Error ? error.message : "could not update administrator" });
+          sendJson(reply, 409, { error: error instanceof Error ? error.message : "could not update user" });
         }
       });
 
