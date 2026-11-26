@@ -3,7 +3,7 @@
 import { dirname, resolve } from "node:path";
 import type { ConversationUpload, ResponseLanguage } from "../model.js";
 import { redactSensitiveText } from "../redact.js";
-import { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "./ui/lib/attachments.js";
+import { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "../upload-constants.js";
 
 export { maxUploadBytes, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
 

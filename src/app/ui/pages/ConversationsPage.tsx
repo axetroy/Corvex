@@ -8,7 +8,7 @@ import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
-import { maxUploadBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../lib/attachments.js";
+import { maxUploadBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
