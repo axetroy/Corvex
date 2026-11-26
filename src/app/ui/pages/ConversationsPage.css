@@ -145,6 +145,28 @@
   }
 }
 
+/* 插话状态提示：贴在输入框上方，排队时强调、送达后转次级。 */
+.conversation-interject-notice {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 5;
+  padding: 5px 12px;
+  border: 1px solid var(--primary);
+  border-radius: 99px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.conversation-interject-notice.is-delivered {
+  border-color: var(--border-soft);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+}
+
 /* 离开底部一段距离后才出现，贴在输入框上方（随输入框高度变化），点击回到最新消息。 */
 .conversation-scroll-bottom {
   position: absolute;

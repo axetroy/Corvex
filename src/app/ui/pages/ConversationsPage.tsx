@@ -242,6 +242,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const pendingReplyTurns = useRef(new Map<string, string>());
   const [pendingReplyConversations, setPendingReplyConversations] = useState<Set<string>>(() => new Set());
   const [pollToken, setPollToken] = useState(0);
+  /** 插话送达状态提示：queued 等待模型处理，delivered 已进入上下文，短暂展示后消失。 */
+  const [interjectNotice, setInterjectNotice] = useState<"queued" | "delivered" | null>(null);
   const [followUps, setFollowUps] = useState<ConversationFollowUp[]>([]);
   const followUpStateRef = useRef<{ conversationId: string; count: number } | null>(null);
   const [error, setError] = useState("");
@@ -391,6 +393,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     return () => window.clearInterval(timer);
   }, [hasActiveTurn, pendingReplyConversations, selectedConversationId]);
 
+  // 「已送达」只短暂提示，避免长期占据界面；「等待模型处理」保留到送达为止。
+  useEffect(() => {
+    if (interjectNotice !== "delivered") return;
+    const timer = window.setTimeout(() => setInterjectNotice(null), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [interjectNotice]);
+
   const loadFollowUps = useCallback(async () => {
     if (!selectedConversationId) {
       followUpStateRef.current = null;
@@ -517,7 +526,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         onTool,
         onExec,
         onContext,
-        onInterjection: () => setPollToken((value) => value + 1),
+        onInterjection: (_turnId, status) => {
+          setInterjectNotice(status);
+          setPollToken((value) => value + 1);
+        },
         onQueue: () => void loadFollowUps(),
         onDone: (status) => {
           if (flushTimer !== undefined) window.clearTimeout(flushTimer);
@@ -1244,6 +1256,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       />
                     ) : null}
                     <div className="conversation-composer-area">
+                    {interjectNotice ? (
+                      <div className={`conversation-interject-notice${interjectNotice === "delivered" ? " is-delivered" : ""}`} role="status">
+                        {interjectNotice === "queued" ? copy.interjectQueued : copy.interjectDelivered}
+                      </div>
+                    ) : null}
                     {showScrollBottom ? (
                       <button
                         type="button"
