@@ -2050,6 +2050,17 @@ export class AppStore {
     });
   }
 
+  /** 各项目的会话活跃度，供仓库搜索排序；旧数据也计入，只是时间衰减会很低。 */
+  projectActivity(): Map<number, { lastConversationAt: string; conversationCount: number }> {
+    const rows = this.db.prepare(
+      "SELECT project_id, MAX(updated_at) AS last_at, COUNT(*) AS total FROM conversations WHERE project_id > 0 GROUP BY project_id",
+    ).all() as { project_id: number; last_at: string; total: number }[];
+    return new Map(rows.map((row) => [
+      row.project_id,
+      { lastConversationAt: String(row.last_at), conversationCount: Number(row.total) },
+    ]));
+  }
+
   /** 保存一轮对话的过程快照（思考、中间回复、工具调用），与落库回答分开存放。 */
   saveConversationTurnProcess(turnId: string, entries: readonly ConversationProcessEntry[]): void {
     const serialized = JSON.stringify(sanitizeConversationProcess(entries));

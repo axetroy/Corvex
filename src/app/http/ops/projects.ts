@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { repositoryCloneUrl, repositoryWebUrl } from "../../../gitlab/client.js";
 import type { OpsContext } from "../context.js";
 import { optionalInteger, queryParam, sendGitLabReadError, sendJson } from "../respond.js";
+import { rankProjects } from "./project-ranking.js";
 
 /** 项目与分支查询：用当前登录用户的 GitLab 令牌发现可见仓库。 */
 export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): void {
@@ -13,7 +14,11 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): vo
       return;
     }
     try {
-      sendJson(reply, 200, await ctx.gitlabForRequest(request).listProjects(search, page));
+      // 先取足够多的候选项目，再按相似度/活跃度/最近会话全局排序，最后按页切片。
+      const candidates = await ctx.gitlabForRequest(request).listProjectCandidates(search);
+      const ranked = rankProjects(candidates, search, ctx.store.projectActivity());
+      const pageSize = 50;
+      sendJson(reply, 200, ranked.slice((page - 1) * pageSize, page * pageSize));
     } catch (error) {
       sendGitLabReadError(reply, error);
     }

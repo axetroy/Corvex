@@ -141,6 +141,33 @@ describe("GitLab write receipts", () => {
     }
   });
 
+  it("fetches project search pages concurrently instead of one after another", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const server = createServer(async (request, response) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+      active -= 1;
+      // 第 4 页返回空，短词搜索在第一批 4 页后就结束。
+      const page = Number(new URL(request.url ?? "http://localhost", "http://localhost").searchParams.get("page") ?? "1");
+      const projects = page < 4
+        ? [{ id: page, name: `cloudoc_im_${page}`, path_with_namespace: `digimaple/cloudoc_im_${page}`, http_url_to_repo: `https://gitlab.example.com/digimaple/cloudoc_im_${page}.git` }]
+        : [];
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(projects));
+    });
+    const port = await listen(server);
+    try {
+      const client = new GitLabClient(`http://127.0.0.1:${port}`, "read");
+      const found = await client.listProjects("im", 1);
+      expect(found.length).toBe(3);
+      expect(maxActive).toBeGreaterThan(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  }, 10_000);
+
   it("resolves a branch name to a verified full commit SHA", async () => {
     let requestUrl = "";
     const server = createServer((request, response) => {

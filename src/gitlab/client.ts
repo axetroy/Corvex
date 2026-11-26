@@ -26,6 +26,10 @@ export interface Project {
   /** GitLab 生成的仓库页面地址，供控制台跳转；旧实例可能仍指向内网地址。 */
   web_url?: string;
   default_branch?: string;
+  /** 最近活动时间，用于搜索排序；旧实例可能不返回。 */
+  last_activity_at?: string;
+  /** 归档项目在搜索中降级显示。 */
+  archived?: boolean;
 }
 
 /**
@@ -681,7 +685,9 @@ export class GitLabClient {
         typeof value.path_with_namespace !== "string" ||
         typeof value.http_url_to_repo !== "string" ||
         !value.http_url_to_repo ||
-        (value.default_branch !== undefined && typeof value.default_branch !== "string")
+        (value.default_branch !== undefined && typeof value.default_branch !== "string") ||
+        (value.last_activity_at !== undefined && typeof value.last_activity_at !== "string") ||
+        (value.archived !== undefined && typeof value.archived !== "boolean")
       ) {
         throw new Error("GitLab returned an incomplete project list entry");
       }
@@ -689,36 +695,96 @@ export class GitLabClient {
     });
   }
 
+  /** 并发拉取同一批页；每页仍是独立请求，但不等上一页结束才发下一页。 */
+  private async fetchProjectPages(
+    baseQuery: URLSearchParams,
+    pages: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<Project[][]> {
+    const results: Project[][] = new Array(pages.length);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(4, pages.length) }, async () => {
+      while (cursor < pages.length) {
+        const index = cursor++;
+        const query = new URLSearchParams(baseQuery);
+        query.set("page", String(pages[index]));
+        results[index] = this.parseProjectList(await this.getJson(`/projects?${query}`, signal));
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  /** 项目字段是否命中本地子串（短词搜索的兜底与长词搜索去误命中共用）。 */
+  private projectMatches(project: Project, needle: string): boolean {
+    return Boolean(
+      project.name?.toLowerCase().includes(needle) ||
+      project.path_with_namespace?.toLowerCase().includes(needle) ||
+      project.description?.toLowerCase().includes(needle),
+    );
+  }
+
   /**
    * GitLab 对 1-2 字符的 search 基本只返回同名项目，`im` 找不到 `cloudoc_im_pc`。
-   * 短词改为拉取可见项目列表并在本地按子串过滤；只处理有限页数，避免把大实例全量拉完。
+   * 短词改成每批 4 页并发拉取可见项目列表，在本地按子串过滤；命中足够或拉完即停。
    */
   private async listProjectsByLocalSearch(needle: string, page: number, signal?: AbortSignal): Promise<Project[]> {
     const pageSize = 50;
     const maxPages = 20;
+    const batchSize = 4;
     const wantedEnd = page * pageSize;
     const matches: Project[] = [];
     const seen = new Set<number>();
-    for (let currentPage = 1; currentPage <= maxPages; currentPage += 1) {
-      const query = new URLSearchParams({
-        per_page: String(pageSize),
-        page: String(currentPage),
-        order_by: "name",
-        sort: "asc",
-      });
-      const projects = this.parseProjectList(await this.getJson(`/projects?${query}`, signal));
-      for (const project of projects) {
-        if (seen.has(project.id)) continue;
-        seen.add(project.id);
-        if (project.name?.toLowerCase().includes(needle) ||
-            project.path_with_namespace?.toLowerCase().includes(needle) ||
-            project.description?.toLowerCase().includes(needle)) {
-          matches.push(project);
+    const baseQuery = new URLSearchParams({ per_page: String(pageSize), order_by: "name", sort: "asc" });
+    for (let firstPage = 1; firstPage <= maxPages; firstPage += batchSize) {
+      const batch = Array.from(
+        { length: Math.min(batchSize, maxPages - firstPage + 1) },
+        (_, index) => firstPage + index,
+      );
+      const pages = await this.fetchProjectPages(baseQuery, batch, signal);
+      let reachedEnd = false;
+      for (const projects of pages) {
+        if (projects.length < pageSize) reachedEnd = true;
+        for (const project of projects) {
+          if (seen.has(project.id)) continue;
+          seen.add(project.id);
+          if (this.projectMatches(project, needle)) matches.push(project);
         }
       }
-      if (matches.length >= wantedEnd || projects.length < pageSize) break;
+      if (matches.length >= wantedEnd || reachedEnd) break;
     }
     return matches.slice((page - 1) * pageSize, page * pageSize);
+  }
+
+  /**
+   * 给搜索排序用的候选集：短词本地过滤最多 20 页，长词取 GitLab 搜索前 3 页，
+   * 都做本地子串过滤去掉模糊误命中，并按 ID 去重。
+   */
+  async listProjectCandidates(search: string, signal?: AbortSignal): Promise<Project[]> {
+    const normalizedSearch = search.trim();
+    if ([...normalizedSearch].length > 100) throw new Error("GitLab project search must be at most 100 characters");
+    const short = normalizedSearch.length > 0 && [...normalizedSearch].length < 3;
+    const maxPages = short ? 20 : 3;
+    const baseQuery = new URLSearchParams({ per_page: "50", order_by: "name", sort: "asc" });
+    if (!short && normalizedSearch) baseQuery.set("search", normalizedSearch);
+    const needle = normalizedSearch.toLowerCase();
+    const seen = new Set<number>();
+    const candidates: Project[] = [];
+    for (let firstPage = 1; firstPage <= maxPages; firstPage += 4) {
+      const batch = Array.from({ length: Math.min(4, maxPages - firstPage + 1) }, (_, index) => firstPage + index);
+      const pages = await this.fetchProjectPages(baseQuery, batch, signal);
+      let reachedEnd = false;
+      for (const projects of pages) {
+        if (projects.length < 50) reachedEnd = true;
+        for (const project of projects) {
+          if (seen.has(project.id)) continue;
+          seen.add(project.id);
+          if (!needle || this.projectMatches(project, needle)) candidates.push(project);
+        }
+      }
+      if (reachedEnd) break;
+    }
+    return candidates;
   }
 
   async listProjects(search: string, page: number, signal?: AbortSignal): Promise<Project[]> {
@@ -741,11 +807,7 @@ export class GitLabClient {
     const projects = this.parseProjectList(await this.getJson(`/projects?${query}`, signal));
     if (!normalizedSearch) return projects;
     const needle = normalizedSearch.toLowerCase();
-    return projects.filter((project) =>
-      project.name?.toLowerCase().includes(needle) ||
-      project.path_with_namespace?.toLowerCase().includes(needle) ||
-      project.description?.toLowerCase().includes(needle),
-    );
+    return projects.filter((project) => this.projectMatches(project, needle));
   }
 
   async getBranch(projectId: number, branchName: string, signal?: AbortSignal): Promise<GitLabBranch> {
