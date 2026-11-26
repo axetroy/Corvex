@@ -40,7 +40,7 @@
 
 ### 2.2 Agent 路径边界（关键）
 
-- 只读工具 `createFsReadExtension(allowedRoots, ...)`（`fs/read.ts:822-1005`）天然支持**多个只读根**：worktree 为 `roots[0]`，其余为可信 skill roots（`pi.ts:562-574`）。`requireRelativeRepoPath`（read.ts:73-85）只拒绝 worktree 内的绝对路径，其它根可绝对路径；`resolveAllowedPath`（:87-119）在 `realpath` 后校验 `isWithin`，符号链接不能跳出允许根。
+- 只读工具 `createFsReadExtension(readRoots, ...)`（`fs/read.ts`）通过 `src/agent/fs/virtual-path.ts` 支持**多个带协议的只读根**：`worktree://`、`skill://<alias>/`、`upload://<id>/`。`parseVirtualPath` 在入口拒绝一切宿主机绝对路径；`resolveAllowedPath` 在 `realpath` 后按 `relative` 判定边界，符号链接不能跳出允许根。读写与 Git 工具共用同一协议，详见 `design.md` 的「虚拟路径协议」。
 - **skill roots 来自 `config.agent.skillPaths`，是全局共享的**——绝不能把用户上传目录加进去，否则跨会话/跨用户泄露。
 - 写入工具只绑定本会话 worktree（`pi.ts:869-871`），上传落盘必须走 HTTP 层，不新增 Agent 写工具。
 
@@ -65,7 +65,7 @@
 ### 3.1 核心决策
 
 - **存哪**：`storage/uploads/<conversationId>/<uploadId>/<safeName>`，独立于 `workspaces/`。避开 `git add -A` 与 worktree 淘汰；存储文件名用 UUID 重新生成，原始文件名只存 DB 展示。
-- **如何给模型**：**不新增工具**。在 `pi.ts:573-574` 构造 `allowedRoots` 时，把"本会话上传目录"作为**仅本轮有效的临时只读根**加入（realpath 后），模型用现成的 `read_file` 按相对/绝对路径读取；同时在 `buildConversationPrompt`（`conversation-runner.ts:1162-1171`）追加一段有界清单「本轮上传文件：`<name>` → 路径 `<abs>`，大小 N」，标注为不可信数据。这样不塞满上下文，也不扩大写权限。
+- **如何给模型**：**不新增工具**。在 `pi.ts` 构造 `ReadRoot[]` 时，把"本附件目录"作为**仅本轮有效的只读根**加入（realpath 后，label 为附件 ID），模型用现成的 `read_file` 按 `upload://<id>/<文件名>` 读取；同时在 `buildConversationPrompt`（`conversation-runner.ts`）追加一段有界清单「本轮上传文件：`<name>` → `upload://<id>/<name>`，大小 N」，标注为不可信数据。清单**不含任何宿主机路径**。这样不塞满上下文，也不扩大写权限。
 - **类型**：首版只支持 **UTF-8 纯文本**（`text/plain` / `text/markdown` / `text/csv` / `application/json`），按字节校验无 NUL + 严格 UTF-8 可解码；后续再评估图片/PDF（需模型多模态能力检测）。
 - **限额**：单文件默认 256 KiB（与 `read_file` 的 `maxReadBytes` 对齐，`read.ts:14`），每次消息最多 10 个附件；进入系统提示词的清单只含文件名/大小/路径（不含正文），正文由模型按需 `read_file`。
 
