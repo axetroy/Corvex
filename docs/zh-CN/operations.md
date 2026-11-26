@@ -78,6 +78,7 @@ Compose 端口映射使用普通 HTTP；请在可信反向代理或负载均衡�
 | `GET`/`PUT /api/ops/settings` | 读取运行时设置的生效值，或整份替换；首次保存后 SQLite 即为唯一来源，是否提供 `--config` 都可用。 |
 | `GET /api/ops/skills` | 所有登录用户可读的已启用对话技能（遵循 [agentskills.io/specification](https://agentskills.io/specification) 的 SKILL.md 文档）。 |
 | `GET`/`POST /api/ops/admin/skills`、`PUT`/`DELETE /api/ops/admin/skills/<id>` | 管理员增删改对话技能；七个系统种子技能可编辑或停用，但不可删除。 |
+| `GET /api/ops/admin/users`、`PUT /api/ops/admin/users/<id>` | 仅管理员可用：列出用户；`{admin}` 授予/取消管理员，`{disabled}` 禁用/启用。禁用会清空该用户令牌与全部会话，恢复后必须重新登录；管理员不能取消或禁用自己，用户需先取消管理员身份才能被禁用，且至少保留一名管理员。被禁用用户无法登录，调用任何接口返回 401。 |
 | `GET`/`PUT`/`DELETE /api/ops/admin/execution` | 读取、保存或重置执行环境配置（开关、后端、沙箱/本地限额）。仅管理员可用；存 SQLite 并做 fail-closed 校验，YAML/环境变量作为文件兜底。 |
 | `GET /api/ops/admin/storage` | 只读扫描 Git 镜像与会话工作树，返回大小和最近修改时间；仅管理员可用，扫描有上限，超限标记 `truncated`。 |
 | `GET /api/ops/conversations/<id>/executions` | 会话内历史 `run_command` 记录（命令、后端、退出码、时间）。 |
