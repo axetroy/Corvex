@@ -14,7 +14,7 @@ const signatures: readonly { kind: UploadByteKind; bytes: readonly number[] }[] 
   { kind: "archive", bytes: [0x42, 0x5a, 0x68] }, // bzip2
   { kind: "archive", bytes: [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00] }, // xz
   { kind: "executable", bytes: [0x4d, 0x5a] }, // MZ（PE/DOS）
-  { kind: "executable", bytes: [0x23, 0x21] }, // #! 脚本
+  // 注意：#! 开头的 shebang 是纯文本脚本，作为上下文读取不会执行，按 text 放行。
   { kind: "executable", bytes: [0xca, 0xfe, 0xba, 0xbe] }, // Java class
   { kind: "executable", bytes: [0x7f, 0x45, 0x4c, 0x46] }, // ELF
 ];

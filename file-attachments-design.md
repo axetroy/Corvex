@@ -66,7 +66,7 @@
 
 - **存哪**：`storage/uploads/<conversationId>/<uploadId>/<safeName>`，独立于 `workspaces/`。避开 `git add -A` 与 worktree 淘汰；存储文件名用 UUID 重新生成，原始文件名只存 DB 展示。
 - **如何给模型**：**不新增工具**。在 `pi.ts` 构造 `ReadRoot[]` 时，把"本附件目录"作为**仅本轮有效的只读根**加入（realpath 后，label 为附件 ID），模型用现成的 `read_file` 按 `upload://<id>/<文件名>` 读取；同时在 `buildConversationPrompt`（`conversation-runner.ts`）追加一段有界清单「本轮上传文件：`<name>` → `upload://<id>/<name>`，大小 N」，标注为不可信数据。清单**不含任何宿主机路径**。这样不塞满上下文，也不扩大写权限。
-- **类型**：首版只支持 **UTF-8 纯文本**（`text/plain` / `text/markdown` / `text/csv` / `application/json`），按字节校验无 NUL + 严格 UTF-8 可解码；后续再评估图片/PDF（需模型多模态能力检测）。
+- **类型**：首版支持**任意 UTF-8 文本文件**，包括 `.py` / `.ts` / `.js` / `.html` / `.css` / `.yaml` 等源码文件。是否接受只看真实字节（无 NUL、严格 UTF-8、无二进制魔数），**不按扩展名或声明的 MIME 白名单拦截**——浏览器对常见源码文件常返回空 MIME 或 `text/x-*`，白名单会误伤。`#!/` shebang 是文本，不作为可执行文件拒绝；读脚本文本不等于执行它。图片/PDF 留待 P2-b（需模型多模态能力检测）。
 - **限额**：单文件默认 256 KiB（与 `read_file` 的 `maxReadBytes` 对齐，`read.ts:14`），每次消息最多 10 个附件；进入系统提示词的清单只含文件名/大小/路径（不含正文），正文由模型按需 `read_file`。
 
 ### 3.2 数据模型（`src/store.ts`）
@@ -77,7 +77,7 @@
 
 ### 3.3 API（`src/app/http/ops/conversations.ts`）
 
-- `POST /api/ops/conversations/:id/uploads`：经 `ownedConversation()`（:78-93）校验归属；content-type 白名单（纯文本 MIME）+ raw body，新增专用 `bodyLimit`（`server.ts:239-243` 范式，双保险手工检查，照 `admin.ts:142,180-183`）；文件名走 query `?filename=`；校验无 NUL/UTF-8、大小、扩展名非可执行；落盘 UUID 路径，写 DB + 审计。
+- `POST /api/ops/conversations/:id/uploads`：经 `ownedConversation()` 校验归属；专用 `application/x-corvex-upload` content-type + raw body + 1 MiB 硬顶 `bodyLimit`，路由再按运行时限额复核；文件名走 query `?filename=`；按真实字节判定类型（UTF-8 文本放行，图片/PDF/压缩包/二进制/伪装可执行文件拒绝），不按扩展名或 MIME 白名单拦截；落盘 UUID 路径，写 DB + 审计。
 - `GET /api/ops/conversations/:id/uploads` 列表、`DELETE .../uploads/:uploadId` 删除（均校验 owner）。
 - `POST /api/ops/conversations/:id/messages` body 增加 `uploadIds: string[]`，服务端逐个校验归属与该对话一致，再随轮次保存关联。
 
@@ -107,7 +107,7 @@
 
 ## 5. 测试
 
-- 上传校验：MIME 白名单、无 NUL、严格 UTF-8、大小/数量、文件名净化、可执行名拒绝；
+- 上传校验：字节类型检测（任意 UTF-8 文本，含常见源码文件）、大小/数量、文件名净化、二进制扩展名拒绝；
 - 归属隔离：跨用户/跨对话的 uploadId 被拒；
 - 只读根：模型能读本轮上传物、读不到别会话上传物、符号链接不能跳出；
 - 清单注入：有界、标注 untrusted；

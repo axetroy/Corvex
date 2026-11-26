@@ -6,21 +6,26 @@ import type { ConversationUpload } from "../../src/model.js";
 const bytes = (value: string) => Buffer.from(value, "utf8");
 
 describe("upload validation", () => {
-  it("accepts valid UTF-8 text with a safe filename", () => {
+  it("accepts any UTF-8 text regardless of extension or declared MIME", () => {
     expect(validateUpload({ filename: "notes.txt", mime: "text/plain", bytes: bytes("hello 世界") })).toEqual({ ok: true });
     expect(validateUpload({ filename: "report.json", mime: "application/json", bytes: bytes("{}") })).toEqual({ ok: true });
+    // 浏览器对源码文件常给出空 MIME 或 text/x-*；字节是文本就应放行。
+    expect(validateUpload({ filename: "main.py", mime: "", bytes: bytes("#!/usr/bin/env python\nprint('hi')\n") })).toEqual({ ok: true });
+    expect(validateUpload({ filename: "index.html", mime: "text/html", bytes: bytes("<!doctype html><html></html>") })).toEqual({ ok: true });
+    expect(validateUpload({ filename: "app.ts", mime: "text/x-typescript", bytes: bytes("export const x: number = 1;") })).toEqual({ ok: true });
+    expect(validateUpload({ filename: "run.sh", mime: "application/octet-stream", bytes: bytes("#!/bin/sh\necho hi\n") })).toEqual({ ok: true });
+    expect(validateUpload({ filename: "weird.png", mime: "image/png", bytes: bytes("not really a png") })).toEqual({ ok: true });
   });
 
-  it("rejects unsupported MIME, empty content, NUL, invalid UTF-8 and oversized content", () => {
-    expect(validateUpload({ filename: "a.png", mime: "image/png", bytes: bytes("x") })).toMatchObject({ ok: false });
+  it("rejects empty content, NUL, invalid UTF-8 and oversized content", () => {
     expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: bytes("") })).toMatchObject({ ok: false });
-    expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: Buffer.from([0x61, 0x00, 0x62]) })).toMatchObject({ ok: false });
-    expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: Buffer.from([0xff, 0xfe]) })).toMatchObject({ ok: false });
+    expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: Buffer.from([0x61, 0x00, 0x62]) })).toMatchObject({ ok: false, error: "binary content is not allowed" });
+    expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: Buffer.from([0xff, 0xfe]) })).toMatchObject({ ok: false, error: "binary content is not allowed" });
     expect(validateUpload({ filename: "a.txt", mime: "text/plain", bytes: Buffer.alloc(maxUploadBytes + 1, 0x61) })).toMatchObject({ ok: false });
   });
 
-  it("rejects executable/script filenames and strips path components", () => {
-    expect(validateUpload({ filename: "run.sh", mime: "text/plain", bytes: bytes("x") })).toMatchObject({ ok: false });
+  it("rejects binary executable filenames and strips path components", () => {
+    expect(validateUpload({ filename: "setup.exe", mime: "text/plain", bytes: bytes("x") })).toMatchObject({ ok: false, error: "executable filenames are not allowed" });
     expect(sanitizeUploadFilename("../../etc/passwd")).toBe("passwd");
     expect(sanitizeUploadFilename("dir\\sub\\notes.txt")).toBe("notes.txt");
     expect(sanitizeUploadFilename("bad\u0000name.md")).toBe("badname.md");
@@ -35,13 +40,15 @@ describe("upload validation", () => {
   it("rejects disguised binaries even when declared as plain text", () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
     expect(validateUpload({ filename: "notes.txt", mime: "text/plain", bytes: png })).toMatchObject({ ok: false, error: "image uploads are not supported yet" });
-    expect(validateUpload({ filename: "run.txt", mime: "text/plain", bytes: bytes("#!/bin/sh\necho hi") })).toMatchObject({ ok: false, error: "executable or script content is not allowed" });
+    // shebang 是纯文本脚本文本，作为上下文读取不会执行，应放行。
+    expect(validateUpload({ filename: "run.sh", mime: "", bytes: bytes("#!/bin/sh\necho hi") })).toEqual({ ok: true });
   });
 });
 
 describe("upload magic bytes", () => {
   it("detects text and rejects known non-text signatures", () => {
     expect(detectUploadKind(bytes("hello 世界"))).toBe("text");
+    expect(detectUploadKind(bytes("#!/usr/bin/env python\nprint(1)\n"))).toBe("text");
     expect(detectUploadKind(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image");
     expect(detectUploadKind(Buffer.from("%PDF-1.7"))).toBe("pdf");
     expect(detectUploadKind(Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe("archive");

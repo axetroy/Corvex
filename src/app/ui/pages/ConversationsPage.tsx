@@ -634,10 +634,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
-  /** 本地文本文件是纯文本首版：先做客户端限额/类型预检，服务端仍会按真实字节复核。 */
+  /**
+   * 客户端只拦截「明显是二进制」的文件；.py/.ts/.html/.sh 等源码文件即使浏览器
+   * 给出空 MIME 或 text/x-* 也应放行，最终按真实字节由服务端判定。
+   */
   function isTextAttachment(file: File): boolean {
     const mime = file.type.toLowerCase();
-    return mime.startsWith("text/") || mime === "application/json";
+    if (/^(image|audio|video)\//.test(mime) || ["application/pdf", "application/zip"].includes(mime)) return false;
+    return !/\.(png|jpe?g|gif|webp|bmp|avif|pdf|zip|tar|gz|xz|7z|rar|exe|dll|so|dylib|app|dmg|deb|rpm|apk|msi)$/i.test(file.name);
   }
 
   function uploadErrorToCopy(error: string): string {
@@ -1436,7 +1440,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       ref={attachmentInputRef}
                       type="file"
                       multiple
-                      accept="text/*,application/json,.md,.txt,.csv,.json"
+                      accept="text/*,.md,.txt,.csv,.json,.jsonl,.yaml,.yml,.toml,.xml,.py,.js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts,.html,.htm,.css,.scss,.less,.java,.go,.rs,.c,.h,.cc,.cpp,.hpp,.cs,.rb,.php,.sh,.bash,.zsh,.sql,.lua,.swift,.kt,.scala,.vue,.svelte,.ini,.cfg,.conf,.env,.gitignore,.dockerfile,.gradle,.tf,.proto,.graphql"
                       style={{ display: "none" }}
                       onChange={(event) => {
                         const files = Array.from(event.target.files ?? []);

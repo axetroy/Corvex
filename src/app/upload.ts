@@ -8,12 +8,14 @@ import { detectUploadKind } from "./upload-magic.js";
 
 export { maxUploadBytes, maxUploadBytesCeiling, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
 
-/** 首版只接受纯文本 MIME；二进制/图片/PDF 留到 P2。 */
-const allowedMime = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
-/** 拒绝可执行/脚本文件名，即使内容是文本也不允许（防止误导后续处理）。 */
+/**
+ * 是否接受上传只看真实字节（UTF-8 文本且无 NUL/二进制头），不看扩展名或声明的 MIME。
+ * 浏览器对 .py / .ts / .yaml 等常返回空 MIME 或 text/x-*，按 MIME 白名单会误伤源码文件。
+ * 读取脚本文本不会执行它——执行只有开启 execution 后的 run_command 能做的事。
+ */
+/** 只拒绝真正可能是二进制可执行文件的扩展名；脚本/源码扩展名一律允许。 */
 const deniedExtensions = new Set([
-  ".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh", ".bash", ".zsh",
-  ".app", ".dmg", ".deb", ".rpm", ".apk", ".msi", ".scr", ".vbs", ".js", ".mjs", ".cjs",
+  ".exe", ".dll", ".so", ".dylib", ".app", ".dmg", ".deb", ".rpm", ".apk", ".msi", ".scr",
 ]);
 
 /** 净化文件名：只保留 basename，去掉路径分隔符、控制字符，按字节限长 120。 */
@@ -77,14 +79,12 @@ export function validateUpload(input: {
   maxBytes?: number;
 }): UploadValidation {
   const maxBytes = input.maxBytes ?? maxUploadBytes;
-  const mime = input.mime.trim().toLowerCase();
-  if (!allowedMime.has(mime)) return { ok: false, error: "unsupported upload content type" };
   const filename = sanitizeUploadFilename(input.filename);
   if (!filename) return { ok: false, error: "invalid upload filename" };
   const lower = filename.toLowerCase();
   const dot = lower.lastIndexOf(".");
   if (dot >= 0 && deniedExtensions.has(lower.slice(dot))) {
-    return { ok: false, error: "executable/script filenames are not allowed" };
+    return { ok: false, error: "executable filenames are not allowed" };
   }
   if (input.bytes.length === 0) return { ok: false, error: "upload is empty" };
   if (input.bytes.length > maxBytes) return { ok: false, error: `upload exceeds the ${maxBytes}-byte limit` };
