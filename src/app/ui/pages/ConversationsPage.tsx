@@ -774,7 +774,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       }
       const queued = await result.json() as { turnId: string; delivery?: "steer" | "queued" | "queue" };
       // 附件已随消息绑定到本轮，输入框上的待发列表清空（失败时保留，用户可重试）。
-      if (selectedConversationIdRef.current === replyConversationId) setAttachments([]);
+      if (selectedConversationIdRef.current === replyConversationId) {
+        setAttachments([]);
+        // 发送等价于「回到现场」：即使之前在上翻历史，也跟随自己刚发的消息。
+        pinnedToBottom.current = true;
+        forceScrollToLatest.current = true;
+        setShowScrollBottom(false);
+        scrollTranscriptToBottom();
+      }
       if (queued.delivery === "steer") {
         // 插话复用正在运行的轮次：没有新的 turnId，也不能进入 pendingReplyTurns。
         if (selectedConversationIdRef.current === replyConversationId) setDraftMessage("");
