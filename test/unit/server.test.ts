@@ -195,6 +195,28 @@ describe("CorvexServer", () => {
       expect(Array.isArray(storage.mirrors)).toBe(true);
       expect(Array.isArray(storage.workspaces)).toBe(true);
       expect(typeof storage.truncated).toBe("boolean");
+
+      // 用户管理：管理员不能取消自身管理员，也不能禁用自身；禁用普通用户会吊销其会话。
+      const meResponse = await fetch(`${base}/api/auth/me`, { headers: authHeaders });
+      const me = (await meResponse.json()) as { id: string };
+      const jsonHeaders = { ...authHeaders, "content-type": "application/json" };
+      expect((await fetch(`${base}/api/ops/admin/users/${me.id}`, {
+        method: "PUT", headers: jsonHeaders, body: JSON.stringify({ admin: false }),
+      })).status).toBe(403);
+      expect((await fetch(`${base}/api/ops/admin/users/${me.id}`, {
+        method: "PUT", headers: jsonHeaders, body: JSON.stringify({ disabled: true }),
+      })).status).toBe(403);
+      expect((await fetch(`${base}/api/ops/admin/users/${nonAdmin.id}`, {
+        method: "PUT", headers: jsonHeaders, body: JSON.stringify({ disabled: true }),
+      })).status).toBe(200);
+      // 被禁用用户的现有会话立即失效。
+      expect((await fetch(`${base}/api/ops/overview`, { headers: viewerHeaders })).status).toBe(401);
+      expect((await fetch(`${base}/api/ops/admin/users/${nonAdmin.id}`, {
+        method: "PUT", headers: jsonHeaders, body: JSON.stringify({ disabled: false }),
+      })).status).toBe(200);
+      // 恢复后需重新登录：旧会话已被删除，不再可用。
+      expect((await fetch(`${base}/api/ops/overview`, { headers: viewerHeaders })).status).toBe(401);
+
       // 未登录且未配置 OAuth 时进入安装向导（跟随重定向后返回页面）。
       expect((await fetch(`${base}/ops`)).status).toBe(200);
       expect((await fetch(`${base}/api/ops/overview`)).status).toBe(401);

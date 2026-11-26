@@ -338,6 +338,53 @@ describe("AppStore", () => {
     expect(() => store.setUserAdmin(second.id, false)).toThrow("at least one administrator");
   });
 
+  it("disabling a user clears tokens, deletes sessions and cannot target an administrator", async () => {
+    store = await AppStore.open(":memory:");
+    const cipher = createTokenCipher(store.getOrCreateSessionSecret());
+    const user = store.upsertUser({
+      gitlabUserId: 60,
+      username: "llb",
+      name: "User",
+      avatarUrl: "",
+      accessToken: "secret-token",
+      refreshToken: "secret-refresh",
+      expiresAt: Date.now() + 3_600_000,
+    }, cipher);
+    const session = store.createUserSession(user.id, Date.now() + 3_600_000);
+
+    // 管理员账号必须先取消管理员身份才能禁用；先造第二个管理员以满足“至少一名管理员”。
+    expect(() => store.setUserDisabled(user.id, true)).toThrow("administrator");
+    expect(store.readUser(user.id, cipher)?.disabled).toBe(false);
+    const second = store.upsertUser({
+      gitlabUserId: 61, username: "second", name: "Second", avatarUrl: "",
+      accessToken: "", refreshToken: "", expiresAt: 0,
+    }, cipher);
+    expect(store.setUserAdmin(second.id, true)).toBe(true);
+    expect(store.setUserAdmin(user.id, false)).toBe(true);
+    expect(store.setUserDisabled(user.id, true)).toBe(true);
+    const disabled = store.readUser(user.id, cipher);
+    expect(disabled?.disabled).toBe(true);
+    expect(disabled?.accessToken).toBe("");
+    expect(disabled?.refreshToken).toBe("");
+    expect(disabled?.tokenExpiresAt).toBe(0);
+    expect(store.readUserSession(session)).toBeUndefined();
+
+    // 重新 OAuth 登录不能恢复令牌（upsertUser 对禁用用户跳过更新）。
+    store.upsertUser({
+      gitlabUserId: 60,
+      username: "llb",
+      name: "User",
+      avatarUrl: "",
+      accessToken: "new-secret-token",
+      refreshToken: "new-secret-refresh",
+      expiresAt: Date.now() + 3_600_000,
+    }, cipher);
+    expect(store.readUser(user.id, cipher)?.accessToken).toBe("");
+
+    expect(store.setUserDisabled(user.id, false)).toBe(true);
+    expect(store.readUser(user.id, cipher)?.disabled).toBe(false);
+  });
+
   it("persists the conversation sync base independently of the turn snapshot", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({
