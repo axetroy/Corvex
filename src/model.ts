@@ -222,6 +222,51 @@ export interface ConversationStreamTool {
 
 export type ConversationStreamContext = { id: string; text: string };
 
+/** 计划任务的调度类型：一次性到点执行后删除，或按 cron 循环。 */
+export type ScheduleKind = "once" | "cron";
+/** 计划任务状态：启用 / 暂停 / 一次性已完成。 */
+export type ScheduledTaskStatus = "active" | "paused" | "done";
+
+/**
+ * 定时执行的任务：到点把 prompt 作为一轮普通对话消息交给 ConversationRunner。
+ * 任务属于某个用户，执行时用该用户的 OAuth 令牌，绝不回退全局凭据。
+ */
+export interface ScheduledTask {
+  /** 8 字符短 ID，便于在对话里口播与取消。 */
+  id: string;
+  ownerUserId: string;
+  /** 在哪个对话里执行；首版绑定现有对话。 */
+  conversationId: string;
+  prompt: string;
+  kind: ScheduleKind;
+  /** 5 段 cron（kind=cron 时非空）；kind=once 时为空。 */
+  cron: string;
+  /** IANA 时区；首版固定 UTC，字段先预留。 */
+  timezone: string;
+  /** 一次性任务的触发时间；循环任务用 cron 推导。 */
+  runAt: string;
+  nextRunAt: string;
+  status: ScheduledTaskStatus;
+  /** 循环任务的过期时间，到点最后执行一次后删除。 */
+  expiresAt: string;
+  lastRunAt: string;
+  lastStatus: string;
+  lastError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 一次任务触发的执行记录。 */
+export interface ScheduledTaskRun {
+  id: number;
+  taskId: string;
+  startedAt: string;
+  finishedAt: string;
+  status: string;
+  turnId: string;
+  error: string;
+}
+
 /** 排队等待下一轮执行的补充消息；顺序由 position 决定，不依赖创建时间。 */
 export interface ConversationFollowUp {
   id: string;
