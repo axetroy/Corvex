@@ -62,7 +62,7 @@ interface ExecutionBackend {
 - 通过容器运行时（docker / podman）执行，检测可用性。
 - 隔离参数：非 root、容器网络命名空间与宿主隔离（默认 bridge，**允许联网**以便安装依赖）、只读 rootfs、只挂载 worktree（rw）、`--cap-drop=ALL`、CPU / 内存 / pids 限额、超时 kill。需要完全禁网时显式配置 `network: none`。
 - 注意：bridge 网络下容器可通过网关访问宿主发布的服务；若要严格禁止访问宿主，需额外防火墙规则或 `network: none`，但后者会阻断依赖安装，按需取舍。
-- 镜像由配置指定（`execution.sandbox.image`，默认 `corvex-exec:latest`，由 `Dockerfile.exec` 构建）：包含 **git、node、npm/npx、经典版 yarn 1.22.22、pnpm 12.23.0、python3、bash、make/g++**，以及常用 Linux 工具 **curl、wget、zip/unzip、xz、jq、file、rsync**（其余 sed/awk/grep/find/tar/gzip/nc/ping 等由 busybox 提供；Node 25+ 不再自带 corepack，故 yarn/pnpm 用 `npm install -g` 显式安装，并在 `USER node` 之前以 root 完成）。不含 bun，需要时用 `npx`。依赖通过挂载 worktree 的 `node_modules` 带入；各包管理器缓存落在容器 tmpfs（`HOME=/tmp` 及各 `*_CACHE` 变量），不污染宿主 worktree。
+- 镜像由配置指定（`execution.sandbox.image`，默认 `corvex-exec:latest`，由 `Dockerfile.exec` 构建）：包含 **git、node、npm/npx、经典版 yarn 1.22.22、pnpm 12.23.0、python3、bash、make/g++**，以及常用 Linux 工具 **curl、wget、zip/unzip、xz、jq、file、rsync**（其余 sed/awk/grep/find/tar/gzip/nc/ping 等由 busybox 提供；Node 25+ 不再自带 corepack，故 yarn/pnpm 用 `npm install -g` 显式安装，并在 `USER node` 之前以 root 完成）。不含 bun，需要时用 `npx`。依赖通过挂载 worktree 的 `node_modules` 带入；各包管理器缓存由 `XDG_CACHE_HOME` / `npm_config_cache` / `YARN_CACHE_FOLDER` / `PIP_CACHE_DIR` 指向容器内 `/corvex-cache`，该目录挂载自宿主 `storage.root/exec-cache/<projectId>`（空间充足、跨命令复用），不污染 worktree；临时文件仍走 `/tmp` 的 tmpfs。
 - 生产强制：容器运行时不可用时**直接拒绝执行**，不得静默回退到本地后端。
 
 ### 4.3 后端选择
@@ -79,7 +79,7 @@ interface ExecutionBackend {
 
 无论从哪个入口保存，都必须通过同一套校验：生产禁 `local`、sandbox 必须有 image/socket、限额在合理区间。任何校验失败都拒绝写入。
 
-`tmpfs_size_mb` 必须与 `max_output_bytes` 解耦：后者只是输出捕获上限（默认 256 KiB），若用它推导 `/tmp` 容量，npm/yarn/pip 的缓存写入会立刻 ENOSPC。容器内 `HOME=/tmp`，并把 `XDG_CACHE_HOME`、`npm_config_cache`、`YARN_CACHE_FOLDER`、`PIP_CACHE_DIR` 都指向 `/tmp/corvex-cache`，所有临时文件留在容器 tmpfs，既不污染宿主 worktree，也不携带宿主路径。
+`tmpfs_size_mb` 必须与 `max_output_bytes` 解耦：后者只是输出捕获上限（默认 256 KiB），若用它推导 `/tmp` 容量，npm/yarn/pip 的缓存写入会立刻 ENOSPC。容器内 `HOME=/tmp`、临时文件走 tmpfs；而 `XDG_CACHE_HOME`、`npm_config_cache`、`YARN_CACHE_FOLDER`、`PIP_CACHE_DIR` 指向专用持久挂载 `/corvex-cache`（宿主 `exec-cache/<projectId>`），避免全量安装把 tmpfs 写满，也避免模型把缓存重定向到 worktree（如 `.yarn-cache`）污染改动。
 
 **可见性边界**：容器只通过 bind mount 看到 `request.cwd` 这一个 worktree 目录；`df` 在该挂载点上显示的是底层文件系统容量（Linux bind mount 的 `statvfs` 语义），这不代表容器能读取宿主其它路径。rootfs 只读、不挂载 docker socket、不注入宿主环境变量或凭据。
 
@@ -98,7 +98,7 @@ execution:
     memory: "2g"
     cpus: 1
     pids_limit: 256
-    tmpfs_size_mb: 512         # /tmp 与包管理器缓存的 tmpfs 大小（16–4096），与 max_output_bytes 无关
+    tmpfs_size_mb: 2048        # /tmp 的 tmpfs 大小（16–4096），与 max_output_bytes 无关；包缓存另走 /corvex-cache
     log_max_size_mb: 4         # Docker json-file 日志单文件上限（1–1024）
     log_max_file: 2            # 保留的日志文件个数（1–100）
     network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）

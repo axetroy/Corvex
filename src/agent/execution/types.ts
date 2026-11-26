@@ -11,6 +11,8 @@ export interface ExecutionRequest {
    * `fatal: not a git repository: (null)`。
    */
   mirrorPath?: string;
+  /** 专用持久缓存目录（宿主路径），沙箱挂到 /corvex-cache，避免占用 tmpfs 或污染 worktree。 */
+  cachePath?: string;
   /** 超时（毫秒），调用方已按配置上限裁剪。 */
   timeoutMs: number;
   /** 输出上限（字节），调用方已按配置上限裁剪。 */

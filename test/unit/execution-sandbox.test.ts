@@ -36,7 +36,7 @@ describe("sandbox container args", () => {
     const tmpfs = args[args.indexOf("--tmpfs") + 1];
     expect(tmpfs).toBe("/tmp:rw,size=512m");
     expect(args).toContain("HOME=/tmp");
-    expect(args).toContain("npm_config_cache=/tmp/corvex-cache/npm");
+    expect(args).toContain("npm_config_cache=/corvex-cache/npm");
     expect(args).toContain("--pids-limit");
     expect(args).toContain("--rm");
     expect(args).toContain("--name");
@@ -53,6 +53,14 @@ describe("sandbox container args", () => {
   it("supports a fully network-isolated mode when configured", () => {
     const args = buildContainerArgs({ ...sandboxConfig, network: "none" }, request, "c");
     expect(args[args.indexOf("--network") + 1]).toBe("none");
+  });
+
+  it("mounts a dedicated persistent cache directory at /corvex-cache", () => {
+    const cachePath = "/data/exec-cache/7";
+    const args = buildContainerArgs(sandboxConfig, { ...request, cachePath }, "c");
+    expect(args).toContain(`type=bind,source=${cachePath},target=/corvex-cache`);
+    const without = buildContainerArgs(sandboxConfig, request, "c");
+    expect(without.some((arg) => arg.includes("target=/corvex-cache"))).toBe(false);
   });
 
   it("mounts the project mirror read-only at its host path so linked worktrees resolve", () => {

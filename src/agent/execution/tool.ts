@@ -26,6 +26,8 @@ export interface RunCommandToolOptions {
   cwd: string;
   /** 项目镜像裸库路径；沙箱只读挂载以便 linked worktree 的 gitdir 可解析。 */
   mirrorPath?: string;
+  /** 专用持久缓存目录；沙箱挂到 /corvex-cache。 */
+  cachePath?: string;
   signal?: AbortSignal;
   /** 配置给出的超时/输出上限；工具参数只能进一步收紧，不能放宽。 */
   maxTimeoutMs: number;
@@ -91,6 +93,7 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
               command: params.command,
               cwd: options.cwd,
               ...(options.mirrorPath ? { mirrorPath: options.mirrorPath } : {}),
+              ...(options.cachePath ? { cachePath: options.cachePath } : {}),
               timeoutMs: params.timeoutMs ?? options.maxTimeoutMs,
               maxOutputBytes: params.maxOutputBytes ?? options.maxOutputBytes,
             },

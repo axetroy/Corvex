@@ -1,6 +1,6 @@
 import { Agent as UndiciAgent, fetch as undiciFetch } from "undici";
 import { join, resolve } from "node:path";
-import { realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { generateSummaryWithUsage } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
@@ -528,6 +528,11 @@ export class PiAgent {
     const mirrorPath = request.conversationProjectId
       ? await realpath(join(resolve(config.storage.root), "mirrors", `${request.conversationProjectId}.git`)).catch(() => undefined)
       : undefined;
+    // 专用的持久缓存目录：挂在容器 /corvex-cache，既不占用 tmpfs，也不污染 worktree。
+    const cacheDir = request.conversationProjectId
+      ? join(resolve(config.storage.root), "exec-cache", String(request.conversationProjectId))
+      : undefined;
+    if (cacheDir) await mkdir(cacheDir, { recursive: true, mode: 0o750 });
     const skillRoots = await Promise.all(config.agent.skillPaths.map((path) => realpath(resolve(path))));
     const allowedRoots = [repositoryRoot, ...skillRoots];
     const runtime = await ModelRuntime.create({ refreshOnCreate: false });
@@ -771,6 +776,7 @@ export class PiAgent {
               backend: executionBackend,
               cwd: repositoryRoot,
               mirrorPath,
+              cachePath: cacheDir,
               signal,
               maxTimeoutMs: executionLimits.timeoutMs,
               maxOutputBytes: executionLimits.maxOutputBytes,

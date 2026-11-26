@@ -18,8 +18,8 @@ import type { ExecChunkCallback, ExecutionBackend, ExecutionRequest, ExecutionRe
 
 /** 容器内 worktree 的挂载点。 */
 const workspaceMount = "/workspace";
-/** 容器内临时目录与缓存根目录：全部落在 tmpfs，不写宿主 worktree。 */
-const cacheMount = "/tmp/corvex-cache";
+/** 容器内专用持久缓存挂载点：落在宿主 exec-cache 目录，空间大且跨命令复用，不污染 worktree。 */
+const cacheMount = "/corvex-cache";
 
 export function buildContainerArgs(
   config: ExecutionConfig["sandbox"],
@@ -52,9 +52,12 @@ export function buildContainerArgs(
     ...(request.mirrorPath
       ? ["--mount", `type=bind,source=${request.mirrorPath},target=${request.mirrorPath},readonly`]
       : []),
+    ...(request.cachePath
+      ? ["--mount", `type=bind,source=${request.cachePath},target=${cacheMount}`]
+      : []),
     "--workdir", workspaceMount,
     "--env", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    // HOME 与各类缓存变量都指向容器内的 tmpfs：既不污染宿主 worktree，也不把宿主路径暴露给命令。
+    // 临时文件走 tmpfs；包管理器缓存走专用持久挂载（空间大、不污染 worktree、跨命令可续跑）。
     "--env", "HOME=/tmp",
     "--env", "TMPDIR=/tmp",
     "--env", `XDG_CACHE_HOME=${cacheMount}/xdg`,
