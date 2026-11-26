@@ -103,11 +103,11 @@ execution:
     log_max_file: 2            # 保留的日志文件个数（1–100）
     network: bridge            # bridge（默认，允许联网装依赖）| none（完全禁网）
     read_only_mounts: []
-    timeout: 120s
+    timeout: 600s
     max_output_bytes: 262144
   local:
     allow_unsafe: true         # 显式确认"知道不安全"
-    timeout: 120s
+    timeout: 600s
     max_output_bytes: 262144
 ```
 

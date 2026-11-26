@@ -210,12 +210,13 @@ const defaults: CorvexConfig = {
       // 默认 bridge：允许联网（装依赖等），但容器网络命名空间与宿主隔离。
       network: "bridge",
       readOnlyMounts: [],
-      timeoutMs: 120_000,
+      // 10 分钟：全量依赖安装 / 大型构建常超过 2 分钟，避免频繁 timeout。
+      timeoutMs: 600_000,
       maxOutputBytes: 256 << 10,
     },
     local: {
       allowUnsafe: false,
-      timeoutMs: 120_000,
+      timeoutMs: 600_000,
       maxOutputBytes: 256 << 10,
     },
   },

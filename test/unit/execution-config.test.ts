@@ -31,7 +31,7 @@ storage:
     expect(config.execution).toMatchObject({
       enabled: false,
       backend: "sandbox",
-      sandbox: { runtime: "docker", network: "bridge", timeoutMs: 120_000, maxOutputBytes: 256 << 10 },
+      sandbox: { runtime: "docker", network: "bridge", timeoutMs: 600_000, maxOutputBytes: 256 << 10 },
       local: { allowUnsafe: false },
     });
   });
