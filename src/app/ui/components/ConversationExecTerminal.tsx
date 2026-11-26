@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { Terminal, ITheme } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
-import { Button, Tag, Typography } from "antd";
+import { Button, Popover, Tag, Typography } from "antd";
 import { sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
@@ -66,7 +66,7 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
   const [now, setNow] = useState(() => Date.now());
   // 历史记录里已成功结束的命令默认收起；正在运行的默认展开。
   const [collapsed, setCollapsed] = useState(entry.done && entry.exitCode === 0);
-  const [commandExpanded, setCommandExpanded] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [commandTruncated, setCommandTruncated] = useState(false);
   const commandRef = useRef<HTMLButtonElement>(null);
   const [stopping, setStopping] = useState(false);
@@ -146,9 +146,8 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     if (pinnedRef.current) term.scrollToBottom();
   }, [entry.stdout, entry.stderr, ready]);
 
-  // 头部命令默认省略显示；检测实际溢出后才提供“点击查看完整命令”的入口。
+  // 头部命令默认省略显示；检测实际溢出后才提供“点击查看完整命令”的气泡入口。
   useEffect(() => {
-    if (commandExpanded) return;
     const node = commandRef.current;
     if (!node) return;
     const measure = () => setCommandTruncated(node.scrollWidth > node.clientWidth + 1);
@@ -156,7 +155,7 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [entry.command, commandExpanded]);
+  }, [entry.command]);
 
   // 命令成功结束的瞬间自动收起；失败、被停止或用户手动展开后不再改写。
   useEffect(() => {
@@ -213,19 +212,32 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
         >
           {collapsed ? "▸" : "▾"}
         </Button>
-        {!commandExpanded ? (
+        <Popover
+          open={commandTruncated ? commandOpen : false}
+          onOpenChange={setCommandOpen}
+          placement="bottomLeft"
+          trigger="click"
+          arrow={false}
+          title={copy.execViewCommand}
+          content={<pre className="conversation-exec-command-full">$ {entry.command}</pre>}
+          classNames={{ root: "conversation-exec-command-popover" }}
+          styles={{
+            root: { maxWidth: "min(560px, 90vw)" },
+            container: { background: "var(--bg-panel)", color: "var(--text)" },
+            title: { color: "var(--text)" },
+          }}
+        >
           <button
             type="button"
             ref={commandRef}
             className={`conversation-exec-command${commandTruncated ? " is-truncated" : ""}`}
-            onClick={() => { if (commandTruncated) setCommandExpanded(true); }}
             title={commandTruncated ? copy.execViewCommand : undefined}
             aria-label={commandTruncated ? copy.execViewCommand : undefined}
             tabIndex={commandTruncated ? 0 : -1}
           >
             $ {entry.command}
           </button>
-        ) : null}
+        </Popover>
         {status}
         {durationLabel ? (
           <Typography.Text type="secondary" className="conversation-exec-duration">{durationLabel}</Typography.Text>
@@ -236,14 +248,6 @@ export const ConversationExecTerminal = memo(function ConversationExecTerminal({
           </Button>
         ) : null}
       </div>
-      {commandExpanded ? (
-        <div className="conversation-exec-command-detail">
-          <pre>$ {entry.command}</pre>
-          <Button size="small" type="link" onClick={() => setCommandExpanded(false)}>
-            {copy.execCollapseCommand}
-          </Button>
-        </div>
-      ) : null}
       <div className={`conversation-exec-screen${collapsed ? " is-collapsed" : ""}`}>
         <div className="conversation-exec-body" ref={hostRef} />
         {!entry.stdout && !entry.stderr && !collapsed ? (

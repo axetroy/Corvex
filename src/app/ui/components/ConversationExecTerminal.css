@@ -55,16 +55,10 @@
   color: var(--primary);
 }
 
-/* 点击命令后就地展开完整命令：保留换行，限高可滚动，避免长命令撑破布局。 */
-.conversation-exec-command-detail {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-subtle);
-}
-
-.conversation-exec-command-detail pre {
-  max-height: 200px;
-  margin: 0 0 4px;
+/* 点击命令弹出的气泡：保留换行，限高可滚动，不占终端布局。 */
+.conversation-exec-command-full {
+  max-height: 240px;
+  margin: 0;
   overflow: auto;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
