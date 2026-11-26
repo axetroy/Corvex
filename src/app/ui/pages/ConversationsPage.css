@@ -384,7 +384,7 @@
 .conversation-workspace-project {
   display: flex;
   flex: 0 1 auto;
-  max-width: 240px;
+  max-width: 300px;
   min-width: 0;
   overflow: hidden;
   color: var(--conversation-ink);
