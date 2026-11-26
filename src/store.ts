@@ -1533,12 +1533,14 @@ export class AppStore {
     return this.transaction(() => {
       const now = new Date().toISOString();
       const existing = this.db
-        .prepare("SELECT id FROM users WHERE gitlab_user_id=?")
-        .get(identity.gitlabUserId) as { id: string } | undefined;
+        .prepare("SELECT id,disabled FROM users WHERE gitlab_user_id=?")
+        .get(identity.gitlabUserId) as { id: string; disabled: number } | undefined;
       const userId = existing?.id ?? randomUUID();
       const accessToken = cipher.encrypt(identity.accessToken);
       const refreshToken = cipher.encrypt(identity.refreshToken);
       if (existing) {
+        // 被禁用用户重新登录时绝不恢复令牌：保持吊销状态，由登录流程直接拒绝。
+        if (existing.disabled === 1) return this.readUser(userId, cipher)!;
         this.db.prepare(
           `UPDATE users SET username=?,name=?,avatar_url=?,access_token=?,refresh_token=?,token_expires_at=?,updated_at=? WHERE id=?`,
         ).run(identity.username, identity.name, identity.avatarUrl, accessToken, refreshToken, identity.expiresAt, now, userId);
@@ -1569,6 +1571,7 @@ export class AppStore {
       refreshToken: cipher.decrypt(String(row.refresh_token ?? "")),
       tokenExpiresAt: Number(row.token_expires_at ?? 0),
       isAdmin: row.is_admin === 1 || row.is_admin === true,
+      disabled: row.disabled === 1 || row.disabled === true,
     };
   }
 
@@ -1582,6 +1585,7 @@ export class AppStore {
         name: String(row.name ?? ""),
         avatarUrl: String(row.avatar_url ?? ""),
         isAdmin: row.is_admin === 1 || row.is_admin === true,
+        disabled: row.disabled === 1 || row.disabled === true,
       }));
   }
 
@@ -1598,6 +1602,32 @@ export class AppStore {
     this.db.prepare("UPDATE users SET is_admin=?,updated_at=? WHERE id=?")
       .run(admin ? 1 : 0, new Date().toISOString(), userId);
     return true;
+  }
+
+  /**
+   * 禁用或恢复用户。禁用会清空令牌并删除该用户全部会话，使其立即无法调用接口；
+   * 管理员账号必须先取消管理员身份才能禁用。返回是否命中用户。
+   */
+  setUserDisabled(userId: string, disabled: boolean): boolean {
+    const existing = this.db.prepare("SELECT is_admin FROM users WHERE id=?").get(userId) as
+      | { is_admin: number }
+      | undefined;
+    if (!existing) return false;
+    if (disabled && existing.is_admin === 1) {
+      throw new Error("an administrator must be demoted before being disabled");
+    }
+    return this.transaction(() => {
+      const now = new Date().toISOString();
+      if (disabled) {
+        this.db.prepare(
+          "UPDATE users SET disabled=1,access_token='',refresh_token='',token_expires_at=0,updated_at=? WHERE id=?",
+        ).run(now, userId);
+        this.db.prepare("DELETE FROM user_sessions WHERE user_id=?").run(userId);
+      } else {
+        this.db.prepare("UPDATE users SET disabled=0,updated_at=? WHERE id=?").run(now, userId);
+      }
+      return true;
+    });
   }
 
   /** 更新令牌（刷新后调用）；令牌字段存密文。 */
@@ -2559,6 +2589,7 @@ export class AppStore {
         username TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '',
         access_token TEXT NOT NULL DEFAULT '', refresh_token TEXT NOT NULL DEFAULT '',
         token_expires_at INTEGER NOT NULL DEFAULT 0, is_admin INTEGER NOT NULL DEFAULT 0,
+        disabled INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS user_sessions (
@@ -2784,6 +2815,8 @@ export class AppStore {
       (this.db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((column) => column.name),
     );
     if (!userColumns.has("is_admin")) this.db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+    // 被禁用用户：旧库默认全部启用，禁用时同时清空令牌与会话（见 setUserDisabled）。
+    if (!userColumns.has("disabled")) this.db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
     // 供应商可属于某个用户；空 owner 表示系统级，迁移时把已有供应商都归为系统级。
     const providerColumns = new Set(
       (this.db.prepare("PRAGMA table_info(model_providers)").all() as { name: string }[]).map((column) => column.name),

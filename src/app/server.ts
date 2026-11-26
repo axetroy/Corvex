@@ -80,6 +80,11 @@ export class CorvexServer {
       const session = sessionId ? store.readUserSession(sessionId) : undefined;
       const user = session ? store.readUser(session.userId, this.cipher) : undefined;
       if (!user) return undefined;
+      // 被禁用用户：令牌与会话已在禁用时清除；这里再兜一层，旧会话也立即失效。
+      if (user.disabled) {
+        if (sessionId) store.deleteUserSession(sessionId);
+        return undefined;
+      }
       const refreshed = await this.oauth.refresh(user);
       if (!refreshed) {
         // 令牌已失效且无法续期：删除本地会话，让后续请求统一返回 401 并触发前端重新登录。

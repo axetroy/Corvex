@@ -61,12 +61,15 @@ export class GitLabOAuthService {
     });
     const identity = await this.readIdentity(tokens);
     const user = this.store.upsertUser(identity, this.cipher);
+    if (user.disabled) throw new Error("user account is disabled");
     const sessionId = this.store.createUserSession(user.id, Date.now() + 7 * 24 * 60 * 60_000);
     return { user, sessionId };
   }
 
   /** 令牌将过期时用 refresh token 续期；失败返回 undefined，调用方应让会话失效并要求重新登录。 */
   async refresh(user: AuthUser): Promise<AuthUser | undefined> {
+    // 被禁用用户即使还持有旧 token 也不再续期；authResolveUser 会据此判定会话失效。
+    if (user.disabled) return undefined;
     if (!user.refreshToken || !this.configured) return user;
     if (user.tokenExpiresAt > Date.now() + 60_000) return user;
     try {

@@ -10,6 +10,8 @@ export interface AuthUser {
   tokenExpiresAt: number;
   /** 管理员可以打开设置页并管理人员。 */
   isAdmin: boolean;
+  /** 被禁用的用户不能登录、不能调用接口；禁用时令牌与会话会被清除。 */
+  disabled: boolean;
 }
 
 /** 管理员视图中的用户摘要，不含任何令牌。 */
@@ -20,6 +22,7 @@ export interface ManagedUser {
   name: string;
   avatarUrl: string;
   isAdmin: boolean;
+  disabled: boolean;
 }
 
 /** GitLab OAuth 回调中取得的身份与令牌。 */
