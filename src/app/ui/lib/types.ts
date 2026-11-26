@@ -212,6 +212,8 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "upload_max_bytes", kind: "number", min: 1024, max: 1048576, step: 1024, unit: "byte", defaultValue: 256 * 1024, labelKey: "settingsUploadMaxBytes", hintKey: "settingsUploadMaxBytesHint" },
       { key: "upload_max_per_message", kind: "number", min: 1, max: 50, step: 1, defaultValue: 10, labelKey: "settingsUploadMaxPerMessage", hintKey: "settingsUploadMaxPerMessageHint" },
       { key: "upload_max_per_conversation", kind: "number", min: 1, max: 1000, step: 10, defaultValue: 100, labelKey: "settingsUploadMaxPerConversation", hintKey: "settingsUploadMaxPerConversationHint" },
+      { key: "agent_submodule_allowed_hosts", kind: "list", item: "path", labelKey: "settingsSubmoduleHosts", hintKey: "settingsSubmoduleHostsHint" },
+      { key: "agent_submodule_host_tokens", kind: "string", secret: true, allowEmpty: true, maxLength: 20000, labelKey: "settingsSubmoduleTokens", hintKey: "settingsSubmoduleTokensHint" },
     ],
   },
   {

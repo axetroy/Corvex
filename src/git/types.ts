@@ -3,6 +3,8 @@ export interface Workspace {
   workspaceName: string;
   path: string;
   headSha: string;
+  /** 已按只读方式检出的子模块目录（相对 worktree）；写工具必须拒绝这些路径。 */
+  submodules?: string[];
 }
 
 /** 提交图谱中的一个节点：父提交用于连线，refs 用于标出分支与会话改动。 */

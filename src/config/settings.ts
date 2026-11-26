@@ -2,6 +2,7 @@ import type { CorvexConfig } from "./config.js";
 import type { ActiveModel } from "../model.js";
 import { isIP } from "node:net";
 import { resolveMaxInputTokens } from "../agent/budget.js";
+import { normalizeAllowedOrigin, parseSubmoduleHostTokens } from "../git/submodules.js";
 import {
   resolveCompactionKeepRecentTokens,
   resolveCompactionReserveTokens,
@@ -81,6 +82,9 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "web_search_enabled", section: "agent", field: "webSearchEnabled", type: "boolean" },
   { key: "web_search_max_queries", section: "agent", field: "webSearchMaxQueries", type: "number", min: 1, max: 50 },
   { key: "git_tool_call_limit", section: "agent", field: "gitToolCallLimit", type: "number", min: 0, max: 200 },
+  // 子模块白名单与专用 token：默认只允许配置 GitLab 同源，第三方必须显式放行。
+  { key: "agent_submodule_allowed_hosts", section: "agent", field: "submoduleAllowedHosts", type: "list", item: "path" },
+  { key: "agent_submodule_host_tokens", section: "agent", field: "submoduleHostTokens", type: "string", maxLength: 20_000, allowEmpty: true },
   { key: "auto_create_merge_request", section: "agent", field: "autoCreateMergeRequest", type: "boolean" },
   { key: "reasoning_enabled", section: "agent", field: "reasoningEnabled", type: "boolean" },
   { key: "task_max_rounds", section: "agent", field: "taskMaxRounds", type: "number", min: 0, max: 10_000 },
@@ -117,6 +121,7 @@ const definitionsByKey = new Map(runtimeSettingDefinitions.map((definition) => [
 export const secretRuntimeSettingKeys = new Set([
   "model_api_key",
   "gitlab_oauth_client_secret",
+  "agent_submodule_host_tokens",
 ]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */
@@ -272,6 +277,21 @@ function checkRelations(values: RuntimeSettingValues): string[] {
       }
     } catch {
       problems.push("model_base_url must be a valid HTTP(S) URL without credentials, query or fragment");
+    }
+  }
+  const allowedSubmoduleHosts = values.agent_submodule_allowed_hosts;
+  if (Array.isArray(allowedSubmoduleHosts)) {
+    if (allowedSubmoduleHosts.length > 50 ||
+        allowedSubmoduleHosts.some((host) => typeof host !== "string" || !normalizeAllowedOrigin(host))) {
+      problems.push("agent_submodule_allowed_hosts must contain at most 50 valid host[:port] or http(s) origins");
+    }
+  }
+  const submoduleTokens = values.agent_submodule_host_tokens;
+  if (typeof submoduleTokens === "string") {
+    try {
+      parseSubmoduleHostTokens(submoduleTokens);
+    } catch (error) {
+      problems.push(`agent_submodule_host_tokens: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return problems;

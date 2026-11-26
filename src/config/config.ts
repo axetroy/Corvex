@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import type { ResponseLanguage, ThinkingLevel } from "../model.js";
+import { normalizeAllowedOrigin, parseSubmoduleHostTokens } from "../git/submodules.js";
 
 export type { ResponseLanguage };
 
@@ -109,6 +110,10 @@ export interface CorvexConfig {
     contextInspectMaxItems: number;
     /** 单条预览的最大字符数。 */
     contextInspectMaxPreviewChars: number;
+    /** 允许拉取子模块的额外 origin；空表示只允许配置 GitLab 同源。 */
+    submoduleAllowedHosts?: string[];
+    /** 第三方 origin 的专用只读 token（JSON 对象），绝不回显到界面。 */
+    submoduleHostTokens?: string;
   };
   execution: ExecutionConfig;
 }
@@ -201,6 +206,8 @@ const defaults: CorvexConfig = {
     contextInspectEnabled: true,
     contextInspectMaxItems: 80,
     contextInspectMaxPreviewChars: 2_048,
+    submoduleAllowedHosts: [],
+    submoduleHostTokens: "",
   },
   execution: {
     enabled: false,
@@ -465,6 +472,10 @@ function parseConfig(raw: unknown): CorvexConfig {
       contextInspectEnabled: boolean(agent.context_inspect_enabled, defaults.agent.contextInspectEnabled),
       contextInspectMaxItems: number(agent.context_inspect_max_items, defaults.agent.contextInspectMaxItems),
       contextInspectMaxPreviewChars: number(agent.context_inspect_max_preview_chars, defaults.agent.contextInspectMaxPreviewChars),
+      submoduleAllowedHosts: stringArray(agent.submodule_allowed_hosts, defaults.agent.submoduleAllowedHosts ?? []),
+      submoduleHostTokens: typeof agent.submodule_host_tokens === "string"
+        ? agent.submodule_host_tokens
+        : defaults.agent.submoduleHostTokens,
     },
     execution: parseExecution(root.execution),
   };
@@ -566,6 +577,16 @@ export function validateConfig(config: CorvexConfig, role?: ConfigRole): void {
   }
   if (config.agent.webBlockedHosts.some((host) => !validBlockedWebHost(host))) {
     problems.push("agent.web_blocked_hosts must contain DNS hostnames without wildcards, ports, or paths");
+  }
+  const allowedSubmoduleHosts = config.agent.submoduleAllowedHosts ?? [];
+  if (allowedSubmoduleHosts.length > 50 ||
+      allowedSubmoduleHosts.some((host) => !normalizeAllowedOrigin(host))) {
+    problems.push("agent.submodule_allowed_hosts must contain at most 50 valid host[:port] or http(s) origins");
+  }
+  try {
+    parseSubmoduleHostTokens(config.agent.submoduleHostTokens ?? "");
+  } catch (error) {
+    problems.push(`agent.submodule_host_tokens: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (config.agent.webSearchMaxQueries < 1 || config.agent.webSearchMaxQueries > 50) {
     problems.push("agent.web_search_max_queries must be between 1 and 50");

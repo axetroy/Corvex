@@ -8,7 +8,7 @@ import { conversationCapabilities, normalizeConversationTitle } from "../model.j
 import type { Conversation, ConversationFollowUp, ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
 import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
-import { conversationWorkspaceName, GitManager } from "../git/manager.js";
+import { conversationWorkspaceName, GitManager, type SubmoduleOptions } from "../git/manager.js";
 import type { Workspace } from "../git/types.js";
 import { GitLabClient, repositoryCloneUrl, type GitLabBranch } from "../gitlab/client.js";
 import { createSteerChannel, PiAgent, type SteerChannel, type TraceContext } from "../agent/pi.js";
@@ -256,17 +256,27 @@ export class ConversationRunner {
   }
 
   /** 把文件系统能力绑定到当前会话的 worktree；所有路径都走共享守卫。 */
-  private workspaceFs(workspacePath: string): WorkspaceFs {
+  private workspaceFs(workspacePath: string, submodules: readonly string[] = []): WorkspaceFs {
+    // 子模块是只读依赖：写进去的改动不会进入 superproject 的会话 ref，必须直接拒绝。
+    const isSubmodulePath = (path: string): boolean =>
+      submodules.some((sub) => path === sub || path.startsWith(`${sub}/`));
+    const resolveWritable = async (requested: string) => {
+      const resolved = await resolveWorktreePath(workspacePath, requested);
+      if (isSubmodulePath(resolved.path)) {
+        throw new Error(`submodule paths are read-only: ${resolved.path}`);
+      }
+      return resolved;
+    };
     const writeFile = async (requested: string, content: string) => {
       const bytes = Buffer.byteLength(content);
       if (bytes > maxWriteBytes) throw new Error(`file content exceeds the ${maxWriteBytes}-byte limit`);
-      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      const { target, path } = await resolveWritable(requested);
       await mkdir(dirname(target), { recursive: true });
       await writeFileFs(target, content, "utf8");
       return { path, bytes };
     };
     const editFile = async (requested: string, oldString: string, newString: string, replaceAll: boolean) => {
-      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      const { target, path } = await resolveWritable(requested);
       const current = await readFileFs(target, "utf8");
       const { updated, replaced } = replaceTextExactly(current, oldString, newString, replaceAll);
       const bytes = Buffer.byteLength(updated);
@@ -275,13 +285,13 @@ export class ConversationRunner {
       return { path, bytes, replaced };
     };
     const deleteFile = async (requested: string) => {
-      const { target, path } = await resolveWorktreePath(workspacePath, requested);
+      const { target, path } = await resolveWritable(requested);
       await rm(target, { force: false });
       return { path, bytes: 0 };
     };
     const resolvePair = async (from: string, to: string, overwrite: boolean) => {
-      const source = await resolveWorktreePath(workspacePath, from);
-      const destination = await resolveWorktreePath(workspacePath, to);
+      const source = await resolveWritable(from);
+      const destination = await resolveWritable(to);
       // 用 lstat 判存在而不读文件内容：大文件/二进制不会浪费内存，
       // 也不会把权限错误误判为「不存在」。
       let existing;
@@ -443,6 +453,27 @@ export class ConversationRunner {
     }
   }
 
+  /** 子模块检出结果写进同一轮的 context 提示，让用户知道哪些没拉到。 */
+  private submoduleOptions(turnId?: string): SubmoduleOptions {
+    const agent = this.config.agent;
+    return {
+      allowedOrigins: agent.submoduleAllowedHosts ?? [],
+      hostTokens: agent.submoduleHostTokens ?? "",
+      ...(turnId ? {
+        onNotice: (reason, path) => {
+          const zh = agent.responseLanguage === "zh-CN";
+          const text = reason === "fetched"
+            ? zh ? `已只读检出子模块 ${path}。` : `Checked out submodule ${path} (read-only).`
+            : zh ? `子模块 ${path} 已跳过（${reason}），其内容不可读。` : `Submodule ${path} skipped (${reason}); its files are unavailable.`;
+          this.publishStream(turnId, {
+            type: "context",
+            context: { id: `submodule-${reason}-${path}`, text },
+          });
+        },
+      } : {}),
+    };
+  }
+
   getConversationChanges(conversationId: string, projectId: number) {
     return this.repo.getConversationChanges(projectId, conversationId);
   }
@@ -477,6 +508,7 @@ export class ConversationRunner {
         conversation.baseSha,
         signal,
         gitlab.authToken,
+        this.submoduleOptions(),
       );
       this.workspaces.set(id, { workspace, lastUsedAt: Date.now() });
     }
@@ -1187,8 +1219,9 @@ export class ConversationRunner {
           baseSha,
           signal,
           gitlab.authToken,
+          this.submoduleOptions(turn.turnId),
         ),
-        (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha }),
+        (value) => ({ projectId: value.projectId, conversationId: turn.conversationId, headSha: value.headSha, submodules: value.submodules }),
       );
       this.workspaces.set(turn.conversationId, { workspace, lastUsedAt: Date.now() });
       const trace: TraceContext = {
@@ -1290,7 +1323,7 @@ export class ConversationRunner {
               onExecEnd: (execId) => this.execStops.delete(execId),
               onExecDelta: (delta) => this.publishStream(turn.turnId, { type: "exec", ...delta }),
               steer,
-              fs: this.workspaceFs(workspace.path),
+              fs: this.workspaceFs(workspace.path, workspace.submodules ?? []),
               ...(conversationCapabilities(turn.mode).gitToolset
                 ? { gitTools: this.gitTools(workspace, turn.conversationId, turn.turnId, turn.targetBranch, gitlab, signal) }
                 : {}),

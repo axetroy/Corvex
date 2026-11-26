@@ -6,7 +6,18 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { needsCommitMessageRewrite } from "./commit-message.js";
 import { isValidBranchName } from "./refs.js";
+import { buildSubmodulePlan, normalizeAllowedOrigin, parseGitmodules, parseSubmoduleHostTokens, type SkippedSubmodule } from "./submodules.js";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
+
+/** 子模块只读检出选项；凭据与白名单都由运维台运行时设置提供。 */
+export interface SubmoduleOptions {
+  allowedOrigins?: string[];
+  hostTokens?: string;
+  onNotice?: (reason: "fetched" | SkippedSubmodule["reason"], path: string) => void;
+}
+
+const maxSubmoduleCount = 10;
+const maxSubmoduleFetchBytes = 256 << 20;
 
 /** 单条 Git 命令允许捕获的标准输出上限。 */
 const maxOutput = 16 << 20;
@@ -49,6 +60,8 @@ interface GitResult {
 
 interface GitRunOptions {
   authToken?: string;
+  /** 只对指定 origin 生效的凭据；用户 OAuth token 绝不会用于第三方 host。 */
+  extraHeaders?: { origin: string; token: string }[];
   timeoutMs?: number;
   terminateOnOutputLimit?: boolean;
   allowExitCodes?: number[];
@@ -526,6 +539,118 @@ export class GitManager {
     return removed;
   }
 
+  /** 读取提交树里的 gitlink 与 .gitmodules；两者取交集后才考虑检出。 */
+  private async readSubmoduleSpecs(
+    mirror: string,
+    sha: string,
+    signal?: AbortSignal,
+  ): Promise<{ links: { path: string; sha: string }[]; gitmodules: Map<string, string> }> {
+    const [tree, modules] = await Promise.all([
+      this.run(mirror, ["--git-dir", mirror, "ls-tree", "-r", "-z", sha], undefined, 1 << 20, signal, {
+        timeoutMs: 10_000,
+      }),
+      this.run(mirror, ["--git-dir", mirror, "show", `${sha}:.gitmodules`], undefined, 64 << 10, signal, {
+        timeoutMs: 10_000,
+        allowExitCodes: [0, 128],
+      }),
+    ]);
+    const links: { path: string; sha: string }[] = [];
+    for (const entry of tree.stdout.toString("utf8").split("\0")) {
+      const match = /^160000 commit ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/.exec(entry);
+      if (match && links.length < maxSubmoduleCount) links.push({ sha: match[1], path: match[2] });
+    }
+    return { links, gitmodules: modules.exitCode === 0 ? parseGitmodules(modules.stdout.toString("utf8")) : new Map() };
+  }
+
+  /** 子模块目录必须落在 worktree 内且路径各段都不是符号链接。 */
+  private async safeSubmodulePath(root: string, relative: string): Promise<string | undefined> {
+    this.validateWorkspaceFilePath(relative);
+    let current = resolve(root);
+    for (const segment of relative.split("/")) {
+      current = join(current, segment);
+      const info = await lstat(current).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (info?.isSymbolicLink()) return undefined;
+    }
+    return current;
+  }
+
+  /**
+   * 只读检出子模块：直接在 gitlink 指向的目录里初始化独立仓库并 fetch 固定的 commit，
+   * 不改写 .gitmodules，也不在 mirror 里留下 modules 目录。写工具仍会拒绝这些路径。
+   */
+  private async prepareSubmodules(
+    workspace: Workspace,
+    mirror: string,
+    sha: string,
+    options: SubmoduleOptions,
+    signal?: AbortSignal,
+    authToken?: string,
+  ): Promise<string[]> {
+    const { links, gitmodules } = await this.readSubmoduleSpecs(mirror, sha, signal);
+    if (links.length === 0) return [];
+    const allowedOrigins = new Set(
+      (options.allowedOrigins ?? []).map(normalizeAllowedOrigin).filter((value): value is string => Boolean(value)),
+    );
+    const plan = buildSubmodulePlan(
+      links,
+      gitmodules,
+      this.gitlabUrl.origin,
+      { gitlabOrigin: this.gitlabUrl.origin, allowedOrigins, hostTokens: parseSubmoduleHostTokens(options.hostTokens ?? "") },
+    );
+    const prepared: string[] = [];
+    for (const skipped of plan.skipped) options.onNotice?.(skipped.reason, skipped.path);
+    for (const item of plan.items) {
+      const target = await this.safeSubmodulePath(workspace.path, item.path);
+      if (!target) {
+        options.onNotice?.("path", item.path);
+        continue;
+      }
+      try {
+        const existing = await this.run(target, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal, {
+          timeoutMs: 10_000, allowExitCodes: [0, 128],
+        });
+        if (existing.exitCode === 0 && existing.stdout.toString().trim().toLowerCase() === item.sha.toLowerCase()) {
+          prepared.push(item.path);
+          continue;
+        }
+        await mkdir(target, { recursive: true, mode: 0o750 });
+        await this.run(target, ["init", "--quiet"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+        const headers = !item.sameOrigin && item.token ? [{ origin: item.origin, token: item.token }] : undefined;
+        await this.run(
+          target,
+          [
+            "-c", "protocol.file.allow=never", "-c", "http.followRedirects=false",
+            "fetch", "--depth", "1", "--no-tags", item.url, item.sha,
+          ],
+          undefined, maxErrorOutput, signal,
+          { timeoutMs: 60_000, authToken: item.sameOrigin ? authToken : undefined, extraHeaders: headers },
+        );
+        await this.run(target, ["checkout", "--detach", "FETCH_HEAD"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+        const head = (await this.run(target, ["rev-parse", "HEAD"], undefined, maxErrorOutput, signal)).stdout.toString().trim();
+        if (head.toLowerCase() !== item.sha.toLowerCase()) {
+          options.onNotice?.("invalid", item.path);
+          continue;
+        }
+        const size = await this.measureDirectory(target);
+        if (size.bytes > maxSubmoduleFetchBytes || size.truncated) {
+          await rm(target, { recursive: true, force: true }).catch(() => undefined);
+          options.onNotice?.("invalid", item.path);
+          continue;
+        }
+        prepared.push(item.path);
+        options.onNotice?.("fetched", item.path);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        await rm(target, { recursive: true, force: true }).catch(() => undefined);
+        options.onNotice?.("invalid", item.path);
+      }
+    }
+    return prepared;
+  }
+
   /**
    * 获取一个对话的常驻 worktree：同一个对话跨轮次复用同一目录，避免每轮
    * 重新 checkout 再整棵删除。固定快照不可变，因此 HEAD 命中时只做一次
@@ -539,6 +664,7 @@ export class GitManager {
     expectedSha: string,
     signal?: AbortSignal,
     authToken?: string,
+    submoduleOptions: SubmoduleOptions = {},
   ): Promise<Workspace> {
     if (projectId <= 0) throw new Error("project ID must be positive");
     if (!shaPattern.test(expectedSha)) {
@@ -588,8 +714,16 @@ export class GitManager {
         await this.removeWorktree(mirror, workspacePath);
         throw new Error(`conversation workspace HEAD mismatch: got ${actual}, expected ${targetSha}`);
       }
+      const submodules = await this.prepareSubmodules(
+        { projectId, workspaceName, path: workspacePath, headSha: expectedSha },
+        mirror,
+        targetSha,
+        submoduleOptions,
+        signal,
+        authToken,
+      );
       await this.touch(workspacePath);
-      return { projectId, workspaceName, path: workspacePath, headSha: expectedSha };
+      return { projectId, workspaceName, path: workspacePath, headSha: expectedSha, submodules };
     });
   }
 
@@ -2202,6 +2336,12 @@ export class GitManager {
     options: GitRunOptions = {},
   ): Promise<GitResult> {
     const env = this.gitEnvironment(options.authToken ?? "");
+    for (const header of options.extraHeaders ?? []) {
+      const index = Number(env.GIT_CONFIG_COUNT ?? 0);
+      env.GIT_CONFIG_COUNT = String(index + 1);
+      env[`GIT_CONFIG_KEY_${index}`] = `http.${header.origin}/.extraHeader`;
+      env[`GIT_CONFIG_VALUE_${index}`] = `Authorization: Basic ${Buffer.from(`oauth2:${header.token}`).toString("base64")}`;
+    }
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error("git command timed out")),
