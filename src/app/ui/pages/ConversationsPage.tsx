@@ -1309,7 +1309,19 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       {hasActiveTurn ? <Tag color="processing">{copy.statuses.running}</Tag> : null}
                       {changePaths.length ? (
                         <>
-                          <Tag className="conversation-changes-tag" title={changePaths.join("\n")}>
+                          <Tag
+                            className="conversation-changes-tag is-clickable"
+                            title={changePaths.join("\n")}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setDetailTab("changes")}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setDetailTab("changes");
+                              }
+                            }}
+                          >
                             {copy.conversationChangesTemplate.replace("{count}", String(changePaths.length))}
                           </Tag>
                           <Button

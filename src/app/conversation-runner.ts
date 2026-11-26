@@ -5,7 +5,7 @@ import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
 import { conversationCapabilities, normalizeConversationTitle } from "../model.js";
-import type { ConversationFollowUp, ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
+import type { Conversation, ConversationFollowUp, ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
 import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
 import { conversationWorkspaceName, GitManager } from "../git/manager.js";
@@ -454,6 +454,33 @@ export class ConversationRunner {
     }
     this.workspaces.delete(conversationId);
     await this.repo.discardConversationChanges(projectId, conversationId);
+  }
+
+  /** 撤销会话改动中的单个文件；worktree 被淘汰时按会话基线重建后再操作。 */
+  async discardConversationFile(
+    conversation: Conversation,
+    path: string,
+    gitlab: GitLabClient,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const id = conversation.id;
+    if (this.running.has(id) || this.hasActiveTurn(id) || this.store.activeConversationIds().has(id)) {
+      throw new Error("cannot discard changes while a turn is active");
+    }
+    let workspace = this.workspaces.get(id)?.workspace;
+    if (!workspace) {
+      const project = await gitlab.getProject(conversation.projectId, signal);
+      workspace = await this.repo.prepareConversationWorkspace(
+        conversation.projectId,
+        id,
+        repositoryCloneUrl(this.config.gitlab.baseUrl, project),
+        conversation.baseSha,
+        signal,
+        gitlab.authToken,
+      );
+      this.workspaces.set(id, { workspace, lastUsedAt: Date.now() });
+    }
+    await this.repo.discardConversationFile(workspace, id, path, signal);
   }
 
   /** 控制台文件操作后把 worktree 改动写入会话 ref，避免淘汰 worktree 时丢失。 */

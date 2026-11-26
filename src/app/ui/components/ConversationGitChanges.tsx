@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
-import { Button, Select, Spin, Typography } from "antd";
-import { fetchJson } from "../lib/api.js";
+import { Button, Modal, Select, Spin, Typography } from "antd";
+import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
 
@@ -38,6 +38,8 @@ interface Props {
 
 /** 会话 ref 相对固定快照的文件变更：直接来自 Git，不依赖工具调用记录。 */
 export function ConversationGitChanges({ conversationId, copy }: Props) {
+  // nonce CSP 下不能用静态 Modal.confirm，使用页面内 contextHolder。
+  const [modal, contextHolder] = Modal.useModal();
   const [changes, setChanges] = useState<ChangesResponse>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -65,6 +67,29 @@ export function ConversationGitChanges({ conversationId, copy }: Props) {
     void load();
   }, [load]);
 
+  const discardFile = (path: string) => {
+    modal.confirm({
+      title: copy.gitChangesDiscard,
+      content: copy.gitChangesDiscardConfirm.replace("{path}", path),
+      okText: copy.gitChangesDiscard,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await sendJson(
+            `/api/ops/conversations/${encodeURIComponent(conversationId)}/changes/discard`,
+            { path },
+            copy,
+            "POST",
+          );
+          setExpanded("");
+          await load();
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      },
+    });
+  };
+
   useEffect(() => {
     let active = true;
     fetchJson<TurnsResponse>(
@@ -79,6 +104,7 @@ export function ConversationGitChanges({ conversationId, copy }: Props) {
 
   return (
     <div className="conversation-git-changes">
+      {contextHolder}
       <div className="conversation-git-changes-toolbar">
         <Typography.Text type="secondary">
           {selectedTurn ? copy.gitChangesTurnHint : copy.gitChangesHint}
@@ -124,6 +150,15 @@ export function ConversationGitChanges({ conversationId, copy }: Props) {
               <summary>
                 <span className={`conversation-git-file-status is-${file.status.trim().slice(0, 1)}`}>{file.status.trim()}</span>
                 <code>{file.path}</code>
+                <Button
+                  className="conversation-git-file-discard"
+                  type="link"
+                  size="small"
+                  danger
+                  onClick={(event) => { event.preventDefault(); event.stopPropagation(); discardFile(file.path); }}
+                >
+                  {copy.gitChangesDiscard}
+                </Button>
               </summary>
               <div className="conversation-git-file-body">
                 {file.patch ? (

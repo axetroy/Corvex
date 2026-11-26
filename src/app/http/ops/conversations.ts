@@ -527,6 +527,31 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     sendJson(reply, 200, { deleted: true });
   });
 
+  // 只撤销指定文件的会话改动；运行中的轮次不能改 worktree。
+  app.post("/api/ops/conversations/:id/changes/discard", async (request, reply) => {
+    const conversationId = idParam((request.params as { id: string }).id);
+    if (!conversationId) {
+      invalidConversationId(reply);
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const body = readJsonObject(request, reply);
+    if (!body) return;
+    const path = typeof body.path === "string" ? body.path : "";
+    if (!path || path.length > 4096) {
+      sendJson(reply, 400, { error: "path must be a bounded non-empty string" });
+      return;
+    }
+    try {
+      await ctx.conversations.discardConversationFile(conversation, path, ctx.gitlabForRequest(request));
+      sendJson(reply, 200, { discarded: true, path });
+    } catch (error) {
+      const message = errorMessage(error);
+      sendJson(reply, message.includes("turn is active") ? 409 : 400, { error: message });
+    }
+  });
+
   // 整段对话轨迹：把该对话全部轮次的轨迹与执行步骤合并成一条时间线，
   // 供对话页「轨迹」标签默认在一个轨迹里展示所有轮次。
   app.get("/api/ops/conversations/:id/turns", async (request, reply) => {

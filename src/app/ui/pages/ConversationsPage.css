@@ -440,6 +440,15 @@
   font-size: 11px;
 }
 
+.conversation-changes-tag.is-clickable {
+  cursor: pointer;
+}
+
+.conversation-changes-tag.is-clickable:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .conversation-discard-changes.ant-btn {
   flex: 0 0 auto;
   height: auto;
@@ -1341,6 +1350,19 @@
   color: var(--warning);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
+}
+
+.conversation-git-file > summary > code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-git-file-discard {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0 4px;
 }
 
 .conversation-git-file-body {

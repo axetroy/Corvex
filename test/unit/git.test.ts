@@ -543,6 +543,47 @@ describe("Git workflows", () => {
     // 这条用例包含多次 mirror/worktree 操作；CI 上比本地慢，默认 5s 不够。
   }, 30_000);
 
+  it("discards only the requested file from conversation changes", async () => {
+    directory = await mkdtemp(join(tmpdir(), "corvex-discard-file-"));
+    const root = join(directory, "storage");
+    const bare = join(directory, "project.git");
+    const source = join(directory, "source");
+    await mkdir(source);
+    await git(source, "init", "--initial-branch=main");
+    await git(source, "config", "user.name", "Corvex Test");
+    await git(source, "config", "user.email", "corvex@example.test");
+    await writeFile(join(source, "a.txt"), "original\n");
+    await git(source, "add", "a.txt");
+    await git(source, "commit", "-m", "base");
+    const baseSha = await git(source, "rev-parse", "HEAD");
+    await execFile("git", ["init", "--bare", bare]);
+    await execFile("git", ["-C", source, "remote", "add", "origin", bare]);
+    await execFile("git", ["-C", source, "push", "origin", "main"]);
+    const mirror = join(root, "mirrors", "7.git");
+    await mkdir(join(root, "mirrors"), { recursive: true });
+    await execFile("git", ["clone", "--mirror", bare, mirror]);
+    await execFile("git", ["--git-dir", mirror, "remote", "set-url", "origin", "http://127.0.0.1:1/project.git"]);
+
+    const manager = new GitManager(root, "http://127.0.0.1:1");
+    await manager.initialize();
+    const conversationId = "1f2e3d4c-5b6a-7980-8a9b-0c1d2e3f4a5b";
+    const repositoryUrl = "http://127.0.0.1:1/project.git";
+    const workspace = await manager.prepareConversationWorkspace(7, conversationId, repositoryUrl, baseSha);
+    await writeFile(join(workspace.path, "a.txt"), "edited\n");
+    await writeFile(join(workspace.path, "new.txt"), "new file\n");
+    await manager.saveConversationChanges(workspace, conversationId);
+
+    await manager.discardConversationFile(workspace, conversationId, "a.txt");
+    expect(await manager.getConversationChanges(7, conversationId)).toMatchObject({ paths: ["new.txt"] });
+    expect(await readFile(join(workspace.path, "a.txt"), "utf8")).toBe("original\n");
+    expect(await readFile(join(workspace.path, "new.txt"), "utf8")).toBe("new file\n");
+
+    // 新增文件被撤销后应从改动列表和工作区同时消失。
+    await manager.discardConversationFile(workspace, conversationId, "new.txt");
+    expect(await manager.getConversationChanges(7, conversationId)).toMatchObject({ paths: [] });
+    await expect(lstat(join(workspace.path, "new.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  }, 30_000);
+
   it("does not delete a project directory while a turn is creating its worktree", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-empty-race-"));
     const root = join(directory, "storage");

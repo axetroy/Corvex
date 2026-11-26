@@ -724,6 +724,75 @@ export class GitManager {
   }
 
   /**
+   * 只撤销会话改动中的某一个文件：以该 ref 的父提交为基线重建新提交，
+   * 其他文件保持原样，因此 diff 里这个文件不再出现，也不会留下一条反向变更。
+   */
+  async discardConversationFile(
+    workspace: Workspace,
+    conversationId: string,
+    requestedPath: string,
+    signal?: AbortSignal,
+  ): Promise<{ sha: string; path: string }> {
+    this.validateWorkspace(workspace);
+    this.validateWorkspaceFilePath(requestedPath);
+    const ref = conversationChangesRef(conversationId);
+    const mirror = join(this.mirrorRoot, `${workspace.projectId}.git`);
+    const resolved = await this.run(
+      mirror,
+      ["--git-dir", mirror, "rev-parse", "--verify", "--quiet", ref],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] },
+    );
+    if (resolved.exitCode !== 0) throw new Error("no conversation changes to discard");
+    const oldSha = resolved.stdout.toString().trim();
+    if (!shaPattern.test(oldSha)) throw new Error("conversation ref contains an invalid commit");
+    const parents = await this.run(
+      mirror,
+      ["--git-dir", mirror, "rev-list", "--parents", "-n", "1", oldSha],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    const baseSha = parents.stdout.toString().trim().split(" ")[1];
+    if (!shaPattern.test(baseSha ?? "")) throw new Error("cannot resolve the conversation change baseline");
+
+    const inBase = await this.run(
+      mirror,
+      ["--git-dir", mirror, "ls-tree", "-r", "--name-only", baseSha, "--", requestedPath],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    if (inBase.stdout.toString("utf8").trim()) {
+      await this.run(workspace.path, ["checkout", baseSha, "--", requestedPath], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    } else {
+      await this.run(workspace.path, ["rm", "-f", "--", requestedPath], undefined, maxErrorOutput, signal, { timeoutMs: 10_000, allowExitCodes: [0, 1] });
+    }
+    const treeResult = await this.run(workspace.path, ["write-tree"], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const tree = treeResult.stdout.toString().trim();
+    if (!shaPattern.test(tree)) throw new Error("git write-tree returned an invalid object id");
+    const created = await this.run(
+      workspace.path,
+      [
+        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
+        "commit-tree", tree, "-p", baseSha, "-m", `discard changes to ${requestedPath}`,
+      ],
+      undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
+    );
+    const newSha = created.stdout.toString().trim();
+    if (!shaPattern.test(newSha)) throw new Error("git commit-tree returned an invalid object id");
+    await this.run(mirror, ["--git-dir", mirror, "update-ref", ref, newSha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    const turnRefs = await this.run(
+      mirror,
+      ["--git-dir", mirror, "for-each-ref", "--format=%(refname) %(objectname)", `refs/conversation-turns/${conversationId}`],
+      undefined, maxErrorOutput, signal, { timeoutMs: 10_000 },
+    );
+    for (const line of turnRefs.stdout.toString().split("\n")) {
+      const [name, object] = line.split(" ");
+      if (name && object === oldSha) {
+        await this.run(mirror, ["--git-dir", mirror, "update-ref", name, newSha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+      }
+    }
+    await this.run(workspace.path, ["checkout", "--detach", newSha], undefined, maxErrorOutput, signal, { timeoutMs: 10_000 });
+    return { sha: newSha, path: requestedPath };
+  }
+
+  /**
    * 把 worktree 的本地改动提交到镜像里的对话 ref。ref 的父提交是 pinned SHA，
    * 因此 worktree 被淘汰、重启或清理后都能按同一基线恢复，且不进入数据库。
    */
