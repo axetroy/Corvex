@@ -5,7 +5,7 @@ import type { AppStore } from "../store.js";
 import type { GitLabClient } from "../gitlab/client.js";
 import type { ScheduledTask } from "../model.js";
 import { errorMessage } from "../errors.js";
-import { nextRunAt, nextRunAtInZone, parseCron, type CronSchedule } from "./schedule.js";
+import { nextRunAt, nextRunAtInZone, parseCron, scheduleJitterMs, type CronSchedule } from "./schedule.js";
 
 /** 调度器依赖；由 Server 注入，便于单测替换时间源与客户端解析。 */
 export interface ScheduledTasksContext {
@@ -139,7 +139,10 @@ export class ScheduledTasksScheduler {
     const schedule = parseCron(task.cron);
     if (!schedule) return new Date(dueAt.getTime() + 86_400_000).toISOString();
     const next = this.computeNext(schedule, task, dueAt);
-    return (next ?? new Date(dueAt.getTime() + 86_400_000)).toISOString();
+    if (!next) return new Date(dueAt.getTime() + 86_400_000).toISOString();
+    // 按任务 ID 确定性错峰：同一任务每次偏移一致，重启后仍稳定，不会逐次漂移。
+    const jitter = scheduleJitterMs(task.id, dueAt, next, new Date(this.now()));
+    return new Date(next.getTime() + jitter).toISOString();
   }
 
   /** 按任务时区选择下次时间计算方式；UTC 走原来的快速路径。 */

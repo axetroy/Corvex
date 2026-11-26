@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt } from "../../src/app/schedule.js";
+import { isValidTimeZone, nextRunAt, nextRunAtInZone, parseCron, parseRunAt, scheduleJitterMs } from "../../src/app/schedule.js";
 
 describe("cron parsing", () => {
   it("parses the standard 5-field subset", () => {
@@ -63,6 +63,25 @@ describe("timezone-aware scheduling", () => {
     const after = new Date("2026-11-26T02:00:00.000Z");
     expect(nextRunAtInZone(schedule, after, "America/New_York")?.toISOString())
       .toBe("2026-11-26T14:00:00.000Z");
+  });
+});
+
+describe("scheduleJitterMs", () => {
+  it("is deterministic and bounded by half the gap and 30 minutes", () => {
+    const nominal = new Date("2026-11-27T09:00:00.000Z");
+    const next = new Date("2026-11-27T09:10:00.000Z"); // gap 10 分钟 → 上限 5 分钟
+    const a = scheduleJitterMs("abcd1234", nominal, next, nominal);
+    const b = scheduleJitterMs("abcd1234", nominal, next, nominal);
+    expect(a).toBe(b);
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(a).toBeLessThanOrEqual(5 * 60_000);
+  });
+
+  it("caps at 30 minutes for long gaps and skips one-shot tasks", () => {
+    const nominal = new Date("2026-11-27T09:00:00.000Z");
+    const next = new Date("2026-11-28T09:00:00.000Z"); // gap 24 小时 → 上限 30 分钟
+    expect(scheduleJitterMs("abcd1234", nominal, next, nominal)).toBeLessThanOrEqual(30 * 60_000);
+    expect(scheduleJitterMs("abcd1234", nominal, undefined, nominal)).toBe(0);
   });
 });
 

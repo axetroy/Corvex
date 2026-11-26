@@ -164,6 +164,23 @@ export function nextRunAt(schedule: CronSchedule, after: Date): Date | undefined
   return undefined;
 }
 
+/**
+ * 循环任务的确定性错峰偏移（毫秒）：按任务 ID 哈希，落在 [0, min(到下次间隔的一半, 30 分钟)]。
+ * 用 ID 而非随机数，保证同一任务每次计算一致、重启后仍稳定；一次性任务不加 jitter。
+ */
+export function scheduleJitterMs(taskId: string, nominal: Date, next: Date | undefined, now: Date): number {
+  if (!next) return 0;
+  const gapMs = next.getTime() - Math.max(nominal.getTime(), now.getTime());
+  if (gapMs <= 0) return 0;
+  const maxMs = Math.min(gapMs / 2, 30 * 60_000);
+  if (maxMs <= 0) return 0;
+  let hash = 0;
+  for (let index = 0; index < taskId.length; index += 1) {
+    hash = (hash * 31 + taskId.charCodeAt(index)) | 0;
+  }
+  return Math.floor((Math.abs(hash) / 2_147_483_648) * maxMs);
+}
+
 /** 相对"现在"的一次性任务时间解析：`in 45m`、`in 2h`、`in 1d`（相对），或 ISO 绝对时间。 */
 export function parseRunAt(input: string, now: Date): Date | undefined {
   const relative = /^in\s+(\d+)\s*([smhd])$/i.exec(input.trim());

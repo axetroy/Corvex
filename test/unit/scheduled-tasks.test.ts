@@ -70,7 +70,8 @@ describe("ScheduledTasksScheduler", () => {
     scheduler.tick();
     expect(runTurn).toHaveBeenCalledTimes(1);
     const after = s.getScheduledTask(task.id)!;
-    expect(after.nextRunAt).toBe("2026-11-28T09:00:00.000Z");
+    expect(Date.parse(after.nextRunAt)).toBeGreaterThan(Date.parse("2026-11-28T09:00:00.000Z"));
+    expect(Date.parse(after.nextRunAt)).toBeLessThanOrEqual(Date.parse("2026-11-28T09:30:00.000Z"));
     expect(after.lastStatus).toBe("succeeded");
   });
 
