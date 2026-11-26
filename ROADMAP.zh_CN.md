@@ -28,6 +28,10 @@
 - 所有 Agent 输出都视为不可信；发布到 GitLab 前再次检查授权、取消状态和版本快照。
 - 恢复特性时同步恢复中英文文档与集成测试。
 
+## 计划任务 / 自然语言调度（规划中）
+
+用户应能用自然语言说"每周一早上 9 点检查 CI"或"45 分钟后提醒我推送分支"，到点自动作为一次普通的对话轮次执行。Corvex 目前没有调度器或 cron 依赖（只有每日清理的定时器）。设计见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文），参考 Claude Code 的 `/loop` 与 `CronCreate/CronList/CronDelete`、Codex Automations 与 Cloud/Desktop 计划任务：自然语言 → 模型确认的 5 段 cron、轮次之间低优先级入队、不补跑、30 天过期、jitter、按用户 OAuth 令牌执行（绝不回退全局凭据）。P0：`scheduled_tasks` 表、cron 解析与下次时间纯函数、Server 到期循环、一次性任务与取消。P1：模型侧 创建/列出/取消 工具与运维台管理页、循环任务与过期。P2：运行历史、暂停/恢复、用户时区、事件触发。
+
 ## 其他延期项
 
 当前没有其他记录项。

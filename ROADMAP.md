@@ -60,6 +60,10 @@ Long tasks benefit from lightweight read-only sub-agents that investigate in par
 
 A readable terminal for `run_command`: stream command output to the console in real time and let the user stop a single command without cancelling the whole turn. Full design in [terminal-design.md](terminal-design.md) (Chinese). P0 (done): `exec` SSE event, backend `onChunk`, streaming UI terminal and per-command cancel API/UI (stop reason `user manually stopped this command` is reported to the model). P1 (done): offline replay from the persisted process snapshot (`execOutput`). P2 (done, simplified): xterm.js rendering (ANSI + virtual scrolling), per-command filtering, and a collapsible terminal that auto-collapses on exit code 0; search/copy controls were removed.
 
+## Scheduled tasks / natural-language scheduling (planned)
+
+Users should be able to say "check CI every Monday at 9am" or "remind me in 45 minutes to push the branch" and have the prompt run automatically as a normal conversation turn. Corvex has no scheduler or cron library today (only a daily retention timer). Design in [scheduled-tasks-design.md](scheduled-tasks-design.md) (Chinese), based on Claude Code `/loop` + `CronCreate/CronList/CronDelete`, Codex Automations and Cloud/Desktop scheduled tasks: natural language → 5-field cron confirmed by the model, low-priority enqueue between turns, no catch-up, 30-day expiry, jitter, per-user OAuth token (no global fallback). P0: `scheduled_tasks` table, cron parser/next-run helpers, Server ticker, one-shot tasks + cancel. P1: model-side schedule/list/cancel tools and the ops-console management page, recurring tasks with expiry. P2: run history, pause/resume, user timezones, event triggers.
+
 ## Other deferred items
 
 No other items are currently recorded.
