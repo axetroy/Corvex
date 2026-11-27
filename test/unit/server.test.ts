@@ -38,7 +38,11 @@ function sessionHeaders(store: AppStore): Record<string, string> {
 }
 
 describe("CorvexServer", () => {
-  afterEach(() => vi.restoreAllMocks());
+  const storageRoots: string[] = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(storageRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
 
   it("authenticates ops routes and serves conversations", async () => {
     // 本用例只验证接口行为，不让对话轮次真正调用模型。
@@ -115,6 +119,8 @@ describe("CorvexServer", () => {
     }, nonAdminCipher);
     const viewerSession = store.createUserSession(nonAdmin.id, Date.now() + 3_600_000);
     const viewerHeaders = { cookie: `corvex_session=${viewerSession}` };
+    const storageRoot = await mkdtemp(join(tmpdir(), "corvex-server-"));
+    storageRoots.push(storageRoot);
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "", password: "" },
@@ -124,7 +130,7 @@ describe("CorvexServer", () => {
         botUsername: "corvex-bot",
       },
       storage: {
-        root: ".",
+        root: storageRoot,
         database: ":memory:",
         retentionDays: 90,
         auditRetentionDays: 365,
@@ -840,6 +846,8 @@ describe("CorvexServer", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const store = await AppStore.open(":memory:");
     const authHeaders = sessionHeaders(store);
+    const storageRoot = await mkdtemp(join(tmpdir(), "corvex-server-"));
+    storageRoots.push(storageRoot);
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "operator", password: "a secure password with 16 chars" },
@@ -848,7 +856,7 @@ describe("CorvexServer", () => {
         blockedUserIds: [],
         botUsername: "corvex",
       },
-      storage: { root: ".", database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
+      storage: { root: storageRoot, database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
       agent: {
         responseLanguage: "en",
         baseUrl: "https://api.openai.com/v1",

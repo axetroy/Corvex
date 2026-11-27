@@ -213,7 +213,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         turnId: created.turnId,
         request: resolveCommandRequest(
           message,
-          (name) => ctx.store.getConversationSkill(name),
+          (name) => ctx.skills.getCached(name),
         ).titleRequest,
         language: titleLanguage,
       });

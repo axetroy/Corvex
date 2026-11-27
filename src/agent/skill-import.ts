@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import yauzl from "yauzl";
 import { parseSkillDocument, validateSkillDocument } from "./skills.js";
 
@@ -13,8 +15,10 @@ export interface DiscoveredSkill {
   name: string;
   description: string;
   document: string;
-  /** 包内路径，便于管理员确认来源。 */
+  /** 包内 SKILL.md 路径，便于管理员确认来源。 */
   sourcePath: string;
+  /** 磁盘化后该技能的目录在解压根里的相对路径（"/" 分隔，根目录为 "."）。 */
+  folder: string;
 }
 
 export interface SkillImportIssue {
@@ -29,7 +33,7 @@ export interface SkillImportResult {
   archive?: Buffer;
 }
 
-/** 压缩包只接受 SKILL.md；路径必须停留在包内，不接受绝对路径、上层遍历或符号链接。 */
+/** 压缩包只接受安全相对路径；绝对路径、上层遍历、Windows 分隔符与 NUL 一律拒绝。 */
 function safeEntryPath(fileName: string): string | undefined {
   if (!fileName || fileName.includes("\0") || fileName.includes("\\")) return undefined;
   if (fileName.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(fileName)) return undefined;
@@ -76,10 +80,14 @@ function readEntry(zip: yauzl.ZipFile, entry: yauzl.Entry, limit: number): Promi
 }
 
 /**
- * 从 ZIP 中发现 SKILL.md：只解析文本指令文档，包内脚本与其它文件一律忽略（技能只提供指令，脚本永不执行）。
- * 返回可导入技能与逐文件问题，单个坏文档不会让整包失败。
+ * 遍历技能包。outputDir 提供时把安全条目写到磁盘，使技能目录包含 SKILL.md 及配套文件；
+ * 不提供时只做发现（旧接口语义）。脚本永不执行，只作为后续只读文件读取的素材。
  */
-export function discoverSkillsFromZip(archive: Buffer, pathPrefix?: string): Promise<SkillImportResult> {
+function unpackSkillArchive(
+  archive: Buffer,
+  pathPrefix: string | undefined,
+  outputDir?: string,
+): Promise<SkillImportResult> {
   return new Promise((resolve, reject) => {
     if (archive.byteLength > skillImportLimits.maxArchiveBytes) {
       reject(new Error(`archive exceeds the ${skillImportLimits.maxArchiveBytes} byte limit`));
@@ -131,32 +139,62 @@ export function discoverSkillsFromZip(archive: Buffer, pathPrefix?: string): Pro
         const path = safeEntryPath(entry.fileName);
         if (!path) {
           result.issues.push({ path: entry.fileName, message: "unsafe archive path ignored" });
-        } else if (isSkillFile(path) && (!prefix || path.startsWith(`${prefix}/`))) {
-          try {
-            const raw = await readEntry(zip, entry, skillImportLimits.maxExtractedBytes);
+          zip.readEntry();
+          return;
+        }
+        try {
+          // ZIP 目录项不需要读取内容；跳过的同时仍计入条目上限。
+          if (entry.fileName.endsWith("/")) {
+            zip.readEntry();
+            return;
+          }
+          const raw = await readEntry(zip, entry, skillImportLimits.maxExtractedBytes);
+          // 落盘发生在校验路径之后；目标始终在 outputDir 内。
+          if (outputDir) {
+            const target = join(outputDir, path);
+            await mkdir(dirname(target), { recursive: true });
+            await writeFile(target, raw);
+          }
+          if (isSkillFile(path) && (!prefix || path.startsWith(`${prefix}/`))) {
             const document = raw.toString("utf8");
             const parsed = parseSkillDocument(document);
             const problems = validateSkillDocument(parsed);
             if (problems.length > 0) {
               result.issues.push({ path, message: problems.join("; ") });
             } else if (result.skills.length < skillImportLimits.maxSkills) {
+              const slash = path.lastIndexOf("/");
               result.skills.push({
                 name: parsed.name,
                 description: parsed.description,
                 document: document.trim(),
                 sourcePath: path,
+                folder: slash < 0 ? "." : path.slice(0, slash),
               });
             }
-          } catch (cause) {
-            result.issues.push({
-              path,
-              message: cause instanceof Error ? cause.message : "invalid SKILL.md",
-            });
           }
+        } catch (cause) {
+          result.issues.push({
+            path,
+            message: cause instanceof Error ? cause.message : "invalid SKILL.md",
+          });
         }
         zip.readEntry();
       });
       zip.readEntry();
     });
   });
+}
+
+/** 只解析不落盘，供导入预览与现有调用方使用。 */
+export function discoverSkillsFromZip(archive: Buffer, pathPrefix?: string): Promise<SkillImportResult> {
+  return unpackSkillArchive(archive, pathPrefix);
+}
+
+/** 解压到磁盘并返回发现的技能及其目录，供磁盘化技能存储使用。 */
+export function extractSkillArchive(
+  archive: Buffer,
+  outputDir: string,
+  pathPrefix?: string,
+): Promise<SkillImportResult> {
+  return unpackSkillArchive(archive, pathPrefix, outputDir);
 }

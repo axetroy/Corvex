@@ -56,6 +56,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - 会话文件浏览只从当前 worktree 读取（`LocalFileSource`），不再回退到 GitLab 快照；worktree 被回收时返回 409 并提示先发起一轮对话。
 - 聊天框底部的上下文简讯显示窗口占用与缓存命中率，不显示压缩阈值；命中率由各轮缓存 token 和 LLM 输入 token 汇总计算。助手回复的动作行也显示单轮命中率，供应商未报告缓存读写时隐藏，不显示 0%。
 - Agent 可主动回查当前会话历史：`list_turns` / `get_turn` 由 Runner 注入固定 conversationId，只读已结束轮次，文本走脱敏与有界截断，内容按不可信历史数据处理；不支持跨会话读取或切换。
+- 技能以磁盘为唯一来源：`<storage.root>/skills/<name>/SKILL.md` 加 `skills-lock.json`（npx skills 风格内容哈希与来源），SQLite 不存技能文档或 ZIP；写操作必须经进程内队列 + `.skills.lock` 文件锁和原子替换，启动时一次性迁移旧表。
 
 ## 架构与安全不变量（不要为省事削弱）
 

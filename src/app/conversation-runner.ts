@@ -26,6 +26,7 @@ import { verifyAnswerClaims } from "../agent/claim-verification.js";
 import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
+import type { SkillStore } from "../agent/skill-store.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -78,6 +79,8 @@ export class ConversationRunner {
     private readonly config: CorvexConfig,
     private readonly store: AppStore,
     private readonly hooks: CorvexHooks,
+    // 只有斜杠指令解析需要同步查技能；未注入时不展开任何指令，兼容旧调用方与测试。
+    private readonly skills: Pick<SkillStore, "getCached"> = { getCached: () => undefined },
   ) {
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl);
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
@@ -963,7 +966,7 @@ export class ConversationRunner {
         turnId: turn.turnId,
         request: resolveCommandRequest(
           turn.request,
-          (name) => this.store.getConversationSkill(name),
+          (name) => this.skills.getCached(name),
         ).titleRequest,
         language,
         workspacePath,
@@ -1236,7 +1239,7 @@ export class ConversationRunner {
       // 斜杠指令按管理员配置的技能模板展开；命令名不进入发给模型的请求。
       const { effectiveRequest } = resolveCommandRequest(
         turn.request,
-        (name) => this.store.getConversationSkill(name),
+        (name) => this.skills.getCached(name),
       );
       const systemPrompt = getConversationSystemPrompt(language, turn.mode, this.config.agent.followupsEnabled);
       // 注入过去轮次真实执行过的工具调用与结果：历史只带文本，「说过」不等于「做过」。

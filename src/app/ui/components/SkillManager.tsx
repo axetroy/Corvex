@@ -99,6 +99,32 @@ export function SkillManager({ copy }: { copy: Copy }) {
     });
   }
 
+  async function verifyLock(frozen: boolean) {
+    setError("");
+    try {
+      const result = await sendJson<{ items: Array<{ restored: boolean }> }>(
+        "/api/ops/admin/skills/verify", { frozen }, copy, "POST",
+      );
+      const restored = result.items.filter((item) => item.restored).length;
+      setNotice(copy.skillVerifyResult
+        .replace("{restored}", String(restored))
+        .replace("{total}", String(result.items.length))
+        .replace("{issues}", String(result.items.length - restored)));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  function statusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      tracked: copy.skillStatusTracked,
+      modified: copy.skillStatusModified,
+      missing: copy.skillStatusMissing,
+      untracked: copy.skillStatusUntracked,
+    };
+    return labels[status] ?? status;
+  }
+
   async function togglePack(pack: SkillPack, enabled: boolean) {
     try {
       await sendJson(`/api/ops/admin/skills/packs/${encodeURIComponent(pack.id)}`, { enabled }, copy);
@@ -133,6 +159,12 @@ export function SkillManager({ copy }: { copy: Copy }) {
       render: (value: string) => (
         <span title={value}>{value.length > 90 ? `${value.slice(0, 90)}…` : value}</span>
       ),
+    },
+    {
+      title: copy.skillManagerStatus,
+      dataIndex: "status",
+      width: "10%",
+      render: (status: string) => <span className={`skill-status skill-status-${status}`}>{statusLabel(status)}</span>,
     },
     {
       title: copy.skillManagerEnabled,
@@ -172,6 +204,8 @@ export function SkillManager({ copy }: { copy: Copy }) {
       <Space>
         <Button type="primary" onClick={openCreate}>{copy.skillManagerAdd}</Button>
         <Button onClick={() => setImportOpen(true)}>{copy.skillManagerImport}</Button>
+        <Button onClick={() => void verifyLock(false)}>{copy.skillVerify}</Button>
+        <Button onClick={() => void verifyLock(true)}>{copy.skillVerifyFrozen}</Button>
       </Space>
       <Table
         rowKey="id"
@@ -194,6 +228,12 @@ export function SkillManager({ copy }: { copy: Copy }) {
           { title: copy.skillManagerName, dataIndex: "name", width: "28%" },
           { title: copy.skillPackSource, dataIndex: "source", width: "14%" },
           { title: copy.skillPackSkills, dataIndex: "skillCount", width: "12%" },
+          {
+            title: copy.skillManagerStatus,
+            dataIndex: "status",
+            width: "10%",
+            render: (status: string) => <span className={`skill-status skill-status-${status}`}>{statusLabel(status)}</span>,
+          },
           {
             title: copy.skillPackSize,
             dataIndex: "size",

@@ -4,6 +4,7 @@ import type { CorvexConfig } from "../../config/config.js";
 import type { GitLabOAuthService } from "../auth/service.js";
 import type { CorvexHooks } from "../hooks.js";
 import type { AppStore } from "../../store.js";
+import type { SkillStore } from "../../agent/skill-store.js";
 import type { GitLabClient } from "../../gitlab/client.js";
 import type { ResponseLanguage } from "../../model.js";
 import type { ConversationRunner } from "../conversation-runner.js";
@@ -17,6 +18,8 @@ import type { ExecutionConfigService } from "../execution-config-service.js";
 export interface OpsContext {
   readonly config: CorvexConfig;
   readonly store: AppStore;
+  /** 磁盘技能存储；技能的唯一权威来源，SQLite 不再保存技能文档或压缩包。 */
+  readonly skills: SkillStore;
   readonly conversations: ConversationRunner;
   readonly settings: SettingsService;
   readonly executionConfig: ExecutionConfigService;

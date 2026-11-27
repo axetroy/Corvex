@@ -8,7 +8,6 @@ import {
 import type { AuthUser, GitLabIdentity, ManagedUser } from "./app/auth/model.js";
 import type { TokenCipher } from "./tokens.js";
 import type { ContextSnapshotData } from "./agent/context-inspect.js";
-import { defaultSkillDocuments, ensureQuickActionMetadata, parseSkillDocument, validateSkillDocument, SKILL_SEED_VERSION } from "./agent/skills.js";
 import {
   redactHostPaths,
   redactModelFacingText,
@@ -26,7 +25,6 @@ import {
   type ConversationFollowUp,
   type ConversationMessage,
   type ConversationMessageAttachment,
-  type ConversationSkill,
   type ConversationUpload,
   type DraftUpload,
   type ScheduledTaskCard,
@@ -34,7 +32,6 @@ import {
   type ScheduledTaskRun,
   type ScheduleKind,
   type ScheduledTaskStatus,
-  type SkillPack,
   type ConversationPage,
   type ConversationProcessEntry,
   type ConversationSummary,
@@ -3323,70 +3320,7 @@ export class AppStore {
         conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
         entries TEXT NOT NULL, updated_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS conversation_skills (
-        id TEXT PRIMARY KEY,
-        document TEXT NOT NULL DEFAULT '',
-        name TEXT NOT NULL DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        is_system INTEGER NOT NULL DEFAULT 0,
-        pack_id TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name);
-      CREATE TABLE IF NOT EXISTS skill_packs (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        archive BLOB NOT NULL,
-        size INTEGER NOT NULL,
-        source TEXT NOT NULL DEFAULT '',
-        source_value TEXT NOT NULL DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
     `);
-    // 早期技能表按列存储；必须在写种子之前补 document 列并从旧列生成 SKILL.md。
-    const skillColumns = new Set(
-      (this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((column) => column.name),
-    );
-    if (!skillColumns.has("pack_id")) {
-      this.db.exec("ALTER TABLE conversation_skills ADD COLUMN pack_id TEXT NOT NULL DEFAULT ''");
-    }
-    // 索引必须在列补齐后创建；旧库的建表语句不会因为 IF NOT EXISTS 自动补列。
-    this.db.exec("CREATE INDEX IF NOT EXISTS conversation_skills_pack_idx ON conversation_skills(pack_id)");
-    if (!skillColumns.has("document")) {
-      this.db.exec("ALTER TABLE conversation_skills ADD COLUMN document TEXT NOT NULL DEFAULT ''");
-      for (const row of this.db.prepare("SELECT * FROM conversation_skills").all() as Record<string, unknown>[]) {
-        // 旧库可能带全套列，也可能只有简化后的列；只读取实际存在的列。
-        const metadata = skillColumns.has("metadata") ? this.readSkillMetadata(row.metadata) : {};
-        if (skillColumns.has("quick_action") && row.quick_action) metadata["corvex-quick-action"] = "true";
-        if (skillColumns.has("quick_label") && row.quick_label) metadata["corvex-quick-label"] = String(row.quick_label);
-        const metadataLines = Object.entries(metadata).map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`);
-        const document = [
-          "---",
-          `name: ${JSON.stringify(String(row.name ?? ""))}`,
-          `description: ${JSON.stringify(skillColumns.has("description") ? String(row.description ?? "") : "")}`,
-          ...(metadataLines.length ? ["metadata:", ...metadataLines] : []),
-          "---",
-          "",
-          skillColumns.has("content") ? String(row.content ?? "") : "",
-          "",
-        ].join("\n");
-        this.db.prepare("UPDATE conversation_skills SET document=? WHERE id=?").run(document, String(row.id));
-      }
-    }
-    this.db.exec("CREATE INDEX IF NOT EXISTS conversation_skills_name_idx ON conversation_skills(name)");
-    // 升级前写入的种子文档可能缺少快捷操作标记；只补键，不改正文和其它字段。
-    for (const row of this.db.prepare("SELECT id,document,is_system FROM conversation_skills").all() as {
-      id: string; document: string; is_system: number;
-    }[]) {
-      if (row.is_system !== 1 || !row.document) continue;
-      const enriched = ensureQuickActionMetadata(row.document);
-      if (enriched !== row.document) {
-        this.db.prepare("UPDATE conversation_skills SET document=? WHERE id=?").run(enriched, row.id);
-      }
-    }
-    // 系统技能种子：只插入缺失项，管理员对文案/描述/启停的修改不会被升级覆盖。
-    this.seedConversationSkills();
     // 旧版「模型列表」把供应商与模型混在一张表，升级时拆成供应商 + 模型。
     this.migrateLegacyModelProfiles();
     this.migrateLegacyTraceTable();
@@ -3664,213 +3598,66 @@ export class AppStore {
     this.db.exec("CREATE INDEX IF NOT EXISTS execution_steps_turn_started_idx ON execution_steps(turn_id,started_at,id)");
   }
 
-  /** 首次启动写入系统技能；INSERT OR IGNORE 保证管理员的修改不会被升级覆盖。 */
-  private seedConversationSkills(): void {
-    const now = new Date().toISOString();
-    const insert = this.db.prepare(
-      `INSERT INTO conversation_skills (id,document,name,enabled,is_system,created_at,updated_at)
-       VALUES (?,?,?,1,1,?,?)`,
-    );
-    this.transaction(() => {
-      for (const document of defaultSkillDocuments) {
-        const parsed = parseSkillDocument(document);
-        const row = this.db.prepare("SELECT id,document,is_system FROM conversation_skills WHERE name=?")
-          .get(parsed.name) as { id: string; document: string; is_system: number } | undefined;
-        if (!row) {
-          insert.run(randomUUID(), document, parsed.name, now, now);
-          continue;
-        }
-        // 系统种子升级：旧版本模板刷新为新内容，但保留管理员的停用选择。
-        if (row.is_system !== 1 || row.document.includes(`corvex-seed-version: "${SKILL_SEED_VERSION}"`)) continue;
-        const previous = parseSkillDocument(row.document);
-        let next = document;
-        if (!previous.enabled) next = next.replace('metadata:\n', 'metadata:\n  corvex-enabled: "false"\n');
-        this.db.prepare("UPDATE conversation_skills SET document=?,enabled=?,updated_at=? WHERE id=?")
-          .run(next, previous.enabled ? 1 : 0, now, row.id);
-      }
-    });
-  }
-
-  /** 全部技能，系统技能排在前面；enabledOnly 供运行时与补全菜单使用。 */
-  listConversationSkills(enabledOnly = false): ConversationSkill[] {
-    const rows = this.db.prepare(
-      `SELECT * FROM conversation_skills ${enabledOnly ? "WHERE enabled=1" : ""} ORDER BY is_system DESC,name`,
-    ).all() as Record<string, unknown>[];
-    return rows.map((row) => this.readConversationSkill(row));
-  }
-
-  getConversationSkill(name: string): ConversationSkill | undefined {
-    const row = this.db.prepare("SELECT * FROM conversation_skills WHERE name=?").get(name) as Record<string, unknown> | undefined;
-    return row ? this.readConversationSkill(row) : undefined;
-  }
-
-  createConversationSkill(document: string): ConversationSkill {
-    const parsed = parseSkillDocument(document);
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    this.db.prepare(
-      `INSERT INTO conversation_skills (id,document,name,enabled,is_system,created_at,updated_at)
-       VALUES (?,?,?,?,0,?,?)`,
-    ).run(id, document.trim(), parsed.name, parsed.enabled ? 1 : 0, now, now);
-    return this.getConversationSkillById(id)!;
-  }
-
-  updateConversationSkill(id: string, document: string): ConversationSkill | undefined {
-    if (!this.db.prepare("SELECT 1 FROM conversation_skills WHERE id=?").get(id)) return undefined;
-    const parsed = parseSkillDocument(document);
-    this.db.prepare(
-      "UPDATE conversation_skills SET document=?,name=?,enabled=?,updated_at=? WHERE id=?",
-    ).run(document.trim(), parsed.name, parsed.enabled ? 1 : 0, new Date().toISOString(), id);
-    return this.getConversationSkillById(id);
-  }
-
-  private getConversationSkillById(id: string): ConversationSkill | undefined {
-    const row = this.db.prepare("SELECT * FROM conversation_skills WHERE id=?").get(id) as Record<string, unknown> | undefined;
-    return row ? this.readConversationSkill(row) : undefined;
-  }
-
-  /** 系统技能只能停用，不能删除；返回 false 表示不存在或受保护。 */
-  deleteConversationSkill(id: string): boolean {
-    const row = this.db.prepare("SELECT is_system FROM conversation_skills WHERE id=?").get(id) as { is_system: number } | undefined;
-    if (!row || row.is_system === 1) return false;
-    return this.db.prepare("DELETE FROM conversation_skills WHERE id=?").run(id).changes === 1;
-  }
-
-  /** 技能包列表只返回元数据，不把 ZIP 二进制带进接口。 */
-  listSkillPacks(): SkillPack[] {
-    const rows = this.db.prepare(
-      `SELECT p.id, p.name, p.size, p.source, p.source_value, p.enabled, p.created_at, p.updated_at,
-        (SELECT COUNT(*) FROM conversation_skills s WHERE s.pack_id=p.id) AS skill_count
-       FROM skill_packs p ORDER BY p.created_at DESC`,
-    ).all() as Record<string, unknown>[];
-    return rows.map((row) => ({
-      id: stringColumn(row, "id"),
-      name: stringColumn(row, "name"),
-      size: numberColumn(row, "size"),
-      source: stringColumn(row, "source"),
-      sourceValue: stringColumn(row, "source_value"),
-      enabled: numberColumn(row, "enabled") === 1,
-      skillCount: numberColumn(row, "skill_count"),
-      createdAt: stringColumn(row, "created_at"),
-      updatedAt: stringColumn(row, "updated_at"),
-    }));
-  }
-
-  /** 取回原始 ZIP，供重新解析或导出。 */
-  getSkillPackArchive(id: string): Buffer | undefined {
-    const row = this.db.prepare("SELECT archive FROM skill_packs WHERE id=?").get(id) as { archive: Buffer } | undefined;
-    return row?.archive ? Buffer.from(row.archive) : undefined;
+  /** 技能已迁移到磁盘；旧表只在迁移成功后由 SkillStore 调用删除。 */
+  dropSkillTables(): void {
+    this.db.exec("DROP TABLE IF EXISTS skill_packs; DROP TABLE IF EXISTS conversation_skills;");
   }
 
   /**
-   * 存下技能包并从包内 SKILL.md 派生技能行。重名技能按 overwrite 决定跳过或覆盖；
-   * 返回派生结果，ZIP 始终是包的唯一来源。
+   * 迁移到磁盘前一次性导出旧技能行。兼容没有 document 列的早期 schema，
+   * 保证老库升级不会丢技能；新方法不再写这些表。
    */
-  createSkillPack(input: {
-    name: string;
-    archive: Buffer;
-    source: string;
-    sourceValue: string;
-    documents: string[];
-    overwrite: boolean;
-  }): { pack: SkillPack; created: string[]; skipped: string[]; errors: string[] } {
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    const created: string[] = [];
-    const skipped: string[] = [];
-    const errors: string[] = [];
-    this.transaction(() => {
-      this.db.prepare(
-        `INSERT INTO skill_packs (id,name,archive,size,source,source_value,enabled,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,1,?,?)`,
-      ).run(id, input.name, input.archive, input.archive.byteLength, input.source, input.sourceValue, now, now);
-      for (const document of input.documents) {
-        try {
-          const parsed = parseSkillDocument(document);
-          const problems = validateSkillDocument(parsed);
-          if (problems.length > 0) {
-            errors.push(`${parsed.name || "unnamed"}: ${problems.join("; ")}`);
-            continue;
+  legacySkillsForMigration(): Array<{
+    name: string; document: string; isSystem: boolean; packId: string;
+    createdAt: string; updatedAt: string;
+  }> {
+    if (!this.hasTable("conversation_skills")) return [];
+    const columns = new Set((this.db.prepare("PRAGMA table_info(conversation_skills)").all() as { name: string }[]).map((row) => row.name));
+    return (this.db.prepare("SELECT * FROM conversation_skills").all() as Record<string, unknown>[]).map((row) => {
+      let document = typeof row.document === "string" ? row.document : "";
+      if (!document) {
+        const metadata: Record<string, string> = {};
+        if (columns.has("metadata")) {
+          const raw: unknown = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+            for (const [key, value] of Object.entries(raw as Record<string, unknown>)) metadata[key] = String(value);
           }
-          const existing = this.db.prepare("SELECT id FROM conversation_skills WHERE name=?").get(parsed.name) as { id: string } | undefined;
-          if (existing && !input.overwrite) {
-            skipped.push(parsed.name);
-            continue;
-          }
-          if (existing) {
-            this.db.prepare("UPDATE conversation_skills SET document=?,enabled=?,pack_id=?,updated_at=? WHERE id=?")
-              .run(document.trim(), parsed.enabled ? 1 : 0, id, now, existing.id);
-          } else {
-            this.db.prepare(
-              `INSERT INTO conversation_skills (id,document,name,enabled,is_system,pack_id,created_at,updated_at)
-               VALUES (?,?,?,?,0,?,?,?)`,
-            ).run(randomUUID(), document.trim(), parsed.name, parsed.enabled ? 1 : 0, id, now, now);
-          }
-          created.push(parsed.name);
-        } catch (cause) {
-          errors.push(cause instanceof Error ? cause.message : "invalid SKILL.md");
         }
+        if (columns.has("quick_action") && row.quick_action) metadata["corvex-quick-action"] = "true";
+        if (columns.has("quick_label") && row.quick_label) metadata["corvex-quick-label"] = String(row.quick_label);
+        const metadataLines = Object.entries(metadata).map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`);
+        document = [
+          "---",
+          `name: ${JSON.stringify(String(row.name ?? ""))}`,
+          `description: ${JSON.stringify(columns.has("description") ? String(row.description ?? "") : "")}`,
+          ...(metadataLines.length ? ["metadata:", ...metadataLines] : []),
+          "---",
+          "",
+          columns.has("content") ? String(row.content ?? "") : "",
+          "",
+        ].join("\n");
       }
-    });
-    return {
-      pack: this.listSkillPacks().find((pack) => pack.id === id)!,
-      created,
-      skipped,
-      errors,
-    };
-  }
-
-  /** 删除技能包时一并删除它派生的技能，避免留下与包不一致的孤儿文档。 */
-  deleteSkillPack(id: string): boolean {
-    return this.transaction(() => {
-      this.db.prepare("DELETE FROM conversation_skills WHERE pack_id=?").run(id);
-      return this.db.prepare("DELETE FROM skill_packs WHERE id=?").run(id).changes === 1;
+      return {
+        name: String(row.name ?? ""),
+        document,
+        isSystem: Number(row.is_system) === 1,
+        packId: typeof row.pack_id === "string" ? row.pack_id : "",
+        createdAt: typeof row.created_at === "string" ? row.created_at : "",
+        updatedAt: typeof row.updated_at === "string" ? row.updated_at : "",
+      };
     });
   }
 
-  /** 停用技能包时同时停用其派生技能；重新启用时按各自 SKILL.md 的 enabled 恢复。 */
-  setSkillPackEnabled(id: string, enabled: boolean): boolean {
-    return this.transaction(() => {
-      const result = this.db.prepare("UPDATE skill_packs SET enabled=?,updated_at=? WHERE id=?")
-        .run(enabled ? 1 : 0, new Date().toISOString(), id);
-      if (result.changes !== 1) return false;
-      if (!enabled) {
-        this.db.prepare("UPDATE conversation_skills SET enabled=0 WHERE pack_id=?").run(id);
-      } else {
-        this.db.prepare("UPDATE conversation_skills SET enabled=1 WHERE pack_id=?").run(id);
-      }
-      return true;
-    });
+  legacySkillPacksForMigration(): Array<{ id: string; name: string; archive: Buffer | undefined }> {
+    if (!this.hasTable("skill_packs")) return [];
+    const rows = this.db.prepare("SELECT id,name,archive FROM skill_packs").all() as Array<{ id: string; name: string; archive: Buffer | null }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, archive: row.archive ? Buffer.from(row.archive) : undefined }));
   }
 
-  /** 元数据是开放的 string→string 映射；损坏的 JSON 按空处理，不让一条脏数据挡住列表。 */
-  private readSkillMetadata(value: unknown): Record<string, string> {
-    const parse = (record: Record<string, unknown>): Record<string, string> =>
-      Object.fromEntries(Object.entries(record).map(([key, item]) => [key, String(item)]));
-    if (value && typeof value === "object" && !Array.isArray(value)) return parse(value as Record<string, unknown>);
-    if (typeof value !== "string") return {};
-    try {
-      const parsed: unknown = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parse(parsed as Record<string, unknown>);
-    } catch {
-      // 忽略损坏的元数据。
-    }
-    return {};
+  private hasTable(name: string): boolean {
+    return (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)) !== undefined;
   }
 
-  private readConversationSkill(row: Record<string, unknown>): ConversationSkill {
-    const document = stringColumn(row, "document");
-    const parsed = parseSkillDocument(document);
-    return {
-      id: stringColumn(row, "id"),
-      document,
-      ...parsed,
-      isSystem: numberColumn(row, "is_system") === 1,
-      createdAt: stringColumn(row, "created_at"),
-      updatedAt: stringColumn(row, "updated_at"),
-      packId: typeof row.pack_id === "string" ? row.pack_id : "",
-    };
-  }
 
   /**
    * 把旧版 `chat_sessions` / `chat_session_messages` 表重命名为对话命名，并把

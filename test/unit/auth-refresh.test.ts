@@ -1,4 +1,7 @@
 import { createServer } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CorvexServer } from "../../src/app/server.js";
 import { AppStore } from "../../src/store.js";
@@ -17,7 +20,12 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
 }
 
 describe("GitLab token refresh failure", () => {
-  afterEach(() => vi.restoreAllMocks());
+  let storageRoot = "";
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (storageRoot) await rm(storageRoot, { recursive: true, force: true });
+    storageRoot = "";
+  });
 
   it("invalidates the session and returns 401 when refresh fails", async () => {
     // 模拟 OAuth token 端点返回 400：refresh token 已失效。
@@ -44,6 +52,7 @@ describe("GitLab token refresh failure", () => {
     }, cipher);
     const sessionId = store.createUserSession(user.id, Date.now() + 3_600_000);
 
+    storageRoot = await mkdtemp(join(tmpdir(), "corvex-auth-refresh-"));
     const config: CorvexConfig = {
       server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
       operations: { username: "", password: "" },
@@ -56,7 +65,7 @@ describe("GitLab token refresh failure", () => {
         oauthRedirectUri: "http://127.0.0.1/auth/gitlab/callback",
       },
       storage: {
-        root: ".",
+        root: storageRoot,
         database: ":memory:",
         retentionDays: 90,
         auditRetentionDays: 365,

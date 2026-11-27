@@ -3,7 +3,7 @@ import { currentUser, requireAdmin } from "../../auth/context.js";
 import type { OpsContext } from "../context.js";
 import { readJsonObject, sendJson } from "../respond.js";
 import { parseSkillDocument, validateSkillDocument } from "../../../agent/skills.js";
-import { discoverSkillsFromZip, skillImportLimits } from "../../../agent/skill-import.js";
+import { skillImportLimits } from "../../../agent/skill-import.js";
 import { fetchSkillsFromSource, type SkillSourceChannel } from "../../../agent/skill-sources.js";
 
 /** 管理员提交的是完整 SKILL.md；解析与校验失败时返回错误文本。 */
@@ -84,9 +84,9 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
         }
       });
 
-      // 对话技能：管理员在此维护斜杠命令的名称、说明与提示词模板。
+      // 对话技能：磁盘文件是唯一来源，锁文件记录来源与内容哈希。
       admin.get("/skills", async (_request, reply) => {
-        sendJson(reply, 200, { items: ctx.store.listConversationSkills() });
+        sendJson(reply, 200, { items: await ctx.skills.list() });
       });
 
       admin.post("/skills", async (request, reply) => {
@@ -97,11 +97,11 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
           sendJson(reply, 400, { error: parsed.error });
           return;
         }
-        if (ctx.store.getConversationSkill(parsed.name)) {
+        if (await ctx.skills.get(parsed.name)) {
           sendJson(reply, 409, { error: "skill name already exists" });
           return;
         }
-        sendJson(reply, 201, ctx.store.createConversationSkill(parsed.document));
+        sendJson(reply, 201, await ctx.skills.create(parsed.document));
       });
 
       admin.put("/skills/:id", async (request, reply) => {
@@ -113,21 +113,27 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
           sendJson(reply, 400, { error: parsed.error });
           return;
         }
-        if (!ctx.store.listConversationSkills().some((skill) => skill.id === id)) {
+        const existing = await ctx.skills.get(id);
+        if (!existing) {
           sendJson(reply, 404, { error: "skill not found" });
           return;
         }
-        const clash = ctx.store.getConversationSkill(parsed.name);
-        if (clash && clash.id !== id) {
+        // 磁盘目录名就是技能名；改名等于新建，走删除 + 新建避免目录与文档不一致。
+        if (parsed.name !== id) {
+          sendJson(reply, 400, { error: "renaming a skill is not supported; delete and create it again" });
+          return;
+        }
+        const clash = await ctx.skills.get(parsed.name);
+        if (clash && clash.name !== id) {
           sendJson(reply, 409, { error: "skill name already exists" });
           return;
         }
-        sendJson(reply, 200, ctx.store.updateConversationSkill(id, parsed.document));
+        sendJson(reply, 200, await ctx.skills.update(id, parsed.document));
       });
 
-      // 技能包导入：ZIP 原样入库，包内 SKILL.md 派生为可调用的对话技能。
+      // 技能包导入：ZIP 与解压后的文件都落盘，来源与哈希写入 skills-lock.json。
       admin.get("/skills/packs", async (_request, reply) => {
-        sendJson(reply, 200, { items: ctx.store.listSkillPacks() });
+        sendJson(reply, 200, { items: await ctx.skills.listPacks() });
       });
 
       admin.post("/skills/import", async (request, reply) => {
@@ -135,8 +141,9 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
         try {
           let archive: Buffer;
           let name: string;
-          let source: string;
+          let source: "upload" | "url" | "github" | "gitlab";
           let sourceValue: string;
+          let ref: string | undefined;
           let path: string | undefined;
           let overwrite = false;
           if (contentType.startsWith("application/zip") || contentType.startsWith("application/octet-stream")) {
@@ -174,6 +181,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
             name = value.split("/").filter(Boolean).pop() ?? "skill-pack";
             source = channel;
             sourceValue = value;
+            ref = typeof body.ref === "string" && body.ref.trim() ? body.ref.trim() : undefined;
             path = typeof body.path === "string" ? body.path : undefined;
             overwrite = body.overwrite === true;
           }
@@ -181,18 +189,21 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
             sendJson(reply, 413, { error: `ZIP exceeds the ${skillImportLimits.maxArchiveBytes} byte limit` });
             return;
           }
-          const discovered = await discoverSkillsFromZip(archive, path);
-          const result = ctx.store.createSkillPack({
-            name,
-            archive,
-            source,
-            sourceValue,
-            documents: discovered.skills.map((skill) => skill.document),
-            overwrite,
-          });
-          sendJson(reply, 201, { ...result, issues: discovered.issues });
+          const result = await ctx.skills.importPack({ name, archive, source, sourceValue, ref, path, overwrite });
+          sendJson(reply, 201, result);
         } catch (cause) {
           sendJson(reply, 400, { error: cause instanceof Error ? cause.message : "skill import failed" });
+        }
+      });
+
+      // 按锁文件校验磁盘状态；frozen 模式拒绝任何无法恢复的差异。
+      admin.post("/skills/verify", async (request, reply) => {
+        const frozen = (request.body as { frozen?: unknown } | undefined)?.frozen === true;
+        try {
+          const items = await ctx.skills.verifyAndRestore(frozen);
+          sendJson(reply, 200, { items });
+        } catch (cause) {
+          sendJson(reply, 409, { error: cause instanceof Error ? cause.message : "skill verification failed" });
         }
       });
 
@@ -200,7 +211,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
         const id = (request.params as { id: string }).id;
         const body = readJsonObject(request, reply);
         if (!body) return;
-        if (!ctx.store.setSkillPackEnabled(id, body.enabled === true)) {
+        if (!await ctx.skills.setPackEnabled(id, body.enabled === true)) {
           sendJson(reply, 404, { error: "skill pack not found" });
           return;
         }
@@ -209,7 +220,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
 
       admin.delete("/skills/packs/:id", async (request, reply) => {
         const id = (request.params as { id: string }).id;
-        if (!ctx.store.deleteSkillPack(id)) {
+        if (!await ctx.skills.deletePack(id)) {
           sendJson(reply, 404, { error: "skill pack not found" });
           return;
         }
@@ -218,7 +229,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: OpsContext): void
 
       admin.delete("/skills/:id", async (request, reply) => {
         const id = (request.params as { id: string }).id;
-        if (!ctx.store.deleteConversationSkill(id)) {
+        if (!await ctx.skills.remove(id)) {
           sendJson(reply, 404, { error: "skill not found or protected" });
           return;
         }

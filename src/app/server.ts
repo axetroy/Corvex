@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { CorvexConfig } from "../config/config.js";
@@ -6,6 +7,7 @@ import type { AppStore } from "../store.js";
 import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
 import { skillImportLimits } from "../agent/skill-import.js";
+import { SkillStore } from "../agent/skill-store.js";
 import { maxUploadBytesCeiling, uploadContentType } from "./upload.js";
 import { pruneEmptyUploadDirs } from "./upload-cleanup.js";
 import { currentUser } from "./auth/context.js";
@@ -54,6 +56,7 @@ export class CorvexServer {
   private readonly address: { host: string; port: number };
   /** 对话轮次在 Server 进程内联执行。 */
   private readonly conversations: ConversationRunner;
+  private readonly skills: SkillStore;
   private readonly settings: SettingsService;
   private readonly executionConfig: ExecutionConfigService;
   private readonly cipher: TokenCipher;
@@ -75,7 +78,8 @@ export class CorvexServer {
     this.address = parseListenAddress(config.server.listen);
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
-    this.conversations = new ConversationRunner(config, store, this.hooks);
+    this.skills = new SkillStore(resolve(config.storage.root, "skills"));
+    this.conversations = new ConversationRunner(config, store, this.hooks, this.skills);
     this.scheduledTasks = new ScheduledTasksScheduler({
       config, store, conversations: this.conversations,
       clientForUser: (userId) => this.clientForUser(userId),
@@ -309,6 +313,7 @@ export class CorvexServer {
     return {
       config: this.config,
       store: this.store,
+      skills: this.skills,
       conversations: this.conversations,
       oauth: this.oauth,
       hooks: this.hooks,
@@ -340,6 +345,13 @@ export class CorvexServer {
   async run(signal: AbortSignal): Promise<void> {
     this.settings.applyStored();
     this.executionConfig.applyStored();
+    // 技能只在启动时做一次迁移/种子刷新；必须在 listen 之前完成，保证第一个请求就能用。
+    const migrated = await this.skills.migrateFromStore(this.store);
+    await this.skills.seedSystemSkills();
+    await this.skills.refresh();
+    if (migrated.skills > 0 || migrated.packs > 0) {
+      console.info("migrated skills to disk", migrated);
+    }
     await callAsyncHook(this.hooks.serverBeforeListen);
     await this.app.listen({ host: this.address.host, port: this.address.port });
     console.info("Corvex server listening", {

@@ -1306,65 +1306,6 @@ describe("AppStore", () => {
     expect(messageColumns.map((column) => column.name)).not.toContain("session_id");
   });
 
-  it("migrates a legacy skill table into SKILL.md documents before seeding", async () => {
-    directory = await mkdtemp(join(tmpdir(), "corvex-skill-migration-"));
-    const databasePath = join(directory, "state.db");
-    const first = await AppStore.open(databasePath);
-    first.close();
-    // 模拟升级前的技能表：没有 document 列，种子尚未写入。
-    const raw = new DatabaseSync(databasePath);
-    raw.exec("ALTER TABLE conversation_skills DROP COLUMN document");
-    raw.exec("DELETE FROM conversation_skills");
-    raw.close();
-
-    const second = await AppStore.open(databasePath);
-    store = second;
-    const skills = second.listConversationSkills();
-    expect(skills).toHaveLength(7);
-    expect(skills.every((skill) => skill.document.startsWith("---"))).toBe(true);
-    expect(skills[0]?.name).toBeTruthy();
-  });
-
-  it("seeds system skills and manages custom skills", async () => {
-    store = await AppStore.open(":memory:");
-    const seeded = store.listConversationSkills();
-    expect(seeded).toHaveLength(7);
-    expect(seeded.every((skill) => skill.isSystem && skill.enabled)).toBe(true);
-    expect(seeded.map((skill) => skill.name)).toContain("create-mr");
-    expect(store.getConversationSkill("docs")?.content).toContain("documentation");
-    expect(store.listConversationSkills(true)).toHaveLength(7);
-
-    const created = store.createConversationSkill(`---
-name: custom
-description: Custom skill
-metadata:
-  corvex-quick-action: "true"
-  corvex-quick-label: "Custom"
----
-
-Do $ARGUMENTS
-`);
-    expect(created.isSystem).toBe(false);
-    expect(store.getConversationSkill("custom")?.quickLabel).toBe("Custom");
-
-    const updated = store.updateConversationSkill(created.id, `---
-name: custom
-description: Custom skill
-metadata:
-  corvex-enabled: "false"
----
-
-Do $ARGUMENTS now
-`);
-    expect(updated?.enabled).toBe(false);
-    expect(store.listConversationSkills(true)).toHaveLength(7);
-
-    // 系统技能受保护：只能改，不能删。
-    const system = seeded.find((skill) => skill.name === "docs")!;
-    expect(store.deleteConversationSkill(system.id)).toBe(false);
-    expect(store.deleteConversationSkill(created.id)).toBe(true);
-    expect(store.getConversationSkill("custom")).toBeUndefined();
-  });
 
   it("stores bounded context snapshots per request", async () => {
     directory = await mkdtemp(join(tmpdir(), "corvex-context-snapshots-"));

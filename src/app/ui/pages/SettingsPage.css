@@ -278,3 +278,21 @@
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* 技能与锁文件的校验状态，颜色只取主题变量以同时适配亮色与暗色。 */
+.skill-status {
+  font-size: 12px;
+}
+
+.skill-status-tracked {
+  color: var(--text-secondary);
+}
+
+.skill-status-modified,
+.skill-status-untracked {
+  color: var(--warning);
+}
+
+.skill-status-missing {
+  color: var(--danger);
+}
