@@ -55,10 +55,14 @@ export class SkillRegistry {
   }
 
   /** 管理端检索技能诊断，区分全局与个人。 */
-  diagnosticsForUser(userId: string): Array<SkillDiagnostic & { scope: "global" | "personal" }> {
+  async diagnosticsForUser(userId: string): Promise<Array<SkillDiagnostic & { scope: "global" | "personal" }>> {
+    const [globalIssues, personalIssues] = await Promise.all([
+      this.global.diagnostics(),
+      this.forUser(userId).diagnostics(),
+    ]);
     return [
-      ...this.global.diagnostics().map((item) => ({ ...item, scope: "global" as const })),
-      ...this.forUser(userId).diagnostics().map((item) => ({ ...item, scope: "personal" as const })),
+      ...globalIssues.map((item) => ({ ...item, scope: "global" as const })),
+      ...personalIssues.map((item) => ({ ...item, scope: "personal" as const })),
     ];
   }
 

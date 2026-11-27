@@ -183,13 +183,11 @@ export class SkillStore {
   /** 启动时与每次写后重建的内存镜像；斜杠命令解析是同步的，读它即可。 */
   private cache = new Map<string, ManagedSkill>();
   private lastSignature = "";
-  private currentDiagnostics: SkillDiagnostic[] = [];
 
   /** 重建同步读取用的缓存；磁盘是权威来源，缓存只是快照。 */
   async refresh(): Promise<void> {
     const skills = await this.list();
     this.cache = new Map(skills.filter((skill) => skill.status !== "missing").map((skill) => [skill.name, skill]));
-    this.currentDiagnostics = await this.collectDiagnostics();
     this.lastSignature = await this.computeSignature();
   }
 
@@ -203,9 +201,9 @@ export class SkillStore {
     return true;
   }
 
-  /** 管理端可见的解析/发现诊断；模型目录不暴露。 */
-  diagnostics(): SkillDiagnostic[] {
-    return [...this.currentDiagnostics];
+  /** 管理端可见的解析/发现诊断；按需计算，不拖慢启动与每轮刷新。 */
+  async diagnostics(): Promise<SkillDiagnostic[]> {
+    return this.collectDiagnostics();
   }
 
   private async computeSignature(): Promise<string> {

@@ -38,7 +38,7 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
   app.get("/skills/diagnostics", async (request, reply) => {
     const store = options.storeForRequest(request);
     await store.refreshIfStale();
-    sendJson(reply, 200, { items: store.diagnostics() });
+    sendJson(reply, 200, { items: await store.diagnostics() });
   });
 
   app.post("/skills", async (request, reply) => {
