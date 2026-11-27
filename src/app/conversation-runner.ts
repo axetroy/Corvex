@@ -80,7 +80,9 @@ export class ConversationRunner {
     private readonly store: AppStore,
     private readonly hooks: CorvexHooks,
     // 只有斜杠指令解析需要同步查技能；未注入时不展开任何指令，兼容旧调用方与测试。
-    private readonly skills: Pick<SkillStore, "getCached"> = { getCached: () => undefined },
+    private readonly skills: Pick<SkillStore, "getCached" | "listCached"> = {
+      getCached: () => undefined, listCached: () => [],
+    },
   ) {
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl);
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
@@ -1328,6 +1330,15 @@ export class ConversationRunner {
               turnTools: {
                 listTurns: (limit, before) => this.store.listAgentTurns(turn.conversationId, limit, before),
                 getTurn: (index) => this.store.getAgentTurn(turn.conversationId, index),
+              },
+              // 技能命令目录来自磁盘技能的内存快照；执行开关与后端仍由配置决定。
+              skillCommandCatalog: {
+                get: (name) => this.skills.getCached(name),
+                available: () => this.skills.listCached()
+                  .filter((skill) => skill.commandsEnabled && skill.status !== "missing")
+                  .flatMap((skill) => (skill.commands ?? []).map((command) => ({
+                    skill: skill.name, command: command.name, description: command.description,
+                  }))),
               },
               gitlab,
               // 上传目录作为仅本轮有效的只读根注入；模型侧只看到 upload://<id>/<filename>。

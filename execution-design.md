@@ -16,7 +16,7 @@
 
 - **不是通用 shell 服务**：Agent 通过工具提交命令，Corvex 解析并受控执行；工具不提供交互式终端、不常驻进程。
 - **不引入第二套控制平面**：沙箱容器只是被 Corvex spawn 的子进程，不引入 sidecar 服务或远程执行 API；Corvex 仍是唯一控制进程。
-- **授权在代码里**：模型输出、仓库内容、Skill 指令都不能扩大权限；能否执行、在哪执行、执行多久由配置与应用代码决定。
+- **授权在代码里**：模型输出、仓库内容、Skill 指令都不能扩大权限；能否执行、在哪执行、执行多久由配置与应用代码决定。技能只能声明固定命令（SKILL.md 的 `corvex-commands`），由 `run_skill_command` 在同样的后端内执行；模型不能提供命令字符串，也不能把用户输入插值进命令。
 - **沙箱不是绝对安全边界**：容器逃逸、供应链（执行的 `node_modules` 来自仓库）仍是残余风险，文档会如实标注，不宣称"安全运行任意不可信代码"。
 
 ## 3. 工具接口
@@ -31,6 +31,18 @@ run_command({
   maxOutputBytes?: number // 可选，同上
 })
 ```
+
+技能命令工具 `run_skill_command` 复用同一执行链路，但模型只选择技能名与命令名：
+
+```
+run_skill_command({
+  skill: string,   // 已启用且声明了命令的技能名
+  command: string, // 该技能 corvex-commands 里的命令名
+  reason?: string
+})
+```
+
+命令字符串来自技能文档、不接受 `$ARGUMENTS` 插值；技能声明的 timeout/output 也只能收紧到配置上限之内。
 
 关键规则：
 

@@ -127,6 +127,25 @@ describe("SkillStore", () => {
     expect(await skills.remove("docs")).toBe(false);
   });
 
+  it("persists declared commands on disk and exposes them through the sync cache", async () => {
+    skills = await openStore();
+    const document = sampleDocument.replace(
+      '  corvex-quick-label: "Custom"',
+      '  corvex-quick-label: "Custom"\n  corvex-commands-enabled: "true"\n  corvex-commands:\n    - name: verify\n      command: pnpm run typecheck\n      description: Check types',
+    );
+    const created = await skills.create(document);
+    expect(created.commandsEnabled).toBe(true);
+    expect(created.commands).toEqual([
+      { name: "verify", command: "pnpm run typecheck", description: "Check types" },
+    ]);
+    // 重新打开一个实例，确认命令来自磁盘文档而不是进程内残留。
+    const reopened = new SkillStore(join(directory, "skills"));
+    await reopened.refresh();
+    expect(reopened.getCached("custom")?.commands[0]?.command).toBe("pnpm run typecheck");
+    await reopened.setEnabled("custom", false);
+    expect((await reopened.get("custom"))?.commands[0]?.command).toBe("pnpm run typecheck");
+  });
+
   it("detects modified, missing and untracked skills against the lock", async () => {
     skills = await openStore();
     await skills.seedSystemSkills();

@@ -525,6 +525,24 @@ export interface ConversationSkill {
   packId: string;
   /** 磁盘技能与锁文件的校验状态；旧接口返回的技能均为 tracked。 */
   status: SkillStatus;
+  /** 技能声明的固定命令；命令字符串来自技能文档，不接受模型提供的内容。 */
+  commands: SkillCommand[];
+  /** metadata.corvex-commands-enabled === "true"，默认关闭。 */
+  commandsEnabled: boolean;
+}
+
+/** 技能可在沙箱/本地后端执行的固定命令，由管理员写在 SKILL.md 的 corvex-commands 里。 */
+export interface SkillCommand {
+  /** 工具参数里使用的名称，小写字母/数字/连字符。 */
+  name: string;
+  /** shell 命令字符串；不允许插值用户输入。 */
+  command: string;
+  /** 展示给模型、用于判断何时执行的说明。 */
+  description: string;
+  /** 可选，受执行配置上限约束。 */
+  timeoutMs?: number;
+  /** 可选，受执行配置上限约束。 */
+  maxOutputBytes?: number;
 }
 
 /** 磁盘技能相对 skills-lock.json 的状态，语义对齐 npx skills 的 list。 */

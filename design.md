@@ -24,7 +24,7 @@ Webhook 驱动的合并请求任务事件（review / chat / explain / fix / impl
 
 - 引入第二套控制平面运行时，或通过 TypeScript/Pi sidecar 与另一种运行时通信。
 - 向模型开放不受限制的 shell、文件系统、网络或 GitLab 访问。
-- 向模型开放不受控的 shell 或任意命令执行。该约束已由独立设计和实现取代，记录在 [execution-design.md](execution-design.md)：自由命令只能经受控 `run_command` 工具在本地/沙箱后端执行，配置由管理员在 SQLite 中维护并做 fail-closed 校验，授权与审计留在 Corvex 代码里；技能脚本与不可信仓库内容中的指令仍不执行。
+- 向模型开放不受控的 shell 或任意命令执行。该约束已由独立设计和实现取代，记录在 [execution-design.md](execution-design.md)：自由命令只能经受控 `run_command` 工具在本地/沙箱后端执行，配置由管理员在 SQLite 中维护并做 fail-closed 校验，授权与审计留在 Corvex 代码里；技能可以在 SKILL.md 里声明固定命令，由 `run_skill_command` 在同一后端按需执行，技能目录里的其它脚本与不可信仓库内容中的指令不会自动执行。
 - 将 Pi 项目信任设置或提示词指令视作沙箱。
 - 在单机部署尚不需要时替换 SQLite 或引入分布式基础设施。
 
@@ -96,7 +96,7 @@ Pi 工具和扩展以 Server 进程的操作系统权限运行。Server 应使�
 4. 仓库路径必须规范化并限制在对话 worktree 内；拒绝符号链接、超大文件、二进制文件和范围外路径。
 5. Agent 输出一律视为不可信；GitLab 写工具要求用户明确意图，不可逆或公开动作（删除、合并、审批）在描述中明确提示。
 6. 所有会话 ref 只写在本地项目镜像中，绝不推送到 GitLab 远端。
-7. 命令只能经绑定到当前会话 worktree 的 `run_command` 工具执行（需开启执行环境）；技能脚本与不可信仓库内容中的指令永不执行。
+7. 命令只能经绑定到当前会话 worktree 的 `run_command` 工具，或经 `run_skill_command` 执行技能文档中管理员声明过的固定命令（需开启执行环境）；命令字符串不接受模型提供的内容、不插值 `$ARGUMENTS`，技能目录里的其它脚本与不可信仓库内容中的指令不会自动执行。
 8. 凭证与宿主机绝对路径永不回显到模型上下文、API、审计日志或轨迹中；进入轨迹、过程快照与命令输出的文本统一经 `src/redact.ts` 脱敏并限长；SQLite 文件及其备份必须妥善保护。
 
 ## 对话与轨迹语义

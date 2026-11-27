@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import YAML from "yaml";
 import type { Dirent } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
@@ -128,7 +129,7 @@ function emptyLock(): SkillLockFile {
 function emptyParsed(name: string): ReturnType<typeof parseSkillDocument> {
   return {
     name, description: "", content: "", license: "", compatibility: "", metadata: {},
-    allowedTools: "", enabled: false, quickAction: false, quickLabel: "",
+    allowedTools: "", enabled: false, quickAction: false, quickLabel: "", commands: [], commandsEnabled: false,
   };
 }
 
@@ -171,6 +172,11 @@ export class SkillStore {
   /** 同步读取已加载的技能，供斜杠命令解析等不能 await 的调用点使用。 */
   getCached(name: string): ManagedSkill | undefined {
     return this.cache.get(name);
+  }
+
+  /** 同步列出缓存中的技能，供技能命令目录与补全使用。 */
+  listCached(): ManagedSkill[] {
+    return [...this.cache.values()];
   }
 
   private queue: Promise<unknown> = Promise.resolve();
@@ -321,6 +327,8 @@ export class SkillStore {
       updatedAt: entry?.updatedAt ?? updatedAt,
       packId: entry?.packId ?? "",
       status,
+      commands: parsed.commands ?? [],
+      commandsEnabled: parsed.commandsEnabled === true,
     };
   }
 
@@ -478,10 +486,10 @@ export class SkillStore {
       } catch {
         return false;
       }
-      const parsed = parseSkillDocument(document);
-      const metadata = { ...parsed.metadata };
-      if (enabled) delete metadata["corvex-enabled"];
-      else metadata["corvex-enabled"] = "false";
+      // 只传启停键：parsed.metadata 把命令数组字符串化了，整包回写会丢结构化字段。
+      const metadata: Record<string, string | undefined> = enabled
+        ? { "corvex-enabled": undefined }
+        : { "corvex-enabled": "false" };
       const updated = rewriteFrontmatter(document, metadata);
       await this.writeSkillDocument(name, updated);
       entry.computedHash = (await this.folderHash(name))!;
@@ -645,7 +653,7 @@ export class SkillStore {
         if (previousDocument) {
           const previous = parseSkillDocument(previousDocument);
           if (!previous.enabled) {
-            document = rewriteFrontmatter(document, { ...previous.metadata, "corvex-enabled": "false" });
+            document = rewriteFrontmatter(document, { "corvex-enabled": "false" });
           }
         }
         await this.writeSkillDocument(parsed.name, document);
@@ -724,14 +732,25 @@ export class SkillStore {
   }
 }
 
-/** 只替换 frontmatter 里的 metadata 段，保留正文与其它字段。 */
-function rewriteFrontmatter(document: string, metadata: Record<string, string>): string {
+/** 只改 frontmatter 的 metadata 标量，保留命令数组等结构化字段与正文。 */
+function rewriteFrontmatter(document: string, metadata: Record<string, string | undefined>): string {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(document.trim());
   if (!match) return document;
-  const lines = match[1].split(/\r?\n/);
-  const metadataStart = lines.findIndex((line) => line === "metadata:");
-  const kept = metadataStart < 0 ? lines : lines.slice(0, metadataStart);
-  const entries = Object.entries(metadata).map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`);
-  const header = entries.length > 0 ? [...kept, "metadata:", ...entries] : kept;
-  return `---\n${header.join("\n")}\n---\n\n${match[2].trim()}\n`;
+  let front: unknown;
+  try {
+    front = YAML.parse(match[1]);
+  } catch {
+    return document;
+  }
+  if (!front || typeof front !== "object" || Array.isArray(front)) return document;
+  const header = front as Record<string, unknown>;
+  const existing = header.metadata && typeof header.metadata === "object" && !Array.isArray(header.metadata)
+    ? header.metadata as Record<string, unknown>
+    : {};
+  const merged: Record<string, unknown> = { ...existing, ...metadata };
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === undefined) delete merged[key];
+  }
+  header.metadata = merged;
+  return `---\n${YAML.stringify(header, { lineWidth: 0 }).trim()}\n---\n\n${match[2].trim()}\n`;
 }

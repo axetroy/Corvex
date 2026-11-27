@@ -31,6 +31,7 @@ import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, r
 import { createPlanExtension } from "./plan.js";
 import { createScheduledTaskExtension } from "./schedule-tools.js";
 import { createTurnToolsExtension, type TurnToolAdapter } from "./turn-tools.js";
+import { createSkillCommandExtension, type SkillCommandCatalog } from "./skill-command-tools.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
@@ -43,7 +44,7 @@ import { estimateConservativeTokens } from "./budget.js";
 import { boundSessionEntries, stripImageContent, type SessionEntryLike } from "./session-persistence.js";
 import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
 import { createTaskBudgetState, observeTaskBudget, wrapUpNotice } from "./task-budget.js";
-import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecDelta, type ExecutionBackend } from "./execution/index.js";
+import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecDelta, type ExecutionBackend, type ExecutionResult } from "./execution/index.js";
 import { createContextInspectExtension } from "./context-inspect.js";
 import type { ContextSnapshot } from "./context-snapshot.js";
 import { createFsReadExtension } from "./fs/index.js";
@@ -385,6 +386,8 @@ export interface ModelRequest {
   gitTools?: GitToolAdapter;
   /** 当前会话历史的只读查询能力；只在对话轮次中提供。 */
   turnTools?: TurnToolAdapter;
+  /** 当前会话可见的技能命令目录；只在启用执行环境的对话轮次中提供。 */
+  skillCommandCatalog?: SkillCommandCatalog;
   /**
    * 轮次内插话通道；由 Runner 创建，PiAgent 在会话就绪后绑定。仅对话轮次提供，
    * 其余任务省略即可。
@@ -895,31 +898,40 @@ export class PiAgent {
             )]
           : []),
         ...(executionBackend
-          ? [createExecutionExtension({
-              backend: executionBackend,
-              cwd: repositoryRoot,
-              mirrorPath,
-              cachePath: cacheDir,
-              signal,
-              maxTimeoutMs: executionLimits.timeoutMs,
-              maxOutputBytes: executionLimits.maxOutputBytes,
-              onExecStart: (execId, stop) => request.onExecStart?.(execId, stop),
-              onExecEnd: (execId) => request.onExecEnd?.(execId),
-              onExecDelta: emitExecStream,
-              onExecuted: (result) => {
-                // 审计：记录操作者/会话/轮次/命令前缀/后端/退出码，不记完整敏感命令。
-                if (this.store && request.actorId !== undefined) {
-                  this.store.insertExecutionAudit(
-                    request.actorId,
-                    request.conversationId ?? "",
-                    request.turnId ?? "",
-                    previewCommand(result.command),
-                    result.backend,
-                    result.exitCode,
-                  );
-                }
-              },
-            })]
+          ? (() => {
+              const options = {
+                backend: executionBackend,
+                cwd: repositoryRoot,
+                mirrorPath,
+                cachePath: cacheDir,
+                signal,
+                maxTimeoutMs: executionLimits.timeoutMs,
+                maxOutputBytes: executionLimits.maxOutputBytes,
+                onExecStart: (execId: string, stop: (reason: string) => void) => request.onExecStart?.(execId, stop),
+                onExecEnd: (execId: string) => request.onExecEnd?.(execId),
+                onExecDelta: emitExecStream,
+                onExecuted: (result: ExecutionResult) => {
+                  // 审计：记录操作者/会话/轮次/命令前缀/后端/退出码，不记完整敏感命令。
+                  if (this.store && request.actorId !== undefined) {
+                    this.store.insertExecutionAudit(
+                      request.actorId,
+                      request.conversationId ?? "",
+                      request.turnId ?? "",
+                      previewCommand(result.command),
+                      result.backend,
+                      result.exitCode,
+                    );
+                  }
+                },
+              };
+              return [
+                createExecutionExtension(options),
+                // 技能命令沿用同一后端与流式/审计链路；未提供目录时不注册工具。
+                ...(request.skillCommandCatalog && request.skillCommandCatalog.available().length > 0
+                  ? [createSkillCommandExtension({ ...options, catalog: request.skillCommandCatalog })]
+                  : []),
+              ];
+            })()
           : []),
         ...(request.taskType === "conversation"
           ? [createScheduledTaskExtension({

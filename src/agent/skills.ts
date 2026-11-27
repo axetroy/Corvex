@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import type { SkillCommand } from "../model.js";
 
 /**
  * 技能即一份 SKILL.md：YAML frontmatter + Markdown 正文。
@@ -19,6 +20,10 @@ export interface ParsedSkillDocument {
   quickAction: boolean;
   /** metadata.corvex-quick-label */
   quickLabel: string;
+  /** metadata.corvex-commands：管理员声明的固定命令。 */
+  commands: SkillCommand[];
+  /** metadata.corvex-commands-enabled === "true" */
+  commandsEnabled: boolean;
 }
 
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
@@ -28,6 +33,29 @@ function metadataMap(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]),
   );
+}
+
+/** 从原始 metadata 里取出命令数组；metadataMap 会把数组字符串化，必须单独解析。 */
+function parseSkillCommands(value: unknown): SkillCommand[] {
+  if (!Array.isArray(value)) return [];
+  const commands: SkillCommand[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const command: SkillCommand = {
+      name: String(record.name ?? "").trim(),
+      command: String(record.command ?? "").trim(),
+      description: String(record.description ?? "").trim(),
+    };
+    if (Number.isSafeInteger(record.timeoutMs) && (record.timeoutMs as number) > 0) {
+      command.timeoutMs = record.timeoutMs as number;
+    }
+    if (Number.isSafeInteger(record.maxOutputBytes) && (record.maxOutputBytes as number) > 0) {
+      command.maxOutputBytes = record.maxOutputBytes as number;
+    }
+    commands.push(command);
+  }
+  return commands;
 }
 
 /** 解析 SKILL.md；格式或必填字段不合法时抛出可直接展示给管理员的错误。 */
@@ -48,6 +76,9 @@ export function parseSkillDocument(document: string): ParsedSkillDocument {
   }
   const header = front as Record<string, unknown>;
   const metadata = metadataMap(header.metadata);
+  const rawMetadata = header.metadata && typeof header.metadata === "object" && !Array.isArray(header.metadata)
+    ? header.metadata as Record<string, unknown>
+    : {};
   return {
     name: String(header.name ?? "").trim(),
     description: String(header.description ?? "").trim(),
@@ -59,6 +90,8 @@ export function parseSkillDocument(document: string): ParsedSkillDocument {
     enabled: metadata["corvex-enabled"] !== "false",
     quickAction: metadata["corvex-quick-action"] === "true",
     quickLabel: String(metadata["corvex-quick-label"] ?? "").trim(),
+    commands: parseSkillCommands(rawMetadata["corvex-commands"]),
+    commandsEnabled: metadata["corvex-commands-enabled"] === "true",
   };
 }
 
@@ -80,6 +113,27 @@ export function validateSkillDocument(skill: ParsedSkillDocument): string[] {
   if (skill.content.length > 8_000) problems.push("body must be at most 8000 characters");
   if (skill.description.length > 1_024) problems.push("description must be at most 1024 characters");
   if (skill.compatibility.length > 500) problems.push("compatibility must be at most 500 characters");
+  if (skill.commandsEnabled && skill.commands.length === 0) {
+    problems.push("corvex-commands-enabled requires at least one entry in corvex-commands");
+  }
+  const seen = new Set<string>();
+  for (const command of skill.commands) {
+    if (!isValidSkillName(command.name)) problems.push(`command name "${command.name}" is invalid`);
+    if (seen.has(command.name)) problems.push(`command name "${command.name}" is duplicated`);
+    seen.add(command.name);
+    if (!command.command) problems.push(`command "${command.name}" must not be empty`);
+    if (command.command.length > 4096) problems.push(`command "${command.name}" exceeds 4096 characters`);
+    if (!command.description) problems.push(`command "${command.name}" needs a description`);
+    if (command.command.includes("$ARGUMENTS")) {
+      problems.push(`command "${command.name}" must not interpolate $ARGUMENTS (user input cannot enter a shell command)`);
+    }
+    if (command.timeoutMs !== undefined && command.timeoutMs > 600_000) {
+      problems.push(`command "${command.name}" timeout must not exceed 600000ms`);
+    }
+    if (command.maxOutputBytes !== undefined && command.maxOutputBytes > (1 << 20)) {
+      problems.push(`command "${command.name}" maxOutputBytes must not exceed 1048576`);
+    }
+  }
   return problems;
 }
 

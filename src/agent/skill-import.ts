@@ -81,7 +81,8 @@ function readEntry(zip: yauzl.ZipFile, entry: yauzl.Entry, limit: number): Promi
 
 /**
  * 遍历技能包。outputDir 提供时把安全条目写到磁盘，使技能目录包含 SKILL.md 及配套文件；
- * 不提供时只做发现（旧接口语义）。脚本永不执行，只作为后续只读文件读取的素材。
+ * 不提供时只做发现（旧接口语义）。其它文件只作为只读素材，不会被自动执行；
+ * 只有 SKILL.md 里显式声明并开启的命令才会由 run_skill_command 执行。
  */
 function unpackSkillArchive(
   archive: Buffer,

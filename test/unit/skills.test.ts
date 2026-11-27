@@ -77,6 +77,67 @@ describe("SKILL.md skills", () => {
     expect(isValidSkillName("a b")).toBe(false);
   });
 
+  it("parses and validates declared skill commands", () => {
+    const withCommands = `---
+name: verify
+description: Verify the change.
+metadata:
+  corvex-commands-enabled: "true"
+  corvex-commands:
+    - name: typecheck
+      command: pnpm run typecheck
+      description: Run the TypeScript checker
+      timeoutMs: 120000
+    - name: tests
+      command: pnpm vitest run
+      description: Run unit tests
+      maxOutputBytes: 4096
+---
+
+Verify $ARGUMENTS.
+`;
+    const parsed = parseSkillDocument(withCommands);
+    expect(parsed.commandsEnabled).toBe(true);
+    expect(parsed.commands).toEqual([
+      { name: "typecheck", command: "pnpm run typecheck", description: "Run the TypeScript checker", timeoutMs: 120000 },
+      { name: "tests", command: "pnpm vitest run", description: "Run unit tests", maxOutputBytes: 4096 },
+    ]);
+    expect(validateSkillDocument(parsed)).toEqual([]);
+    // 默认关闭，命令即使写了也不会暴露给模型。
+    expect(parseSkillDocument(withCommands.replace('  corvex-commands-enabled: "true"\n', "")).commandsEnabled).toBe(false);
+  });
+
+  it("rejects command injection and invalid command declarations", () => {
+    const bad = (commands: string) => parseSkillDocument(`---
+name: verify
+description: Verify.
+metadata:
+  corvex-commands-enabled: "true"
+  corvex-commands:
+${commands}
+---
+
+Do $ARGUMENTS.
+`);
+    expect(validateSkillDocument(bad(`    - name: x\n      command: "echo $ARGUMENTS"\n      description: x`)))
+      .toContain('command "x" must not interpolate $ARGUMENTS (user input cannot enter a shell command)');
+    expect(validateSkillDocument(bad(`    - name: X\n      command: echo\n      description: x`)))
+      .toContain('command name "X" is invalid');
+    expect(validateSkillDocument(bad(`    - name: x\n      command: echo\n      description: x\n    - name: x\n      command: echo\n      description: x`)))
+      .toContain('command name "x" is duplicated');
+    const enabledWithoutCommands = parseSkillDocument(`---
+name: verify
+description: Verify.
+metadata:
+  corvex-commands-enabled: "true"
+---
+
+Do $ARGUMENTS.
+`);
+    expect(validateSkillDocument(enabledWithoutCommands))
+      .toContain("corvex-commands-enabled requires at least one entry in corvex-commands");
+  });
+
   it("expands $ARGUMENTS or appends arguments", () => {
     expect(expandSkillTemplate("Do $ARGUMENTS carefully.", " auth ")).toBe("Do auth carefully.");
     expect(expandSkillTemplate("Review the changes", "src/auth.ts"))

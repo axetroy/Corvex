@@ -17,7 +17,7 @@ export interface ExecDelta {
 }
 
 /** 命令字符串最大字符数。 */
-const maxCommandCharacters = 4_096;
+export const maxCommandCharacters = 4_096;
 /** 审计/过程展示里保留的命令前缀长度，避免把敏感值写进轨迹。 */
 const commandPreviewChars = 240;
 
@@ -50,6 +50,69 @@ export function previewCommand(command: string): string {
 }
 
 /**
+ * 执行一次受控命令：独立 AbortController、单命令停止、流式终端、脱敏结果。
+ * run_command 与技能命令共用这条链路，安全边界和配置上限完全一致。
+ */
+export async function executeBoundedCommand(
+  options: RunCommandToolOptions,
+  toolCallId: string,
+  input: { command: string; timeoutMs?: number; maxOutputBytes?: number },
+): Promise<string> {
+  // 每条命令用自己的 AbortController：停止单条命令不能 abort 整个 turn 的 signal。
+  // 但与 turn signal 关联，整轮取消时命令同样被 kill。
+  const controller = new AbortController();
+  const commandSignal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  options.onExecStart?.(toolCallId, (reason) => controller.abort(reason));
+  const emit = (delta: ExecDelta) => {
+    try { options.onExecDelta?.(delta); } catch (error) {
+      console.warn("exec stream callback failed", { error: errorMessage(error) });
+    }
+  };
+  let result: ExecutionResult;
+  try {
+    result = await options.backend.run(
+      {
+        command: input.command,
+        cwd: options.cwd,
+        ...(options.mirrorPath ? { mirrorPath: options.mirrorPath } : {}),
+        ...(options.cachePath ? { cachePath: options.cachePath } : {}),
+        timeoutMs: Math.min(input.timeoutMs ?? options.maxTimeoutMs, options.maxTimeoutMs),
+        maxOutputBytes: Math.min(input.maxOutputBytes ?? options.maxOutputBytes, options.maxOutputBytes),
+      },
+      commandSignal,
+      (stream, text) => emit({ execId: toolCallId, stream, chunk: redactModelFacingText(text) }),
+    );
+  } finally {
+    options.onExecEnd?.(toolCallId);
+  }
+  // 终态：chunk 为空，done=true；前端据此收起终端并把状态定为成功/失败/已停止。
+  emit({
+    execId: toolCallId,
+    stream: "stdout",
+    chunk: "",
+    done: true,
+    exitCode: result.exitCode,
+    aborted: result.aborted,
+    reason: result.reason,
+    truncated: result.truncated,
+  });
+  options.onExecuted?.(result);
+  return [
+    `backend: ${result.backend}`,
+    `command: ${previewCommand(result.command)}`,
+    `exitCode: ${result.exitCode ?? "null"}${result.aborted ? ` (aborted${result.reason ? `: ${result.reason}` : ""})` : ""}`,
+    `durationMs: ${result.durationMs}`,
+    result.truncated ? "output: TRUNCATED" : "",
+    "--- stdout ---",
+    redactModelFacingText(result.stdout),
+    "--- stderr ---",
+    redactModelFacingText(result.stderr),
+  ].filter(Boolean).join("\n");
+}
+
+/**
  * 注册 run_command：自由命令在受控后端执行，模型不接触 shell。
  * 只注册在显式启用 execution 的对话轮次里（由 pi.ts 按配置决定）。
  */
@@ -74,62 +137,12 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
         maxOutputBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: options.maxOutputBytes })),
       }),
       execute: async (toolCallId, params) => {
-        // 每条命令用自己的 AbortController：停止单条命令不能 abort 整个 turn 的 signal。
-        // 但与 turn signal 关联，整轮取消时命令同样被 kill。
-        const controller = new AbortController();
-        const commandSignal = options.signal
-          ? AbortSignal.any([options.signal, controller.signal])
-          : controller.signal;
-        options.onExecStart?.(toolCallId, (reason) => controller.abort(reason));
-        const emit = (delta: ExecDelta) => {
-          try { options.onExecDelta?.(delta); } catch (error) {
-            console.warn("exec stream callback failed", { error: errorMessage(error) });
-          }
-        };
-        let result: ExecutionResult;
-        try {
-          result = await options.backend.run(
-            {
-              command: params.command,
-              cwd: options.cwd,
-              ...(options.mirrorPath ? { mirrorPath: options.mirrorPath } : {}),
-              ...(options.cachePath ? { cachePath: options.cachePath } : {}),
-              timeoutMs: params.timeoutMs ?? options.maxTimeoutMs,
-              maxOutputBytes: params.maxOutputBytes ?? options.maxOutputBytes,
-            },
-            commandSignal,
-            (stream, text) => emit({ execId: toolCallId, stream, chunk: redactModelFacingText(text) }),
-          );
-        } finally {
-          options.onExecEnd?.(toolCallId);
-        }
-        // 终态：chunk 为空，done=true；前端据此收起终端并把状态定为成功/失败/已停止。
-        emit({
-          execId: toolCallId,
-          stream: "stdout",
-          chunk: "",
-          done: true,
-          exitCode: result.exitCode,
-          aborted: result.aborted,
-          reason: result.reason,
-          truncated: result.truncated,
+        const body = await executeBoundedCommand(options, toolCallId, {
+          command: params.command,
+          ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+          ...(params.maxOutputBytes !== undefined ? { maxOutputBytes: params.maxOutputBytes } : {}),
         });
-        options.onExecuted?.(result);
-        const body = [
-          `backend: ${result.backend}`,
-          `command: ${previewCommand(result.command)}`,
-          `exitCode: ${result.exitCode ?? "null"}${result.aborted ? ` (aborted${result.reason ? `: ${result.reason}` : ""})` : ""}`,
-          `durationMs: ${result.durationMs}`,
-          result.truncated ? "output: TRUNCATED" : "",
-          "--- stdout ---",
-          redactModelFacingText(result.stdout),
-          "--- stderr ---",
-          redactModelFacingText(result.stderr),
-        ].filter(Boolean).join("\n");
-        return {
-          content: [{ type: "text" as const, text: body }],
-          details: {},
-        };
+        return { content: [{ type: "text" as const, text: body }], details: {} };
       },
     });
   };
