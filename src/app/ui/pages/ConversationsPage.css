@@ -2763,14 +2763,22 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-image-viewport {
-  display: grid;
+  position: relative;
+  display: block;
   min-height: 0;
   flex: 1 1 auto;
-  place-items: center;
   overflow: hidden;
   border: 1px solid var(--conversation-border);
   border-radius: 6px;
-  background: var(--bg-subtle);
+  /* 棋盘格背景：白色或透明图片也能看清边界，亮/暗主题各有对应变量。 */
+  background-color: var(--bg-panel);
+  background-image:
+    linear-gradient(45deg, var(--image-checker) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--image-checker) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--image-checker) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--image-checker) 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -2781,17 +2789,12 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-image-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   display: block;
   max-width: none;
   transform-origin: center center;
-  background-color: var(--bg-panel);
-  background-image:
-    linear-gradient(45deg, var(--border-soft) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--border-soft) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--border-soft) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--border-soft) 75%);
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-  background-size: 16px 16px;
   pointer-events: none;
 }
 

@@ -22,7 +22,8 @@ interface View {
 
 const minZoom = 0.1;
 const maxZoom = 8;
-const zoomStep = 1.15;
+/** 每像素滚轮位移对应的缩放系数；触控板小增量会平滑缩放，鼠标滚轮也不会突变。 */
+const zoomPerPixel = 0.0015;
 const initialView: View = { zoom: 1, x: 0, y: 0 };
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -82,7 +83,13 @@ export function ImagePreview({ src, alt, copy }: Props) {
       const rect = element.getBoundingClientRect();
       const pointerX = event.clientX - rect.left - rect.width / 2;
       const pointerY = event.clientY - rect.top - rect.height / 2;
-      const factor = event.deltaY < 0 ? zoomStep : 1 / zoomStep;
+      // 不同设备的 deltaMode 差异很大，先统一成像素再按位移比例缩放。
+      const pixels = event.deltaMode === 1
+        ? event.deltaY * 16
+        : event.deltaMode === 2
+          ? event.deltaY * rect.height
+          : event.deltaY;
+      const factor = clamp(Math.exp(-pixels * zoomPerPixel), 0.8, 1.25);
       setView((current) => {
         const zoom = clamp(current.zoom * factor, minZoom, maxZoom);
         const ratio = zoom / current.zoom;
@@ -148,7 +155,8 @@ export function ImagePreview({ src, alt, copy }: Props) {
             width: natural?.width,
             height: natural?.height,
             visibility: natural && viewport.width && viewport.height ? "visible" : "hidden",
-            transform: `translate(${view.x}px, ${view.y}px) scale(${fit * view.zoom})`,
+            // 先以视口中心为原点居中，再叠加拖拽偏移与缩放；不依赖 Grid 的溢出对齐。
+            transform: `translate(-50%, -50%) translate(${view.x}px, ${view.y}px) scale(${fit * view.zoom})`,
           }}
           onLoad={(event) => setNatural({
             width: event.currentTarget.naturalWidth,

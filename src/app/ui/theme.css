@@ -20,6 +20,8 @@
   --border-soft: #eef1f4;
   --border: #e1e6eb;
   --border-strong: #d5dce3;
+  /** 图片查看器的棋盘格底色，与 --bg-panel 交错，便于看清白色/透明图片。 */
+  --image-checker: #e8edf2;
 
   --text: #17212b;
   --text-strong: #25313c;
@@ -62,6 +64,7 @@
   --border-soft: #22303d;
   --border: #2b3a48;
   --border-strong: #3b4b5b;
+  --image-checker: #243141;
 
   --text: #e7edf3;
   --text-strong: #f3f7fa;
