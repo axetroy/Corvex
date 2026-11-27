@@ -2018,45 +2018,107 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   white-space: nowrap;
 }
 
-/* 待发附件放在输入框内部的 header 区，与其它 Agent 的输入框一致。 */
+/* 待发附件放在输入框内部的 header 区：卡片式，不再是一条长 pill。 */
 .conversation-attachment-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 2px 2px 4px;
+  gap: 6px;
+  padding: 8px 4px 4px;
 }
 
 .conversation-attachment-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .conversation-attachment-chip {
+  position: relative;
   display: inline-flex;
-  max-width: 220px;
+  width: 168px;
+  min-width: 0;
+  min-height: 56px;
   align-items: center;
-  gap: 5px;
-  padding: 3px 6px 3px 8px;
-  /* 输入框所在区域本身是 --bg-subtle，chip 必须换成面板色 + 更明显的边框才不会糊成一片。 */
+  gap: 9px;
+  padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 99px;
+  border-radius: 8px;
   background: var(--bg-panel);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 7%);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 6%);
+  color: var(--text);
+}
+
+.conversation-attachment-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.conversation-attachment-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.conversation-attachment-thumb {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  object-fit: cover;
+}
+
+.conversation-attachment-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversation-attachment-name {
+  overflow: hidden;
   color: var(--text);
   font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-attachment-chip svg,
-.conversation-attachment-thumb {
-  width: 13px;
-  height: 13px;
-  flex: none;
+.conversation-attachment-kind {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-attachment-thumb {
-  border-radius: 3px;
-  object-fit: cover;
+.conversation-attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.conversation-attachment-remove:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
 }
 
 /* 用户气泡里展示发送时附带的附件快照；缩略图 404 时隐藏图片只留文件名。 */
@@ -2100,31 +2162,6 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   color: var(--warning);
   font-size: 11px;
   line-height: 1.5;
-}
-
-.conversation-attachment-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-attachment-chip button {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 16px;
-}
-
-.conversation-attachment-chip button:hover {
-  background: var(--bg-hover);
-  color: var(--danger);
 }
 
 .conversation-composer-footer {

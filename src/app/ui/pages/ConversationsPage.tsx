@@ -719,6 +719,19 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
    * 客户端只拦截「明显是二进制」的文件；.py/.ts/.html/.sh 等源码文件即使浏览器
    * 给出空 MIME 或 text/x-* 也应放行，最终按真实字节由服务端判定。
    */
+  /** 附件卡片副标题：把 MIME 收敛成短类型名，不增加 i18n 键。 */
+  function attachmentKind(mime: string, filename: string): string {
+    if (mime.startsWith("image/")) return (mime.split("/")[1] ?? "image").toUpperCase();
+    const extension = filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
+    const known: Record<string, string> = {
+      md: "Markdown", markdown: "Markdown", json: "JSON", jsonl: "JSON", csv: "CSV",
+      html: "HTML", htm: "HTML", css: "CSS", js: "JavaScript", ts: "TypeScript",
+      jsx: "JSX", tsx: "TSX", py: "Python", sh: "Shell", yaml: "YAML", yml: "YAML",
+      toml: "TOML", xml: "XML", sql: "SQL", java: "Java", go: "Go", rs: "Rust",
+    };
+    return known[extension] ?? (mime.split("/")[1] ?? "Text").toUpperCase().slice(0, 12);
+  }
+
   const supportedImageMime = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
   function isImageAttachment(file: File): boolean {
     return supportedImageMime.has(file.type.toLowerCase()) || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
@@ -1591,11 +1604,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                                       ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/image`
                                       : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
                                     alt=""
+                                    onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
                                   />
-                                ) : <FileIcon />}
-                                <span className="conversation-attachment-name">{item.filename}</span>
+                                ) : (
+                                  <span className="conversation-attachment-icon"><FileIcon /></span>
+                                )}
+                                <span className="conversation-attachment-info">
+                                  <span className="conversation-attachment-name">{item.filename}</span>
+                                  <span className="conversation-attachment-kind">{attachmentKind(item.mime, item.filename)}</span>
+                                </span>
                                 <button
                                   type="button"
+                                  className="conversation-attachment-remove"
                                   aria-label={`${copy.removeAttachment}: ${item.filename}`}
                                   title={copy.removeAttachment}
                                   onClick={() => void removeAttachment(item.id)}
