@@ -1266,20 +1266,17 @@
   font-size: 11px;
 }
 
-.conversation-tool-call-params-hint {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--bg-hover);
+.conversation-tool-call-label {
+  display: block;
+  margin: 8px 0 2px 12px;
   color: var(--conversation-muted);
   font-size: 11px;
-  white-space: nowrap;
 }
 
-.conversation-tool-call-input {
+.conversation-tool-call-input,
+.conversation-tool-call-output {
   max-height: 12em;
-  margin: 6px 0 0 12px;
+  margin: 0 0 0 12px;
   padding: 8px;
   overflow: auto;
   border-radius: 6px;
@@ -1288,6 +1285,15 @@
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.conversation-tool-call-output {
+  border-left: 2px solid var(--conversation-brand);
+  background: var(--bg-panel);
+}
+
+.conversation-tool-call-output-block + .conversation-tool-call-output-block {
+  margin-top: 2px;
 }
 
 .conversation-message-text {

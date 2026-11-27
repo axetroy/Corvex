@@ -138,6 +138,8 @@ export interface ConversationToolCall {
   status: TraceStatus;
   /** 工具调用参数（脱敏后的 JSON 文本）；未记录时为空。 */
   input: string | null;
+  /** 工具返回结果（脱敏且限长后）；展开调用时与参数一起展示。 */
+  output?: string | null;
   durationMs: number | null;
 }
 
@@ -159,6 +161,8 @@ export type ConversationProcessEntry =
       input: string | null;
       status: TraceStatus;
       durationMs: number | null;
+      /** 工具返回结果（脱敏且限长后），随过程快照落库，供刷新后展开查看。 */
+      output?: string | null;
       /** run_command 的脱敏输出，随过程快照落库，供刷新后回放终端（chunk 已拼接为完整文本）。 */
       execOutput?: {
         stdout: string;
@@ -250,6 +254,8 @@ export interface ConversationStreamTool {
   input: string | null;
   status: TraceStatus;
   durationMs: number | null;
+  /** 工具结束时的返回结果；与输入一样脱敏限长，供展开时查看。 */
+  output?: string | null;
 }
 
 export type ConversationStreamContext = { id: string; text: string };

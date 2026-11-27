@@ -1036,7 +1036,8 @@ describe("AppStore", () => {
       null,
       { round: 1, input: JSON.stringify({ path: "src/routing.ts" }) },
     );
-    store.finishTrace(readTrace, "succeeded", 42);
+    store.finishTrace(readTrace, "succeeded", 42, undefined, undefined, undefined,
+      JSON.stringify({ content: [{ type: "text", text: "export const route = 1;" }] }));
     const grepTrace = store.startTrace(
       { kind: "conversation", turnId: claimed.turnId },
       claimed.attempt,
@@ -1054,7 +1055,10 @@ describe("AppStore", () => {
       role: "assistant",
       traceCount: 2,
       toolCalls: [
-        { name: "read_file", status: "succeeded", durationMs: 42 },
+        {
+          name: "read_file", status: "succeeded", durationMs: 42,
+          output: JSON.stringify({ content: [{ type: "text", text: "export const route = 1;" }] }),
+        },
         { name: "git_grep", status: "failed", durationMs: 7 },
       ],
     });

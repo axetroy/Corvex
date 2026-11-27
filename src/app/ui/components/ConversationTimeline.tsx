@@ -164,7 +164,18 @@ export const ConversationTimeline = memo(function ConversationTimeline({
                   {translate(copy.traceStatuses, segment.call.status)}
                 </span>
               </summary>
-              {segment.call.input ? <pre className="conversation-tool-call-input">{segment.call.input}</pre> : null}
+              {segment.call.input ? (
+                <>
+                  <span className="conversation-tool-call-label">{copy.conversationToolParameters}</span>
+                  <pre className="conversation-tool-call-input">{segment.call.input}</pre>
+                </>
+              ) : null}
+              {segment.call.output ? (
+                <div className="conversation-tool-call-output-block">
+                  <span className="conversation-tool-call-label">{copy.conversationToolOutput}</span>
+                  <pre className="conversation-tool-call-output">{segment.call.output}</pre>
+                </div>
+              ) : null}
             </details>
           )
         ) : segment.kind === "tool" && segment.call.name === "record_plan" ? (
@@ -190,11 +201,19 @@ export const ConversationTimeline = memo(function ConversationTimeline({
                   {formatTraceDuration(segment.call.durationMs, copy)}
                 </span>
               )}
-              {segment.call.input ? (
-                <span className="conversation-tool-call-params-hint">{copy.conversationToolParameters}</span>
-              ) : null}
             </summary>
-            {segment.call.input ? <pre className="conversation-tool-call-input">{segment.call.input}</pre> : null}
+            {segment.call.input ? (
+              <>
+                <span className="conversation-tool-call-label">{copy.conversationToolParameters}</span>
+                <pre className="conversation-tool-call-input">{segment.call.input}</pre>
+              </>
+            ) : null}
+            {segment.call.output ? (
+              <div className="conversation-tool-call-output-block">
+                <span className="conversation-tool-call-label">{copy.conversationToolOutput}</span>
+                <pre className="conversation-tool-call-output">{segment.call.output}</pre>
+              </div>
+            ) : null}
           </details>
         ))}
       </div>

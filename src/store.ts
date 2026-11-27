@@ -90,6 +90,8 @@ const maxExecutionPayloadBytes = 64 << 10;
 const maxConversationToolCalls = 50;
 /** 对话列表工具调用参数展示的最大字节数，避免把整段轨迹负载塞进列表接口。 */
 const maxConversationToolInputBytes = 2048;
+/** 工具输出比参数更长，但仍要限制，避免一条结果占满过程快照。 */
+const maxConversationToolOutputBytes = 4096;
 /** 单轮对话过程落库的最大条目数；超出时只保留最近的过程，避免长任务撑大数据库。 */
 const maxConversationProcessEntries = 400;
 /** 单轮对话过程落库的最大字节数；超限时从最早条目开始丢弃。 */
@@ -232,6 +234,7 @@ function sanitizeConversationProcess(entries: readonly ConversationProcessEntry[
         ...entry,
         name: redactSensitiveText(entry.name).slice(0, 512),
         input: entry.input ? redactModelFacingText(entry.input).slice(0, maxConversationProcessInputChars) : null,
+        ...(entry.output ? { output: redactModelFacingText(entry.output).slice(0, maxConversationToolOutputBytes) } : {}),
       };
     }
     if (entry.kind === "scheduleCard") {
@@ -348,6 +351,7 @@ function readConversationProcess(raw: string): ConversationProcessEntry[] {
         ...(typeof entry.id === "string" ? { id: entry.id } : {}),
         name: entry.name,
         input: typeof entry.input === "string" ? entry.input : null,
+        ...(typeof entry.output === "string" ? { output: entry.output } : {}),
         status: entry.status,
         durationMs: typeof entry.durationMs === "number" ? entry.durationMs : null,
         ...(execOutput ? { execOutput } : {}),
@@ -1106,7 +1110,7 @@ export class AppStore {
     const turnIds = messages.flatMap((message) => (message.role === "assistant" && message.turnId ? [message.turnId] : []));
     if (turnIds.length > 0) {
       const rows = this.db.prepare(
-        `SELECT turn_id, name, status, trace_input, duration_ms FROM conversation_trace
+        `SELECT turn_id, name, status, trace_input, trace_output, duration_ms FROM conversation_trace
          WHERE kind='tool' AND turn_id IN (${turnIds.map(() => "?").join(",")})
          ORDER BY started_at,id`,
       ).all(...turnIds);
@@ -2410,10 +2414,15 @@ export class AppStore {
     if (input !== null && input !== undefined && typeof input !== "string") {
       throw new Error('SQLite column "trace_input" is not text or null');
     }
+    const output = row.trace_output;
+    if (output !== null && output !== undefined && typeof output !== "string") {
+      throw new Error('SQLite column "trace_output" is not text or null');
+    }
     return {
       name: stringColumn(row, "name"),
       status,
       input: typeof input === "string" ? input.slice(0, maxConversationToolInputBytes) : null,
+      output: typeof output === "string" ? output.slice(0, maxConversationToolOutputBytes) : null,
       durationMs: typeof duration === "number" ? duration : null,
     };
   }

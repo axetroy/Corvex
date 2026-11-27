@@ -83,6 +83,7 @@ export function parseSseFrames(buffer: string): {
             input: typeof tool.input === "string" ? tool.input : null,
             status: tool.status as ConversationStreamTool["status"],
             durationMs: typeof tool.durationMs === "number" ? tool.durationMs : null,
+            ...(typeof tool.output === "string" ? { output: tool.output } : {}),
           },
         });
       }

@@ -1042,6 +1042,7 @@ export class ConversationRunner {
           existing.input = tool.input;
           existing.status = tool.status;
           existing.durationMs = tool.durationMs;
+          if (tool.output) existing.output = tool.output;
         } else {
           entries.push({
             kind: "tool",
@@ -1050,6 +1051,7 @@ export class ConversationRunner {
             input: tool.input,
             status: tool.status,
             durationMs: tool.durationMs,
+            ...(tool.output ? { output: tool.output } : {}),
           });
         }
       }

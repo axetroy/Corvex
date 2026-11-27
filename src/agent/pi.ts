@@ -25,7 +25,7 @@ import { estimateTokens, isContextOverflowError, nextOverflowRetryContextWindow 
 import { resolveAdaptiveCompactionThreshold } from "./adaptive-compaction.js";
 import { getAgentToolAccess } from "./tool-access.js";
 import { createToolCatalogExtension } from "./tool-catalog.js";
-import { redactSensitiveText } from "../redact.js";
+import { redactModelFacingText, redactSensitiveText } from "../redact.js";
 import { readProjectGuidance } from "./project-guidance.js";
 import { contextNoticeText, microcompactNoticeText, projectGuidanceNoticeText, responseWaitNoticeText } from "./context-notice.js";
 import { createPlanExtension } from "./plan.js";
@@ -259,6 +259,31 @@ export function createSteerChannel(): SteerChannel {
       }
     },
   };
+}
+
+/** 工具结果只取 text 片段，避免图片 Base64 之类的大负载进入过程/界面。 */
+function readToolResultText(result: unknown): string | null {
+  if (result === undefined || result === null) return null;
+  let text = "";
+  if (result && typeof result === "object") {
+    const content = (result as Record<string, unknown>).content;
+    if (Array.isArray(content)) {
+      text = content.flatMap((part) => {
+        if (!part || typeof part !== "object") return [];
+        const item = part as Record<string, unknown>;
+        return item.type === "text" && typeof item.text === "string" ? [item.text] : [];
+      }).join("\n");
+    }
+  }
+  if (!text) {
+    try {
+      text = JSON.stringify(result) ?? "";
+    } catch {
+      text = String(result);
+    }
+  }
+  const safe = redactModelFacingText(text);
+  return safe.length > 4_096 ? `${safe.slice(0, 4_096)}…` : safe;
 }
 
 /** 工具结果里的 details 是不可信边界数据，逐字段校验后才交给前端渲染。 */
@@ -1269,12 +1294,14 @@ export class PiAgent {
           durationMs: null,
         });
       } else if (event.type === "tool_execution_end") {
+        const output = event.isError ? null : readToolResultText(event.result);
         emitToolStream({
           id: event.toolCallId,
           name: event.toolName,
           input: streamToolInputs.get(event.toolCallId) ?? null,
           status: event.isError ? "failed" : "succeeded",
           durationMs: event.durationMs ?? null,
+          ...(output ? { output } : {}),
         });
         if (!event.isError) {
           emitScheduleCard((event.result as { details?: unknown } | undefined)?.details);

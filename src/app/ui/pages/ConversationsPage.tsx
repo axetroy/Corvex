@@ -1092,8 +1092,11 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     // 刷新后用落库的过程快照还原每次思考、中间回复与工具调用；旧数据回退到工具摘要。
     const persistedSegments: ConversationTimelineSegment[] = [];
     if (message.process.length) {
+      // 旧轮次的过程快照没有 output，按工具顺序回退到轨迹摘要里的输出。
+      let toolIndex = 0;
       message.process.forEach((entry, index) => {
         if (entry.kind === "tool") {
+          const fallbackOutput = message.toolCalls[toolIndex++]?.output;
           persistedSegments.push({
             kind: "tool",
             key: `persisted-${index}`,
@@ -1103,6 +1106,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
               input: entry.input,
               status: entry.status,
               durationMs: entry.durationMs,
+              ...(entry.output ?? fallbackOutput ? { output: entry.output ?? fallbackOutput } : {}),
             },
           });
         } else if (entry.kind === "context") {
