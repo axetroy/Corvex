@@ -2053,6 +2053,42 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   object-fit: cover;
 }
 
+/* 用户气泡里展示发送时附带的附件快照；缩略图 404 时隐藏图片只留文件名。 */
+.conversation-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.conversation-message-attachment {
+  display: inline-flex;
+  max-width: 220px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.conversation-message-attachment img,
+.conversation-message-attachment svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.conversation-message-attachment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-attachment-warning {
   margin: 0 2px;
   color: var(--warning);

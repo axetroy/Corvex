@@ -25,6 +25,7 @@ import {
   type Conversation,
   type ConversationFollowUp,
   type ConversationMessage,
+  type ConversationMessageAttachment,
   type ConversationSkill,
   type ConversationUpload,
   type ScheduledTaskCard,
@@ -2298,6 +2299,14 @@ export class AppStore {
     const userMessageId = randomUUID();
     const responseId = randomUUID();
     const request = input.request.trim();
+    // 消息自带附件快照：附件表后续被删也不影响历史消息展示。
+    const attachmentSnapshot = JSON.stringify((input.uploadIds ?? []).flatMap((id) => {
+      const upload = this.getConversationUpload(id);
+      if (!upload || upload.conversationId !== conversationId) return [];
+      return [{
+        id: upload.id, filename: upload.filename, mime: upload.mime, sizeBytes: upload.sizeBytes,
+      }];
+    }));
     this.db.prepare(
       `INSERT INTO conversation_turns
          (id,conversation_id,message_id,user_message_id,role,status,request,head_sha,actor_id,attempt_count,last_error,upload_ids,created_at,updated_at)
@@ -2320,14 +2329,17 @@ export class AppStore {
     );
     this.db.prepare(
       `INSERT INTO conversation_messages
-         (id,conversation_id,role,content,status,turn_id,head_sha,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(userMessageId, conversationId, "user", request, "completed", null, input.headSha, now, now);
+         (id,conversation_id,role,content,status,turn_id,head_sha,upload_snapshot,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      userMessageId, conversationId, "user", request, "completed", null, input.headSha,
+      attachmentSnapshot, now, now,
+    );
     this.db.prepare(
       `INSERT INTO conversation_messages
-         (id,conversation_id,role,content,status,turn_id,head_sha,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).run(responseId, conversationId, "assistant", "", "queued", turnId, input.headSha, now, now);
+         (id,conversation_id,role,content,status,turn_id,head_sha,upload_snapshot,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    ).run(responseId, conversationId, "assistant", "", "queued", turnId, input.headSha, "[]", now, now);
     this.db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
     return { conversationId, turnId };
   }
@@ -2382,6 +2394,22 @@ export class AppStore {
     const tps = generationDurationMs > 0 && generationOutputTokens > 0
       ? generationOutputTokens * 1000 / generationDurationMs
       : null;
+    let attachments: ConversationMessageAttachment[] = [];
+    try {
+      const parsed: unknown = JSON.parse(typeof row.upload_snapshot === "string" ? row.upload_snapshot : "[]");
+      if (Array.isArray(parsed)) {
+        attachments = parsed.flatMap((item): ConversationMessageAttachment[] => {
+          if (!item || typeof item !== "object") return [];
+          const row = item as Record<string, unknown>;
+          return typeof row.id === "string" && typeof row.filename === "string" &&
+            typeof row.mime === "string" && typeof row.sizeBytes === "number"
+            ? [{ id: row.id, filename: row.filename, mime: row.mime, sizeBytes: row.sizeBytes }]
+            : [];
+        });
+      }
+    } catch {
+      // 旧数据或损坏的 JSON 按无附件处理，不阻断对话读取。
+    }
     const generationInputTokens = row.generation_input_tokens === undefined ? 0 : numberColumn(row, "generation_input_tokens");
     const cacheRead = typeof row.turn_cache_read_tokens === "number"
       ? numberColumn(row, "turn_cache_read_tokens")
@@ -2402,6 +2430,7 @@ export class AppStore {
       kind: row.kind === "interjection" ? "interjection" : "message",
       content: stringColumn(row, "content"),
       status: status as ConversationMessage["status"],
+      attachments,
       turnId,
       headSha: stringColumn(row, "head_sha"),
       createdAt: stringColumn(row, "created_at"),
@@ -3123,7 +3152,7 @@ export class AppStore {
       CREATE TABLE IF NOT EXISTS conversation_messages (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
         role TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'message', content TEXT NOT NULL, status TEXT NOT NULL, turn_id TEXT,
-        head_sha TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        head_sha TEXT NOT NULL, upload_snapshot TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_messages_order_idx ON conversation_messages(conversation_id,created_at,id);
       CREATE TABLE IF NOT EXISTS conversation_followups (
@@ -3511,6 +3540,40 @@ export class AppStore {
     );
     if (!providerModelColumns.has("supports_vision")) {
       this.db.exec("ALTER TABLE provider_models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0");
+    }
+    // 用户消息需要记住随消息上传的附件，旧库补列为空数组。
+    const messageColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(conversation_messages)").all() as { name: string }[]).map((column) => column.name),
+    );
+    const messageSnapshotMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:message-attachment-snapshot'")
+      .get() as { value: string } | undefined;
+    if (!messageSnapshotMigration) {
+      if (!messageColumns.has("upload_snapshot")) {
+        this.db.exec("ALTER TABLE conversation_messages ADD COLUMN upload_snapshot TEXT NOT NULL DEFAULT '[]'");
+      }
+      // 旧轮次把附件 ID 存在 turn.upload_ids，按它回填消息快照，历史对话也能显示附件。
+      const turns = this.db.prepare(
+        "SELECT user_message_id,upload_ids FROM conversation_turns WHERE user_message_id<>'' AND upload_ids<>'[]'",
+      ).all() as { user_message_id: string; upload_ids: string }[];
+      const update = this.db.prepare("UPDATE conversation_messages SET upload_snapshot=? WHERE id=? AND upload_snapshot='[]'");
+      for (const turn of turns) {
+        let ids: unknown;
+        try { ids = JSON.parse(turn.upload_ids); } catch { continue; }
+        if (!Array.isArray(ids)) continue;
+        const snapshot = ids.flatMap((id) => {
+          if (typeof id !== "string") return [];
+          const upload = this.getConversationUpload(id);
+          return upload ? [{
+            id: upload.id, filename: upload.filename, mime: upload.mime, sizeBytes: upload.sizeBytes,
+          }] : [];
+        });
+        if (snapshot.length > 0) update.run(JSON.stringify(snapshot), turn.user_message_id);
+      }
+      const now = new Date().toISOString();
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:message-attachment-snapshot", now, now, "migration");
     }
     // 旧版本把错过的一次性任务留在 active，并用 9999 哨兵当下次触发时间；统一标为已完成。
     const stuckOnceMigration = this.db

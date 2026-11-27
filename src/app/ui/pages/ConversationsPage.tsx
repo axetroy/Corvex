@@ -165,7 +165,27 @@ function MessageContent({
     },
   }), [copy]);
   if (message.role === "user") {
-    return <div className="conversation-message-text" data-turn-id={message.id}>{message.content}</div>;
+    return (
+      <div className="conversation-message-text" data-turn-id={message.id}>
+        {message.content}
+        {message.attachments.length ? (
+          <div className="conversation-message-attachments">
+            {message.attachments.map((attachment) => (
+              <span className="conversation-message-attachment" key={attachment.id} title={attachment.filename}>
+                {attachment.mime.startsWith("image/") && conversationId ? (
+                  <img
+                    src={`/api/ops/conversations/${encodeURIComponent(conversationId)}/uploads/${encodeURIComponent(attachment.id)}/image`}
+                    alt=""
+                    onError={(event) => { event.currentTarget.style.display = "none"; }}
+                  />
+                ) : <FileIcon />}
+                <span>{attachment.filename}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
   // 回复仍在校验/生成中时不提供复制，避免复制到半成品内容。
   const settled = message.status === "completed" || message.status === "failed";

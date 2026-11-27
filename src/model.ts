@@ -174,6 +174,14 @@ export type ConversationProcessEntry =
       };
     };
 
+/** 消息里的附件快照：只存展示所需字段，不依赖附件表后续是否还存在。 */
+export interface ConversationMessageAttachment {
+  id: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+}
+
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -181,6 +189,8 @@ export interface ConversationMessage {
   kind: "message" | "interjection";
   content: string;
   status: ConversationMessageStatus;
+  /** 随这条用户消息上传的附件快照；落库时留存，后续附件被删也能显示文件名。 */
+  attachments: ConversationMessageAttachment[];
   /** 助手回复对应的轮次 ID；用户消息为空。 */
   turnId: string | null;
   headSha: string;

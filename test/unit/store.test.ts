@@ -418,6 +418,32 @@ describe("AppStore", () => {
     expect(store.branchActivity(99).size).toBe(0);
   });
 
+  it("keeps an attachment snapshot on the user message after the upload is deleted", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 1, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "x", ownerUserId: "u1",
+    });
+    const upload = store.createConversationUpload({
+      id: "snap1", conversationId: created.conversationId, ownerUserId: "u1",
+      filename: "shot.png", mime: "image/png", sizeBytes: 70,
+      storagePath: "uploads/c1/snap1/shot.png", sha256: "x",
+    });
+    const claimed = store.claimConversationTurn(created.turnId);
+    if (!claimed) throw new Error("expected a conversation turn to be claimed");
+    store.finishConversationTurn(claimed.turnId, "done");
+    store.addConversationMessage(created.conversationId, {
+      ownerUserId: "u1", projectId: 1, targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "look at this",
+      uploadIds: [upload.id],
+    });
+    expect(store.deleteConversationUpload(upload.id)).toBe(true);
+    const message = store.getConversation(created.conversationId)?.messages.find((item) => item.role === "user" && item.content === "look at this");
+    expect(message?.attachments).toEqual([
+      { id: "snap1", filename: "shot.png", mime: "image/png", sizeBytes: 70 },
+    ]);
+  });
+
   it("preserves scheduled task cards in the turn process snapshot", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({
