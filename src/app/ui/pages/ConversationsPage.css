@@ -2229,12 +2229,10 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-upload-notice {
-  padding: 6px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--bg-subtle);
+  margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 /* 附件预览弹窗：Monaco / 图片预览器都撑满弹窗内容区。 */

@@ -800,6 +800,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
     setUploadingAttachment(true);
     setError("");
+    setUploadNotice("");
     try {
       for (const file of files.slice(0, room)) {
         // 客户端按文件类型预检；图片先压缩再上传，原图不进入请求体。
@@ -1444,7 +1445,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     <>
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
-      {uploadNotice ? <div className="conversation-upload-notice">{uploadNotice}</div> : null}
       <section className="conversations-layout" aria-label={copy.conversationsDescription}>
         <Group
           id="conversation-panels"
@@ -1737,6 +1737,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                               </span>
                             ))}
                           </div>
+                          {uploadNotice ? (
+                            <div className="conversation-upload-notice" role="status">{uploadNotice}</div>
+                          ) : null}
                           {attachments.some((item) => item.mime.startsWith("image/")) && !uploadLimits.visionSupported ? (
                             <div className="conversation-attachment-warning" role="status">{copy.attachmentVisionUnsupported}</div>
                           ) : null}
