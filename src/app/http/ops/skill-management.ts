@@ -101,6 +101,8 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
       let name: string;
       let source: "upload" | "url" | "github" | "gitlab";
       let sourceValue: string;
+      let sourceUrl: string | undefined;
+      let commit: string | undefined;
       let ref: string | undefined;
       let path: string | undefined;
       let overwrite = false;
@@ -133,6 +135,8 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
           { gitlab: options.gitlabForRequest(request), gitlabBaseUrl: options.gitlabBaseUrl },
         );
         archive = result.archive!;
+        sourceUrl = result.sourceUrl;
+        commit = result.commit;
         name = value.split("/").filter(Boolean).pop() ?? "skill-pack";
         source = channel;
         sourceValue = value;
@@ -144,10 +148,38 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
         sendJson(reply, 413, { error: `ZIP exceeds the ${skillImportLimits.maxArchiveBytes} byte limit` });
         return;
       }
-      const result = await options.storeForRequest(request).importPack({ name, archive, source, sourceValue, ref, path, overwrite });
+      const result = await options.storeForRequest(request).importPack({
+        name, archive, source, sourceValue, ref, sourceUrl, commit, path, overwrite,
+      });
       sendJson(reply, 201, result);
     } catch (cause) {
       sendJson(reply, 400, { error: cause instanceof Error ? cause.message : "skill import failed" });
+    }
+  });
+
+  // 按锁里记录的远程来源重新拉取并更新技能包。
+  app.post("/skills/packs/:id/update", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    try {
+      const result = await options.storeForRequest(request).updatePack(id, async (entry) => {
+        if (entry.source !== "url" && entry.source !== "github" && entry.source !== "gitlab") {
+          throw new Error("this pack was uploaded locally and has no remote source");
+        }
+        const fetched = await fetchSkillsFromSource(
+          {
+            channel: entry.source,
+            value: entry.sourceUrl || entry.sourceValue || "",
+            ...(entry.ref || entry.commit ? { ref: entry.ref ?? entry.commit! } : {}),
+            ...(entry.skillPath ? { path: entry.skillPath.replace(/\/[^/]+$/, "") } : {}),
+          },
+          { gitlab: options.gitlabForRequest(request), gitlabBaseUrl: options.gitlabBaseUrl },
+        );
+        if (!fetched.archive) throw new Error("source did not return a ZIP archive");
+        return { archive: fetched.archive, sourceUrl: fetched.sourceUrl, commit: fetched.commit };
+      });
+      sendJson(reply, 200, result);
+    } catch (cause) {
+      sendJson(reply, 400, { error: cause instanceof Error ? cause.message : "skill pack update failed" });
     }
   });
 

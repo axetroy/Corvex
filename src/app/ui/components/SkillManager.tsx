@@ -153,6 +153,16 @@ export function SkillManager({ copy }: { copy: Copy }) {
     }
   }
 
+  async function updatePack(pack: SkillPack, base = "/api/ops/admin/skills") {
+    setError("");
+    try {
+      await sendJson(`${base}/packs/${encodeURIComponent(pack.id)}/update`, {}, copy, "POST");
+      setNotice(copy.skillManagerSaved);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
   function confirmDeletePack(pack: SkillPack, base = "/api/ops/admin/skills") {
     modal.confirm({
       title: copy.skillPackDeleteConfirm,
@@ -289,7 +299,10 @@ export function SkillManager({ copy }: { copy: Copy }) {
             key: "actions",
             width: "22%",
             render: (_: unknown, pack: SkillPack) => (
-              <Button size="small" danger onClick={() => confirmDeletePack(pack)}>{copy.skillPackDelete}</Button>
+              <Space size="small">
+                <Button size="small" onClick={() => void updatePack(pack)}>{copy.skillPackUpdate}</Button>
+                <Button size="small" danger onClick={() => confirmDeletePack(pack)}>{copy.skillPackDelete}</Button>
+              </Space>
             ),
           },
         ]}
@@ -335,7 +348,10 @@ export function SkillManager({ copy }: { copy: Copy }) {
             key: "actions",
             width: "20%",
             render: (_: unknown, pack: SkillPack) => (
-              <Button size="small" danger onClick={() => confirmDeletePack(pack, "/api/ops/me/skills")}>{copy.skillPackDelete}</Button>
+              <Space size="small">
+                <Button size="small" onClick={() => void updatePack(pack, "/api/ops/me/skills")}>{copy.skillPackUpdate}</Button>
+                <Button size="small" danger onClick={() => confirmDeletePack(pack, "/api/ops/me/skills")}>{copy.skillPackDelete}</Button>
+              </Space>
             ),
           },
         ]}

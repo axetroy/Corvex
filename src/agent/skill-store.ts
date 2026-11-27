@@ -51,6 +51,8 @@ export interface SkillLockEntry {
   archive?: string;
   /** SKILL.md 相对技能目录的路径；npx skills 允许它不在根目录。 */
   skillFile?: string;
+  /** 用户填写的原始来源地址（owner/repo 等），无解析 URL 时用于回源。 */
+  sourceValue?: string;
 }
 
 export interface SkillLockFile {
@@ -75,8 +77,16 @@ export interface SkillImportPackInput {
   sourceValue: string;
   ref?: string;
   commit?: string;
+  sourceUrl?: string;
   path?: string;
   overwrite: boolean;
+}
+
+/** 更新技能包时由路由提供重新下载能力，存储层不关心 GitLab 令牌与网络细节。 */
+export interface SkillPackFetchResult {
+  archive: Buffer;
+  sourceUrl?: string;
+  commit?: string;
 }
 
 export interface SkillImportPackResult {
@@ -670,7 +680,8 @@ export class SkillStore {
           lock.skills[skill.name] = {
             source: input.source,
             sourceType: input.source,
-            sourceUrl: input.sourceValue,
+            sourceUrl: input.sourceUrl ?? input.sourceValue,
+            sourceValue: input.sourceValue,
             ...(input.ref ? { ref: input.ref } : {}),
             ...(input.commit ? { commit: input.commit } : {}),
             skillPath: skill.sourcePath,
@@ -714,6 +725,76 @@ export class SkillStore {
       await this.writeLock(lock);
       await this.refresh();
       return true;
+    });
+  }
+
+  /**
+   * 按锁里记录的来源重新拉取技能包并替换文件，类似 npx skills update。
+   * 来源不可复现（手动上传且无 URL）时拒绝更新。
+   */
+  async updatePack(
+    id: string,
+    fetchArchive: (entry: SkillLockEntry) => Promise<SkillPackFetchResult>,
+  ): Promise<{ pack: ManagedSkillPack; updated: string[]; removed: string[] }> {
+    return this.withLock(async () => {
+      const lock = await this.readLock();
+      const members = Object.entries(lock.skills).filter(([, entry]) => entry.packId === id);
+      if (members.length === 0) throw new Error("skill pack not found");
+      const first = members[0]![1];
+      if (!first.sourceUrl && !first.sourceValue) throw new Error("this pack has no reproducible source");
+      const fetched = await fetchArchive(first);
+      const now = new Date().toISOString();
+      await atomicWrite(this.archivePath(id), fetched.archive);
+      const staging = join(this.root, ".staging", `update-${id}`);
+      const extracted = await extractSkillArchive(fetched.archive, staging, first.skillPath?.replace(/\/[^/]+$/, ""));
+      const updated: string[] = [];
+      const removed: string[] = [];
+      try {
+        const incoming = new Set(extracted.skills.map((skill) => skill.name));
+        for (const [name] of members) {
+          if (!incoming.has(name)) {
+            await rm(this.skillDir(name), { recursive: true, force: true });
+            delete lock.skills[name];
+            removed.push(name);
+          }
+        }
+        for (const skill of extracted.skills) {
+          const existing = lock.skills[skill.name];
+          if (existing?.source === "system") continue;
+          if (existing) await rm(this.skillDir(skill.name), { recursive: true, force: true });
+          await cp(join(staging, skill.folder), this.skillDir(skill.name), { recursive: true });
+          lock.skills[skill.name] = {
+            source: first.source,
+            sourceType: first.sourceType,
+            sourceUrl: fetched.sourceUrl ?? first.sourceUrl ?? first.sourceValue,
+            ...(fetched.commit ? { commit: fetched.commit } : first.commit ? { commit: first.commit } : {}),
+            ...(first.ref ? { ref: first.ref } : {}),
+            skillPath: skill.sourcePath,
+            skillFile: "SKILL.md",
+            computedHash: (await this.folderHash(skill.name))!,
+            installedAt: existing?.installedAt ?? now,
+            updatedAt: now,
+            packId: id,
+            packName: first.packName ?? id,
+            archive: `.archives/${id}.zip`,
+          };
+          updated.push(skill.name);
+        }
+        await this.writeLock(lock);
+      } finally {
+        await rm(staging, { recursive: true, force: true });
+      }
+      await this.refresh();
+      const pack = (await this.listPacks()).find((entry) => entry.id === id);
+      return {
+        pack: pack ?? {
+          id, name: first.packName ?? id, size: fetched.archive.byteLength, source: first.source,
+          sourceValue: first.sourceUrl ?? first.sourceValue, enabled: true, skillCount: updated.length,
+          createdAt: now, updatedAt: now, status: "tracked",
+        },
+        updated,
+        removed,
+      };
     });
   }
 

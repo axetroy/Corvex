@@ -66,7 +66,7 @@ function filterResult(result: SkillImportResult, input: Pick<SkillSourceInput, "
     if (input.skill && skill.name !== input.skill) return false;
     return true;
   });
-  return { skills, issues: result.issues, archive: result.archive };
+  return { ...result, skills, issues: result.issues };
 }
 
 /** 从 GitHub 仓库（公开）下载 ZIP 并发现技能。 */
@@ -75,7 +75,11 @@ async function fromGithub(input: SkillSourceInput, options: SkillSourceOptions):
   const ref = input.ref ?? parsed.ref ?? "HEAD";
   const url = `https://codeload.github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/zip/${encodeURIComponent(ref)}`;
   const archive = await downloadArchive(url, options);
-  return filterResult(await discoverSkillsFromZip(archive), {
+  return filterResult({
+    ...await discoverSkillsFromZip(archive),
+    sourceUrl: url,
+    ...(input.ref ? { commit: input.ref } : {}),
+  }, {
     ...input,
     path: input.path ?? parsed.path,
     skill: parsed.skill,
@@ -114,7 +118,11 @@ async function fromGitlab(input: SkillSourceInput, options: SkillSourceOptions):
     throw new Error("GitLab archive exceeds the download limit");
   }
   if (!isZip(body)) throw new Error("GitLab did not return a ZIP archive");
-  return filterResult(await discoverSkillsFromZip(body), input);
+  return filterResult({
+    ...await discoverSkillsFromZip(body),
+    sourceUrl: archiveUrl.toString(),
+    ...(input.ref ? { commit: input.ref } : {}),
+  }, input);
 }
 
 /** 统一入口：URL / GitHub / GitLab 三种远程来源都归一成同一份发现结果。 */
@@ -127,7 +135,7 @@ export async function fetchSkillsFromSource(
       const value = input.value.trim();
       if (!/^https?:\/\//i.test(value)) throw new Error("URL source must start with http:// or https://");
       const archive = await downloadArchive(value, options);
-      return filterResult(await discoverSkillsFromZip(archive), input);
+      return filterResult({ ...await discoverSkillsFromZip(archive), sourceUrl: value }, input);
     }
     case "github":
       return fromGithub(input, options);

@@ -218,6 +218,28 @@ describe("SkillStore", () => {
     expect(await skills.get("demo")).toBeUndefined();
   });
 
+  it("updates a pack from its recorded source and keeps the hash in sync", async () => {
+    skills = await openStore();
+    const first = await skills.importPack({
+      name: "demo-pack", source: "github", sourceValue: "org/repo", sourceUrl: "https://codeload.github.com/org/repo/zip/main",
+      ref: "main", overwrite: false,
+      archive: zip({ "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nold body\n" }),
+    });
+    const second = zip({
+      "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nnew body\n",
+    });
+    const result = await skills.updatePack(first.pack.id, async () => ({
+      archive: second, sourceUrl: "https://codeload.github.com/org/repo/zip/main", commit: "abc123",
+    }));
+    expect(result.updated).toEqual(["demo"]);
+    expect((await skills.get("demo"))?.content).toBe("new body");
+    expect((await skills.get("demo"))?.status).toBe("tracked");
+    const lock = JSON.parse(await readFile(join(directory, "skills", skillLockFileName), "utf8")) as {
+      skills: Record<string, { commit?: string; sourceUrl?: string }>;
+    };
+    expect(lock.skills.demo).toMatchObject({ commit: "abc123", sourceUrl: "https://codeload.github.com/org/repo/zip/main" });
+  });
+
   it("exports a legacy SQLite skill table once and drops the old tables", async () => {
     skills = await openStore();
     const databasePath = join(directory, "state.db");

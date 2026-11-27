@@ -31,6 +31,10 @@ export interface SkillImportResult {
   issues: SkillImportIssue[];
   /** 原始 ZIP，供技能包原样入库。 */
   archive?: Buffer;
+  /** 解析后的下载地址，便于后续按同一来源更新。 */
+  sourceUrl?: string;
+  /** 来源提交（分支/tag 时由调用方记录已知 ref）。 */
+  commit?: string;
 }
 
 /** 压缩包只接受安全相对路径；绝对路径、上层遍历、Windows 分隔符与 NUL 一律拒绝。 */
