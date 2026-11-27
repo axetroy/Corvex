@@ -37,6 +37,22 @@ describe("managed skill catalog", () => {
     expect(captured).toContain("<available_skills>");
   });
 
+  it("caps single descriptions and falls back to names when the catalog grows too large", () => {
+    const many = Array.from({ length: 60 }, (_, index) => ({
+      name: `skill-${String(index).padStart(2, "0")}`,
+      description: "x".repeat(2_000),
+      location: `skill://managed/skill-${index}/SKILL.md`,
+      baseDir: `skill://managed/skill-${index}`,
+    }));
+    const section = buildSkillCatalogSection(many, "en");
+    expect(section.length).toBeLessThanOrEqual(8_000 + 600);
+    expect(section).toContain("Too many skills to list descriptions");
+    expect(section).not.toContain("<description>");
+    const one = buildSkillCatalogSection([many[0]!], "en");
+    expect(one).toContain("<description>");
+    expect(one).not.toContain("x".repeat(600));
+  });
+
   it("returns an empty section when there are no model-invocable skills", () => {
     expect(buildSkillCatalogSection([], "zh-CN")).toBe("");
   });

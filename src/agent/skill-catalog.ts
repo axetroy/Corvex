@@ -11,6 +11,11 @@ export interface SkillCatalogEntry {
   baseDir: string;
 }
 
+/** 单条描述与整个目录的硬上限，避免技能数量增长线性挤占 system prompt。 */
+export const maxSkillDescriptionChars = 512;
+export const maxSkillCatalogChars = 8_000;
+export const maxSkillCatalogEntries = 40;
+
 function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -35,17 +40,36 @@ export function buildSkillCatalogSection(entries: readonly SkillCatalogEntry[], 
         "Resolve relative paths inside a skill against its baseDir URI before reading them.",
         "<available_skills>",
       ];
-  for (const entry of entries) {
-    lines.push(
-      "  <skill>",
-      `    <name>${escapeXml(entry.name)}</name>`,
-      `    <description>${escapeXml(entry.description)}</description>`,
-      `    <location>${escapeXml(entry.location)}</location>`,
-      `    <baseDir>${escapeXml(entry.baseDir)}</baseDir>`,
-      "  </skill>",
-    );
+  const ordered = [...entries].sort((left, right) => left.name.localeCompare(right.name));
+  const describe = (value: string): string => {
+    const flat = value.replace(/\s+/g, " ").trim();
+    return flat.length > maxSkillDescriptionChars ? `${flat.slice(0, maxSkillDescriptionChars - 1)}…` : flat;
+  };
+  const render = (withDescription: boolean): string[] => {
+    const output: string[] = [];
+    for (const entry of ordered.slice(0, withDescription ? ordered.length : maxSkillCatalogEntries)) {
+      output.push(
+        "  <skill>",
+        `    <name>${escapeXml(entry.name)}</name>`,
+        ...(withDescription ? [`    <description>${escapeXml(describe(entry.description))}</description>`] : []),
+        `    <location>${escapeXml(entry.location)}</location>`,
+        `    <baseDir>${escapeXml(entry.baseDir)}</baseDir>`,
+        "  </skill>",
+      );
+    }
+    return output;
+  };
+  const full = render(true);
+  const trimmed = full.join("\n").length <= maxSkillCatalogChars ? full : render(false);
+  if (trimmed !== full) {
+    lines.unshift(language === "zh-CN"
+      ? "技能过多，已省略描述；按名称判断相关性后用 read_file 读取正文。"
+      : "Too many skills to list descriptions; choose by name and read the body with read_file.");
+    if (ordered.length > maxSkillCatalogEntries) {
+      lines.push(`<!-- ${ordered.length - maxSkillCatalogEntries} more skills omitted -->`);
+    }
   }
-  lines.push("</available_skills>");
+  lines.push(...trimmed, "</available_skills>");
   return lines.join("\n");
 }
 
