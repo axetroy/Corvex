@@ -1525,14 +1525,21 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   border: 1px solid var(--conversation-border);
   border-radius: 5px;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0;
   transition: opacity 0.12s ease;
+}
+
+/* 鼠标移到代码块上、或键盘聚焦按钮时才显示，避免复制按钮常驻干扰阅读。 */
+.conversation-message-markdown .x-markdown pre:hover .conversation-code-copy,
+.conversation-code-copy:focus-visible,
+.conversation-code-copy.is-copied,
+.conversation-code-copy.is-failed {
+  opacity: 1;
 }
 
 .conversation-code-copy:hover,
 .conversation-code-copy:focus-visible {
   color: var(--text);
-  opacity: 1;
 }
 
 .conversation-code-copy.is-copied {
@@ -1541,6 +1548,13 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 
 .conversation-code-copy.is-failed {
   color: var(--danger);
+}
+
+/* 触控设备没有 hover，保持可见。 */
+@media (hover: none) {
+  .conversation-code-copy {
+    opacity: 0.75;
+  }
 }
 
 /* 流式回复末尾的光标：正文仍在增长时提示「还在写」，落库后随状态移除。 */
