@@ -220,10 +220,10 @@
 .conversation-summary-active {
   position: absolute;
   top: 50%;
-  right: 2px;
+  right: 6px;
   transform: translateY(-50%);
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--blue);
   box-shadow: 0 0 0 0 rgb(47 127 224 / 55%);
