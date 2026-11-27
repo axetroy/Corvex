@@ -70,7 +70,7 @@ OAuth Application 的三个字段由安装页写入 SQLite，必须与客户端 
 | `agent.max_output_tokens` | `4096` | 1–8192 | 请求模型生成的最大输出 Token 数。每个模型各自保存；这里是回退值。 |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC 每日 Token 预算；`0` 表示不限制预算。 |
 | `agent.web_enabled` | `true` | 布尔值 | 启用只读 `web_fetch` 工具；设为 `false` 可关闭。 |
-| `agent.web_search_enabled` | `true` | 布尔值 | 启用 Tavily 免费免 key 模式的 `web_search`；无需 API key，但查询会发送给 Tavily。 |
+| `agent.web_search_enabled` | `true` | 布尔值 | 通过已配置的多个免费后端启用 `web_search`，按健康度评分调度；免 key 后端无需 API key，可选 key 可提升额度；查询会发送给所选搜索引擎。 |
 | `agent.web_search_max_queries` | `5` | 数字 | 每轮最多调用 `web_search` 的次数（1–50）。 |
 | `agent.git_tool_call_limit` | `40` | 0–200 | 每轮最多调用 Git 工具的次数（失败也计入）。用尽后 Agent 停止 Git 操作并汇报进展；`0` 表示不限制。 |
 | `agent.auto_create_merge_request` | `true` | 布尔值 | 首次成功发布到功能分支后，用当前登录用户令牌复用已打开的 MR 或自动创建：源分支为发布的分支，目标分支为本对话的分支。 |

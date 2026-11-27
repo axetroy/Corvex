@@ -48,7 +48,7 @@ Pi 会话不开放内建 shell、edit 或 write 工具；命令执行仅在开�
 - **文件读取**通过 `read_file` / `read_dir` / `stat` / `search_text` / `git_grep` 完成，只读取固定 SHA worktree 或可信 Skill 根目录中的 UTF-8 文本；仓库文件必须使用相对路径，绝对路径只接受 Skill 根目录。文件改动通过 `write_file` / `edit_file` / `delete_file` / `move_file` / `copy_file` 完成，并受统一的 worktree 路径守卫与字节上限约束。
 - **Git 工具**限定在对话 worktree 与本地镜像：`git_status`、`git_log`、`git_show`、`git_diff`、`git_branches`、`git_clone`、`git_branch`、`git_checkout`、`git_pull`、`git_merge`、`git_commit`、`git_push`、`git_revert`。不接受任意 URL、远端或强制推送；`git_push` 只写镜像中的 `refs/conversations/<id>`，绝不写 GitLab 分支。分支、合并与回滚都经过校验，不会重写历史。
 - **GitLab 工具**固定绑定到对话项目：项目与 MR 发现、Issue/MR 读取、讨论与变更，以及 Issue/MR 的创建、更新、关闭、评论等生命周期操作。iid 必须来自用户或读取结果；写操作需要用户明确意图，删除、合并、批准等不可逆或公开动作在描述中明确标注。
-- `web_fetch`（启用时）只能访问公网 HTTPS 主机，重定向会重新校验，私网/保留地址与配置的黑名单主机始终被拒绝，返回文本受限且视为不可信输入。`web_search` 使用 Tavily 免费免 key 模式：查询文本会发送给 Tavily，共享额度可能限流，限流时以提示文本返回而不是让本轮失败；结果链接经过与 `web_fetch` 相同的 URL 校验，摘要限长，每轮搜索次数可配置。搜索结果是第三方不可信文本。Skill 只是指令，不是访问控制。
+- `web_fetch`（启用时）只能访问公网 HTTPS 主机，重定向会重新校验，私网/保留地址与配置的黑名单主机始终被拒绝，返回文本受限且视为不可信输入。`web_search` 使用多个免费后端（Tavily、Exa、You.com、Wikipedia、Hacker News、DuckDuckGo、SearXNG），按综合健康度评分（来源质量 × 成功率 × 延迟）调度；免 key 后端无需 API key，配置可选 key 可提升额度。查询文本会发送给所选搜索引擎，限流后端冷却 60 秒并以提示文本返回而不是让本轮失败；结果链接经过与 `web_fetch` 相同的 URL 校验，摘要限长，每轮搜索次数可配置。搜索结果是第三方不可信文本。Skill 只是指令，不是访问控制。
 - 命令仅在开启执行环境后经绑定到会话 worktree 的 `run_command` 工具执行，不存在任意 shell。技能可在 `corvex-commands` 元数据中声明固定命令并用 `corvex-commands-enabled` 开启，模型只能通过 `run_skill_command` 调用，命令字符串来自技能文档、不插值用户输入，执行仍沿用配置的后端、上限、脱敏与审计；技能目录里的其它文件不会被自动执行。Agent 输出不被信任，GitLab 写入前再次校验授权、取消状态与固定版本。
 
 ## 轮次状态与取消

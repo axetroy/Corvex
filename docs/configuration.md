@@ -72,7 +72,7 @@ Corvex creates the database parent directory, mirror directory, and workspace di
 | `agent.max_output_tokens` | `4096` | 1–8192 | Maximum requested model output tokens. Each model stores its own value; this is the fallback. |
 | `agent.daily_token_budget` | `0` | 0–1,000,000,000 | UTC-day token budget; `0` disables budget enforcement. |
 | `agent.web_enabled` | `true` | Boolean | Enables the read-only `web_fetch` tool. Set to `false` to disable. |
-| `agent.web_search_enabled` | `true` | Boolean | Enables `web_search` via Tavily's free keyless mode. No API key is needed, but every query is sent to Tavily. |
+| `agent.web_search_enabled` | `true` | Boolean | Enables `web_search` through the configured free backends (ranked by health score). Keyless backends need no API key; optional keys raise the quota. Queries are sent to the selected search engine. |
 | `agent.web_search_max_queries` | `5` | Number | Maximum `web_search` calls per turn (1–50). |
 | `agent.git_tool_call_limit` | `40` | 0–200 | Maximum Git tool calls per turn (failed calls count too). Once exhausted the agent stops using Git tools and reports progress; `0` disables the limit. |
 | `agent.auto_create_merge_request` | `true` | Boolean | After the first successful publish to a feature branch, reuse an open MR or create one automatically with the signed-in user token (source = published branch, target = conversation branch). |
@@ -125,7 +125,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `project_agents_md` | Boolean | Load the pinned worktree's root `AGENTS.md` as project guidance. |
 | `project_agents_md_max_bytes` | 1,024–262,144 | Byte budget for injected project guidance. |
 | `web_enabled` | Boolean | Enable the read-only `web_fetch` tool. |
-| `web_search_enabled` | Boolean | Enable `web_search` (Tavily keyless, no API key; queries are sent to Tavily). |
+| `web_search_enabled` | Boolean | Enable `web_search` through the configured free backends (keyless by default, optional keys; queries leave the server for the selected engine). |
 | `web_search_max_queries` | Number | Max `web_search` calls per turn (1–50). |
 | `git_tool_call_limit` | 0–200 | Max Git tool calls per turn (failed calls count too); `0` disables the limit. |
 | `agent_submodule_allowed_hosts` | List of origins | Extra read-only submodule origins (e.g. `http://192.168.0.10:8080`); same-origin GitLab is always allowed. |

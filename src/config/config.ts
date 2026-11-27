@@ -57,7 +57,7 @@ export interface CorvexConfig {
     dailyTokenBudget: number;
     webEnabled: boolean;
     webBlockedHosts: string[];
-    /** 是否注册 web_search 工具（Tavily 免 key 搜索）。 */
+    /** 是否注册 web_search 工具（按健康分调度的多个免费搜索后端）。 */
     webSearchEnabled: boolean;
     /** 每个对话轮次最多执行的搜索次数。 */
     webSearchMaxQueries: number;
