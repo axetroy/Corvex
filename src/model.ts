@@ -541,6 +541,10 @@ export interface ConversationSkill {
   argumentHint: string;
   /** frontmatter.arguments：命名位置参数。 */
   arguments: string[];
+  /** 斜杠命令名；个人同名技能带 me: 前缀，缺省时用 name。 */
+  commandName?: string;
+  /** 技能来源作用域；仅合并视图返回。 */
+  scope?: "global" | "personal";
 }
 
 /** 技能可在沙箱/本地后端执行的固定命令，由管理员写在 SKILL.md 的 corvex-commands 里。 */

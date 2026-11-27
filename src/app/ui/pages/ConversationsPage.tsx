@@ -1123,7 +1123,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     composerRef.current?.focus();
   };
   // 输入 "/" 或 "/abc" 且尚未输入空格时展示技能补全；普通路径文本不会被误判。
-  const commandQuery = /^\/[a-z-]*$/.test(draftMessage) ? draftMessage.slice(1).toLowerCase() : null;
+  const commandQuery = /^\/(?:skill:)?(?:me:)?[a-z-]*$/.test(draftMessage)
+    ? draftMessage.replace(/^\/(?:skill:)?(?:me:)?/, "").toLowerCase()
+    : null;
   const commandSuggestions = commandQuery === null
     ? []
     : skills
@@ -1132,7 +1134,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         const hint = skill.argumentHint ? ` ${skill.argumentHint}` : "";
         const text = `${skill.description}${hint}`;
         return {
-          command: skill.name,
+          command: skill.commandName ?? skill.name,
           description: text.length > 90 ? `${text.slice(0, 90)}…` : text,
           fullDescription: skill.description,
         };

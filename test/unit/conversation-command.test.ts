@@ -21,6 +21,13 @@ const skill: ConversationSkill = {
 };
 
 describe("conversation slash commands", () => {
+  it("accepts the /skill:name alias used by Pi and Claude Code", () => {
+    expect(parseConversationCommand("/skill:docs 说明")).toEqual({ command: "docs", message: "说明" });
+    expect(parseConversationCommand("/skill:me:docs 说明")).toEqual({ command: "me:docs", message: "说明" });
+    expect(resolveCommandRequest("/skill:docs 内容", () => skill).effectiveRequest)
+      .toBe("Focus on documentation. 内容");
+  });
+
   it("substitutes named arguments from the slash command text", () => {
     const named = {
       ...skill,

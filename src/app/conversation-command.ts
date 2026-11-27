@@ -12,8 +12,8 @@ export interface ParsedConversationCommand {
 
 /** 解析消息开头的 `/command`，只校验格式；指令是否存在由调用方查技能表决定。 */
 export function parseConversationCommand(text: string): ParsedConversationCommand | undefined {
-  // 个人技能同名时用 me: 前缀调用；裸名仍按全局优先解析。
-  const match = /^\/(me:)?([a-z][a-z-]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  // 支持 Pi/Claude 风格的 /skill:name 别名与个人技能 me: 命名空间。
+  const match = /^\/(?:skill:)?(me:)?([a-z][a-z-]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!match) return undefined;
   return { command: match[1] ? `me:${match[2]}` : match[2], message: (match[3] ?? "").trim() };
 }
