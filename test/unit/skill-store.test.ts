@@ -160,6 +160,22 @@ describe("SkillStore", () => {
     expect(issues.some((issue) => issue.skill === "custom" && issue.level === "error")).toBe(true);
   });
 
+  it("reports multiple SKILL.md files and duplicate frontmatter names", async () => {
+    skills = await openStore();
+    await skills.create(sampleDocument);
+    await skills.create(sampleDocument.replace("name: custom", "name: other"));
+    const root = join(directory, "skills");
+    await mkdir(join(root, "custom", "nested"), { recursive: true });
+    await writeFile(join(root, "custom", "nested", "SKILL.md"), "---\nname: nested\ndescription: Nested\n---\n\nBody\n");
+    const shared = "---\nname: shared\ndescription: Shared\n---\n\nBody\n";
+    await writeFile(join(root, "custom", "SKILL.md"), shared);
+    await writeFile(join(root, "other", "SKILL.md"), shared);
+    await skills.refresh();
+    const issues = skills.diagnostics();
+    expect(issues.some((issue) => issue.skill === "custom" && issue.message.includes("multiple SKILL.md"))).toBe(true);
+    expect(issues.some((issue) => issue.message.includes('name "shared" is also declared by'))).toBe(true);
+  });
+
   it("discovers SKILL.md in nested directories and keeps bundled files verbatim", async () => {
     skills = await openStore();
     await skills.create(sampleDocument);

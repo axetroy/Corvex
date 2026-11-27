@@ -233,9 +233,17 @@ export class SkillStore {
   private async collectDiagnostics(): Promise<SkillDiagnostic[]> {
     const lock = await this.readLock();
     const result: SkillDiagnostic[] = [];
+    const declaredNames = new Map<string, string[]>();
     for (const [name, entry] of Object.entries(lock.skills)) {
       if (!isValidSkillName(name)) continue;
+      const allFiles = await this.findAllSkillFiles(name);
       const file = await this.findSkillFile(name, entry.skillFile);
+      if (allFiles.length > 1) {
+        result.push({
+          level: "warning", skill: name,
+          message: `multiple SKILL.md files found (${allFiles.join(", ")}); only ${file ?? allFiles[0]} is used`,
+        });
+      }
       if (!file) {
         result.push({ level: "error", skill: name, message: "SKILL.md not found in the skill directory" });
         continue;
@@ -255,8 +263,21 @@ export class SkillStore {
         if (parsed.name !== name) {
           result.push({ level: "warning", skill: name, message: `frontmatter name "${parsed.name}" differs from directory name "${name}"` });
         }
+        const owners = declaredNames.get(parsed.name) ?? [];
+        owners.push(name);
+        declaredNames.set(parsed.name, owners);
       } catch (error) {
         result.push({ level: "error", skill: name, message: error instanceof Error ? error.message : "invalid SKILL.md" });
+      }
+    }
+    for (const [name, owners] of declaredNames) {
+      if (owners.length > 1) {
+        for (const owner of owners) {
+          result.push({
+            level: "warning", skill: owner,
+            message: `frontmatter name "${name}" is also declared by ${owners.filter((item) => item !== owner).join(", ")}`,
+          });
+        }
       }
     }
     return result;
@@ -395,6 +416,25 @@ export class SkillStore {
       return undefined;
     };
     return walk(root, "");
+  }
+
+  /** 递归收集技能目录下所有 SKILL.md，用于冲突诊断。 */
+  private async findAllSkillFiles(name: string): Promise<string[]> {
+    const root = this.skillDir(name);
+    const found: string[] = [];
+    const walk = async (directory: string, prefix: string): Promise<void> => {
+      const direct = join(directory, "SKILL.md");
+      if (await stat(direct).then((info) => info.isFile()).catch(() => false)) {
+        found.push(prefix ? `${prefix}/SKILL.md` : "SKILL.md");
+      }
+      const entries = await readdir(directory, { withFileTypes: true }).catch(() => [] as Dirent[]);
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        await walk(join(directory, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+      }
+    };
+    await walk(root, "");
+    return found.sort();
   }
 
   /** 读一份技能的 SKILL.md；名称非法或文件缺失时返回 undefined。 */
