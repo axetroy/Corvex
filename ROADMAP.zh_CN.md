@@ -1,6 +1,6 @@
 # 路线图
 
-本文档记录有意延期的特性。这里的项目在当前阶段尚未实现，仅作为设计记录保留，后续迭代再重新实现。
+本文档只记录延期或尚未实现的功能。已实现的内容不在本文重复记录，其设计契约见对应的 `*-design.md` 文档。
 
 ## GitLab Webhook 驱动的事件（延期）
 
@@ -28,18 +28,14 @@
 - 所有 Agent 输出都视为不可信；发布到 GitLab 前再次检查授权、取消状态和版本快照。
 - 恢复特性时同步恢复中英文文档与集成测试。
 
-## 计划任务 / 自然语言调度（P0/P1/P2 已完成；Webhook/新建对话延期）
+## 长任务能力缺口：子代理 / 并行调研（计划中）
 
-用户可以说"每周一早上 9 点检查 CI"或"45 分钟后提醒我推送分支"，到点自动作为一次普通对话轮次执行。设计见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文），参考 Claude Code 的 `/loop` 与 `CronCreate/CronList/CronDelete`、Codex Automations 与 Cloud/Desktop 计划任务：自然语言 → 模型确认的 5 段 cron、不补跑、按用户 OAuth 令牌执行（绝不回退全局凭据）。P0（完成）：`scheduled_tasks` / `scheduled_task_runs` 表、严格 cron 解析与下次时间、Server 可中止到期循环与原子领取、一次性与循环任务经 `runTurn` 执行、启动恢复不补跑、模型侧 创建/列出/取消 工具。P1（完成）：`/api/ops/me/scheduled-tasks` 接口与运行记录、账号菜单里的运维台计划任务页、30 天过期。P2（完成）：按任务 ID 的确定性 jitter 错峰、IANA 用户时区（默认 UTC）、暂停/恢复与"立即运行"接口和按钮、运行历史气泡。GitLab Webhook 事件触发与"每次新建独立对话执行"仍延期（见上文 Webhook 事件章节）。
+长任务适合用轻量的只读子代理并行调研，只把有界结论返回主会话，避免污染主上下文。Corvex 目前仍是一轮一个会话，尚未实现委派。设计见 [subagent-design.md](subagent-design.md)（中文），参考 Claude Code、OpenCode、Cursor、Codex CLI 与 Pi SDK 示例的上下文隔离、工具收窄、委派与结果回传方式。P0：`spawn_subagent` 工具，管理员定义 agent、全新上下文、只读工具子集、深度 1 与旁路轨迹。P1：管理界面、恢复与并发/token 预算。P2：后台完成通知与 worktree 隔离的写入型子代理。
 
-## 上传外部文件作为上下文（规划中）
+## 计划任务：剩余的触发方式（延期）
 
-用户应能把本地文件（先支持纯文本）附加到消息，让模型在该轮读取，类似 Claude Code 的 `+`/拖拽与 OpenCode 的附件。设计见 [file-attachments-design.md](file-attachments-design.md)（中文），参考 OpenCode 的 `file:`/`data:` URI 与按字节检测类型、Claude Code 的 `@` 引用。Corvex 特性：上传物放 `storage/uploads/<conversationId>/`（**绝不放 worktree**——`git add -A` 会提交、`git_publish` 可能推送到 GitLab），作为**仅本轮有效的只读根**配合有界提示词清单暴露给模型，复用现成 `read_file` 工具（不新增 Agent 工具、不新增运行时依赖）。P0（完成）：`conversation_uploads` 表 + 纯文本上传 API + 本轮只读根 + 消息关联。P1（完成）：composer 附件按钮/拖拽/chips + 双语 UI + `conversationDelete` 清理。P2-a（完成）：运行时可配的大小/数量限额 + 按真实字节识别上传类型（拒绝伪装的可执行文件）。P2-b（延期）：图片/PDF（模型能力检测）与目录附件。所有文件与 Git 工具的路径参数统一使用虚拟协议（`worktree://`、`upload://<id>/`、`skill://<别名>/`）；宿主机绝对路径一律拒绝，并从工具 schema、错误、轨迹与命令输出中脱敏。
+还有两种触发方式未做：GitLab Webhook 事件触发，以及每次为任务新建独立对话（而不是在创建它的对话里执行）。见 [scheduled-tasks-design.md](scheduled-tasks-design.md)（中文）。调度器本身、cron 解析、增删改界面、时区、jitter、暂停/恢复/立即运行与对话内结构化卡片均已实现。
 
-## 仓库与分支搜索排序（完成）
+## 文件附件：剩余的类型（延期）
 
-项目选择器和分支选择器都先在服务端取有界候选集、综合评分排序，再分页返回。1–2 字符的短词改为 4 路并发分页拉取后本地过滤，不再依赖 GitLab 的模糊搜索。`src/app/http/ops/project-ranking.ts` 与 `branch-ranking.ts` 是纯排序函数：相似度主导，新鲜度与最近会话活跃度只做微调；分数不回显给界面。
-
-## 其他延期项
-
-当前没有其他记录项。
+只剩下 P2-b：图片/PDF（需要按模型检测视觉能力、魔数校验与 Base64 预算隔离）以及目录附件。见 [file-attachments-design.md](file-attachments-design.md)（中文）。文本上传、运行时大小/数量限额、虚拟路径协议与源码文件支持均已实现。

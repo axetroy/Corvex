@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks features that were deferred or are still pending. Implemented items are marked as such and kept as a design record; the rest remain for a later iteration.
+This document tracks only deferred or still-pending features. Implemented work is not recorded here; the binding design contracts live in the dedicated `*-design.md` files.
 
 ## GitLab webhook-driven events (deferred)
 
@@ -28,50 +28,14 @@ The current stage focuses on persistent, user-driven conversations in the ops co
 - Keep all agent output untrusted and re-check authorization, cancellation and revision before publishing to GitLab.
 - Restore bilingual docs and integration tests together with the feature.
 
-## Long-running autonomous agent gaps
-
-Corvex already covers context governance (microcompaction, proactive compaction, real token counts, bounded tool results), human collaboration (steer/interject, queued follow-ups, Stop, notifications) and durable state (per-conversation full Pi session persistence, interrupted-turn recovery, rolling summaries). To match mainstream coding agents on **long, autonomous tasks**, the following gaps were identified. Most are now implemented (marked below); the remaining ones are ordered by impact.
-
-### P0 — Tool loop detection and recovery (implemented)
-
-Mainstream agents detect when the model repeats the same tool call with the same arguments, stops making progress, or fails the same way repeatedly, and steer or stop it. `src/agent/tool-loop.ts` records a bounded `(toolName, normalized args)` signature per session and injects a localized "you have repeated this N times — change strategy or report" steer at a threshold (4 consecutive / 8 total), treating repeated identical failures as exhausted. Git calls are separately capped per turn (`agent.git_tool_call_limit`), and a response-stall watchdog covers a silent model.
-
-### P0 — Live plan state machine (implemented)
-
-`record_plan` persists a task checklist in `conversation_plans` (`ConversationPlan`) with `pending / in_progress / completed` steps. The model can rewrite the list or send status-only updates; progress survives across turns and resume, and the console renders step statuses in the Chat process block.
-
-### P1 — Task-level round/token budget with forced wrap-up (implemented)
-
-`agent.task_max_rounds` / `agent.task_max_output_tokens` are soft per-task ceilings. `src/agent/task-budget.ts` observes model rounds and generated tokens, and at the ceiling steers the model once to stop starting new work, wrap up, and report from confirmed results. It never aborts the turn.
-
-### P1 — Completion verification (implemented)
-
-`src/agent/claim-verification.ts` now also treats "fixed / completed" claims as high-risk: they are unverified unless the turn's tool trace contains a read-back (`read_file`) or diff (`git_diff`) tool. The system prompt requires reading changes back before claiming completion; unverified claims surface as a `context` notice in the process snapshot.
-
-### P2 — Verification sandbox (implemented)
-
-The largest structural gap was that Corvex had no shell and never executed repository code, so it could not close the edit → test → fix loop that mainstream agents rely on. The decision is to allow **free commands** (not an allowlist) through a new `run_command` tool that supports shell syntax (pipes/redirects) in the configured backend, with two backends: a development-only `local` backend and a mandatory `sandbox` backend for production. The full design lives in [execution-design.md](execution-design.md) (Chinese, binding contract): config is admin-managed in SQLite with a YAML/env fallback and validated fail-closed, authorization and audit stay in Corvex code, results are redacted into traces. The sandbox backend runs commands in a container (network namespace isolated from the host, bridge by default so dependencies can be installed, `none` for full isolation), drops capabilities, uses a read-only rootfs with only the worktree mounted, and enforces CPU/memory/pids limits plus timeouts. P0/P1/P2/P3 are implemented: the process timeline renders `run_command` invocations with their command, the completion guard requires a successful `run_command` before claiming "tests/typecheck passed". Execution config is managed by admins at **Settings → Execution** (`GET/PUT/DELETE /api/ops/admin/execution`), stored in SQLite, validated fail-closed, and applies immediately; YAML/env remains the file fallback. The conversation workspace has an **Executions** tab listing past commands, backends and exit codes from audit events. End-to-end tests cover a real `run_command` call through PiAgent with the local backend. A future increment could reuse past results.
-
-### P2 — Sub-agents / parallel research (planned)
+## Long-running autonomous agent gap: sub-agents / parallel research (planned)
 
 Long tasks benefit from lightweight read-only sub-agents that investigate in parallel and return bounded findings, keeping the main session's context clean. Corvex still runs one session per turn; delegation is not implemented. The design is recorded in [subagent-design.md](subagent-design.md) (Chinese), based on how Claude Code, OpenCode, Cursor, Codex CLI and the Pi SDK example handle context isolation, tool scoping, delegation and result return. P0: a `spawn_subagent` tool with admin-defined agents, fresh context, a read-only tool subset, depth 1 and sidechain traces. P1: admin UI, resume and concurrency/token budgets. P2: background completion notifications and worktree-isolated writers.
 
-## Readable terminal (P0/P1/P2 done)
+## Scheduled tasks: remaining triggers (deferred)
 
-A readable terminal for `run_command`: stream command output to the console in real time and let the user stop a single command without cancelling the whole turn. Full design in [terminal-design.md](terminal-design.md) (Chinese). P0 (done): `exec` SSE event, backend `onChunk`, streaming UI terminal and per-command cancel API/UI (stop reason `user manually stopped this command` is reported to the model). P1 (done): offline replay from the persisted process snapshot (`execOutput`). P2 (done, simplified): xterm.js rendering (ANSI + virtual scrolling), per-command filtering, and a collapsible terminal that auto-collapses on exit code 0; search/copy controls were removed.
+Two trigger modes are still pending: GitLab webhook event triggers, and creating a fresh conversation per task instead of running in the conversation that created it. See [scheduled-tasks-design.md](scheduled-tasks-design.md) (Chinese). The scheduler itself, cron parsing, CRUD UI, timezones, jitter, pause/resume/run-now and structured chat cards are already implemented.
 
-## Scheduled tasks / natural-language scheduling (P0/P1/P2 done; webhook/new-conversation deferred)
+## File attachments: remaining types (deferred)
 
-Users can say "check CI every Monday at 9am" or "remind me in 45 minutes to push the branch" and the prompt runs automatically as a normal conversation turn. Design in [scheduled-tasks-design.md](scheduled-tasks-design.md) (Chinese), based on Claude Code `/loop` + `CronCreate/CronList/CronDelete`, Codex Automations and Cloud/Desktop scheduled tasks: natural language → 5-field cron confirmed by the model, no catch-up, per-user OAuth token (no global fallback). P0 (done): `scheduled_tasks` / `scheduled_task_runs` tables, strict cron parser + next-run helpers, Server abortable ticker with atomic claim, one-shot + recurring execution via `runTurn`, startup recovery without replay, model-side `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task` tools. P1 (done): `/api/ops/me/scheduled-tasks` CRUD + run history and the ops-console Scheduled tasks page in the account menu; 30-day expiry. P2 (done): deterministic per-task jitter, IANA timezone-aware cron (UTC default), pause/resume and manual "run now" API + UI, run-history popover. GitLab webhook event triggers and creating a fresh conversation per task remain deferred (see the webhook events section above).
-
-## File attachments as context (planned)
-
-Users should be able to attach a local file (plain text first) to a conversation message so the model can read it during that turn, similar to Claude Code's `+`/drag-drop and OpenCode's attachments. Design in [file-attachments-design.md](file-attachments-design.md) (Chinese), based on how OpenCode passes `file:`/`data:` URIs with byte-detected types and Claude Code uses `@` references. Corvex specifics: uploads go to `storage/uploads/<conversationId>/` (never the worktree — `git add -A` would commit and `git_publish` could push them), exposed to the model as a **per-session read-only root** plus a bounded prompt manifest, using the existing `read_file` tool (no new agent tool, no new runtime dependency). P0 (done): `conversation_uploads` table + text-only upload API + per-session root + message association. P1 (done): composer attach button/drag-drop/chips + bilingual UI + `conversationDelete` cleanup. P2-a (done): runtime-configurable size/count limits + byte-based upload type detection (rejects disguised executables). P2-b (deferred): images/PDF with model-capability detection and directory attachments. All file/Git path arguments now use a unified virtual protocol (`worktree://`, `upload://<id>/`, `skill://<alias>/`); host absolute paths are rejected and redacted from tool schemas, errors, traces and command output.
-
-## Repository and branch search ranking (done)
-
-Both the project picker and the branch picker fetch a bounded candidate set and rank it on the server before pagination. Short (1–2 character) queries are fetched in 4-way concurrent pages and filtered locally instead of being sent to GitLab's fuzzy search. `src/app/http/ops/project-ranking.ts` and `branch-ranking.ts` hold the pure scoring functions: similarity dominates, with recency and recent-conversation activity as smaller signals. Only ranked, paginated results reach the UI; scores are not exposed.
-
-## Other deferred items
-
-No other items are currently recorded.
+Only P2-b is left: images/PDF (requiring per-model vision capability detection, magic-byte validation and Base64 budget isolation) and directory attachments. See [file-attachments-design.md](file-attachments-design.md) (Chinese). Text uploads, runtime size/count limits, the virtual path protocol and source-file support are already implemented.
