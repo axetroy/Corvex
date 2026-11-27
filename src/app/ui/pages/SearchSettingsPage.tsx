@@ -226,7 +226,7 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {notice ? <Alert type="success" showIcon message={notice} /> : null}
 
-      <Panel title={copy.settingsGroupTools}>
+      <Panel title={copy.searchSettingsNetworkTitle}>
         <div className="search-setting-row">
           <div>
             <div className="search-setting-label">{copy.settingsWebEnabled}</div>
