@@ -49,7 +49,8 @@ function similarityScore(project: Project, query: string): number {
   return score;
 }
 
-function timeDecay(iso: string | undefined, now: number, halfLifeDays = 30): number {
+/** 分支排序复用同一时间衰减曲线：越久未动权重越低。 */
+export function timeDecay(iso: string | undefined, now: number, halfLifeDays = 30): number {
   if (!iso) return 0;
   const timestamp = Date.parse(iso);
   if (!Number.isFinite(timestamp)) return 0;
@@ -63,7 +64,8 @@ function timeDecay(iso: string | undefined, now: number, halfLifeDays = 30): num
   return Math.max(0.02, 0.2 * Math.exp(-(days - 365) / (halfLifeDays * 10)));
 }
 
-function conversationScore(activity: ProjectActivity | undefined, now: number): number {
+/** 最近会话活跃度：时间占主导、数量做补充；分支复用同一口径。 */
+export function conversationScore(activity: ProjectActivity | undefined, now: number): number {
   if (!activity) return 0;
   const recency = timeDecay(activity.lastConversationAt, now);
   const volume = Math.min(activity.conversationCount / 10, 1);

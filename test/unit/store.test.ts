@@ -371,6 +371,21 @@ describe("AppStore", () => {
     expect(entry.execOutput.exitCode).toBe(0);
   });
 
+  it("aggregates branch activity for branch ranking", async () => {
+    store = await AppStore.open(":memory:");
+    for (const branch of ["main", "main", "feature/im"]) {
+      store.createConversation({
+        projectId: 42, projectName: "g/p", targetBranch: branch,
+        headSha: "a".repeat(40), actorId: 0, request: "x", ownerUserId: "u1",
+      });
+    }
+    const activity = store.branchActivity(42);
+    expect(activity.get("main")?.conversationCount).toBe(2);
+    expect(typeof activity.get("main")?.lastConversationAt).toBe("string");
+    expect(activity.get("feature/im")?.conversationCount).toBe(1);
+    expect(store.branchActivity(99).size).toBe(0);
+  });
+
   it("preserves scheduled task cards in the turn process snapshot", async () => {
     store = await AppStore.open(":memory:");
     const created = store.createConversation({

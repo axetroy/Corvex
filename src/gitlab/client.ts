@@ -852,17 +852,14 @@ export class GitLabClient {
     };
   }
 
-  async listBranches(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabBranch[]> {
-    if (projectId <= 0) throw new Error("project ID must be positive");
-    const query = this.pagedSearchQuery(search, page);
-    const result = await this.getJson(`/projects/${projectId}/repository/branches?${query}`, signal);
+  /** 把 GitLab 的分支响应收窄到控制台需要的字段，并丢弃无效/超长值。 */
+  private parseBranchList(result: unknown): GitLabBranch[] {
     if (!Array.isArray(result)) throw new Error("GitLab branch list is not an array");
     return result.map((value) => {
       if (
         !isRecord(value) || typeof value.name !== "string" || !isRecord(value.commit) ||
         typeof value.commit.id !== "string" || !fullSha(value.commit.id)
       ) throw new Error("GitLab returned an invalid branch list entry");
-      // 只保留 Agent 控制台需要的提交元数据；非字符串、空白或超长的值一律丢弃。
       const shortId = optionalString(value.commit, "short_id", 64);
       const title = optionalString(value.commit, "title", 4096);
       const committedDate = optionalString(value.commit, "committed_date", 64);
@@ -876,6 +873,72 @@ export class GitLabClient {
         },
       };
     });
+  }
+
+  async listBranches(projectId: number, search: string, page: number, signal?: AbortSignal): Promise<GitLabBranch[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const query = this.pagedSearchQuery(search, page);
+    return this.parseBranchList(await this.getJson(`/projects/${projectId}/repository/branches?${query}`, signal));
+  }
+
+  private branchMatches(branch: GitLabBranch, needle: string): boolean {
+    return branch.name.toLowerCase().includes(needle) || Boolean(branch.commit.title?.toLowerCase().includes(needle));
+  }
+
+  private async fetchBranchPages(
+    projectId: number,
+    baseQuery: URLSearchParams,
+    pages: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<GitLabBranch[][]> {
+    const results: GitLabBranch[][] = Array.from({ length: pages.length }, () => []);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(4, pages.length) }, async () => {
+      while (cursor < pages.length) {
+        const index = cursor++;
+        const query = new URLSearchParams(baseQuery);
+        query.set("page", String(pages[index]));
+        results[index] = this.parseBranchList(
+          await this.getJson(`/projects/${projectId}/repository/branches?${query}`, signal),
+        );
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  /**
+   * 分支搜索候选集：短词（1-2 字符）分页拉取后本地过滤，长词用 GitLab 搜索但同样本地复核，
+   * 最多 10 页、每批 4 路并发。分支数量可能远多于项目，因此上限比项目搜索更保守。
+   */
+  async listBranchCandidates(projectId: number, search: string, signal?: AbortSignal): Promise<GitLabBranch[]> {
+    if (projectId <= 0) throw new Error("project ID must be positive");
+    const normalized = search.trim();
+    if ([...normalized].length > 100) throw new Error("GitLab branch search must be at most 100 characters");
+    const short = normalized.length > 0 && [...normalized].length < 3;
+    const maxPages = short ? 10 : 3;
+    const baseQuery = new URLSearchParams({ per_page: "50" });
+    if (!short && normalized) baseQuery.set("search", normalized);
+    const needle = normalized.toLowerCase();
+    const seen = new Set<string>();
+    const candidates: GitLabBranch[] = [];
+    for (let firstPage = 1; firstPage <= maxPages; firstPage += 4) {
+      const batch = Array.from(
+        { length: Math.min(4, maxPages - firstPage + 1) }, (_, index) => firstPage + index,
+      );
+      const pages = await this.fetchBranchPages(projectId, baseQuery, batch, signal);
+      let reachedEnd = false;
+      for (const branches of pages) {
+        if (branches.length < 50) reachedEnd = true;
+        for (const branch of branches) {
+          if (seen.has(branch.name)) continue;
+          seen.add(branch.name);
+          if (!needle || this.branchMatches(branch, needle)) candidates.push(branch);
+        }
+      }
+      if (reachedEnd) break;
+    }
+    return candidates;
   }
 
   private pagedSearchQuery(search: string, page: number): URLSearchParams {

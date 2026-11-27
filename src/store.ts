@@ -2184,6 +2184,19 @@ export class AppStore {
     ]));
   }
 
+  /**
+   * 指定项目内各分支的会话活跃度，供分支搜索排序；与 projectActivity 同口径。
+   */
+  branchActivity(projectId: number): Map<string, { lastConversationAt: string; conversationCount: number }> {
+    const rows = this.db.prepare(
+      "SELECT target_branch, MAX(updated_at) AS last_at, COUNT(*) AS total FROM conversations WHERE project_id=? AND target_branch<>'' GROUP BY target_branch",
+    ).all(projectId) as { target_branch: string; last_at: string; total: number }[];
+    return new Map(rows.map((row) => [
+      String(row.target_branch),
+      { lastConversationAt: String(row.last_at), conversationCount: Number(row.total) },
+    ]));
+  }
+
   /** 保存一轮对话的过程快照（思考、中间回复、工具调用），与落库回答分开存放。 */
   saveConversationTurnProcess(turnId: string, entries: readonly ConversationProcessEntry[]): void {
     const serialized = JSON.stringify(sanitizeConversationProcess(entries));

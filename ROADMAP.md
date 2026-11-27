@@ -68,6 +68,10 @@ Users can say "check CI every Monday at 9am" or "remind me in 45 minutes to push
 
 Users should be able to attach a local file (plain text first) to a conversation message so the model can read it during that turn, similar to Claude Code's `+`/drag-drop and OpenCode's attachments. Design in [file-attachments-design.md](file-attachments-design.md) (Chinese), based on how OpenCode passes `file:`/`data:` URIs with byte-detected types and Claude Code uses `@` references. Corvex specifics: uploads go to `storage/uploads/<conversationId>/` (never the worktree — `git add -A` would commit and `git_publish` could push them), exposed to the model as a **per-session read-only root** plus a bounded prompt manifest, using the existing `read_file` tool (no new agent tool, no new runtime dependency). P0 (done): `conversation_uploads` table + text-only upload API + per-session root + message association. P1 (done): composer attach button/drag-drop/chips + bilingual UI + `conversationDelete` cleanup. P2-a (done): runtime-configurable size/count limits + byte-based upload type detection (rejects disguised executables). P2-b (deferred): images/PDF with model-capability detection and directory attachments. All file/Git path arguments now use a unified virtual protocol (`worktree://`, `upload://<id>/`, `skill://<alias>/`); host absolute paths are rejected and redacted from tool schemas, errors, traces and command output.
 
+## Repository and branch search ranking (done)
+
+Both the project picker and the branch picker fetch a bounded candidate set and rank it on the server before pagination. Short (1–2 character) queries are fetched in 4-way concurrent pages and filtered locally instead of being sent to GitLab's fuzzy search. `src/app/http/ops/project-ranking.ts` and `branch-ranking.ts` hold the pure scoring functions: similarity dominates, with recency and recent-conversation activity as smaller signals. Only ranked, paginated results reach the UI; scores are not exposed.
+
 ## Other deferred items
 
 No other items are currently recorded.

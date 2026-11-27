@@ -3,6 +3,7 @@ import { repositoryCloneUrl, repositoryWebUrl } from "../../../gitlab/client.js"
 import type { OpsContext } from "../context.js";
 import { optionalInteger, queryParam, sendGitLabReadError, sendJson } from "../respond.js";
 import { rankProjects } from "./project-ranking.js";
+import { rankBranches } from "./branch-ranking.js";
 
 /** 项目与分支查询：用当前登录用户的 GitLab 令牌发现可见仓库。 */
 export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): void {
@@ -68,7 +69,13 @@ export function registerProjectRoutes(app: FastifyInstance, ctx: OpsContext): vo
       return;
     }
     try {
-      sendJson(reply, 200, await ctx.gitlabForRequest(request).listBranches(projectId, search, page));
+      // 短词本地过滤 + 全局综合排序后再分页，避免 GitLab 默认顺序把不相关分支排前面。
+      const candidates = await ctx.gitlabForRequest(request).listBranchCandidates(projectId, search);
+      const ranked = rankBranches(candidates, search, ctx.store.branchActivity(projectId));
+      const pageSize = 50;
+      const branches = ranked.slice((page - 1) * pageSize, page * pageSize)
+        .map((branch) => ({ name: branch.name, commit: branch.commit }));
+      sendJson(reply, 200, branches);
     } catch (error) {
       sendGitLabReadError(reply, error);
     }
