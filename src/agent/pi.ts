@@ -1142,7 +1142,10 @@ export class PiAgent {
     // 流式正文、思考与工具调用只做展示，不参与判定；回调异常不能影响模型执行。
     let streamedAssistantText = "";
     let streamedAssistantThinking = "";
-    const streamToolInputs = new Map<string, string | null>();
+    // SDK 的 tool_execution_end 事件不带 args，这里从 start 缓存原始入参供展示、hook 与循环检测共用。
+    // 必须存原始对象而不是 JSON 字符串，否则 toolSignature 的稳定序列化会被绕过（键顺序影响签名）。
+    const streamToolInputs = new Map<string, unknown>();
+    let endedToolArgs: unknown = null;
     const emitStream = (
       callback: ((update: { reset: boolean; text: string }) => void) | undefined,
       label: string,
@@ -1289,21 +1292,22 @@ export class PiAgent {
       // 工具事件发生在两轮模型输出之间，先于轨迹落库推送，界面才能按
       // 「思考 → 工具 → 下一轮思考」的真实顺序逐条渲染。
       if (event.type === "tool_execution_start") {
-        const input = JSON.stringify(event.args) ?? null;
-        streamToolInputs.set(event.toolCallId, input);
+        streamToolInputs.set(event.toolCallId, event.args);
         emitToolStream({
           id: event.toolCallId,
           name: event.toolName,
-          input,
+          input: JSON.stringify(event.args) ?? null,
           status: "running",
           durationMs: null,
         });
       } else if (event.type === "tool_execution_end") {
+        // 删除缓存前先取出入参：后面的 hook 与循环检测都在同一个回调的后半段读取。
+        endedToolArgs = streamToolInputs.get(event.toolCallId) ?? null;
         const output = event.isError ? null : readToolResultText(event.result);
         emitToolStream({
           id: event.toolCallId,
           name: event.toolName,
-          input: streamToolInputs.get(event.toolCallId) ?? null,
+          input: JSON.stringify(endedToolArgs) ?? null,
           status: event.isError ? "failed" : "succeeded",
           durationMs: event.durationMs ?? null,
           ...(output ? { output } : {}),
@@ -1435,7 +1439,7 @@ export class PiAgent {
           void callAsyncHook(this.hooks.toolAfter, {
             toolName: event.toolName,
             toolCallId: event.toolCallId,
-            input: streamToolInputs.get(event.toolCallId) ?? null,
+            input: JSON.stringify(endedToolArgs) ?? null,
             output: event.result,
             status: event.isError ? "failed" : "succeeded",
             durationMs: event.durationMs ?? performance.now() - active.startedAt,
@@ -1443,7 +1447,7 @@ export class PiAgent {
             attempt: trace?.attempt,
           }).catch((error: unknown) => console.warn("tool after hook failed", { error: errorMessage(error) }));
         }
-        const loopNotice = recordToolCall(toolLoop, event.toolName, streamToolInputs.get(event.toolCallId) ?? null, event.isError);
+        const loopNotice = recordToolCall(toolLoop, event.toolName, endedToolArgs, event.isError);
         if (loopNotice) noticeToolLoop(loopNotice);
         this.finishTrace(
           active.traceId,

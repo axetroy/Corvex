@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { createSteerChannel, getAgentToolAccess, maxAgentPromptBytes, PiAgent } from "../../src/agent/pi.js";
 import { AppStore } from "../../src/store.js";
+import { createCorvexHooks } from "../../src/app/hooks.js";
 import type { ConversationStreamTool } from "../../src/model.js";
 
 describe("PiAgent", () => {
@@ -912,6 +913,111 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain("<project_instructions");
     expect(requestBodies[0]).toContain("Use pnpm test before committing.");
     expect(notices.some((text) => text.includes("AGENTS.md"))).toBe(true);
+  }, 15_000);
+
+  /** 用假模型发 4 次 read_file 调用，返回上下文提示与工具 hook 入参，验证循环检测是否包含参数。 */
+  async function toolLoopNotices(distinctArgs: boolean): Promise<{ notices: string[]; hookInputs: unknown[] }> {
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "corvex-pi-loop-"));
+    for (let index = 1; index <= 4; index += 1) {
+      await writeFile(join(temporaryDirectory, `file-${index}.txt`), `content ${index}`);
+    }
+    let requestCount = 0;
+    server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        if (request.url === "/tokenize") {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        const index = requestCount++;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        if (index === 0) {
+          const toolCalls = [1, 2, 3, 4].map((number) => ({
+            index: number - 1,
+            id: `call-${number}`,
+            type: "function",
+            function: {
+              name: "read_file",
+              arguments: JSON.stringify({ path: distinctArgs ? `file-${number}.txt` : "file-1.txt" }),
+            },
+          }));
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-tools", object: "chat.completion.chunk", created: 1, model: "test-model",
+            choices: [{ index: 0, delta: { role: "assistant", tool_calls: toolCalls }, finish_reason: null }],
+          })}\n\n`);
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-tools", object: "chat.completion.chunk", created: 1, model: "test-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 },
+          })}\n\n`);
+          response.end("data: [DONE]\n\n");
+          return;
+        }
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-text", object: "chat.completion.chunk", created: 1, model: "test-model",
+          choices: [{ index: 0, delta: { role: "assistant", content: "Done." }, finish_reason: null }],
+        })}\n\n`);
+        response.write(`data: ${JSON.stringify({
+          id: "chatcmpl-text", object: "chat.completion.chunk", created: 1, model: "test-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 14, completion_tokens: 2, total_tokens: 16 },
+        })}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server!.once("error", reject);
+      server!.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test API server has no TCP address");
+    const config = {
+      server: { listen: "127.0.0.1:8080", readTimeout: 5000, shutdownTimeout: 30000 },
+      operations: { username: "", password: "" },
+      gitlab: { baseUrl: "https://gitlab.example.com", blockedUserIds: [], botUsername: "" },
+      storage: { root: temporaryDirectory, database: join(temporaryDirectory, "state.db"), retentionDays: 90, auditRetentionDays: 365 },
+      agent: {
+        responseLanguage: "en", baseUrl: `http://127.0.0.1:${address.port}/v1`, model: "test-model",
+        providerName: "Acme Models", apiKey: "test-key", requestTimeout: 5000, sessionTimeout: 30_000,
+        maxOutputTokens: 4096, dailyTokenBudget: 0, webEnabled: false, webBlockedHosts: [],
+        skillPaths: [], contextWindow: 131_072, maxInputTokens: 0, historyTokenBudget: 24_000,
+        turnToolResultBytes: 2 << 20, compactionReserveTokens: 16_384, compactionKeepRecentTokens: 20_000,
+        summaryEnabled: false,
+      },
+      review: { maxFiles: 100, maxFindings: 30, maxContextBytes: 2 << 20, batchConcurrency: 2 },
+      events: { pollInterval: 2000, eventTimeout: 30 * 60_000 },
+      fix: { enabled: false, maxPatchBytes: 128 << 10 },
+      issue: { implementEnabled: false, historyComments: 20 },
+    } satisfies CorvexConfig;
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      ownerUserId: "user-1", projectId: 7, projectName: "group/project",
+      targetBranch: "main", headSha: "a".repeat(40), actorId: 11, request: "hi",
+    });
+    const notices: string[] = [];
+    const hookInputs: unknown[] = [];
+    const hooks = createCorvexHooks();
+    hooks.toolAfter.tap("test", (context) => { hookInputs.push(context.input); });
+    await new PiAgent(config, store, undefined, undefined, hooks).generate({
+      taskType: "conversation", systemPrompt: "Be concise.", userPrompt: "hi",
+      onContextDelta: (context) => notices.push(context.text),
+    }, temporaryDirectory, undefined, {
+      scope: { turnId: created.turnId }, attempt: 1, taskType: "conversation",
+    });
+    return { notices, hookInputs };
+  }
+
+  it("does not report a loop when the same tool is called with different arguments", async () => {
+    const { notices, hookInputs } = await toolLoopNotices(true);
+    expect(notices.some((text) => text.includes("same arguments"))).toBe(false);
+    expect(hookInputs).toHaveLength(4);
+    expect(hookInputs.every((input) => typeof input === "string" && input.includes("path"))).toBe(true);
+  }, 15_000);
+
+  it("still reports a loop when the same tool is called with identical arguments", async () => {
+    const { notices } = await toolLoopNotices(false);
+    expect(notices.some((text) => text.includes("same arguments"))).toBe(true);
   }, 15_000);
 
   it("aborts a stalled turn with a clear error instead of waiting for SDK retries", async () => {
