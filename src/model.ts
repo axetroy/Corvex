@@ -535,6 +535,12 @@ export interface ConversationSkill {
   userInvocable: boolean;
   /** SKILL.md 相对技能目录的路径；不在根目录时也可用。 */
   skillFile: string;
+  /** frontmatter.when_to_use：模型路由提示。 */
+  whenToUse: string;
+  /** frontmatter.argument-hint：斜杠补全参数提示。 */
+  argumentHint: string;
+  /** frontmatter.arguments：命名位置参数。 */
+  arguments: string[];
 }
 
 /** 技能可在沙箱/本地后端执行的固定命令，由管理员写在 SKILL.md 的 corvex-commands 里。 */

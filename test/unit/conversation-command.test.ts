@@ -21,6 +21,16 @@ const skill: ConversationSkill = {
 };
 
 describe("conversation slash commands", () => {
+  it("substitutes named arguments from the slash command text", () => {
+    const named = {
+      ...skill,
+      arguments: ["env", "ticket"],
+      content: "Deploy $env for $ticket. Raw: $ARGUMENTS",
+    };
+    expect(resolveCommandRequest("/deploy prod T-42", () => named).effectiveRequest)
+      .toBe("Deploy prod for T-42. Raw: prod T-42");
+  });
+
   it("parses me: namespaced personal commands and honors user-invocable", () => {
     expect(parseConversationCommand("/me:docs 补充文档")).toEqual({ command: "me:docs", message: "补充文档" });
     const personal = { ...skill, name: "docs", userInvocable: false };

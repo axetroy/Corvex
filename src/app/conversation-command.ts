@@ -38,8 +38,13 @@ export function resolveCommandRequest(
   if (!parsed) return { effectiveRequest: request, titleRequest: request };
   const skill = getSkill(parsed.command);
   if (!skill?.enabled || skill.userInvocable === false) return { effectiveRequest: request, titleRequest: request };
+  const parts = parsed.message.split(/\s+/).filter(Boolean);
+  const named: Record<string, string> = {};
+  for (const [index, name] of (skill.arguments ?? []).entries()) {
+    named[name] = parts[index] ?? "";
+  }
   return {
-    effectiveRequest: expandSkillTemplate(skill.content, parsed.message),
-    titleRequest: parsed.message || skill.description,
+    effectiveRequest: expandSkillTemplate(skill.content, parsed.message, named),
+    titleRequest: parsed.message || [skill.description, skill.whenToUse].filter(Boolean).join(" "),
   };
 }

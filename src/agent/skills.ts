@@ -28,6 +28,12 @@ export interface ParsedSkillDocument {
   disableModelInvocation: boolean;
   /** frontmatter.user-invocable !== false：是否出现在 `/` 补全与斜杠命令里。 */
   userInvocable: boolean;
+  /** frontmatter.when_to_use：追加到目录描述，帮助模型判断何时触发。 */
+  whenToUse: string;
+  /** frontmatter.argument-hint：斜杠补全里展示的参数提示。 */
+  argumentHint: string;
+  /** frontmatter.arguments：命名位置参数，用于 $name 替换。 */
+  arguments: string[];
 }
 
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
@@ -60,6 +66,13 @@ function parseSkillCommands(value: unknown): SkillCommand[] {
     commands.push(command);
   }
   return commands;
+}
+
+/** arguments 支持空格分隔字符串或 YAML 列表。 */
+function parseArgumentNames(value: unknown): string[] {
+  if (typeof value === "string") return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  return [];
 }
 
 /** 解析 SKILL.md；格式或必填字段不合法时抛出可直接展示给管理员的错误。 */
@@ -98,6 +111,9 @@ export function parseSkillDocument(document: string): ParsedSkillDocument {
     commandsEnabled: metadata["corvex-commands-enabled"] === "true",
     disableModelInvocation: header["disable-model-invocation"] === true,
     userInvocable: header["user-invocable"] !== false,
+    whenToUse: String(header.when_to_use ?? "").trim(),
+    argumentHint: String(header["argument-hint"] ?? "").trim(),
+    arguments: parseArgumentNames(header.arguments),
   };
 }
 
@@ -118,6 +134,14 @@ export function validateSkillDocument(skill: ParsedSkillDocument): string[] {
   if (!skill.description) problems.push("description must not be empty");
   if (skill.content.length > 8_000) problems.push("body must be at most 8000 characters");
   if (skill.description.length > 1_024) problems.push("description must be at most 1024 characters");
+  if (skill.whenToUse.length > 512) problems.push("when_to_use must be at most 512 characters");
+  if (skill.description.length + skill.whenToUse.length > 1_536) {
+    problems.push("description plus when_to_use must be at most 1536 characters");
+  }
+  if (skill.argumentHint.length > 200) problems.push("argument-hint must be at most 200 characters");
+  for (const name of skill.arguments) {
+    if (!isValidSkillName(name)) problems.push(`argument name "${name}" is invalid`);
+  }
   if (skill.compatibility.length > 500) problems.push("compatibility must be at most 500 characters");
   if (skill.commandsEnabled && skill.commands.length === 0) {
     problems.push("corvex-commands-enabled requires at least one entry in corvex-commands");
@@ -143,10 +167,13 @@ export function validateSkillDocument(skill: ParsedSkillDocument): string[] {
   return problems;
 }
 
-/** 展开技能模板：`$ARGUMENTS` 替换为参数；没有占位符时把参数附在正文之后。 */
-export function expandSkillTemplate(content: string, args: string): string {
-  const template = content.trim();
+/** 展开技能模板：`$ARGUMENTS` 与命名 `$name` 都替换；没有占位符时把参数附在正文之后。 */
+export function expandSkillTemplate(content: string, args: string, named: Readonly<Record<string, string>> = {}): string {
+  let template = content.trim();
   const argument = args.trim();
+  for (const [name, value] of Object.entries(named)) {
+    template = template.replaceAll(`$${name}`, value);
+  }
   if (template.includes("$ARGUMENTS")) return template.replaceAll("$ARGUMENTS", argument).trim();
   return argument ? `${template}\n\n${argument}` : template;
 }

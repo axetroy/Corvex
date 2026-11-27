@@ -1377,7 +1377,7 @@ export class ConversationRunner {
                       .map((skill) => ({
                         name: skill.name,
                         commandName: skill.commandName,
-                        description: skill.description,
+                        description: [skill.description, skill.whenToUse].filter(Boolean).join(" "),
                         skillFile: skill.skillFile || "SKILL.md",
                         alias: skill.scope === "global" ? globalAlias : personalAlias,
                         scope: skill.scope,

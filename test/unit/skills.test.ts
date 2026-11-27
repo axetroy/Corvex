@@ -77,6 +77,35 @@ describe("SKILL.md skills", () => {
     expect(isValidSkillName("a b")).toBe(false);
   });
 
+  it("parses when_to_use, argument-hint and named arguments", () => {
+    const parsed = parseSkillDocument(`---
+name: deploy
+description: Deploy the service
+when_to_use: Use when the user asks to deploy
+argument-hint: <environment> [ticket]
+arguments: env ticket
+---
+
+Deploy $env for $ticket. All: $ARGUMENTS.
+`);
+    expect(parsed.whenToUse).toBe("Use when the user asks to deploy");
+    expect(parsed.argumentHint).toBe("<environment> [ticket]");
+    expect(parsed.arguments).toEqual(["env", "ticket"]);
+    expect(validateSkillDocument(parsed)).toEqual([]);
+    expect(expandSkillTemplate(parsed.content, "prod T-123", { env: "prod", ticket: "T-123" }))
+      .toBe("Deploy prod for T-123. All: prod T-123.");
+    const invalid = parseSkillDocument(`---
+name: deploy
+description: Deploy
+arguments: env
+when_to_use: ${"x".repeat(600)}
+---
+
+Body
+`);
+    expect(validateSkillDocument(invalid)).toContain("when_to_use must be at most 512 characters");
+  });
+
   it("parses model-invocation controls from frontmatter", () => {
     const parsed = parseSkillDocument(`---
 name: deploy

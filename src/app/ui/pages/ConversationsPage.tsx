@@ -1128,11 +1128,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     ? []
     : skills
       .filter((skill) => skill.name.startsWith(commandQuery))
-      .map((skill) => ({
-        command: skill.name,
-        description: skill.description.length > 90 ? `${skill.description.slice(0, 90)}…` : skill.description,
-        fullDescription: skill.description,
-      }));
+      .map((skill) => {
+        const hint = skill.argumentHint ? ` ${skill.argumentHint}` : "";
+        const text = `${skill.description}${hint}`;
+        return {
+          command: skill.name,
+          description: text.length > 90 ? `${text.slice(0, 90)}…` : text,
+          fullDescription: skill.description,
+        };
+      });
   // 过滤条件变化时回到第一项；选中项超出可视区时只在菜单内部滚动。
   useEffect(() => { setCommandIndex(0); }, [commandQuery]);
   useEffect(() => {

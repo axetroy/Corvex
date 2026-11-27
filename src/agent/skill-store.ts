@@ -139,7 +139,7 @@ function emptyParsed(name: string): ReturnType<typeof parseSkillDocument> {
   return {
     name, description: "", content: "", license: "", compatibility: "", metadata: {},
     allowedTools: "", enabled: false, quickAction: false, quickLabel: "", commands: [], commandsEnabled: false,
-    disableModelInvocation: false, userInvocable: true,
+    disableModelInvocation: false, userInvocable: true, whenToUse: "", argumentHint: "", arguments: [],
   };
 }
 
@@ -449,6 +449,9 @@ export class SkillStore {
       disableModelInvocation: parsed.disableModelInvocation === true,
       userInvocable: parsed.userInvocable !== false,
       skillFile: typeof entry?.skillFile === "string" && entry.skillFile ? entry.skillFile : "SKILL.md",
+      whenToUse: parsed.whenToUse ?? "",
+      argumentHint: parsed.argumentHint ?? "",
+      arguments: parsed.arguments ?? [],
     };
   }
 
