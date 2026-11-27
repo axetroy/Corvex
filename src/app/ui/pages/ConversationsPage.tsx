@@ -161,6 +161,7 @@ function MessageContent({
   /** 只有最新一轮的回答才展示建议；用户发起下一轮后旧建议过期。 */
   showSuggestions?: boolean;
 }) {
+  const [messageExpanded, setMessageExpanded] = useState(false);
   const codeComponentsProps = useMemo(() => ({
     code: {
       copy,
@@ -171,9 +172,20 @@ function MessageContent({
     },
   }), [copy]);
   if (message.role === "user") {
+    const isLong = message.content.split("\n").length > 8 || message.content.length > 800;
+    const clamped = isLong && !messageExpanded;
     return (
       <div className="conversation-message-text" data-turn-id={message.id}>
-        {message.content}
+        <span className={`conversation-message-text-body${clamped ? " is-clamped" : ""}`}>{message.content}</span>
+        {isLong ? (
+          <button
+            type="button"
+            className="conversation-message-expand"
+            onClick={() => setMessageExpanded((value) => !value)}
+          >
+            {messageExpanded ? copy.conversationMessageCollapse : copy.conversationMessageExpand}
+          </button>
+        ) : null}
         {message.attachments.length ? (
           <div className="conversation-message-attachments">
             {message.attachments.map((attachment) => (

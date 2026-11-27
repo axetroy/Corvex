@@ -1064,6 +1064,32 @@
   white-space: pre-wrap;
 }
 
+/* 长消息默认只显示前 8 行，点击「展开全文」再看完整内容。 */
+.conversation-message-text-body {
+  display: block;
+}
+
+.conversation-message-text-body.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  overflow: hidden;
+}
+
+.conversation-message-expand {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.conversation-message-expand:hover {
+  text-decoration: underline;
+}
+
 .conversation-git-graph {
   min-height: 0;
   flex: 1;
