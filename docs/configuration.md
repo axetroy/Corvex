@@ -137,6 +137,9 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `agent_session_timeout` | 1–86,400 seconds | Full session timeout; entered in seconds, stored in milliseconds. |
 | `agent_response_stall_timeout` | 0–3,600 seconds | Abort a turn when the model produces no output (headers, text or tool calls) for this long; the console shows a waiting notice while idle. `0` disables the watchdog. Default `180`. |
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
+| `web_search_backends` | List of backend ids | Free search backends in preference order: `tavily`, `exa`, `you`, `wikipedia`, `hackernews`, `duckduckgo`, `searxng`. Actual order is a composite score of source quality, success rate and latency; rate-limited backends cool down. |
+| `tavily_api_key` | String (secret, ≤200) | Optional Tavily key; empty uses the free keyless allowance. Never echoed back. |
+| `searxng_base_url` | HTTP(S) URL | Self-hosted SearXNG root with JSON format enabled; empty skips the backend. |
 | `agent_commit_trailer` | String (≤200) | Trailer appended to every conversation commit; empty disables it. Default `Assisted-by: AI Agent`. Conversation authors are always the signed-in users, never the Agent. |
 | `fallback_commit_author_name` | String (≤120) | Commit author name used only when a conversation has no identifiable owner. Default `Corvex`. |
 | `fallback_commit_author_email` | Email (≤200) | Commit author email used only when a conversation has no identifiable owner. Default `no.reply@corvex-agent.com`. |

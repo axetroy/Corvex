@@ -197,10 +197,6 @@ export const settingGroups: readonly SettingGroup[] = [
     titleKey: "settingsGroupTools",
     hintKey: "settingsGroupToolsHint",
     fields: [
-      { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
-      { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
-      { key: "web_search_enabled", kind: "boolean", labelKey: "settingsWebSearchEnabled", hintKey: "settingsWebSearchEnabledHint" },
-      { key: "web_search_max_queries", kind: "number", min: 1, max: 50, step: 1, labelKey: "settingsWebSearchMaxQueries", hintKey: "settingsWebSearchMaxQueriesHint" },
       { key: "git_tool_call_limit", kind: "number", min: 0, max: 200, step: 5, labelKey: "settingsGitToolCallLimit", hintKey: "settingsGitToolCallLimitHint" },
       { key: "auto_create_merge_request", kind: "boolean", defaultValue: true, labelKey: "settingsAutoCreateMr", hintKey: "settingsAutoCreateMrHint" },
       { key: "reasoning_enabled", kind: "boolean", defaultValue: true, labelKey: "settingsReasoningEnabled", hintKey: "settingsReasoningEnabledHint" },
@@ -214,6 +210,19 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "upload_max_per_conversation", kind: "number", min: 1, max: 1000, step: 10, defaultValue: 100, labelKey: "settingsUploadMaxPerConversation", hintKey: "settingsUploadMaxPerConversationHint" },
       { key: "agent_submodule_allowed_hosts", kind: "list", item: "path", labelKey: "settingsSubmoduleHosts", hintKey: "settingsSubmoduleHostsHint" },
       { key: "agent_submodule_host_tokens", kind: "string", secret: true, allowEmpty: true, maxLength: 20000, labelKey: "settingsSubmoduleTokens", hintKey: "settingsSubmoduleTokensHint" },
+    ],
+  },
+  {
+    titleKey: "settingsGroupSearch",
+    hintKey: "settingsGroupSearchHint",
+    fields: [
+      { key: "web_enabled", kind: "boolean", labelKey: "settingsWebEnabled", hintKey: "settingsWebEnabledHint" },
+      { key: "web_blocked_hosts", kind: "list", item: "hostname", labelKey: "settingsWebBlockedHosts", hintKey: "settingsWebBlockedHostsHint" },
+      { key: "web_search_enabled", kind: "boolean", labelKey: "settingsWebSearchEnabled", hintKey: "settingsWebSearchEnabledHint" },
+      { key: "web_search_backends", kind: "list", item: "path", labelKey: "settingsWebSearchBackends", hintKey: "settingsWebSearchBackendsHint" },
+      { key: "web_search_max_queries", kind: "number", min: 1, max: 50, step: 1, labelKey: "settingsWebSearchMaxQueries", hintKey: "settingsWebSearchMaxQueriesHint" },
+      { key: "tavily_api_key", kind: "string", secret: true, allowEmpty: true, maxLength: 200, labelKey: "settingsTavilyApiKey", hintKey: "settingsTavilyApiKeyHint" },
+      { key: "searxng_base_url", kind: "string", allowEmpty: true, maxLength: 500, labelKey: "settingsSearxngBaseUrl", hintKey: "settingsSearxngBaseUrlHint" },
     ],
   },
   {

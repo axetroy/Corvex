@@ -35,7 +35,7 @@ function formatFieldValue(field: SettingField, value: SettingValue): string {
   return value.toLocaleString("en-US");
 }
 
-export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "storage" | "skills" | "advanced";
+export type SettingsSection = "basic" | "model" | "gitlab" | "workflow" | "search" | "storage" | "skills" | "advanced";
 
 /** 每个设置分组用侧栏同名标签作为页头标题，避免六个页面都显示「Agent 设置」。 */
 const sectionTitleKeys: Record<SettingsSection, CopyTextKey> = {
@@ -43,6 +43,7 @@ const sectionTitleKeys: Record<SettingsSection, CopyTextKey> = {
   model: "settingsTabModel",
   gitlab: "settingsTabGitLab",
   workflow: "settingsTabWorkflow",
+  search: "settingsTabSearch",
   storage: "settingsTabStorage",
   skills: "settingsTabSkills",
   advanced: "settingsTabAdvanced",
@@ -54,6 +55,7 @@ const sectionDescriptionKeys: Record<SettingsSection, CopyTextKey> = {
   model: "settingsGroupModelHint",
   gitlab: "settingsGroupGitLabHint",
   workflow: "settingsGroupToolsHint",
+  search: "settingsGroupSearchHint",
   storage: "settingsGroupStorageHint",
   skills: "skillManagerHint",
   advanced: "settingsGroupAdvancedHint",
@@ -65,6 +67,7 @@ export const sectionGroups: Record<SettingsSection, readonly string[]> = {
   model: ["settingsGroupModel", "settingsGroupQuota"],
   gitlab: ["settingsGroupGitLab"],
   workflow: ["settingsGroupTools"],
+  search: ["settingsGroupSearch"],
   storage: ["settingsGroupStorage"],
   skills: [],
   advanced: ["settingsGroupRuntime", "settingsGroupAdvanced"],
@@ -385,6 +388,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
           {renderGroup("settingsGroupWorkflow")}
         </>
       ) : null}
+      {section === "search" ? renderGroup("settingsGroupSearch") : null}
       {section === "storage" ? (
         <>
           {renderGroup("settingsGroupStorage")}

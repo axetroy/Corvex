@@ -2,6 +2,7 @@ import type { CorvexConfig } from "./config.js";
 import type { ActiveModel } from "../model.js";
 import { isIP } from "node:net";
 import { resolveMaxInputTokens } from "../agent/budget.js";
+import { webSearchBackends } from "../agent/web-search.js";
 import { normalizeAllowedOrigin, parseSubmoduleHostTokens } from "../git/submodules.js";
 import {
   resolveCompactionKeepRecentTokens,
@@ -81,6 +82,9 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "web_blocked_hosts", section: "agent", field: "webBlockedHosts", type: "list", item: "hostname" },
   { key: "web_search_enabled", section: "agent", field: "webSearchEnabled", type: "boolean" },
   { key: "web_search_max_queries", section: "agent", field: "webSearchMaxQueries", type: "number", min: 1, max: 50 },
+  { key: "web_search_backends", section: "agent", field: "webSearchBackends", type: "list", item: "path" },
+  { key: "searxng_base_url", section: "agent", field: "searxngBaseUrl", type: "string", maxLength: 500, allowEmpty: true },
+  { key: "tavily_api_key", section: "agent", field: "tavilyApiKey", type: "string", maxLength: 200, allowEmpty: true },
   { key: "git_tool_call_limit", section: "agent", field: "gitToolCallLimit", type: "number", min: 0, max: 200 },
   // 子模块白名单与专用 token：默认只允许配置 GitLab 同源，第三方必须显式放行。
   { key: "agent_submodule_allowed_hosts", section: "agent", field: "submoduleAllowedHosts", type: "list", item: "path" },
@@ -126,6 +130,7 @@ export const secretRuntimeSettingKeys = new Set([
   "model_api_key",
   "gitlab_oauth_client_secret",
   "agent_submodule_host_tokens",
+  "tavily_api_key",
 ]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */
@@ -216,6 +221,24 @@ function checkRelations(values: RuntimeSettingValues): string[] {
   const trailer = values.agent_commit_trailer;
   if (typeof trailer === "string" && trailer && !/^[A-Za-z-]+: .+/.test(trailer)) {
     problems.push("agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Corvex Agent");
+  }
+  const backends = values.web_search_backends;
+  if (Array.isArray(backends)) {
+    if (backends.length === 0) problems.push("web_search_backends must contain at least one backend");
+    for (const backend of backends) {
+      if (typeof backend === "string" && !(webSearchBackends as readonly string[]).includes(backend)) {
+        problems.push(`web_search_backends contains unknown backend "${backend}"`);
+      }
+    }
+  }
+  const searxng = values.searxng_base_url;
+  if (typeof searxng === "string" && searxng) {
+    try {
+      const url = new URL(searxng);
+      if (!/^https?:$/.test(url.protocol)) throw new Error("bad protocol");
+    } catch {
+      problems.push("searxng_base_url must be an HTTP(S) URL");
+    }
   }
   const fallbackEmail = values.fallback_commit_author_email;
   if (typeof fallbackEmail === "string" && fallbackEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(fallbackEmail)) {

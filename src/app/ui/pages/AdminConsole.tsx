@@ -25,11 +25,12 @@ interface Props {
   onRefresh: () => void;
 }
 
-const sections: { key: SettingsSection; labelKey: "settingsTabBasic" | "settingsTabModel" | "settingsTabGitLab" | "settingsTabWorkflow" | "settingsTabStorage" | "settingsTabSkills" | "settingsTabAdvanced" }[] = [
+const sections: { key: SettingsSection; labelKey: "settingsTabBasic" | "settingsTabModel" | "settingsTabGitLab" | "settingsTabWorkflow" | "settingsTabSearch" | "settingsTabStorage" | "settingsTabSkills" | "settingsTabAdvanced" }[] = [
   { key: "basic", labelKey: "settingsTabBasic" },
   { key: "model", labelKey: "settingsTabModel" },
   { key: "gitlab", labelKey: "settingsTabGitLab" },
   { key: "workflow", labelKey: "settingsTabWorkflow" },
+  { key: "search", labelKey: "settingsTabSearch" },
   { key: "storage", labelKey: "settingsTabStorage" },
   { key: "skills", labelKey: "settingsTabSkills" },
   { key: "advanced", labelKey: "settingsTabAdvanced" },

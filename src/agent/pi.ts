@@ -930,6 +930,11 @@ export class PiAgent {
               config.agent.webSearchMaxQueries,
               config.agent.webBlockedHosts,
               signal,
+              {
+                backends: config.agent.webSearchBackends,
+                searxngBaseUrl: config.agent.searxngBaseUrl,
+                tavilyApiKey: config.agent.tavilyApiKey,
+              },
             )]
           : []),
         ...(executionBackend

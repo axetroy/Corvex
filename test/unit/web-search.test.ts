@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createWebSearchExtension, searchWeb } from "../../src/agent/web-search.ts";
+import { backendScore, createWebSearchExtension, searchWeb } from "../../src/agent/web-search.ts";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -73,9 +73,54 @@ describe("keyless web search", () => {
     expect(result).toEqual({ results: [], notice: expect.stringContaining("rate-limited") });
   });
 
-  it("surfaces non-rate-limit HTTP failures", async () => {
+  it("reports backend failures as a notice instead of throwing", async () => {
     const recorderMock = recorder({ error: "bad request" }, 400);
-    await expect(searchWeb("query", 5, { dependencies: recorderMock.dependencies })).rejects.toThrow("HTTP 400");
+    const result = await searchWeb("query", 5, {
+      backends: ["tavily"],
+      dependencies: recorderMock.dependencies,
+    });
+    expect(result.results).toEqual([]);
+    expect(result.notice).toContain("HTTP 400");
+  });
+
+  it("tries another keyless backend when the first one is rate-limited", async () => {
+    const calls: string[] = [];
+    const request = vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.startsWith("https://api.tavily.com/")) {
+        return new Response(JSON.stringify({ error: "rate limited" }), { status: 429 });
+      }
+      return jsonResponse({
+        query: { search: [{ title: "Wiki", snippet: "An article", _: 1 }] },
+      });
+    });
+    const result = await searchWeb("query", 5, {
+      backends: ["tavily", "wikipedia"],
+      dependencies: { request },
+    });
+    expect(result.source).toBe("wikipedia");
+    expect(result.results[0]?.url).toContain("en.wikipedia.org/wiki/Wiki");
+    expect(calls.some((url) => url.includes("api.tavily.com"))).toBe(true);
+    expect(calls.some((url) => url.includes("wikipedia.org/w/api.php"))).toBe(true);
+  });
+
+  it("prefers healthy backends and cools down rate-limited ones", () => {
+    const healthy = { successes: 5, failures: 0, latencyMs: 100, cooldownUntil: 0 };
+    const cooled = { successes: 5, failures: 0, latencyMs: 100, cooldownUntil: Date.now() + 60_000 };
+    expect(backendScore("tavily", healthy)).toBeGreaterThan(backendScore("duckduckgo", healthy));
+    expect(backendScore("tavily", cooled)).toBe(-1);
+  });
+
+  it("uses an optional Tavily API key instead of keyless mode", async () => {
+    const recorderMock = recorder({ results: [{ title: "Node", url: "https://docs.example.org/node", content: "OK" }] });
+    await searchWeb("node", 3, {
+      backends: ["tavily"],
+      tavilyApiKey: "tvly-test",
+      dependencies: recorderMock.dependencies,
+    });
+    const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer tvly-test");
+    expect(headers["X-Tavily-Access-Mode"]).toBeUndefined();
   });
 
   it("validates the query length before calling the network", async () => {

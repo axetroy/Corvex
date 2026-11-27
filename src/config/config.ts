@@ -61,6 +61,12 @@ export interface CorvexConfig {
     webSearchEnabled: boolean;
     /** 每个对话轮次最多执行的搜索次数。 */
     webSearchMaxQueries: number;
+    /** 免费搜索后端及优先级；按综合健康分排序后依次尝试。 */
+    webSearchBackends: string[];
+    /** 自托管 SearXNG 根地址；留空则跳过该后端。 */
+    searxngBaseUrl: string;
+    /** 可选 Tavily API key；设置后改用账号额度，留空走 keyless。 */
+    tavilyApiKey: string;
     /** 每个对话轮次最多调用的 Git 工具次数；0 表示不限制。 */
     gitToolCallLimit: number;
     /** 首次 publish 到功能分支后是否自动创建（或复用）合并请求。 */
@@ -188,6 +194,9 @@ const defaults: CorvexConfig = {
     webBlockedHosts: [],
     webSearchEnabled: true,
     webSearchMaxQueries: 5,
+    webSearchBackends: ["tavily", "exa", "you", "wikipedia", "hackernews", "duckduckgo", "searxng"],
+    searxngBaseUrl: "",
+    tavilyApiKey: "",
     gitToolCallLimit: 40,
     autoCreateMergeRequest: true,
     reasoningEnabled: true,
@@ -460,6 +469,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       webBlockedHosts: stringArray(agent.web_blocked_hosts, defaults.agent.webBlockedHosts),
       webSearchEnabled: boolean(agent.web_search_enabled, defaults.agent.webSearchEnabled),
       webSearchMaxQueries: number(agent.web_search_max_queries, defaults.agent.webSearchMaxQueries),
+      webSearchBackends: stringArray(agent.web_search_backends, defaults.agent.webSearchBackends),
+      searxngBaseUrl: string(agent.searxng_base_url, defaults.agent.searxngBaseUrl),
+      tavilyApiKey: string(agent.tavily_api_key, defaults.agent.tavilyApiKey),
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
       thinkingLevel: parseThinkingLevel(agent.thinking_level) ?? defaults.agent.thinkingLevel,

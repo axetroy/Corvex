@@ -257,7 +257,7 @@ describe("PiAgent", () => {
     expect(requestBodies[0]).toContain('"name":"search_text"');
     expect(requestBodies[0]).toContain('"name":"web_fetch"');
     expect(requestBodies[0]).toContain('"name":"web_search"');
-    expect(requestBodies[0]).toContain("Tavily's free keyless mode");
+    expect(requestBodies[0]).toContain("keyless first: Tavily, Exa, You.com");
     expect(requestBodies[0]).toContain("Additional blocked hosts: blocked.corp.dev");
     // 自定义 systemPrompt 下 SDK 不会自动生成 tools 段：工具目录必须出现在真实请求里，
     // 且覆盖所有活跃工具，模型才能在能力类提问中感知它们。
