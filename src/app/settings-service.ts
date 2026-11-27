@@ -118,6 +118,14 @@ export class SettingsService {
    * 写入运行时设置：先校验，再以启动快照为基准应用全部覆盖项，
    * 用配置的原生校验器验证最终结果。只有校验通过才落库并生效。
    */
+  /** 局部保存：未提交的键沿用当前值，供专用设置页（如搜索）独立保存。 */
+  savePartial(incoming: unknown): SettingsSaveResult {
+    if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming)) {
+      return { status: 400, body: { error: "settings must be a JSON object" } };
+    }
+    return this.save({ ...this.read().settings, ...(incoming as Record<string, unknown>) });
+  }
+
   save(incoming: unknown): SettingsSaveResult {
     if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming)) {
       return { status: 400, body: { error: "settings must be a JSON object" } };

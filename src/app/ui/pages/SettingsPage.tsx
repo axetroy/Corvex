@@ -13,6 +13,7 @@ import { StorageCleanupPanel } from "../components/StorageCleanupPanel.js";
 import { StorageOverviewContent } from "../components/StorageOverviewPanel.js";
 import { ModelManager } from "../components/ModelManager.js";
 import { SkillManager } from "../components/SkillManager.js";
+import { SearchSettingsPage } from "./SearchSettingsPage.js";
 
 /** 设置元数据里的文案键是普通字符串，查表时收窄为 Copy 的文案键。 */
 function text(copy: Copy, key: string): string {
@@ -164,6 +165,9 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
     () => (data ? !sameDraft(draft, data.settings) : false),
     [data, draft],
   );
+
+  // 搜索页用自己的组件与局部保存接口，不走整份设置表单。
+  if (section === "search") return <SearchSettingsPage copy={copy} onUpdated={onUpdated} />;
 
   if (error && !data) return <ErrorBanner message={error} />;
   if (!data) return <Loading>{copy.loading}</Loading>;
@@ -388,7 +392,6 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
           {renderGroup("settingsGroupWorkflow")}
         </>
       ) : null}
-      {section === "search" ? renderGroup("settingsGroupSearch") : null}
       {section === "storage" ? (
         <>
           {renderGroup("settingsGroupStorage")}

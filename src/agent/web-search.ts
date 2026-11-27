@@ -9,9 +9,10 @@ import { normalizeWebHost, validateWebUrl } from "./web-read.js";
  * 首个返回非空结果的后端胜出；全部失败时回退到百科/HN 等兜底源。
  */
 
-export const webSearchBackends = [
-  "tavily", "exa", "you", "wikipedia", "hackernews", "duckduckgo", "searxng",
-] as const;
+import { searchBackendIds } from "../search-backends.js";
+
+/** 兼容旧导出的名称；ID 列表只维护一份。 */
+export const webSearchBackends = searchBackendIds;
 export type WebSearchBackendId = (typeof webSearchBackends)[number];
 
 /** 查询与结果的长度上限：搜索结果作为工具输出进入会话，必须限长。 */

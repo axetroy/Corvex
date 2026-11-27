@@ -2,7 +2,7 @@ import type { CorvexConfig } from "./config.js";
 import type { ActiveModel } from "../model.js";
 import { isIP } from "node:net";
 import { resolveMaxInputTokens } from "../agent/budget.js";
-import { webSearchBackends } from "../agent/web-search.js";
+import { searchBackendIds } from "../search-backends.js";
 import { normalizeAllowedOrigin, parseSubmoduleHostTokens } from "../git/submodules.js";
 import {
   resolveCompactionKeepRecentTokens,
@@ -226,7 +226,7 @@ function checkRelations(values: RuntimeSettingValues): string[] {
   if (Array.isArray(backends)) {
     if (backends.length === 0) problems.push("web_search_backends must contain at least one backend");
     for (const backend of backends) {
-      if (typeof backend === "string" && !(webSearchBackends as readonly string[]).includes(backend)) {
+      if (typeof backend === "string" && !(searchBackendIds as readonly string[]).includes(backend)) {
         problems.push(`web_search_backends contains unknown backend "${backend}"`);
       }
     }

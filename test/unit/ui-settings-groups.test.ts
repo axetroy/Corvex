@@ -10,8 +10,10 @@ const settingsPage = fileURLToPath(new URL("../../src/app/ui/pages/SettingsPage.
 describe("operations UI settings groups", () => {
   it("renders every declared setting group", () => {
     const source = readFileSync(settingsPage, "utf8");
+    // 搜索页有专用组件 SearchSettingsPage，不走通用 renderGroup。
+    const customRendered = new Set(["settingsGroupSearch"]);
     const missing = settingGroups
-      .filter((group) => !source.includes(`renderGroup("${group.titleKey}")`))
+      .filter((group) => !customRendered.has(group.titleKey) && !source.includes(`renderGroup("${group.titleKey}")`))
       .map((group) => group.titleKey);
     expect(missing).toEqual([]);
   });
