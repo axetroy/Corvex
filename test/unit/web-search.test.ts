@@ -71,7 +71,9 @@ describe("keyless web search", () => {
   it("turns a keyless rate limit into a notice instead of failing the turn", async () => {
     const recorderMock = recorder({ error: "rate limited" }, 429);
     const result = await searchWeb("query", 5, { dependencies: recorderMock.dependencies });
-    expect(result).toEqual({ results: [], notice: expect.stringContaining("rate-limited") });
+    expect(result).toEqual({
+      results: [], backend: "none", notice: expect.stringContaining("rate-limited"),
+    });
   });
 
   it("reports backend failures as a notice instead of throwing", async () => {
@@ -99,7 +101,7 @@ describe("keyless web search", () => {
       backends: ["tavily", "wikipedia"],
       dependencies: { request },
     });
-    expect(result.source).toBe("wikipedia");
+    expect(result.backend).toBe("wikipedia");
     expect(result.results[0]?.url).toContain("en.wikipedia.org/wiki/Wiki");
     expect(calls.some((url) => url.includes("api.tavily.com"))).toBe(true);
     expect(calls.some((url) => url.includes("wikipedia.org/w/api.php"))).toBe(true);
@@ -150,7 +152,7 @@ describe("keyless web search", () => {
     expect(recorderMock.calls[0]?.url).toBe("https://api.exa.ai/search");
     const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer exa-test");
-    expect(result.source).toBe("exa");
+    expect(result.backend).toBe("exa");
   });
 
   it("uses the You.com keyed API with X-API-Key when configured", async () => {
@@ -165,7 +167,7 @@ describe("keyless web search", () => {
     expect(recorderMock.calls[0]?.url).toBe("https://ydc-index.io/v1/search");
     const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
     expect(headers["X-API-Key"]).toBe("ydc-test");
-    expect(result.source).toBe("you");
+    expect(result.backend).toBe("you");
   });
 
   it("validates the query length before calling the network", async () => {

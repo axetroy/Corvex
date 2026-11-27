@@ -11,6 +11,11 @@ const qualityWeight: Record<SearchBackendId, number> = {
   duckduckgo: 0.6,
 };
 
+/** 尚无运行数据时展示的预估分（质量基线 × 默认可靠性 0.8）。 */
+export function previewScore(id: SearchBackendId): number {
+  return qualityWeight[id] * 0.8;
+}
+
 export interface BackendHealth {
   successes: number;
   failures: number;

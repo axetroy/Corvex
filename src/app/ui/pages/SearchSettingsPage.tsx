@@ -7,7 +7,7 @@ import type { SettingsResponse } from "../lib/types.js";
 import { AdminPage } from "../components/AdminPage.js";
 import { Panel } from "../components/common.js";
 import { searchBackendIds, type SearchBackendId } from "../../../search-backends.js";
-import type { BackendScore } from "../../../agent/search-health.js";
+import { previewScore, type BackendScore } from "../../../agent/search-health.js";
 import "./SearchSettingsPage.css";
 
 const backendCopyKeys: Record<SearchBackendId, keyof Copy> = {
@@ -266,6 +266,13 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
 
       <Panel title={copy.settingsWebSearchBackends}>
         <Typography.Paragraph type="secondary" className="search-backend-hint">{copy.searchSettingsOrder}</Typography.Paragraph>
+        <div className="search-backend-head">
+          <span>#</span>
+          <span>{copy.searchBackendColumn}</span>
+          <span className="search-backend-head-spacer" />
+          <span>{copy.searchSettingsScore}</span>
+          <span />
+        </div>
         <div className="search-backend-list">
           {draft.order.map((id, index) => {
             const enabled = draft.enabled.includes(id);
@@ -291,24 +298,25 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
                     {keyedBackends.has(id) && keyFor(id).trim()
                       ? <Tag color="blue">key</Tag>
                       : <Tag>keyless</Tag>}
-                    {(() => {
-                      const entry = scoreById.get(id);
-                      if (!entry) return null;
-                      return (
-                        <Tag
-                          className="search-backend-score"
-                          title={copy.searchSettingsScoreHint
-                            .replace("{success}", String(entry.successes))
-                            .replace("{failure}", String(entry.failures))
-                            .replace("{latency}", String(entry.latencyMs))}
-                        >
-                          {copy.searchSettingsScore} {entry.score < 0 ? "—" : entry.score.toFixed(2)}
-                        </Tag>
-                      );
-                    })()}
                   </div>
                   <div className="search-backend-desc">{copy[backendCopyKeys[id]] as string}</div>
                 </div>
+                {(() => {
+                  const entry = scoreById.get(id);
+                  const title = entry
+                    ? copy.searchSettingsScoreHint
+                        .replace("{success}", String(entry.successes))
+                        .replace("{failure}", String(entry.failures))
+                        .replace("{latency}", String(entry.latencyMs))
+                    : copy.searchSettingsScoreEstimate;
+                  const value = entry?.score ?? previewScore(id);
+                  return (
+                    <span className="search-backend-score" title={title}>
+                      <span className="search-backend-score-label">{copy.searchSettingsScore}</span>
+                      {value < 0 ? "—" : value.toFixed(2)}
+                    </span>
+                  );
+                })()}
                 <div className="search-backend-actions">
                   <Button
                     type="text"
