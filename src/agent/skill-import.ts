@@ -29,12 +29,6 @@ export interface SkillImportIssue {
 export interface SkillImportResult {
   skills: DiscoveredSkill[];
   issues: SkillImportIssue[];
-  /** 原始 ZIP，供技能包原样入库。 */
-  archive?: Buffer;
-  /** 解析后的下载地址，便于后续按同一来源更新。 */
-  sourceUrl?: string;
-  /** 来源提交（分支/tag 时由调用方记录已知 ref）。 */
-  commit?: string;
 }
 
 /** 压缩包只接受安全相对路径；绝对路径、上层遍历、Windows 分隔符与 NUL 一律拒绝。 */
@@ -84,7 +78,7 @@ function readEntry(zip: yauzl.ZipFile, entry: yauzl.Entry, limit: number): Promi
 }
 
 /**
- * 遍历技能包。outputDir 提供时把安全条目写到磁盘，使技能目录包含 SKILL.md 及配套文件；
+ * 遍历 ZIP 来源。outputDir 提供时把安全条目写到磁盘，使技能目录包含 SKILL.md 及配套文件；
  * 不提供时只做发现（旧接口语义）。其它文件只作为只读素材，不会被自动执行；
  * 只有 SKILL.md 里显式声明并开启的命令才会由 run_skill_command 执行。
  */
@@ -103,7 +97,7 @@ function unpackSkillArchive(
         reject(error ?? new Error("invalid ZIP archive"));
         return;
       }
-      const result: SkillImportResult = { skills: [], issues: [], archive };
+      const result: SkillImportResult = { skills: [], issues: [] };
       const prefix = pathPrefix?.replace(/\/+$/, "");
       let entriesSeen = 0;
       let bytesSeen = 0;

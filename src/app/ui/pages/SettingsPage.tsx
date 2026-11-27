@@ -399,7 +399,7 @@ export function SettingsPage({ copy, locale, section = "basic", onUpdated, onRef
           />
         </>
       ) : null}
-      {section === "skills" ? <SkillManager copy={copy} /> : null}
+      {section === "skills" ? <SkillManager copy={copy} scope="global" /> : null}
       {section === "advanced" ? (
         <>
           {renderGroup("settingsGroupRuntime")}

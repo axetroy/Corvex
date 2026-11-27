@@ -34,7 +34,7 @@
 
 ### 2.1 没有现成的对话附件能力
 
-- 唯一的二进制上行是管理员 skill pack ZIP：`POST /api/ops/admin/skills/import`（`admin.ts:133-197`），用 `application/zip` 原始 body + 专用 `bodyLimit`（`server.ts:239-243`），文件名走 query `?filename=`。**没有 multipart 库，也不应新增运行时依赖**。
+- 唯一的二进制上行是技能导入 ZIP：`POST /api/ops/admin/skills/import/preview` 与 `POST /api/ops/me/skills/import/preview`，用 `application/zip` 原始 body + 专用 `bodyLimit`（`server.ts`），文件名走 query `?filename=`。预览只列候选技能，确认导入走 JSON 端点并携带 token 与勾选列表。**没有 multipart 库，也不应新增运行时依赖**。
 - 前端上传用 `sendBinary(path, buffer, contentType, copy)`（`ui/lib/api.ts:38-56`），不是 FormData；`SkillImportDialog.tsx:102-109` 是隐藏 `<input type="file">` 的现成范式。
 - 没有"对话附件"表，也没有附件 API。
 

@@ -15,7 +15,7 @@ export const maxImagesPerMessage = 5;
 export const maxUploadsPerMessage = 10;
 /** 单个会话默认累计保留的附件数；已发送附件仍占额度，留足余量避免误伤多轮协作。 */
 export const maxUploadsPerConversation = 100;
-/** 专用 content-type：避开 application/json（API body）与 application/zip（技能包）。 */
+/** 专用 content-type：避开 application/json（API body）与 application/zip（技能导入）。 */
 export const uploadContentType = "application/x-corvex-upload";
 
 /** 已上传、等待随消息发送的附件摘要。 */

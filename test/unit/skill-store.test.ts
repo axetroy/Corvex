@@ -210,51 +210,57 @@ describe("SkillStore", () => {
     expect((await skills.list()).find((skill) => skill.name === "outsider")?.status).toBe("untracked");
   });
 
-  it("imports a pack to disk and restores it from the stored archive", async () => {
+  it("previews all skills and imports only the selected ones", async () => {
     skills = await openStore();
     const archive = zip({
       "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo skill\n---\n\nDo demo things\n",
       "skills/demo/notes.md": "reference notes\n",
+      "skills/extra/SKILL.md": "---\nname: extra\ndescription: Extra skill\n---\n\nExtra body\n",
     });
-    const result = await skills.importPack({
-      name: "demo-pack", archive, source: "upload", sourceValue: "demo.zip", overwrite: false,
-    });
+    const preview = await skills.createImportPreview({ archive, source: "upload", sourceValue: "demo.zip" });
+    // 预览响应不含 Buffer，ZIP 已写到暂存文件。
+    expect(preview).not.toHaveProperty("archive");
+    const staged = join(directory, "skills", ".staging", `preview-${preview.token}.zip`);
+    expect((await readFile(staged)).byteLength).toBe(archive.byteLength);
+    expect(preview.skills).toHaveLength(2);
+    expect(preview.skills.map((skill) => skill.name).sort()).toEqual(["demo", "extra"]);
+    const demoPath = preview.skills.find((skill) => skill.name === "demo")!.sourcePath;
+    const result = await skills.importSkills({ token: preview.token, selected: [demoPath], overwrite: false });
     expect(result.created).toEqual(["demo"]);
-    expect(result.pack.skillCount).toBe(1);
+    // 确认后暂存 ZIP 被清理，不再占用磁盘或内存。
+    await expect(readFile(staged)).rejects.toThrow();
+    expect(await skills.get("extra")).toBeUndefined();
     expect(await readFile(join(directory, "skills", "demo", "notes.md"), "utf8")).toBe("reference notes\n");
-    expect(await skills.get("demo")).toMatchObject({ status: "tracked", packId: result.pack.id });
 
-    // 改坏文件后用锁里的哈希发现差异，并从磁盘上的 ZIP 恢复。
+    // 改坏文件后用锁里的哈希发现差异，并从本地 ZIP 恢复。
     await writeFile(join(directory, "skills", "demo", "SKILL.md"), "broken");
     const report = await skills.verifyAndRestore(false);
     expect(report.find((entry) => entry.name === "demo")).toMatchObject({ status: "modified", restored: true });
     expect((await skills.get("demo"))?.status).toBe("tracked");
-
-    expect(await skills.deletePack(result.pack.id)).toBe(true);
+    expect(await skills.remove("demo")).toBe(true);
     expect(await skills.get("demo")).toBeUndefined();
   });
 
-  it("updates a pack from its recorded source and keeps the hash in sync", async () => {
+  it("records resolved source url and commit from the preview", async () => {
     skills = await openStore();
-    const first = await skills.importPack({
-      name: "demo-pack", source: "github", sourceValue: "org/repo", sourceUrl: "https://codeload.github.com/org/repo/zip/main",
-      ref: "main", overwrite: false,
-      archive: zip({ "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nold body\n" }),
+    const archive = zip({ "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nBody\n" });
+    const preview = await skills.createImportPreview({
+      archive, source: "github", sourceValue: "org/repo",
+      sourceUrl: "https://codeload.github.com/org/repo/zip/main", ref: "main", commit: "abc123",
     });
-    const second = zip({
-      "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\n\nnew body\n",
+    await skills.importSkills({
+      token: preview.token,
+      selected: preview.skills.map((skill) => skill.sourcePath),
+      overwrite: false,
     });
-    const result = await skills.updatePack(first.pack.id, async () => ({
-      archive: second, sourceUrl: "https://codeload.github.com/org/repo/zip/main", commit: "abc123",
-    }));
-    expect(result.updated).toEqual(["demo"]);
-    expect((await skills.get("demo"))?.content).toBe("new body");
-    expect((await skills.get("demo"))?.status).toBe("tracked");
     const lock = JSON.parse(await readFile(join(directory, "skills", skillLockFileName), "utf8")) as {
       skills: Record<string, { commit?: string; sourceUrl?: string }>;
     };
-    expect(lock.skills.demo).toMatchObject({ commit: "abc123", sourceUrl: "https://codeload.github.com/org/repo/zip/main" });
+    expect(lock.skills.demo).toMatchObject({
+      commit: "abc123", sourceUrl: "https://codeload.github.com/org/repo/zip/main",
+    });
   });
+
 
   it("exports a legacy SQLite skill table once and drops the old tables", async () => {
     skills = await openStore();

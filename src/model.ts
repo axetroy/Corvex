@@ -521,8 +521,6 @@ export interface ConversationSkill {
   isSystem: boolean;
   createdAt: string;
   updatedAt: string;
-  /** 来源技能包 ID；手动添加的技能为空。 */
-  packId: string;
   /** 磁盘技能与锁文件的校验状态；旧接口返回的技能均为 tracked。 */
   status: SkillStatus;
   /** 技能声明的固定命令；命令字符串来自技能文档，不接受模型提供的内容。 */
@@ -565,23 +563,6 @@ export interface SkillCommand {
 
 /** 磁盘技能相对 skills-lock.json 的状态，语义对齐 npx skills 的 list。 */
 export type SkillStatus = "tracked" | "modified" | "untracked" | "missing";
-
-/** 导入的技能包：ZIP 与解压文件存磁盘，技能文档从磁盘读取。 */
-export interface SkillPack {
-  id: string;
-  name: string;
-  size: number;
-  /** upload / url / github / gitlab */
-  source: string;
-  /** 原始地址或文件名，便于追溯。 */
-  sourceValue: string;
-  enabled: boolean;
-  skillCount: number;
-  createdAt: string;
-  updatedAt: string;
-  /** 包内技能相对锁文件的校验状态。 */
-  status: SkillStatus;
-}
 
 /** 当前使用的模型及其供应商连接参数。 */
 export interface ActiveModel {

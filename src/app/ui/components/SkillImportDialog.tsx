@@ -1,17 +1,29 @@
 import { useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Segmented, Switch, Typography } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Segmented, Switch, Typography } from "antd";
 import { sendBinary, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
 
 type Channel = "upload" | "url" | "github" | "gitlab";
 
+interface PreviewSkill {
+  name: string;
+  description: string;
+  document: string;
+  sourcePath: string;
+  issues: string[];
+}
+
+interface Preview {
+  token: string;
+  skills: PreviewSkill[];
+  issues: Array<{ path: string; message: string }>;
+}
+
 interface ImportResult {
-  pack: { id: string; name: string };
   created: string[];
   skipped: string[];
   errors: string[];
-  issues: Array<{ path: string; message: string }>;
 }
 
 interface Props {
@@ -26,6 +38,7 @@ interface Props {
 /** ZIP 上限在服务端也有同样的硬限制；这里提前拦截，避免无谓上传。 */
 const maxZipBytes = 10 * 1024 * 1024;
 
+/** 导入技能：先解析来源并列出全部技能，默认全选，再按勾选结果写入。 */
 export function SkillImportDialog({ open, copy, onClose, onImported, basePath = "/api/ops/admin/skills" }: Props) {
   const [channel, setChannel] = useState<Channel>("upload");
   const [file, setFile] = useState<File | undefined>();
@@ -33,6 +46,8 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
   const [ref, setRef] = useState("");
   const [path, setPath] = useState("");
   const [overwrite, setOverwrite] = useState(false);
+  const [preview, setPreview] = useState<Preview | undefined>();
+  const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ImportResult | undefined>();
@@ -45,34 +60,54 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
     gitlab: copy.skillImportGitlabHint,
   }[channel];
 
-  async function runImport() {
+  function reset() {
+    setPreview(undefined);
+    setSelected([]);
+    setResult(undefined);
+    setError("");
+  }
+
+  async function runPreview() {
     setBusy(true);
     setError("");
+    setPreview(undefined);
     setResult(undefined);
     try {
-      let next: ImportResult;
+      let next: Preview;
       if (channel === "upload") {
         if (!file) throw new Error(copy.skillImportFileHint);
-        if (file.size > maxZipBytes) throw new Error(`ZIP exceeds 10 MiB`);
+        if (file.size > maxZipBytes) throw new Error("ZIP exceeds 10 MiB");
         const buffer = await file.arrayBuffer();
-        next = await sendBinary<ImportResult>(
-          `${basePath}/import?filename=${encodeURIComponent(file.name)}`,
-          buffer,
-          "application/zip",
-          copy,
+        next = await sendBinary<Preview>(
+          `${basePath}/import/preview?filename=${encodeURIComponent(file.name)}`,
+          buffer, "application/zip", copy,
         );
       } else {
         if (!value.trim()) throw new Error(hint);
-        next = await sendJson<ImportResult>(`${basePath}/import`, {
-          channel,
-          value: value.trim(),
-          ref: ref.trim(),
-          path: path.trim(),
-          overwrite,
+        next = await sendJson<Preview>(`${basePath}/import/preview`, {
+          channel, value: value.trim(), ref: ref.trim(), path: path.trim(),
         }, copy, "POST");
       }
+      setPreview(next);
+      setSelected(next.skills.map((skill) => skill.sourcePath));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runImport() {
+    if (!preview) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await sendJson<ImportResult>(`${basePath}/import`, {
+        token: preview.token, selected, overwrite,
+      }, copy, "POST");
       setResult(next);
       onImported();
+      reset();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -90,7 +125,7 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
     >
       <Segmented<Channel>
         value={channel}
-        onChange={(next) => { setChannel(next); setError(""); setResult(undefined); }}
+        onChange={(next) => { setChannel(next); reset(); }}
         options={[
           { label: copy.skillImportUpload, value: "upload" },
           { label: copy.skillImportUrl, value: "url" },
@@ -106,39 +141,52 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
             type="file"
             accept=".zip,application/zip"
             style={{ display: "none" }}
-            onChange={(event) => setFile(event.target.files?.[0])}
+            onChange={(event) => { setFile(event.target.files?.[0]); reset(); }}
           />
           <Button onClick={() => fileInput.current?.click()}>{file?.name ?? copy.skillImportUpload}</Button>
         </>
       ) : (
         <>
-          <Input
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder={channel === "github" ? "owner/repo" : copy.skillImportUrlHint}
-          />
+          <Input value={value} onChange={(event) => { setValue(event.target.value); reset(); }} placeholder={channel === "github" ? "owner/repo" : copy.skillImportUrlHint} />
           {channel !== "url" ? (
-            <Input
-              style={{ marginTop: 8 }}
-              value={ref}
-              onChange={(event) => setRef(event.target.value)}
-              placeholder={copy.skillImportRef}
-            />
+            <Input style={{ marginTop: 8 }} value={ref} onChange={(event) => { setRef(event.target.value); reset(); }} placeholder={copy.skillImportRef} />
           ) : null}
           {channel !== "gitlab" ? (
-            <Input
-              style={{ marginTop: 8 }}
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder={copy.skillImportPath}
-            />
+            <Input style={{ marginTop: 8 }} value={path} onChange={(event) => { setPath(event.target.value); reset(); }} placeholder={copy.skillImportPath} />
           ) : null}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-            <Switch checked={overwrite} onChange={setOverwrite} />
-            <Typography.Text>{copy.skillImportOverwrite}</Typography.Text>
-          </div>
         </>
       )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+        <Switch checked={overwrite} onChange={setOverwrite} />
+        <Typography.Text>{copy.skillImportOverwrite}</Typography.Text>
+      </div>
+      <Button loading={busy} onClick={() => void runPreview()} style={{ marginTop: 12 }}>
+        {copy.skillImportPreview}
+      </Button>
+      {preview ? (
+        <div style={{ marginTop: 12 }}>
+          <Typography.Paragraph type="secondary">
+            {copy.skillImportFound.replace("{count}", String(preview.skills.length))}
+          </Typography.Paragraph>
+          <Checkbox.Group
+            value={selected}
+            onChange={(values) => setSelected(values.map(String))}
+            style={{ display: "flex", flexDirection: "column", gap: 6 }}
+            options={preview.skills.map((skill) => ({
+              value: skill.sourcePath,
+              label: (
+                <span>
+                  <strong>{skill.name}</strong> — {skill.description || skill.sourcePath}
+                  {skill.issues.length ? <em> ({skill.issues.join("; ")})</em> : null}
+                </span>
+              ),
+            }))}
+          />
+          <Button type="primary" loading={busy} disabled={selected.length === 0} onClick={() => void runImport()} style={{ marginTop: 12 }}>
+            {copy.skillImportConfirmSelected}
+          </Button>
+        </div>
+      ) : null}
       {error ? <Alert type="error" showIcon message={error} style={{ marginTop: 12 }} /> : null}
       {result ? (
         <Alert
@@ -149,19 +197,8 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
             .replace("{created}", String(result.created.length))
             .replace("{skipped}", String(result.skipped.length))
             .replace("{errors}", String(result.errors.length))}
-          description={(
-            <>
-              {result.created.length ? <div>{result.created.join(", ")}</div> : null}
-              {result.issues.length ? (
-                <div>{copy.skillImportIssues}: {result.issues.map((item) => item.path).join(", ")}</div>
-              ) : null}
-            </>
-          )}
         />
       ) : null}
-      <Button type="primary" loading={busy} onClick={() => void runImport()} style={{ marginTop: 12 }}>
-        {copy.skillImportConfirm}
-      </Button>
     </Modal>
   );
 }

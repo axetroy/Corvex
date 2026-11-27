@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AppStore } from "../store.js";
-import type { ConversationSkill, SkillPack, SkillStatus } from "../model.js";
+import type { ConversationSkill, SkillStatus } from "../model.js";
 import {
   defaultSkillDocuments,
   ensureQuickActionMetadata,
@@ -25,7 +25,7 @@ import {
   SKILL_SEED_VERSION,
   validateSkillDocument,
 } from "./skills.js";
-import { extractSkillArchive } from "./skill-import.js";
+import { discoverSkillsFromZip, extractSkillArchive } from "./skill-import.js";
 
 /** 与 npx skills 锁文件同构的版本号；旧版本不兼容时按空锁处理。 */
 export const skillLockVersion = 2;
@@ -44,10 +44,7 @@ export interface SkillLockEntry {
   computedHash: string;
   installedAt: string;
   updatedAt: string;
-  /** 同一包派生的技能共享该 ID；系统种子与手动技能为空。 */
-  packId?: string;
-  packName?: string;
-  /** 本地保留的 ZIP（相对技能根目录），让导入包可以离线恢复。 */
+  /** 本地保留的 ZIP（相对技能根目录），让已导入技能可以离线恢复。 */
   archive?: string;
   /** SKILL.md 相对技能目录的路径；npx skills 允许它不在根目录。 */
   skillFile?: string;
@@ -61,7 +58,6 @@ export interface SkillLockFile {
 }
 
 export type ManagedSkill = ConversationSkill;
-export type ManagedSkillPack = SkillPack;
 
 /** 技能文件被发现/解析时产生的问题；管理端展示，模型目录不暴露。 */
 export interface SkillDiagnostic {
@@ -70,31 +66,48 @@ export interface SkillDiagnostic {
   message: string;
 }
 
-export interface SkillImportPackInput {
+/** 导入预览里的候选技能；selected 由用户在界面勾选。 */
+export interface DiscoveredImportSkill {
   name: string;
+  description: string;
+  document: string;
+  sourcePath: string;
+  issues: string[];
+}
+
+export interface SkillImportPreview {
+  skills: DiscoveredImportSkill[];
+  issues: Array<{ path: string; message: string }>;
+  /** 预览阶段缓存的 ZIP 句柄标识，确认导入时回传。 */
+  token: string;
+}
+
+export interface SkillImportPreviewInput {
   archive: Buffer;
   source: "upload" | "url" | "github" | "gitlab";
   sourceValue: string;
+  sourceUrl?: string;
   ref?: string;
   commit?: string;
-  sourceUrl?: string;
   path?: string;
+}
+
+/** 预览缓存只保存暂存文件路径与元数据，绝不持有 ZIP Buffer。 */
+interface PreviewCacheEntry extends Omit<SkillImportPreviewInput, "archive"> {
+  archivePath: string;
+  createdAt: number;
+}
+
+export interface SkillImportInput {
+  token: string;
+  selected: string[];
   overwrite: boolean;
 }
 
-/** 更新技能包时由路由提供重新下载能力，存储层不关心 GitLab 令牌与网络细节。 */
-export interface SkillPackFetchResult {
-  archive: Buffer;
-  sourceUrl?: string;
-  commit?: string;
-}
-
-export interface SkillImportPackResult {
-  pack: ManagedSkillPack;
+export interface SkillImportResult {
   created: string[];
   skipped: string[];
   errors: string[];
-  issues: Array<{ path: string; message: string }>;
 }
 
 /** npx skills 内容哈希排除的目录与文件，不参与安装也不参与校验。 */
@@ -176,13 +189,15 @@ export class SkillStore {
   }
 
   private archivePath(id: string): string {
-    if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error(`invalid skill pack id: ${id}`);
+    if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error(`invalid skill import id: ${id}`);
     return join(this.root, ".archives", `${id}.zip`);
   }
 
   /** 启动时与每次写后重建的内存镜像；斜杠命令解析是同步的，读它即可。 */
   private cache = new Map<string, ManagedSkill>();
   private lastSignature = "";
+  /** 导入预览的临时缓存：ZIP 写盘后只留路径，避免长时间占用应用内存。 */
+  private readonly previews = new Map<string, PreviewCacheEntry>();
 
   /** 重建同步读取用的缓存；磁盘是权威来源，缓存只是快照。 */
   async refresh(): Promise<void> {
@@ -490,7 +505,6 @@ export class SkillStore {
       isSystem: entry?.source === "system",
       createdAt: entry?.installedAt ?? updatedAt,
       updatedAt: entry?.updatedAt ?? updatedAt,
-      packId: entry?.packId ?? "",
       status,
       commands: parsed.commands ?? [],
       commandsEnabled: parsed.commandsEnabled === true,
@@ -545,50 +559,6 @@ export class SkillStore {
   }
 
   /** 供斜杠命令与补全菜单使用的已启用技能。 */
-  async listEnabled(): Promise<ManagedSkill[]> {
-    return (await this.list()).filter((skill) => skill.enabled && skill.userInvocable && skill.status !== "missing");
-  }
-
-  async listPacks(): Promise<ManagedSkillPack[]> {
-    const skills = await this.list();
-    const lock = await this.readLock();
-    const grouped = new Map<string, ManagedSkill[]>();
-    for (const skill of skills) {
-      if (!skill.packId) continue;
-      const members = grouped.get(skill.packId) ?? [];
-      members.push(skill);
-      grouped.set(skill.packId, members);
-    }
-    const packs: ManagedSkillPack[] = [];
-    for (const [id, members] of grouped) {
-      const first = lock.skills[members[0]!.name];
-      let size: number;
-      try {
-        size = (await stat(this.archivePath(id))).size;
-      } catch {
-        // 无本地包时按技能文档总大小展示。
-        size = members.reduce((sum, skill) => sum + Buffer.byteLength(skill.document), 0);
-      }
-      const status = members.some((skill) => skill.status === "missing") ? "missing"
-        : members.some((skill) => skill.status === "modified") ? "modified"
-        : members.some((skill) => skill.status === "untracked") ? "untracked"
-        : "tracked";
-      packs.push({
-        id,
-        name: first?.packName ?? id,
-        size,
-        source: first?.source ?? "upload",
-        sourceValue: first?.sourceUrl ?? "",
-        enabled: members.some((skill) => skill.enabled),
-        skillCount: members.length,
-        createdAt: members.reduce((min, skill) => skill.createdAt < min ? skill.createdAt : min, members[0]!.createdAt),
-        updatedAt: members.reduce((max, skill) => skill.updatedAt > max ? skill.updatedAt : max, members[0]!.updatedAt),
-        status,
-      });
-    }
-    return packs.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  }
-
   async create(document: string): Promise<ManagedSkill> {
     return this.withLock(async () => {
       const parsed = parseSkillDocument(document);
@@ -680,55 +650,100 @@ export class SkillStore {
     });
   }
 
-  async setPackEnabled(id: string, enabled: boolean): Promise<boolean> {
-    const skills = (await this.listPacks()).find((pack) => pack.id === id);
-    if (!skills) return false;
-    const members = (await this.list()).filter((skill) => skill.packId === id);
-    for (const member of members) await this.setEnabled(member.name, enabled);
-    return true;
+  /** 供斜杠命令与补全菜单使用的已启用技能。 */
+  async listEnabled(): Promise<ManagedSkill[]> {
+    return (await this.list()).filter((skill) => skill.enabled && skill.userInvocable && skill.status !== "missing");
   }
 
-  /** 导入技能包：ZIP 存到磁盘、文件解压到磁盘，派生技能登记进锁。 */
-  async importPack(input: SkillImportPackInput): Promise<SkillImportPackResult> {
+  /** 预览导入：ZIP 立刻写盘，缓存只保留路径；返回候选技能供用户勾选。 */
+  async createImportPreview(input: SkillImportPreviewInput): Promise<SkillImportPreview> {
+    const token = randomUUID();
+    const now = Date.now();
+    await mkdir(join(this.root, ".staging"), { recursive: true });
+    // 清理过期预览：连同暂存 ZIP 一起删除，避免磁盘与内存同时泄漏。
+    for (const [id, entry] of this.previews) {
+      if (now - entry.createdAt <= 10 * 60_000) continue;
+      await rm(entry.archivePath, { force: true }).catch(() => undefined);
+      this.previews.delete(id);
+    }
+    const archivePath = join(this.root, ".staging", `preview-${token}.zip`);
+    await atomicWrite(archivePath, input.archive);
+    this.previews.set(token, {
+      source: input.source,
+      sourceValue: input.sourceValue,
+      ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}),
+      ...(input.ref ? { ref: input.ref } : {}),
+      ...(input.commit ? { commit: input.commit } : {}),
+      ...(input.path ? { path: input.path } : {}),
+      archivePath,
+      createdAt: now,
+    });
+    // 仅在解析期间短暂持有 Buffer，方法返回后即可被回收。
+    const archive = await readFile(archivePath);
+    const discovered = await discoverSkillsFromZip(archive, input.path);
+    return {
+      token,
+      skills: discovered.skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        document: skill.document,
+        sourcePath: skill.sourcePath,
+        issues: discovered.issues
+          .filter((issue) => issue.path === skill.sourcePath)
+          .map((issue) => issue.message),
+      })),
+      issues: discovered.issues,
+    };
+  }
+
+  /** 按勾选结果导入技能；ZIP 留在本地供 verify 离线恢复。 */
+  async importSkills(input: SkillImportInput): Promise<SkillImportResult> {
     return this.withLock(async () => {
-      const packId = randomUUID();
-      const now = new Date().toISOString();
-      const archiveRelative = join(".archives", `${packId}.zip`);
-      await atomicWrite(join(this.root, archiveRelative), input.archive);
-      const staging = join(this.root, ".staging", packId);
-      const extracted = await extractSkillArchive(input.archive, staging, input.path);
+      const preview = this.previews.get(input.token);
+      if (!preview) throw new Error("import preview expired; upload the archive again");
+      const staging = join(this.root, ".staging", input.token);
+      // 从磁盘暂存文件读取，Buffer 只在本次导入期间短暂存在。
+      const archive = await readFile(preview.archivePath);
+      const extracted = await extractSkillArchive(archive, staging, preview.path);
       const lock = await this.readLock();
+      const selected = new Set(input.selected);
+      const archiveId = randomUUID();
+      const archiveRelative = join(".archives", `${archiveId}.zip`);
       const created: string[] = [];
       const skipped: string[] = [];
       const errors: string[] = [];
+      const now = new Date().toISOString();
       try {
+        await atomicWrite(join(this.root, archiveRelative), archive);
         for (const skill of extracted.skills) {
+          if (!selected.has(skill.sourcePath)) continue;
           const existing = lock.skills[skill.name];
           if (existing && !input.overwrite) {
             skipped.push(skill.name);
             continue;
           }
-          if (existing && existing.source === "system") {
+          if (existing?.source === "system") {
             skipped.push(skill.name);
             continue;
           }
+          if (existing?.source === "manual") {
+            errors.push(`${skill.name}: a manual skill already owns this name`);
+            continue;
+          }
           if (existing) await rm(this.skillDir(skill.name), { recursive: true, force: true });
-          const source = join(staging, skill.folder);
-          await cp(source, this.skillDir(skill.name), { recursive: true });
+          await cp(join(staging, skill.folder), this.skillDir(skill.name), { recursive: true });
           lock.skills[skill.name] = {
-            source: input.source,
-            sourceType: input.source,
-            sourceUrl: input.sourceUrl ?? input.sourceValue,
-            sourceValue: input.sourceValue,
-            ...(input.ref ? { ref: input.ref } : {}),
-            ...(input.commit ? { commit: input.commit } : {}),
+            source: preview.source,
+            sourceType: preview.source,
+            sourceUrl: preview.sourceUrl ?? preview.sourceValue,
+            sourceValue: preview.sourceValue,
+            ...(preview.ref ? { ref: preview.ref } : {}),
+            ...(preview.commit ? { commit: preview.commit } : {}),
             skillPath: skill.sourcePath,
             skillFile: "SKILL.md",
             computedHash: (await this.folderHash(skill.name))!,
             installedAt: existing?.installedAt ?? now,
             updatedAt: now,
-            packId,
-            packName: input.name,
             archive: archiveRelative.replace(/\\/g, "/"),
           };
           created.push(skill.name);
@@ -736,103 +751,11 @@ export class SkillStore {
         await this.writeLock(lock);
       } finally {
         await rm(staging, { recursive: true, force: true });
+        await rm(preview.archivePath, { force: true }).catch(() => undefined);
+        this.previews.delete(input.token);
       }
       await this.refresh();
-      const pack = (await this.listPacks()).find((entry) => entry.id === packId);
-      return {
-        pack: pack ?? {
-          id: packId, name: input.name, size: input.archive.byteLength, source: input.source,
-          sourceValue: input.sourceValue, enabled: true, skillCount: 0,
-          createdAt: now, updatedAt: now, status: "tracked",
-        },
-        created, skipped, errors, issues: extracted.issues,
-      };
-    });
-  }
-
-  async deletePack(id: string): Promise<boolean> {
-    return this.withLock(async () => {
-      const lock = await this.readLock();
-      const members = Object.entries(lock.skills).filter(([, entry]) => entry.packId === id);
-      if (members.length === 0) return false;
-      for (const [name] of members) {
-        await rm(this.skillDir(name), { recursive: true, force: true });
-        delete lock.skills[name];
-      }
-      await rm(this.archivePath(id), { force: true });
-      await this.writeLock(lock);
-      await this.refresh();
-      return true;
-    });
-  }
-
-  /**
-   * 按锁里记录的来源重新拉取技能包并替换文件，类似 npx skills update。
-   * 来源不可复现（手动上传且无 URL）时拒绝更新。
-   */
-  async updatePack(
-    id: string,
-    fetchArchive: (entry: SkillLockEntry) => Promise<SkillPackFetchResult>,
-  ): Promise<{ pack: ManagedSkillPack; updated: string[]; removed: string[] }> {
-    return this.withLock(async () => {
-      const lock = await this.readLock();
-      const members = Object.entries(lock.skills).filter(([, entry]) => entry.packId === id);
-      if (members.length === 0) throw new Error("skill pack not found");
-      const first = members[0]![1];
-      if (!first.sourceUrl && !first.sourceValue) throw new Error("this pack has no reproducible source");
-      const fetched = await fetchArchive(first);
-      const now = new Date().toISOString();
-      await atomicWrite(this.archivePath(id), fetched.archive);
-      const staging = join(this.root, ".staging", `update-${id}`);
-      const extracted = await extractSkillArchive(fetched.archive, staging, first.skillPath?.replace(/\/[^/]+$/, ""));
-      const updated: string[] = [];
-      const removed: string[] = [];
-      try {
-        const incoming = new Set(extracted.skills.map((skill) => skill.name));
-        for (const [name] of members) {
-          if (!incoming.has(name)) {
-            await rm(this.skillDir(name), { recursive: true, force: true });
-            delete lock.skills[name];
-            removed.push(name);
-          }
-        }
-        for (const skill of extracted.skills) {
-          const existing = lock.skills[skill.name];
-          if (existing?.source === "system") continue;
-          if (existing) await rm(this.skillDir(skill.name), { recursive: true, force: true });
-          await cp(join(staging, skill.folder), this.skillDir(skill.name), { recursive: true });
-          lock.skills[skill.name] = {
-            source: first.source,
-            sourceType: first.sourceType,
-            sourceUrl: fetched.sourceUrl ?? first.sourceUrl ?? first.sourceValue,
-            ...(fetched.commit ? { commit: fetched.commit } : first.commit ? { commit: first.commit } : {}),
-            ...(first.ref ? { ref: first.ref } : {}),
-            skillPath: skill.sourcePath,
-            skillFile: "SKILL.md",
-            computedHash: (await this.folderHash(skill.name))!,
-            installedAt: existing?.installedAt ?? now,
-            updatedAt: now,
-            packId: id,
-            packName: first.packName ?? id,
-            archive: `.archives/${id}.zip`,
-          };
-          updated.push(skill.name);
-        }
-        await this.writeLock(lock);
-      } finally {
-        await rm(staging, { recursive: true, force: true });
-      }
-      await this.refresh();
-      const pack = (await this.listPacks()).find((entry) => entry.id === id);
-      return {
-        pack: pack ?? {
-          id, name: first.packName ?? id, size: fetched.archive.byteLength, source: first.source,
-          sourceValue: first.sourceUrl ?? first.sourceValue, enabled: true, skillCount: updated.length,
-          createdAt: now, updatedAt: now, status: "tracked",
-        },
-        updated,
-        removed,
-      };
+      return { created, skipped, errors };
     });
   }
 
@@ -943,12 +866,12 @@ export class SkillStore {
   }
 
   /**
-   * 一次性把旧 SQLite 里的技能与技能包导出到磁盘，成功后清空旧表。
+   * 一次性把旧 SQLite 技能表导出到磁盘，成功后清空旧表。
    * 已有锁文件说明迁移已完成，绝不重复导出覆盖管理员的修改。
    */
-  async migrateFromStore(store: AppStore): Promise<{ skills: number; packs: number }> {
+  async migrateFromStore(store: AppStore): Promise<{ skills: number; archives: number }> {
     return this.withLock(async () => {
-      if (await this.lockExists()) return { skills: 0, packs: 0 };
+      if (await this.lockExists()) return { skills: 0, archives: 0 };
       const legacySkills = store.legacySkillsForMigration();
       const legacyPacks = store.legacySkillPacksForMigration();
       const lock = emptyLock();
@@ -967,17 +890,13 @@ export class SkillStore {
           computedHash: (await this.folderHash(skill.name))!,
           installedAt: skill.createdAt || now,
           updatedAt: skill.updatedAt || now,
-          ...(skill.packId ? {
-            packId: skill.packId,
-            packName: legacyPacks.find((pack) => pack.id === skill.packId)?.name ?? skill.packId,
-            archive: `.archives/${skill.packId}.zip`,
-          } : {}),
+          ...(skill.packId ? { archive: `.archives/${skill.packId}.zip` } : {}),
         };
       }
       await this.writeLock(lock);
       store.dropSkillTables();
       await this.refresh();
-      return { skills: Object.keys(lock.skills).length, packs: legacyPacks.length };
+      return { skills: Object.keys(lock.skills).length, archives: legacyPacks.length };
     });
   }
 

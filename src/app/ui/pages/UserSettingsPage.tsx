@@ -1,6 +1,7 @@
 import type { Copy } from "../lib/i18n.js";
 import { PageHeading } from "../components/common.js";
 import { ModelManager } from "../components/ModelManager.js";
+import { SkillManager } from "../components/SkillManager.js";
 
 interface Props {
   copy: Copy;
@@ -13,6 +14,7 @@ export function UserSettingsPage({ copy, onChanged }: Props) {
     <div className="user-settings-page">
       <PageHeading title={copy.userSettingsTitle} description={copy.userSettingsDescription} />
       <ModelManager copy={copy} scope="user" onChanged={onChanged} />
+      <SkillManager copy={copy} scope="personal" />
     </div>
   );
 }

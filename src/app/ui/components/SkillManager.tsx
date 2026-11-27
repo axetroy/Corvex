@@ -3,13 +3,12 @@ import { Button, Modal, Space, Switch, Table, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
-import type { ConversationSkill, SkillPack } from "../lib/types.js";
+import type { ConversationSkill } from "../lib/types.js";
 import { SkillImportDialog } from "./SkillImportDialog.js";
 
 // Monaco 体积很大，只在打开编辑弹窗时加载。
 const SkillEditor = lazy(() => import("./SkillEditor.js").then((module) => ({ default: module.SkillEditor })));
 
-/** 技能格式遵循的规范地址，管理端与文档都指向这里。 */
 const AGENT_SKILLS_SPEC_URL = "https://agentskills.io/specification";
 
 const blankDocument = `---
@@ -23,16 +22,14 @@ metadata:
 Instructions for the model. Use $ARGUMENTS for the user's text.
 `;
 
-/** 管理员维护对话技能：每个技能就是一份 SKILL.md，用 Monaco 编辑。 */
-export function SkillManager({ copy }: { copy: Copy }) {
+type Diagnostic = { level: string; skill: string; message: string };
+
+/** 全局技能由管理员维护，个人技能由登录用户自己维护；两者共用同一套组件与 API 形状。 */
+export function SkillManager({ copy, scope }: { copy: Copy; scope: "global" | "personal" }) {
+  const base = scope === "global" ? "/api/ops/admin/skills" : "/api/ops/me/skills";
   const [skills, setSkills] = useState<ConversationSkill[]>([]);
-  const [packs, setPacks] = useState<SkillPack[]>([]);
-  const [personalSkills, setPersonalSkills] = useState<ConversationSkill[]>([]);
-  const [personalPacks, setPersonalPacks] = useState<SkillPack[]>([]);
-  const [diagnostics, setDiagnostics] = useState<Array<{ level: string; skill: string; message: string }>>([]);
-  const [editorBase, setEditorBase] = useState("/api/ops/admin/skills");
+  const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [importOpen, setImportOpen] = useState(false);
-  const [personalImportOpen, setPersonalImportOpen] = useState(false);
   const [editing, setEditing] = useState<ConversationSkill | undefined>();
   const [document, setDocument] = useState(blankDocument);
   const [modalOpen, setModalOpen] = useState(false);
@@ -43,38 +40,24 @@ export function SkillManager({ copy }: { copy: Copy }) {
 
   useEffect(() => {
     let active = true;
-    fetchJson<{ items: ConversationSkill[] }>("/api/ops/admin/skills", copy)
+    fetchJson<{ items: ConversationSkill[] }>(base, copy)
       .then((result) => { if (active) setSkills(result.items ?? []); })
       .catch((cause: unknown) => { if (active) setError(errorMessage(cause)); });
-    fetchJson<{ items: SkillPack[] }>("/api/ops/admin/skills/packs", copy)
-      .then((result) => { if (active) setPacks(result.items ?? []); })
+    fetchJson<{ items: Diagnostic[] }>(`${base}/diagnostics`, copy)
+      .then((result) => { if (active) setDiagnostics(result.items ?? []); })
       .catch(() => undefined);
-    fetchJson<{ items: ConversationSkill[] }>("/api/ops/me/skills", copy)
-      .then((result) => { if (active) setPersonalSkills(result.items ?? []); })
-      .catch(() => undefined);
-    fetchJson<{ items: SkillPack[] }>("/api/ops/me/skills/packs", copy)
-      .then((result) => { if (active) setPersonalPacks(result.items ?? []); })
-      .catch(() => undefined);
-    void Promise.all([
-      fetchJson<{ items: Array<{ level: string; skill: string; message: string }> }>("/api/ops/admin/skills/diagnostics", copy),
-      fetchJson<{ items: Array<{ level: string; skill: string; message: string }> }>("/api/ops/me/skills/diagnostics", copy),
-    ]).then(([global, personal]) => {
-      if (active) setDiagnostics([...(global.items ?? []), ...(personal.items ?? [])]);
-    }).catch(() => undefined);
     return () => { active = false; };
-  }, [copy, notice]);
+  }, [base, copy, notice]);
 
-  function openCreate(base = "/api/ops/admin/skills") {
+  function openCreate() {
     setEditing(undefined);
-    setEditorBase(base);
     setDocument(blankDocument);
     setError("");
     setModalOpen(true);
   }
 
-  function openEdit(skill: ConversationSkill, base = "/api/ops/admin/skills") {
+  function openEdit(skill: ConversationSkill) {
     setEditing(skill);
-    setEditorBase(base);
     setDocument(skill.document);
     setError("");
     setModalOpen(true);
@@ -84,11 +67,8 @@ export function SkillManager({ copy }: { copy: Copy }) {
     setSaving(true);
     setError("");
     try {
-      if (editing) {
-        await sendJson(`${editorBase}/${encodeURIComponent(editing.id)}`, { document }, copy);
-      } else {
-        await sendJson(editorBase, { document }, copy, "POST");
-      }
+      if (editing) await sendJson(`${base}/${encodeURIComponent(editing.id)}`, { document }, copy);
+      else await sendJson(base, { document }, copy, "POST");
       setModalOpen(false);
       setNotice(copy.skillManagerSaved);
     } catch (cause) {
@@ -98,7 +78,7 @@ export function SkillManager({ copy }: { copy: Copy }) {
     }
   }
 
-  function confirmDelete(skill: ConversationSkill, base = "/api/ops/admin/skills") {
+  function confirmDelete(skill: ConversationSkill) {
     if (skill.isSystem) {
       setError(copy.skillManagerSystemProtected);
       return;
@@ -118,7 +98,7 @@ export function SkillManager({ copy }: { copy: Copy }) {
     });
   }
 
-  async function verifyLock(frozen: boolean, base = "/api/ops/admin/skills") {
+  async function verifyLock(frozen: boolean) {
     setError("");
     try {
       const result = await sendJson<{ items: Array<{ restored: boolean }> }>(
@@ -144,48 +124,12 @@ export function SkillManager({ copy }: { copy: Copy }) {
     return labels[status] ?? status;
   }
 
-  async function togglePack(pack: SkillPack, enabled: boolean, base = "/api/ops/admin/skills") {
-    try {
-      await sendJson(`${base}/packs/${encodeURIComponent(pack.id)}`, { enabled }, copy);
-      setNotice(copy.skillManagerSaved);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  async function updatePack(pack: SkillPack, base = "/api/ops/admin/skills") {
-    setError("");
-    try {
-      await sendJson(`${base}/packs/${encodeURIComponent(pack.id)}/update`, {}, copy, "POST");
-      setNotice(copy.skillManagerSaved);
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  }
-
-  function confirmDeletePack(pack: SkillPack, base = "/api/ops/admin/skills") {
-    modal.confirm({
-      title: copy.skillPackDeleteConfirm,
-      okText: copy.skillPackDelete,
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          await sendJson(`${base}/packs/${encodeURIComponent(pack.id)}`, {}, copy, "DELETE");
-          setNotice(copy.skillManagerSaved);
-        } catch (cause) {
-          setError(errorMessage(cause));
-        }
-      },
-    });
-  }
-
-  function makeColumns(base: string) {
-    return [
+  const columns = [
     { title: copy.skillManagerName, dataIndex: "name", width: "18%" },
     {
       title: copy.skillManagerDescription,
       dataIndex: "description",
-      width: "32%",
+      width: "30%",
       render: (value: string) => (
         <span title={value}>{value.length > 90 ? `${value.slice(0, 90)}…` : value}</span>
       ),
@@ -199,36 +143,36 @@ export function SkillManager({ copy }: { copy: Copy }) {
     {
       title: copy.skillManagerEnabled,
       dataIndex: "enabled",
-      width: "12%",
+      width: "10%",
       render: (enabled: boolean) => <Switch checked={enabled} disabled />,
     },
     {
       title: copy.skillManagerSystem,
       dataIndex: "isSystem",
-      width: "12%",
+      width: "10%",
       render: (system: boolean) => (system ? <span className="skill-manager-system-tag">{copy.skillManagerSystem}</span> : null),
     },
     {
       title: "",
       key: "actions",
-      width: "26%",
+      width: "22%",
       render: (_: unknown, skill: ConversationSkill) => (
         <Space size="small">
-          <Button size="small" onClick={() => openEdit(skill, base)}>{copy.skillManagerEdit}</Button>
-          <Button size="small" danger onClick={() => confirmDelete(skill, base)}>{copy.skillManagerDelete}</Button>
+          <Button size="small" onClick={() => openEdit(skill)}>{copy.skillManagerEdit}</Button>
+          <Button size="small" danger onClick={() => confirmDelete(skill)}>{copy.skillManagerDelete}</Button>
         </Space>
       ),
     },
-    ];
-  }
-
-  const columns = makeColumns("/api/ops/admin/skills");
-  const personalColumns = makeColumns("/api/ops/me/skills");
+  ];
 
   return (
     <div className="skill-manager">
-      <Typography.Title level={5}>{copy.skillManagerTitle}</Typography.Title>
-      <Typography.Paragraph type="secondary">{copy.skillManagerHint}</Typography.Paragraph>
+      <Typography.Title level={5}>
+        {scope === "global" ? copy.skillManagerTitle : copy.personalSkillTitle}
+      </Typography.Title>
+      <Typography.Paragraph type="secondary">
+        {scope === "global" ? copy.skillManagerHint : copy.personalSkillHint}
+      </Typography.Paragraph>
       <Typography.Paragraph type="secondary">
         {copy.skillManagerSpecHint}{" "}
         <a href={AGENT_SKILLS_SPEC_URL} target="_blank" rel="noreferrer">{copy.skillManagerSpecLink}</a>
@@ -248,7 +192,7 @@ export function SkillManager({ copy }: { copy: Copy }) {
         </ul>
       )}
       <Space>
-        <Button type="primary" onClick={() => openCreate()}>{copy.skillManagerAdd}</Button>
+        <Button type="primary" onClick={openCreate}>{copy.skillManagerAdd}</Button>
         <Button onClick={() => setImportOpen(true)}>{copy.skillManagerImport}</Button>
         <Button onClick={() => void verifyLock(false)}>{copy.skillVerify}</Button>
         <Button onClick={() => void verifyLock(true)}>{copy.skillVerifyFrozen}</Button>
@@ -263,110 +207,11 @@ export function SkillManager({ copy }: { copy: Copy }) {
         tableLayout="fixed"
         style={{ marginTop: 12 }}
       />
-      <Typography.Title level={5} style={{ marginTop: 24 }}>{copy.skillPackTitle}</Typography.Title>
-      <Table
-        rowKey="id"
-        dataSource={packs}
-        size="small"
-        pagination={false}
-        locale={{ emptyText: copy.skillPackEmpty }}
-        columns={[
-          { title: copy.skillManagerName, dataIndex: "name", width: "28%" },
-          { title: copy.skillPackSource, dataIndex: "source", width: "14%" },
-          { title: copy.skillPackSkills, dataIndex: "skillCount", width: "12%" },
-          {
-            title: copy.skillManagerStatus,
-            dataIndex: "status",
-            width: "10%",
-            render: (status: string) => <span className={`skill-status skill-status-${status}`}>{statusLabel(status)}</span>,
-          },
-          {
-            title: copy.skillPackSize,
-            dataIndex: "size",
-            width: "12%",
-            render: (value: number) => `${Math.round(value / 1024)} KiB`,
-          },
-          {
-            title: copy.skillManagerEnabled,
-            dataIndex: "enabled",
-            width: "12%",
-            render: (enabled: boolean, pack: SkillPack) => (
-              <Switch checked={enabled} onChange={(next) => void togglePack(pack, next)} />
-            ),
-          },
-          {
-            title: "",
-            key: "actions",
-            width: "22%",
-            render: (_: unknown, pack: SkillPack) => (
-              <Space size="small">
-                <Button size="small" onClick={() => void updatePack(pack)}>{copy.skillPackUpdate}</Button>
-                <Button size="small" danger onClick={() => confirmDeletePack(pack)}>{copy.skillPackDelete}</Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
-      <Typography.Title level={5} style={{ marginTop: 28 }}>{copy.personalSkillTitle}</Typography.Title>
-      <Typography.Paragraph type="secondary">{copy.personalSkillHint}</Typography.Paragraph>
-      <Space>
-        <Button type="primary" onClick={() => openCreate("/api/ops/me/skills")}>{copy.skillManagerAdd}</Button>
-        <Button onClick={() => setPersonalImportOpen(true)}>{copy.skillManagerImport}</Button>
-        <Button onClick={() => void verifyLock(false, "/api/ops/me/skills")}>{copy.skillVerify}</Button>
-        <Button onClick={() => void verifyLock(true, "/api/ops/me/skills")}>{copy.skillVerifyFrozen}</Button>
-      </Space>
-      <Table
-        rowKey="id"
-        dataSource={personalSkills}
-        columns={personalColumns}
-        pagination={false}
-        size="small"
-        locale={{ emptyText: copy.skillManagerEmpty }}
-        tableLayout="fixed"
-        style={{ marginTop: 12 }}
-      />
-      <Table
-        rowKey="id"
-        dataSource={personalPacks}
-        size="small"
-        pagination={false}
-        locale={{ emptyText: copy.skillPackEmpty }}
-        columns={[
-          { title: copy.skillManagerName, dataIndex: "name", width: "28%" },
-          { title: copy.skillPackSource, dataIndex: "source", width: "14%" },
-          { title: copy.skillPackSkills, dataIndex: "skillCount", width: "12%" },
-          {
-            title: copy.skillManagerEnabled,
-            dataIndex: "enabled",
-            width: "16%",
-            render: (enabled: boolean, pack: SkillPack) => (
-              <Switch checked={enabled} onChange={(next) => void togglePack(pack, next, "/api/ops/me/skills")} />
-            ),
-          },
-          {
-            title: "",
-            key: "actions",
-            width: "20%",
-            render: (_: unknown, pack: SkillPack) => (
-              <Space size="small">
-                <Button size="small" onClick={() => void updatePack(pack, "/api/ops/me/skills")}>{copy.skillPackUpdate}</Button>
-                <Button size="small" danger onClick={() => confirmDeletePack(pack, "/api/ops/me/skills")}>{copy.skillPackDelete}</Button>
-              </Space>
-            ),
-          },
-        ]}
-      />
       <SkillImportDialog
         open={importOpen}
         copy={copy}
+        basePath={base}
         onClose={() => setImportOpen(false)}
-        onImported={() => setNotice(copy.skillManagerSaved)}
-      />
-      <SkillImportDialog
-        open={personalImportOpen}
-        copy={copy}
-        basePath="/api/ops/me/skills"
-        onClose={() => setPersonalImportOpen(false)}
         onImported={() => setNotice(copy.skillManagerSaved)}
       />
       <Modal
@@ -378,9 +223,8 @@ export function SkillManager({ copy }: { copy: Copy }) {
         confirmLoading={saving}
         width={760}
       >
-        <Typography.Paragraph type="secondary">{copy.skillManagerDocumentHint}</Typography.Paragraph>
-        <Suspense fallback={<div className="skill-manager-editor-loading">…</div>}>
-          {modalOpen ? <SkillEditor value={document} onChange={setDocument} /> : null}
+        <Suspense fallback={<Typography.Text type="secondary">{copy.loading}</Typography.Text>}>
+          <SkillEditor value={document} onChange={setDocument} />
         </Suspense>
       </Modal>
       {modalContextHolder}

@@ -59,35 +59,40 @@ export function parseGithubSource(value: string): { owner: string; repo: string;
   };
 }
 
-function filterResult(result: SkillImportResult, input: Pick<SkillSourceInput, "path" | "ref"> & { skill?: string }): SkillImportResult {
-  const pathPrefix = input.path?.replace(/\/+$/, "");
-  const skills = result.skills.filter((skill) => {
-    if (pathPrefix && !skill.sourcePath.startsWith(`${pathPrefix}/`)) return false;
-    if (input.skill && skill.name !== input.skill) return false;
-    return true;
-  });
-  return { ...result, skills, issues: result.issues };
+/** 远程来源下载结果；archive 只在当前请求内短暂存在，调用方必须立即写盘。 */
+export interface SourceArchive {
+  archive: Buffer;
+  sourceUrl?: string;
+  commit?: string;
+  /** 归一化后的子目录前缀。 */
+  path?: string;
 }
 
-/** 从 GitHub 仓库（公开）下载 ZIP 并发现技能。 */
-async function fromGithub(input: SkillSourceInput, options: SkillSourceOptions): Promise<SkillImportResult> {
+function filterResult(result: SkillImportResult, pathPrefix?: string): SkillImportResult {
+  if (!pathPrefix) return result;
+  const prefix = pathPrefix.replace(/\/+$/, "");
+  return {
+    skills: result.skills.filter((skill) => skill.sourcePath.startsWith(`${prefix}/`)),
+    issues: result.issues,
+  };
+}
+
+/** 从 GitHub 仓库下载 ZIP；ref 可以是分支、tag 或提交。 */
+async function archiveFromGithub(input: SkillSourceInput, options: SkillSourceOptions): Promise<SourceArchive> {
   const parsed = parseGithubSource(input.value);
   const ref = input.ref ?? parsed.ref ?? "HEAD";
-  const url = `https://codeload.github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/zip/${encodeURIComponent(ref)}`;
-  const archive = await downloadArchive(url, options);
-  return filterResult({
-    ...await discoverSkillsFromZip(archive),
-    sourceUrl: url,
+  const sourceUrl = `https://codeload.github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/zip/${encodeURIComponent(ref)}`;
+  const archive = await downloadArchive(sourceUrl, options);
+  return {
+    archive,
+    sourceUrl,
     ...(input.ref ? { commit: input.ref } : {}),
-  }, {
-    ...input,
     path: input.path ?? parsed.path,
-    skill: parsed.skill,
-  });
+  };
 }
 
 /** 从已配置的 GitLab 实例下载项目归档；使用当前登录用户的 OAuth 令牌。 */
-async function fromGitlab(input: SkillSourceInput, options: SkillSourceOptions): Promise<SkillImportResult> {
+async function archiveFromGitlab(input: SkillSourceInput, options: SkillSourceOptions): Promise<SourceArchive> {
   const client = options.gitlab;
   if (!client?.authToken) throw new Error("GitLab source requires a signed-in user");
   const baseUrl = options.gitlabBaseUrl?.replace(/\/+$/, "") ?? "";
@@ -118,32 +123,41 @@ async function fromGitlab(input: SkillSourceInput, options: SkillSourceOptions):
     throw new Error("GitLab archive exceeds the download limit");
   }
   if (!isZip(body)) throw new Error("GitLab did not return a ZIP archive");
-  return filterResult({
-    ...await discoverSkillsFromZip(body),
+  return {
+    archive: body,
     sourceUrl: archiveUrl.toString(),
     ...(input.ref ? { commit: input.ref } : {}),
-  }, input);
+    path: input.path,
+  };
 }
 
-/** 统一入口：URL / GitHub / GitLab 三种远程来源都归一成同一份发现结果。 */
-export async function fetchSkillsFromSource(
+/** 只负责下载 ZIP 与解析来源信息；不缓存、不常驻内存。 */
+export async function fetchSourceArchive(
   input: SkillSourceInput,
   options: SkillSourceOptions = {},
-): Promise<SkillImportResult> {
+): Promise<SourceArchive> {
   switch (input.channel) {
     case "url": {
       const value = input.value.trim();
       if (!/^https?:\/\//i.test(value)) throw new Error("URL source must start with http:// or https://");
-      const archive = await downloadArchive(value, options);
-      return filterResult({ ...await discoverSkillsFromZip(archive), sourceUrl: value }, input);
+      return { archive: await downloadArchive(value, options), sourceUrl: value, path: input.path };
     }
     case "github":
-      return fromGithub(input, options);
+      return archiveFromGithub(input, options);
     case "gitlab":
-      return fromGitlab(input, options);
+      return archiveFromGitlab(input, options);
     default: {
       const exhaustive: never = input.channel;
       throw new Error(`unsupported skill source ${String(exhaustive)}`);
     }
   }
+}
+
+/** 完整发现流程：下载后立刻解析，结果里不再带 ZIP。 */
+export async function fetchSkillsFromSource(
+  input: SkillSourceInput,
+  options: SkillSourceOptions = {},
+): Promise<SkillImportResult> {
+  const source = await fetchSourceArchive(input, options);
+  return filterResult(await discoverSkillsFromZip(source.archive, source.path), source.path);
 }

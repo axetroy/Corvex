@@ -251,13 +251,13 @@ export class CorvexServer {
     });
     // 所有请求体先按原始字节读取；`/api/ops` 自行校验 content-type 并解析 JSON。
     this.app.removeAllContentTypeParsers();
-    // 技能包 ZIP 单独放宽到导入上限；其余路由仍受 Fastify 默认请求体限制。
+    // 技能导入 ZIP 单独放宽到导入上限；其余路由仍受 Fastify 默认请求体限制。
     this.app.addContentTypeParser(
       "application/zip",
       { parseAs: "buffer", bodyLimit: skillImportLimits.maxArchiveBytes },
       (_request, body, done) => done(null, body),
     );
-    // 会话文本附件走专用 content-type，独立限额且不与 JSON API / 技能包 ZIP 冲突。
+    // 会话文本附件走专用 content-type，独立限额且不与 JSON API / 技能导入 ZIP 冲突。
     this.app.addContentTypeParser(
       uploadContentType,
       { parseAs: "buffer", bodyLimit: maxUploadBytesCeiling },
@@ -352,7 +352,7 @@ export class CorvexServer {
     // 技能只在启动时做一次迁移/种子刷新；必须在 listen 之前完成，保证第一个请求就能用。
     const migrated = await this.skills.migrateFromStore(this.store);
     await this.skills.seedSystemSkills();
-    if (migrated.skills > 0 || migrated.packs > 0) {
+    if (migrated.skills > 0 || migrated.archives > 0) {
       console.info("migrated skills to disk", migrated);
     }
     await callAsyncHook(this.hooks.serverBeforeListen);

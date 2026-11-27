@@ -62,7 +62,7 @@ export async function sendJson<T>(path: string, body: unknown, copy: Copy, metho
   return await requestJson<T>(path, copy, { method, body });
 }
 
-/** 上传原始二进制（例如技能包 ZIP）；同源 fetch 会自动带上控制台会话凭据。 */
+/** 上传原始二进制（例如技能导入 ZIP）；同源 fetch 会自动带上控制台会话凭据。 */
 export async function sendBinary<T>(path: string, body: ArrayBuffer, contentType: string, copy: Copy): Promise<T> {
   let response: Response;
   try {

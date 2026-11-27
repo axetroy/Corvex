@@ -55,7 +55,7 @@ function zip(entries: Record<string, string>): Buffer {
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: ${name} skill\n---\n\nDo ${name} carefully.\n`;
 
-describe("skill package import", () => {
+describe("skill import", () => {
   it("discovers SKILL.md files and ignores other entries", async () => {
     const result = await discoverSkillsFromZip(zip({
       "README.md": "not a skill",
@@ -64,7 +64,6 @@ describe("skill package import", () => {
     }));
     expect(result.skills.map((item) => item.name).sort()).toEqual(["api-guide", "web-design"]);
     expect(result.issues).toEqual([]);
-    expect(result.archive?.byteLength).toBeGreaterThan(0);
   });
 
   it("filters by subdirectory prefix", async () => {
