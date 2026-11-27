@@ -389,13 +389,16 @@ export interface ModelRequest {
   turnTools?: TurnToolAdapter;
   /** 当前会话可见的技能命令目录；只在启用执行环境的对话轮次中提供。 */
   skillCommandCatalog?: SkillCommandCatalog;
-  /** 托管技能根目录：进入 Pi 发现与 skill:// 只读根；只由 Runner 注入。 */
-  managedSkillRoot?: string;
+  /** 托管技能根（全局与个人）：进入 Pi 发现与 skill:// 只读根；只由 Runner 注入。 */
+  managedSkillRoots?: Array<{ path: string; alias: string }>;
   /** 模型可见的技能元数据；正文按需用 skill:// 读取，不在此注入。 */
   managedSkills?: Array<{
     name: string;
+    commandName: string;
     description: string;
     skillFile: string;
+    alias: string;
+    scope: "global" | "personal";
     disableModelInvocation: boolean;
   }>;
   /**
@@ -655,25 +658,24 @@ export class PiAgent {
       ? join(resolve(config.storage.root), "exec-cache", String(request.conversationProjectId))
       : undefined;
     if (cacheDir) await mkdir(cacheDir, { recursive: true, mode: 0o750 });
-    const managedSkillRoot = request.managedSkillRoot ? resolve(request.managedSkillRoot) : undefined;
+    const managedRoots = request.managedSkillRoots ?? [];
     const skillPathsResolved = [
       ...config.agent.skillPaths.map((path) => resolve(path)),
-      // 托管技能也进入 Pi 的发现与 skill:// 根表，使两种来源对模型一致可见。
-      ...(managedSkillRoot ? [managedSkillRoot] : []),
+      // 全局与个人托管技能都进入 Pi 发现与 skill:// 根表；别名由 Runner 按同一顺序派生。
+      ...managedRoots.map((root) => resolve(root.path)),
     ];
     const skillRoots = await Promise.all(skillPathsResolved.map((path) => realpath(path)));
     const skillLabels = assignSkillLabels(skillPathsResolved);
-    const managedSkillAlias = managedSkillRoot ? skillLabels.at(-1) : undefined;
-    // 模型可见的技能目录：只有 description 常驻上下文，正文用它给的 skill:// URI 按需读取。
-    const managedSkillSection = managedSkillAlias && request.managedSkills?.length
+    // 模型可见的技能目录：只有 description 常驻上下文，正文用 skill:// URI 按需读取。
+    const managedSkillSection = request.managedSkills?.length
       ? buildSkillCatalogSection(
           request.managedSkills
             .filter((skill) => !skill.disableModelInvocation && skill.description)
             .map((skill) => ({
-              name: skill.name,
-              description: skill.description,
-              location: `skill://${managedSkillAlias}/${skill.name}/${skill.skillFile}`,
-              baseDir: `skill://${managedSkillAlias}/${skill.name}`,
+              name: skill.commandName,
+              description: `[${skill.scope === "global" ? "global" : "personal"}] ${skill.description}`,
+              location: `skill://${skill.alias}/${skill.name}/${skill.skillFile}`,
+              baseDir: `skill://${skill.alias}/${skill.name}`,
             })),
           config.agent.responseLanguage,
         )

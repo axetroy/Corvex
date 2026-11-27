@@ -5,7 +5,7 @@ import type { CorvexConfig } from "../config/config.js";
 import { errorMessage } from "../errors.js";
 import { applyActiveModel } from "../config/settings.js";
 import { conversationCapabilities, normalizeConversationTitle } from "../model.js";
-import type { Conversation, ConversationFollowUp, ConversationProcessEntry, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
+import type { Conversation, ConversationFollowUp, ConversationProcessEntry, ConversationSkill, ConversationStreamEvent, ConversationTurnContext, ConversationTurnStatus, ResponseLanguage } from "../model.js";
 import type { AppStore } from "../store.js";
 import { traceExecutionStep } from "../execution.js";
 import { conversationWorkspaceName, GitManager, type SubmoduleOptions } from "../git/manager.js";
@@ -27,6 +27,8 @@ import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
 import { resolveCommandRequest } from "./conversation-command.js";
 import type { SkillStore } from "../agent/skill-store.js";
+import type { SkillRegistry } from "../agent/skill-registry.js";
+import { assignSkillLabels } from "../agent/fs/virtual-path.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -83,6 +85,7 @@ export class ConversationRunner {
     private readonly skills: Pick<SkillStore, "getCached" | "listCached"> = {
       getCached: () => undefined, listCached: () => [],
     },
+    private readonly registry?: SkillRegistry,
   ) {
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl);
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
@@ -953,6 +956,13 @@ export class ConversationRunner {
     }
   }
 
+  /** 斜杠技能查询绑定到会话拥有者，避免跨用户命中个人技能。 */
+  private skillLookup(conversationId: string): (name: string) => ConversationSkill | undefined {
+    if (!this.registry) return (name) => this.skills.getCached(name);
+    const userId = this.store.getConversation(conversationId)?.ownerUserId ?? "";
+    return (name) => this.registry!.resolve(userId, name);
+  }
+
   /** 首轮完成后用 LLM 从用户消息精炼标题；失败时保留创建时的确定性标题。 */
   private async refineTitle(
     turn: ConversationTurnContext,
@@ -962,13 +972,16 @@ export class ConversationRunner {
     language: ResponseLanguage,
   ): Promise<void> {
     if (turn.history.length > 0) return;
+    if (this.registry) {
+      await this.registry.ensureUser(this.store.getConversation(turn.conversationId)?.ownerUserId ?? "");
+    }
     try {
       const title = await callAsyncHook(this.hooks.conversationTitleRefine, {
         conversationId: turn.conversationId,
         turnId: turn.turnId,
         request: resolveCommandRequest(
           turn.request,
-          (name) => this.skills.getCached(name),
+          this.skillLookup(turn.conversationId),
         ).titleRequest,
         language,
         workspacePath,
@@ -1238,11 +1251,11 @@ export class ConversationRunner {
         taskType: "conversation",
         workspace,
       };
-      // 斜杠指令按管理员配置的技能模板展开；命令名不进入发给模型的请求。
-      const { effectiveRequest } = resolveCommandRequest(
-        turn.request,
-        (name) => this.skills.getCached(name),
-      );
+      // 斜杠指令按当前用户可见的技能模板展开；命令名不进入发给模型的请求。
+      if (this.registry) {
+        await this.registry.ensureUser(this.store.getConversation(turn.conversationId)?.ownerUserId ?? "");
+      }
+      const { effectiveRequest } = resolveCommandRequest(turn.request, this.skillLookup(turn.conversationId));
       const systemPrompt = getConversationSystemPrompt(language, turn.mode, this.config.agent.followupsEnabled);
       // 注入过去轮次真实执行过的工具调用与结果：历史只带文本，「说过」不等于「做过」。
       // 取最近若干轮，避开早期被裁剪的长轨迹；上限由 buildToolEvidence 统一约束。
@@ -1305,6 +1318,23 @@ export class ConversationRunner {
           kept: history.length,
         });
       }
+      // 技能视图按会话拥有者派生：全局 + 个人，别名与 Pi 的资源加载顺序一致。
+      const skillUserId = this.store.getConversation(turn.conversationId)?.ownerUserId ?? "";
+      const globalSkillRoot = resolve(this.config.storage.root, "skills");
+      const personalSkillRoot = resolve(this.config.storage.root, "user-skills", skillUserId);
+      const skillAliases = assignSkillLabels([
+        ...this.config.agent.skillPaths.map((path) => resolve(path)),
+        globalSkillRoot,
+        personalSkillRoot,
+      ]);
+      const globalAlias = skillAliases.at(-2) ?? "skills";
+      const personalAlias = skillAliases.at(-1) ?? "me";
+      if (this.registry) {
+        await mkdir(personalSkillRoot, { recursive: true, mode: 0o700 });
+      }
+      const visibleSkills = this.registry
+        ? this.registry.listForUser(skillUserId)
+        : this.skills.listCached().map((skill) => ({ ...skill, scope: "global" as const, commandName: skill.name }));
       const started = Date.now();
       let answer: Awaited<ReturnType<PiAgent["generate"]>>;
       try {
@@ -1331,22 +1361,32 @@ export class ConversationRunner {
                 listTurns: (limit, before) => this.store.listAgentTurns(turn.conversationId, limit, before),
                 getTurn: (index) => this.store.getAgentTurn(turn.conversationId, index),
               },
-              // 技能命令目录来自磁盘技能的内存快照；执行开关与后端仍由配置决定。
-              managedSkillRoot: resolve(this.config.storage.root, "skills"),
-              managedSkills: this.skills.listCached()
-                .filter((skill) => skill.enabled && skill.status !== "missing")
-                .map((skill) => ({
-                  name: skill.name,
-                  description: skill.description,
-                  skillFile: skill.skillFile || "SKILL.md",
-                  disableModelInvocation: skill.disableModelInvocation,
-                })),
+              // 技能目录与命令只取当前用户可见的合并视图；执行开关与后端仍由配置决定。
+              ...(this.registry
+                ? {
+                    managedSkillRoots: [
+                      { path: globalSkillRoot, alias: globalAlias },
+                      { path: personalSkillRoot, alias: personalAlias },
+                    ],
+                    managedSkills: visibleSkills
+                      .filter((skill) => skill.enabled && skill.status !== "missing")
+                      .map((skill) => ({
+                        name: skill.name,
+                        commandName: skill.commandName,
+                        description: skill.description,
+                        skillFile: skill.skillFile || "SKILL.md",
+                        alias: skill.scope === "global" ? globalAlias : personalAlias,
+                        scope: skill.scope,
+                        disableModelInvocation: skill.disableModelInvocation,
+                      })),
+                  }
+                : {}),
               skillCommandCatalog: {
-                get: (name) => this.skills.getCached(name),
-                available: () => this.skills.listCached()
+                get: (name) => visibleSkills.find((skill) => skill.commandName === name && skill.status !== "missing"),
+                available: () => visibleSkills
                   .filter((skill) => skill.commandsEnabled && skill.status !== "missing")
                   .flatMap((skill) => (skill.commands ?? []).map((command) => ({
-                    skill: skill.name, command: command.name, description: command.description,
+                    skill: skill.commandName, command: command.name, description: command.description,
                   }))),
               },
               gitlab,

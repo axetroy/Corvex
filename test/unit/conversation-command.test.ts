@@ -21,6 +21,13 @@ const skill: ConversationSkill = {
 };
 
 describe("conversation slash commands", () => {
+  it("parses me: namespaced personal commands and honors user-invocable", () => {
+    expect(parseConversationCommand("/me:docs 补充文档")).toEqual({ command: "me:docs", message: "补充文档" });
+    const personal = { ...skill, name: "docs", userInvocable: false };
+    expect(resolveCommandRequest("/docs 内容", () => personal).effectiveRequest).toBe("/docs 内容");
+    expect(resolveCommandRequest("/docs 内容", () => skill).effectiveRequest).toBe("Focus on documentation. 内容");
+  });
+
   it("parses any well-formed command without a static list", () => {
     expect(parseConversationCommand("/review 检查这个文件的错误处理")).toEqual({
       command: "review",

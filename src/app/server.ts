@@ -8,6 +8,7 @@ import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
 import { skillImportLimits } from "../agent/skill-import.js";
 import { SkillStore } from "../agent/skill-store.js";
+import { SkillRegistry } from "../agent/skill-registry.js";
 import { maxUploadBytesCeiling, uploadContentType } from "./upload.js";
 import { pruneEmptyUploadDirs } from "./upload-cleanup.js";
 import { currentUser } from "./auth/context.js";
@@ -57,6 +58,7 @@ export class CorvexServer {
   /** 对话轮次在 Server 进程内联执行。 */
   private readonly conversations: ConversationRunner;
   private readonly skills: SkillStore;
+  private readonly skillRegistry: SkillRegistry;
   private readonly settings: SettingsService;
   private readonly executionConfig: ExecutionConfigService;
   private readonly cipher: TokenCipher;
@@ -78,8 +80,9 @@ export class CorvexServer {
     this.address = parseListenAddress(config.server.listen);
     this.cipher = createTokenCipher(store.getOrCreateSessionSecret());
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
-    this.skills = new SkillStore(resolve(config.storage.root, "skills"));
-    this.conversations = new ConversationRunner(config, store, this.hooks, this.skills);
+    this.skillRegistry = new SkillRegistry(resolve(config.storage.root));
+    this.skills = this.skillRegistry.global;
+    this.conversations = new ConversationRunner(config, store, this.hooks, this.skills, this.skillRegistry);
     this.scheduledTasks = new ScheduledTasksScheduler({
       config, store, conversations: this.conversations,
       clientForUser: (userId) => this.clientForUser(userId),
@@ -314,6 +317,7 @@ export class CorvexServer {
       config: this.config,
       store: this.store,
       skills: this.skills,
+      skillRegistry: this.skillRegistry,
       conversations: this.conversations,
       oauth: this.oauth,
       hooks: this.hooks,
@@ -348,7 +352,6 @@ export class CorvexServer {
     // 技能只在启动时做一次迁移/种子刷新；必须在 listen 之前完成，保证第一个请求就能用。
     const migrated = await this.skills.migrateFromStore(this.store);
     await this.skills.seedSystemSkills();
-    await this.skills.refresh();
     if (migrated.skills > 0 || migrated.packs > 0) {
       console.info("migrated skills to disk", migrated);
     }

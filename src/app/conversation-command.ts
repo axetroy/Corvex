@@ -12,9 +12,10 @@ export interface ParsedConversationCommand {
 
 /** 解析消息开头的 `/command`，只校验格式；指令是否存在由调用方查技能表决定。 */
 export function parseConversationCommand(text: string): ParsedConversationCommand | undefined {
-  const match = /^\/([a-z][a-z-]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  // 个人技能同名时用 me: 前缀调用；裸名仍按全局优先解析。
+  const match = /^\/(me:)?([a-z][a-z-]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!match) return undefined;
-  return { command: match[1], message: (match[2] ?? "").trim() };
+  return { command: match[1] ? `me:${match[2]}` : match[2], message: (match[3] ?? "").trim() };
 }
 
 /** 去掉指令前缀，用于标题生成等只需要原始问题的场景。 */

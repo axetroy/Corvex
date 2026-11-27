@@ -19,12 +19,14 @@ interface Props {
   copy: Copy;
   onClose: () => void;
   onImported: () => void;
+  /** 管理端或个人端的技能路由前缀。 */
+  basePath?: string;
 }
 
 /** ZIP 上限在服务端也有同样的硬限制；这里提前拦截，避免无谓上传。 */
 const maxZipBytes = 10 * 1024 * 1024;
 
-export function SkillImportDialog({ open, copy, onClose, onImported }: Props) {
+export function SkillImportDialog({ open, copy, onClose, onImported, basePath = "/api/ops/admin/skills" }: Props) {
   const [channel, setChannel] = useState<Channel>("upload");
   const [file, setFile] = useState<File | undefined>();
   const [value, setValue] = useState("");
@@ -54,14 +56,14 @@ export function SkillImportDialog({ open, copy, onClose, onImported }: Props) {
         if (file.size > maxZipBytes) throw new Error(`ZIP exceeds 10 MiB`);
         const buffer = await file.arrayBuffer();
         next = await sendBinary<ImportResult>(
-          `/api/ops/admin/skills/import?filename=${encodeURIComponent(file.name)}`,
+          `${basePath}/import?filename=${encodeURIComponent(file.name)}`,
           buffer,
           "application/zip",
           copy,
         );
       } else {
         if (!value.trim()) throw new Error(hint);
-        next = await sendJson<ImportResult>("/api/ops/admin/skills/import", {
+        next = await sendJson<ImportResult>(`${basePath}/import`, {
           channel,
           value: value.trim(),
           ref: ref.trim(),

@@ -5,6 +5,7 @@ import type { GitLabOAuthService } from "../auth/service.js";
 import type { CorvexHooks } from "../hooks.js";
 import type { AppStore } from "../../store.js";
 import type { SkillStore } from "../../agent/skill-store.js";
+import type { SkillRegistry } from "../../agent/skill-registry.js";
 import type { GitLabClient } from "../../gitlab/client.js";
 import type { ResponseLanguage } from "../../model.js";
 import type { ConversationRunner } from "../conversation-runner.js";
@@ -20,6 +21,8 @@ export interface OpsContext {
   readonly store: AppStore;
   /** 磁盘技能存储；技能的唯一权威来源，SQLite 不再保存技能文档或压缩包。 */
   readonly skills: SkillStore;
+  /** 全局 + 个人技能注册表；路由按当前用户取个人视图。 */
+  readonly skillRegistry: SkillRegistry;
   readonly conversations: ConversationRunner;
   readonly settings: SettingsService;
   readonly executionConfig: ExecutionConfigService;
