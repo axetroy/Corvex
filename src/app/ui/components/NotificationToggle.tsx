@@ -18,7 +18,7 @@ export function NotificationToggle({ copy, className }: Props) {
   return (
     <button
       type="button"
-      className={`notification-toggle${enabled ? " is-enabled" : ""}${className ? ` ${className}` : ""}`}
+      className={`notification-toggle${enabled ? " is-enabled" : ""}${permission === "denied" || permission === "unsupported" ? " is-blocked" : ""}${className ? ` ${className}` : ""}`}
       aria-label={label}
       aria-pressed={enabled}
       title={label}
