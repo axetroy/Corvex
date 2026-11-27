@@ -2228,6 +2228,15 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   white-space: nowrap;
 }
 
+.conversation-upload-notice {
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 /* 附件预览弹窗：Monaco / 图片预览器都撑满弹窗内容区。 */
 .conversation-attachment-preview {
   /* 给弹窗标题与留白留出空间，避免整页出现滚动条。 */

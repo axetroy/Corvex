@@ -11,6 +11,10 @@ export const imageUploadMaxBytes = 4 << 20;
 export const maxUploadBytesCeiling = 8 << 20;
 /** 单条消息最多附带的图片数；与文本附件共享同一上限时取更小值。 */
 export const maxImagesPerMessage = 5;
+/** 前端上传前把每张图片压缩到的目标字节数；base64 膨胀后仍能落在请求预算内。 */
+export const compressedImageTargetBytes = 700 << 10;
+/** 发送给模型的图片总原始字节上限；多图时按此裁剪，避免累加后超预算。 */
+export const maxImageBytesPerMessage = 1 << 20;
 /** 单条消息默认最多附带的附件数。 */
 export const maxUploadsPerMessage = 10;
 /** 单个会话默认累计保留的附件数；已发送附件仍占额度，留足余量避免误伤多轮协作。 */

@@ -21,7 +21,7 @@ import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-confli
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { buildToolEvidence } from "../agent/tool-evidence.js";
 import { buildUploadContext } from "./upload.js";
-import { imageUploadMaxBytes, maxImagesPerMessage } from "../upload-constants.js";
+import { imageUploadMaxBytes, maxImageBytesPerMessage, maxImagesPerMessage } from "../upload-constants.js";
 import { verifyAnswerClaims } from "../agent/claim-verification.js";
 import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
@@ -1280,7 +1280,7 @@ export class ConversationRunner {
           : "\n\n[Uploaded images were not sent: the current model does not support image input.]";
       } else {
         let totalBytes = 0;
-        const budget = imageUploadMaxBytes * maxImagesPerMessage;
+        const budget = Math.min(imageUploadMaxBytes * maxImagesPerMessage, maxImageBytesPerMessage);
         for (const item of imageUploads.slice(0, maxImagesPerMessage)) {
           const bytes = await readFileFs(item.filePath);
           if (bytes.length > imageUploadMaxBytes || totalBytes + bytes.length > budget) continue;

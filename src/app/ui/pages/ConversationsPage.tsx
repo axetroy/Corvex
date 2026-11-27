@@ -9,6 +9,8 @@ import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, fetchText, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
 import { imageUploadMaxBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
+import { compressImageForUpload } from "../lib/image-compress.js";
+import { formatStorageBytes as formatBytes } from "../lib/storage.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
@@ -323,6 +325,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [followUps, setFollowUps] = useState<ConversationFollowUp[]>([]);
   const followUpStateRef = useRef<{ conversationId: string; count: number } | null>(null);
   const [error, setError] = useState("");
+  const [uploadNotice, setUploadNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showCreate, setShowCreate] = useState(!conversationId);
@@ -799,16 +802,29 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setError("");
     try {
       for (const file of files.slice(0, room)) {
-        // 客户端按文件类型预检；服务端仍按真实字节与运行时限额复核。
-        const limit = isImageAttachment(file) ? imageUploadMaxBytes : uploadLimits.maxBytes;
+        // 客户端按文件类型预检；图片先压缩再上传，原图不进入请求体。
+        const image = isImageAttachment(file);
+        const limit = image ? 32 << 20 : uploadLimits.maxBytes;
         if (file.size === 0 || file.size > limit) throw new Error(copy.attachmentTooLarge);
         if (!isSupportedAttachment(file)) throw new Error(copy.attachmentUnsupported);
-        const declaredMime = file.type || (isImageAttachment(file) ? "image/png" : "text/plain");
-        const query = new URLSearchParams({ filename: file.name, mime: declaredMime });
+        const prepared = image
+          ? await compressImageForUpload(file)
+          : {
+              data: await file.arrayBuffer(), mime: file.type || "text/plain",
+              filename: file.name, originalBytes: file.size, width: 0, height: 0,
+            };
+        if (prepared.data.byteLength > imageUploadMaxBytes) throw new Error(copy.attachmentTooLarge);
+        const declaredMime = prepared.mime;
+        const query = new URLSearchParams({ filename: prepared.filename, mime: declaredMime });
         const path = showCreate
           ? `/api/ops/uploads/draft?${query.toString()}`
-          : uploadUrl(currentConversation!.id, file.name, declaredMime);
-        const created = await sendBinary<PendingAttachment>(path, await file.arrayBuffer(), uploadContentType, copy);
+          : uploadUrl(currentConversation!.id, prepared.filename, declaredMime);
+        const created = await sendBinary<PendingAttachment>(path, prepared.data, uploadContentType, copy);
+        if (image && prepared.originalBytes > prepared.data.byteLength) {
+          setUploadNotice(copy.attachmentImageCompressed
+            .replace("{from}", formatBytes(prepared.originalBytes))
+            .replace("{to}", formatBytes(prepared.data.byteLength)));
+        }
         setAttachments((current) => [...current, {
           id: created.id, filename: created.filename, sizeBytes: created.sizeBytes, mime: created.mime,
           ...(showCreate ? { draft: true } : {}),
@@ -1428,6 +1444,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     <>
       {modalContextHolder}
       {error ? <ErrorBanner message={error} /> : null}
+      {uploadNotice ? <div className="conversation-upload-notice">{uploadNotice}</div> : null}
       <section className="conversations-layout" aria-label={copy.conversationsDescription}>
         <Group
           id="conversation-panels"
