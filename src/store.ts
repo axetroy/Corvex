@@ -2047,6 +2047,22 @@ export class AppStore {
     };
   }
 
+  /** 按 ID 取用户公开身份；用于提交署名，不触碰令牌。 */
+  getManagedUser(userId: string): ManagedUser | undefined {
+    const row = this.db.prepare("SELECT * FROM users WHERE id=?").get(userId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      gitlabUserId: Number(row.gitlab_user_id),
+      username: String(row.username),
+      name: String(row.name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
+      isAdmin: row.is_admin === 1 || row.is_admin === true,
+      disabled: row.disabled === 1 || row.disabled === true,
+      lastLoginAt: String(row.last_login_at ?? ""),
+    };
+  }
+
   /** 列出全部登录用户，供管理员管理。 */
   listUsers(): ManagedUser[] {
     return (this.db.prepare("SELECT * FROM users ORDER BY created_at,id").all() as Record<string, unknown>[])

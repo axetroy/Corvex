@@ -18,6 +18,22 @@ export interface ExecDelta {
 
 /** 命令字符串最大字符数。 */
 export const maxCommandCharacters = 4_096;
+
+/**
+ * 会创建/改写提交的命令：必须走 git_commit / git_publish 等受控工具，
+ * 否则会绕过用户署名与 Assisted-by trailer。允许 git -c 这类前缀。
+ */
+const commitCommandPattern = /(?:^|[\s;&|])git(?:\s+-(?:c|C)\s+[^\s]+(?:\s+[^\s]+)?)*\s+(?:commit|commit-tree|cherry-pick|rebase|am)(?:\s|$)/m;
+
+/** 拒绝自由命令里的提交操作，返回给模型可读的失败原因。 */
+function rejectCommitCommand(command: string): string | undefined {
+  if (!commitCommandPattern.test(command)) return undefined;
+  return [
+    "command: rejected",
+    "reason: creating or rewriting commits is not allowed through run_command; use the git_commit or git_publish tool so the commit carries the user identity and the Assisted-by trailer.",
+    `command: ${previewCommand(command)}`,
+  ].join("\n");
+}
 /** 审计/过程展示里保留的命令前缀长度，避免把敏感值写进轨迹。 */
 const commandPreviewChars = 240;
 
@@ -58,6 +74,8 @@ export async function executeBoundedCommand(
   toolCallId: string,
   input: { command: string; timeoutMs?: number; maxOutputBytes?: number; cwd?: string; readonlyCwd?: boolean },
 ): Promise<string> {
+  const rejected = rejectCommitCommand(input.command);
+  if (rejected) return rejected;
   // 每条命令用自己的 AbortController：停止单条命令不能 abort 整个 turn 的 signal。
   // 但与 turn signal 关联，整轮取消时命令同样被 kill。
   const controller = new AbortController();
@@ -128,7 +146,8 @@ export function createExecutionExtension(options: RunCommandToolOptions): (pi: E
         "Shell syntax (pipes, redirects, &&) is supported; execution is isolated by the configured backend. " +
         "Use it to run typechecks, linters, tests or git inspection. " +
         `The command is limited to ${maxCommandCharacters} characters, a ${options.maxTimeoutMs}ms timeout and ${options.maxOutputBytes} output bytes. ` +
-        "Output is redacted and bounded; report only what the tool actually returned.",
+        "Output is redacted and bounded; report only what the tool actually returned. " +
+        "Do not create or rewrite commits with this tool: git commit / commit-tree / cherry-pick / rebase / am are rejected here; use git_commit or git_publish instead so commits carry the user identity and attribution.",
       promptSnippet:
         `run_command: Run a bounded command in the pinned worktree (${options.backend.kind} backend).`,
       parameters: Type.Object({

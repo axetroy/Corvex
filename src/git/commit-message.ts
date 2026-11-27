@@ -1,3 +1,5 @@
+import { userCommitMessage } from "./commit-identity.js";
+
 /** 会话 ref 自动保存改动时使用的占位信息。 */
 export const conversationCommitPrefix = "Corvex conversation changes ";
 
@@ -10,8 +12,8 @@ export function isAutoConversationCommit(subject: string): boolean {
  * 只有「显式给了信息」且「当前仍是占位提交」时才允许重写，避免改写用户提供或 GitLab 已有的提交。
  */
 export function needsCommitMessageRewrite(currentMessage: string, requested: string | undefined): boolean {
-  const requestedText = requested?.trim();
+  const requestedText = userCommitMessage(requested ?? "");
   if (!requestedText) return false;
-  if (currentMessage.trim() === requestedText) return false;
+  if (userCommitMessage(currentMessage) === requestedText) return false;
   return isAutoConversationCommit(currentMessage.split("\n", 1)[0].trim());
 }

@@ -70,6 +70,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - 配置按角色校验；启动不需要 GitLab 凭据，因为 API 与 Git 调用都用登录用户 token。
 - 分支/ref 名称允许 Unicode（含中文），统一用 `src/git/refs.ts` 的 `isValidBranchName` / `branchNamePatternSource`，工具 schema 与运行时校验共用；不要在各处写死 ASCII 正则，否则中文分支会「工具放行、执行拒绝」。
 - 轮末自动保存改动用的是占位提交信息；用户/模型显式给出提交信息时，`GitManager` 只重写仍带占位信息的会话 ref 提交再推送，不能改写真实提交或已发布提交。
+- 所有会话提交（自动保存、`git_commit` / `git_publish`、逐文件撤销）都由 `GitManager` 统一构造：author 是会话拥有者（GitLab noreply 邮箱），正文末尾强制 `Assisted-by: OpenCode:hy4-flash-free`；`run_command`（含容器内执行）禁止 `git commit` / `commit-tree` / `cherry-pick` / `rebase` / `am`，避免绕过署名与会话 ref 绑定。
 
 ## 测试
 

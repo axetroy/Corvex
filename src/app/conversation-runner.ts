@@ -30,6 +30,7 @@ import type { SkillStore } from "../agent/skill-store.js";
 import type { SkillRegistry } from "../agent/skill-registry.js";
 import { assignSkillLabels } from "../agent/fs/virtual-path.js";
 import { isValidSkillName } from "../agent/skills.js";
+import { authorFromUser } from "../git/commit-identity.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -88,7 +89,17 @@ export class ConversationRunner {
     },
     private readonly registry?: SkillRegistry,
   ) {
-    this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl);
+    this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, (conversationId) => {
+      const ownerId = store.getConversation(conversationId)?.ownerUserId;
+      const user = ownerId ? store.getManagedUser(ownerId) : undefined;
+      let host: string;
+      try {
+        host = new URL(config.gitlab.baseUrl).hostname;
+      } catch {
+        host = "";
+      }
+      return authorFromUser(user, host);
+    });
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
     this.agent = new PiAgent(config, store, this.repo, undefined, this.hooks);

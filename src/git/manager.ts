@@ -5,6 +5,7 @@ import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { needsCommitMessageRewrite } from "./commit-message.js";
+import { commitTreeArgs, fallbackCommitAuthor, withAgentTrailer, type CommitAuthor } from "./commit-identity.js";
 import { isValidBranchName } from "./refs.js";
 import { buildSubmodulePlan, normalizeAllowedOrigin, parseGitmodules, parseSubmoduleHostTokens, type SkippedSubmodule } from "./submodules.js";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
@@ -204,13 +205,22 @@ export class GitManager {
   private gitlabUrl: URL;
   private readonly projectLocks = new Map<number, Promise<void>>();
 
-  constructor(root: string, gitlabBaseUrl: string) {
+  /** 由 Runner 注入：按会话 ID 找到发起用户，作为会话提交的 author。 */
+  private readonly resolveCommitAuthor?: (conversationId: string) => CommitAuthor | undefined;
+
+  constructor(root: string, gitlabBaseUrl: string, resolveCommitAuthor?: (conversationId: string) => CommitAuthor | undefined) {
+    this.resolveCommitAuthor = resolveCommitAuthor;
     if (!root.trim()) throw new Error("Git storage root is required");
     this.root = resolve(root);
     this.mirrorRoot = join(this.root, "mirrors");
     this.workspaceRoot = join(this.root, "workspaces");
     this.gitlabUrl = new URL("http://localhost");
     this.reconfigureGitLab(gitlabBaseUrl);
+  }
+
+  /** 会话提交一律用用户身份；没有可用身份时退回系统身份，绝不写成 Agent。 */
+  private commitAuthor(conversationId: string): CommitAuthor {
+    return this.resolveCommitAuthor?.(conversationId) ?? fallbackCommitAuthor;
   }
 
   /** 运维台修改 GitLab 地址后更新镜像来源校验；现有镜像在下次使用时重新校验来源。 */
@@ -834,8 +844,9 @@ export class GitManager {
     const created = await this.run(
       mirror,
       [
-        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
-        "commit-tree", tree, ...parentShas.flatMap((parent) => ["-p", parent]), "-m", message.trim(),
+        ...commitTreeArgs(this.commitAuthor(conversationId), [
+          tree, ...parentShas.flatMap((parent) => ["-p", parent]), "-m", withAgentTrailer(message),
+        ]),
       ],
       undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
     );
@@ -903,8 +914,9 @@ export class GitManager {
     const created = await this.run(
       workspace.path,
       [
-        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
-        "commit-tree", tree, "-p", baseSha, "-m", `discard changes to ${requestedPath}`,
+        ...commitTreeArgs(this.commitAuthor(conversationId), [
+          tree, "-p", baseSha, "-m", withAgentTrailer(`discard changes to ${requestedPath}`),
+        ]),
       ],
       undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
     );
@@ -981,8 +993,10 @@ export class GitManager {
     const commitResult = await this.run(
       workspace.path,
       [
-        "-c", "user.name=Corvex Agent", "-c", "user.email=corvex-agent@localhost", "-c", "commit.gpgsign=false",
-        "commit-tree", tree, "-p", workspace.headSha, "-m", message?.trim() || `Corvex conversation changes ${conversationId}`,
+        ...commitTreeArgs(this.commitAuthor(conversationId), [
+          tree, "-p", workspace.headSha,
+          "-m", withAgentTrailer(message?.trim() || `Corvex conversation changes ${conversationId}`),
+        ]),
       ],
       undefined,
       maxErrorOutput,
