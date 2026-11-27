@@ -43,8 +43,15 @@ export function resolveCommandRequest(
   for (const [index, name] of (skill.arguments ?? []).entries()) {
     named[name] = parts[index] ?? "";
   }
+  // 保留技能名并显式标注这是用户调用，否则模型会把模板正文当成用户粘贴的注入文本而拒绝执行。
+  const body = skill.content ?? "";
+  const expanded = expandSkillTemplate(body, parsed.message, named, false);
+  const name = skill.name.replace(/["<>&]/g, "");
+  const argumentsBlock = body.includes("$ARGUMENTS") || !parsed.message
+    ? ""
+    : `\n\nUser arguments:\n${parsed.message}`;
   return {
-    effectiveRequest: expandSkillTemplate(skill.content, parsed.message, named),
+    effectiveRequest: `<skill name="${name}" invocation="user-slash">\n${expanded}\n</skill>${argumentsBlock}`,
     titleRequest: parsed.message || [skill.description, skill.whenToUse].filter(Boolean).join(" "),
   };
 }

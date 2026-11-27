@@ -169,14 +169,19 @@ export function validateSkillDocument(skill: ParsedSkillDocument): string[] {
 }
 
 /** 展开技能模板：`$ARGUMENTS` 与命名 `$name` 都替换；没有占位符时把参数附在正文之后。 */
-export function expandSkillTemplate(content: string, args: string, named: Readonly<Record<string, string>> = {}): string {
+export function expandSkillTemplate(
+  content: string,
+  args: string,
+  named: Readonly<Record<string, string>> = {},
+  appendArguments = true,
+): string {
   let template = content.trim();
   const argument = args.trim();
   for (const [name, value] of Object.entries(named)) {
     template = template.replaceAll(`$${name}`, value);
   }
   if (template.includes("$ARGUMENTS")) return template.replaceAll("$ARGUMENTS", argument).trim();
-  return argument ? `${template}\n\n${argument}` : template;
+  return appendArguments && argument ? `${template}\n\n${argument}` : template;
 }
 
 /** 系统种子模板版本；升级时刷新旧文档，但保留管理员的停用选择。 */

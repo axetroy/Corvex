@@ -20,12 +20,16 @@ const skill: ConversationSkill = {
   updatedAt: "2026-01-01T00:00:00Z",
 };
 
+/** 显式调用的模板会包在技能块里，而不是裸文本。 */
+const skillBlock = (body: string, name = "docs"): string =>
+  `<skill name="${name}" invocation="user-slash">\n${body}\n</skill>`;
+
 describe("conversation slash commands", () => {
   it("accepts the /skill:name alias used by Pi and Claude Code", () => {
     expect(parseConversationCommand("/skill:docs 说明")).toEqual({ command: "docs", message: "说明" });
     expect(parseConversationCommand("/skill:me:docs 说明")).toEqual({ command: "me:docs", message: "说明" });
     expect(resolveCommandRequest("/skill:docs 内容", () => skill).effectiveRequest)
-      .toBe("Focus on documentation. 内容");
+      .toBe(skillBlock("Focus on documentation. 内容"));
   });
 
   it("substitutes named arguments from the slash command text", () => {
@@ -35,14 +39,14 @@ describe("conversation slash commands", () => {
       content: "Deploy $env for $ticket. Raw: $ARGUMENTS",
     };
     expect(resolveCommandRequest("/deploy prod T-42", () => named).effectiveRequest)
-      .toBe("Deploy prod for T-42. Raw: prod T-42");
+      .toBe(skillBlock("Deploy prod for T-42. Raw: prod T-42"));
   });
 
   it("parses me: namespaced personal commands and honors user-invocable", () => {
     expect(parseConversationCommand("/me:docs 补充文档")).toEqual({ command: "me:docs", message: "补充文档" });
     const personal = { ...skill, name: "docs", userInvocable: false };
     expect(resolveCommandRequest("/docs 内容", () => personal).effectiveRequest).toBe("/docs 内容");
-    expect(resolveCommandRequest("/docs 内容", () => skill).effectiveRequest).toBe("Focus on documentation. 内容");
+    expect(resolveCommandRequest("/docs 内容", () => skill).effectiveRequest).toBe(skillBlock("Focus on documentation. 内容"));
   });
 
   it("parses any well-formed command without a static list", () => {
@@ -71,14 +75,20 @@ describe("conversation slash commands", () => {
   it("expands an enabled skill into the model request and a short title", () => {
     const getSkill = (name: string) => name === "docs" ? skill : undefined;
     expect(resolveCommandRequest("/docs add auth docs", getSkill)).toEqual({
-      effectiveRequest: "Focus on documentation. add auth docs",
+      effectiveRequest: skillBlock("Focus on documentation. add auth docs"),
       titleRequest: "add auth docs",
     });
     // 裸命令用技能描述作为标题，避免空标题；模板仍然提供完整任务文本。
     expect(resolveCommandRequest("/docs", getSkill)).toEqual({
-      effectiveRequest: "Focus on documentation.",
+      effectiveRequest: skillBlock("Focus on documentation."),
       titleRequest: "Improve docs",
     });
+  });
+
+  it("appends user arguments separately when the template has no placeholder", () => {
+    const plain = { ...skill, content: "Review the code carefully" };
+    expect(resolveCommandRequest("/docs 检查 auth 模块", () => plain).effectiveRequest)
+      .toBe(`${skillBlock("Review the code carefully")}\n\nUser arguments:\n检查 auth 模块`);
   });
 
   it("leaves unknown and disabled skills untouched", () => {
