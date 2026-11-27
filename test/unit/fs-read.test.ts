@@ -366,6 +366,43 @@ describe("readAllowedFile", () => {
     await expect(searchAllowedFiles("match", ".", [root], true)).resolves.toMatchObject({ matches: [] });
   });
 
+  it("adds a numbered code frame with context around matches", async () => {
+    await writeFile(join(root, "framed.ts"), "a\nb\ntarget\nc\nd\n");
+
+    const result = await searchAllowedFiles("target", ".", [root], { contextLines: 1 });
+    expect(result.matches).toEqual([{
+      path: "framed.ts",
+      line: 3,
+      text: "target",
+      frame: ["  2 │ b", "> 3 │ target", "  4 │ c"].join("\n"),
+    }]);
+  });
+
+  it("clamps context at file boundaries and caps each framed line", async () => {
+    await writeFile(join(root, "edge.ts"), `target\n${"x".repeat(500)}`);
+
+    const result = await searchAllowedFiles("target", ".", [root], { contextLines: 2 });
+    const frame = result.matches[0]?.frame?.split("\n");
+    expect(frame).toEqual(["> 1 │ target", `  2 │ ${"x".repeat(400)}`]);
+  });
+
+  it("rejects out-of-range context lines", async () => {
+    await expect(searchAllowedFiles("x", ".", [root], { contextLines: -1 })).rejects.toThrow(
+      "contextLines must be an integer between 0 and 5",
+    );
+    await expect(searchAllowedFiles("x", ".", [root], { contextLines: 6 })).rejects.toThrow(
+      "contextLines must be an integer between 0 and 5",
+    );
+  });
+
+  it("omits frames by default for backward compatibility", async () => {
+    await writeFile(join(root, "plain.txt"), "target\n");
+
+    await expect(searchAllowedFiles("target", ".", [root])).resolves.toMatchObject({
+      matches: [{ path: "plain.txt", line: 1, text: "target" }],
+    });
+  });
+
   it("restricts search to allowed paths and validates the query", async () => {
     await expect(searchAllowedFiles("secret", outside, [root])).rejects.toThrow(
       "outside the configured read-only roots",

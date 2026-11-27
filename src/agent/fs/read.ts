@@ -41,6 +41,10 @@ const maxSearchTotalBytes = 16 << 20;
 const maxSearchResults = 50;
 /** search_text 每条匹配结果最多保留的行文本字符数。 */
 const maxSearchLineCharacters = 400;
+/** search_text 单次请求最多附带的上下文行数（匹配行前后各算）。 */
+const maxSearchContextLines = 5;
+/** search_text 单次请求所有 code frame 文本的总字节上限。 */
+const maxSearchFrameBytes = 64 << 10;
 /** 正则模式最大长度；过长的模式既难读也放大回溯风险。 */
 const maxRegexPatternCharacters = 200;
 /** 正则匹配时每行参与匹配的最大字符数，限制灾难性回溯的成本。 */
@@ -274,6 +278,8 @@ export interface SearchMatch {
   path: string;
   line: number;
   text: string;
+  /** 请求上下文时返回的代码帧：带行号 gutter 与匹配行标记，文本已按行截断。 */
+  frame?: string;
 }
 
 export interface SearchResult {
@@ -293,6 +299,18 @@ export interface SearchOptions {
   caseSensitive?: boolean;
   /** Opt-in 正则；默认字面量，避免模型随手写的可信度不明的模式造成灾难性回溯。 */
   regex?: boolean;
+  /** 每条匹配前后附带的上下文行数，0–5，默认 0（保持原有输出不变）。 */
+  contextLines?: number;
+}
+
+/** 把相邻行渲染成带行号 gutter 的代码帧，匹配行用 > 标记，便于快速定位。 */
+function renderCodeFrame(entries: readonly { line: number; text: string; match: boolean }[]): string {
+  const width = Math.max(...entries.map((entry) => String(entry.line).length));
+  return entries
+    .map((entry) =>
+      `${entry.match ? ">" : " "} ${String(entry.line).padStart(width)} │ ${entry.text}`,
+    )
+    .join("\n");
 }
 
 export async function searchAllowedFiles(
@@ -301,7 +319,11 @@ export async function searchAllowedFiles(
   allowedRoots: string[],
   options: SearchOptions | boolean = {},
 ): Promise<SearchResult> {
-  const { caseSensitive = false, regex = false } = typeof options === "boolean" ? { caseSensitive: options } : options;
+  const { caseSensitive = false, regex = false, contextLines = 0 } =
+    typeof options === "boolean" ? { caseSensitive: options } : options;
+  if (!Number.isSafeInteger(contextLines) || contextLines < 0 || contextLines > maxSearchContextLines) {
+    throw new Error(`contextLines must be an integer between 0 and ${maxSearchContextLines}`);
+  }
   const searchTerm = query.trim();
   if (!searchTerm || searchTerm.includes("\0") || searchTerm.length > maxSearchQueryCharacters) {
     throw new Error(`search query must contain 1 to ${maxSearchQueryCharacters} characters`);
@@ -329,6 +351,7 @@ export async function searchAllowedFiles(
   const candidates = startInfo.isFile() ? [start.path] : [];
   let scannedFiles = 0;
   let scannedBytes = 0;
+  let frameBytes = 0;
   let truncated = false;
   let stopSearching = false;
   let entriesVisited = 0;
@@ -388,11 +411,31 @@ export async function searchAllowedFiles(
         truncated = true;
         return false;
       }
-      matches.push({
+      const match: SearchMatch = {
         path: relativePath,
         line: index + 1,
         text: line.slice(0, maxSearchLineCharacters),
-      });
+      };
+      if (contextLines > 0 && frameBytes < maxSearchFrameBytes) {
+        const first = Math.max(0, index - contextLines);
+        const last = Math.min(lines.length - 1, index + contextLines);
+        const frame = renderCodeFrame(
+          lines.slice(first, last + 1).map((entry, offset) => ({
+            line: first + offset + 1,
+            text: entry.replace(/\r$/, "").slice(0, maxSearchLineCharacters),
+            match: first + offset === index,
+          })),
+        );
+        const bytes = Buffer.byteLength(frame);
+        if (frameBytes + bytes <= maxSearchFrameBytes) {
+          frameBytes += bytes;
+          match.frame = frame;
+        } else {
+          // 帧预算耗尽时仍保留纯文本匹配，但标记结果不完整。
+          truncated = true;
+        }
+      }
+      matches.push(match);
     }
     return true;
   };
@@ -963,13 +1006,14 @@ export function createFsReadExtension(
       name: "search_text",
       label: "Search repository text",
       executionMode: "parallel",
-      description: `Search for text in UTF-8 files under virtual roots. By default the query is a LITERAL string: parentheses, dots and backslashes have no special meaning, so search for "pause(" rather than "pause\\(\\)". Set regex to true only when you need a pattern (max ${maxRegexPatternCharacters} chars, matched against the first 2 KiB of each line). Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use a virtual path to narrow the search and treat truncated results as incomplete.`,
-      promptSnippet: "search_text: Find text in bounded repository files; literal by default, regex:true for patterns, narrow with path.",
+      description: `Search for text in UTF-8 files under virtual roots. By default the query is a LITERAL string: parentheses, dots and backslashes have no special meaning, so search for "pause(" rather than "pause\\(\\)". Set regex to true only when you need a pattern (max ${maxRegexPatternCharacters} chars, matched against the first 2 KiB of each line). Set context (0–${maxSearchContextLines}) to include a code frame around each match: numbered lines with the matching line marked by >, each line capped at ${maxSearchLineCharacters} characters and all frames at ${maxSearchFrameBytes} bytes. Search skips .git, node_modules, dist, coverage, .next, and .turbo. Each call scans at most ${maxSearchFiles} files and ${maxSearchTotalBytes} bytes, reads at most ${maxSearchFileBytes} bytes per file, and returns at most ${maxSearchResults} matches with bounded line text. Use a virtual path to narrow the search and treat truncated results as incomplete.`,
+      promptSnippet: "search_text: Find text in bounded repository files; literal by default, regex:true for patterns, context:N for a numbered code frame, narrow with path.",
       parameters: Type.Object({
         query: Type.String({ minLength: 1, maxLength: maxSearchQueryCharacters }),
         path: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
         caseSensitive: Type.Optional(Type.Boolean()),
         regex: Type.Optional(Type.Boolean()),
+        context: Type.Optional(Type.Integer({ minimum: 0, maximum: maxSearchContextLines })),
       }),
       execute: async (_toolCallId, params) => safely(async () => ({
         content: [{
@@ -978,7 +1022,7 @@ export function createFsReadExtension(
             params.query,
             resolveForRead(params.path ?? "."),
             physicalRoots,
-            { caseSensitive: params.caseSensitive, regex: params.regex },
+            { caseSensitive: params.caseSensitive, regex: params.regex, contextLines: params.context },
           )),
         }],
         details: {},
