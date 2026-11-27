@@ -1481,7 +1481,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     <div
                       className={`conversation-composer-area${draggingAttachment ? " is-dragging-attachment" : ""}`}
                       onDragOver={(event) => {
-                        if (showCreate || uploadingAttachment) return;
+                        if (uploadingAttachment) return;
                         event.preventDefault();
                         setDraggingAttachment(true);
                       }}
@@ -1552,35 +1552,6 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         ))}
                       </div>
                     ) : null}
-                    {attachments.length ? (
-                      <div className="conversation-attachment-chips">
-                        {attachments.map((item) => (
-                          <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
-                            {item.mime.startsWith("image/") && (item.draft || selectedConversationId) ? (
-                              <img
-                                className="conversation-attachment-thumb"
-                                src={item.draft
-                                  ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/image`
-                                  : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
-                                alt=""
-                              />
-                            ) : <FileIcon />}
-                            <span className="conversation-attachment-name">{item.filename}</span>
-                            <button
-                              type="button"
-                              aria-label={`${copy.removeAttachment}: ${item.filename}`}
-                              title={copy.removeAttachment}
-                              onClick={() => void removeAttachment(item.id)}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {attachments.some((item) => item.mime.startsWith("image/")) && !uploadLimits.visionSupported ? (
-                      <div className="conversation-attachment-warning" role="status">{copy.attachmentVisionUnsupported}</div>
-                    ) : null}
                     <input
                       ref={attachmentInputRef}
                       type="file"
@@ -1608,22 +1579,51 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         setDraftMessage(value.slice(0, 20_000));
                       }}
                       onKeyDown={handleComposerKeyDown}
+                      header={attachments.length ? (
+                        <div className="conversation-attachment-list">
+                          <div className="conversation-attachment-chips">
+                            {attachments.map((item) => (
+                              <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
+                                {item.mime.startsWith("image/") && (item.draft || selectedConversationId) ? (
+                                  <img
+                                    className="conversation-attachment-thumb"
+                                    src={item.draft
+                                      ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/image`
+                                      : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
+                                    alt=""
+                                  />
+                                ) : <FileIcon />}
+                                <span className="conversation-attachment-name">{item.filename}</span>
+                                <button
+                                  type="button"
+                                  aria-label={`${copy.removeAttachment}: ${item.filename}`}
+                                  title={copy.removeAttachment}
+                                  onClick={() => void removeAttachment(item.id)}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                          {attachments.some((item) => item.mime.startsWith("image/")) && !uploadLimits.visionSupported ? (
+                            <div className="conversation-attachment-warning" role="status">{copy.attachmentVisionUnsupported}</div>
+                          ) : null}
+                        </div>
+                      ) : undefined}
                       onSubmit={(message) => submitMessage(message)}
                       footer={(
                         <div className="conversation-composer-footer">
-                          {!showCreate ? (
-                            <button
-                              type="button"
-                              className="conversation-attach-button"
-                              aria-label={copy.attachFile}
-                              title={copy.attachFileHint}
-                              disabled={busy || uploadingAttachment || attachments.length >= uploadLimits.maxPerMessage}
-                              onClick={() => attachmentInputRef.current?.click()}
-                            >
-                              <AttachIcon />
-                              <span>{uploadingAttachment ? copy.uploadingAttachment : copy.attachFile}</span>
-                            </button>
-                          ) : null}
+                          <button
+                            type="button"
+                            className="conversation-attach-button"
+                            aria-label={copy.attachFile}
+                            title={copy.attachFileHint}
+                            disabled={busy || uploadingAttachment || attachments.length >= uploadLimits.maxPerMessage}
+                            onClick={() => attachmentInputRef.current?.click()}
+                          >
+                            <AttachIcon />
+                            <span>{uploadingAttachment ? copy.uploadingAttachment : copy.attachFile}</span>
+                          </button>
                           <ComposerModelPicker copy={copy} disabled={busy} />
                         </div>
                       )}

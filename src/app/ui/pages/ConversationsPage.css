@@ -2018,12 +2018,18 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   white-space: nowrap;
 }
 
-/* 待发附件 chips：发送后清空，失败保留以便重试。 */
+/* 待发附件放在输入框内部的 header 区，与其它 Agent 的输入框一致。 */
+.conversation-attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 2px 4px;
+}
+
 .conversation-attachment-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 2px;
 }
 
 .conversation-attachment-chip {
@@ -2090,7 +2096,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-attachment-warning {
-  margin: 0 2px;
+  margin: 0;
   color: var(--warning);
   font-size: 11px;
   line-height: 1.5;
