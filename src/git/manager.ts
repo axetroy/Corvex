@@ -5,7 +5,7 @@ import { lstat, mkdir, readdir, rename, rm, utimes } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { needsCommitMessageRewrite } from "./commit-message.js";
-import { commitTreeArgs, fallbackCommitAuthor, withAgentTrailer, type CommitAuthor } from "./commit-identity.js";
+import { commitTreeArgs, withCommitTrailer, type CommitAuthor, type CommitPolicy } from "./commit-identity.js";
 import { isValidBranchName } from "./refs.js";
 import { buildSubmodulePlan, normalizeAllowedOrigin, parseGitmodules, parseSubmoduleHostTokens, type SkippedSubmodule } from "./submodules.js";
 import type { GitGraphNode, GitGraphOptions, GitGraphResult, Workspace } from "./types.js";
@@ -207,9 +207,16 @@ export class GitManager {
 
   /** 由 Runner 注入：按会话 ID 找到发起用户，作为会话提交的 author。 */
   private readonly resolveCommitAuthor?: (conversationId: string) => CommitAuthor | undefined;
+  private readonly commitPolicy?: () => CommitPolicy;
 
-  constructor(root: string, gitlabBaseUrl: string, resolveCommitAuthor?: (conversationId: string) => CommitAuthor | undefined) {
+  constructor(
+    root: string,
+    gitlabBaseUrl: string,
+    resolveCommitAuthor?: (conversationId: string) => CommitAuthor | undefined,
+    commitPolicy?: () => CommitPolicy,
+  ) {
     this.resolveCommitAuthor = resolveCommitAuthor;
+    this.commitPolicy = commitPolicy;
     if (!root.trim()) throw new Error("Git storage root is required");
     this.root = resolve(root);
     this.mirrorRoot = join(this.root, "mirrors");
@@ -220,7 +227,15 @@ export class GitManager {
 
   /** 会话提交一律用用户身份；没有可用身份时退回系统身份，绝不写成 Agent。 */
   private commitAuthor(conversationId: string): CommitAuthor {
-    return this.resolveCommitAuthor?.(conversationId) ?? fallbackCommitAuthor;
+    return this.resolveCommitAuthor?.(conversationId) ?? this.policy().fallback;
+  }
+
+  /** 运行时读取，管理中心改设置后无需重启。 */
+  private policy(): CommitPolicy {
+    return this.commitPolicy?.() ?? {
+      trailer: "",
+      fallback: { name: "Corvex", email: "corvex@localhost" },
+    };
   }
 
   /** 运维台修改 GitLab 地址后更新镜像来源校验；现有镜像在下次使用时重新校验来源。 */
@@ -845,7 +860,8 @@ export class GitManager {
       mirror,
       [
         ...commitTreeArgs(this.commitAuthor(conversationId), [
-          tree, ...parentShas.flatMap((parent) => ["-p", parent]), "-m", withAgentTrailer(message),
+          tree, ...parentShas.flatMap((parent) => ["-p", parent]),
+          "-m", withCommitTrailer(message, this.policy().trailer),
         ]),
       ],
       undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
@@ -915,7 +931,8 @@ export class GitManager {
       workspace.path,
       [
         ...commitTreeArgs(this.commitAuthor(conversationId), [
-          tree, "-p", baseSha, "-m", withAgentTrailer(`discard changes to ${requestedPath}`),
+          tree, "-p", baseSha,
+          "-m", withCommitTrailer(`discard changes to ${requestedPath}`, this.policy().trailer),
         ]),
       ],
       undefined, maxErrorOutput, signal, { timeoutMs: 30_000 },
@@ -995,7 +1012,9 @@ export class GitManager {
       [
         ...commitTreeArgs(this.commitAuthor(conversationId), [
           tree, "-p", workspace.headSha,
-          "-m", withAgentTrailer(message?.trim() || `Corvex conversation changes ${conversationId}`),
+          "-m", withCommitTrailer(
+            message?.trim() || `Corvex conversation changes ${conversationId}`, this.policy().trailer,
+          ),
         ]),
       ],
       undefined,

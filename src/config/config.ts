@@ -80,6 +80,12 @@ export interface CorvexConfig {
     uploadMaxPerMessage: number;
     /** 单个会话累计保留的附件数。 */
     uploadMaxPerConversation: number;
+    /** 会话提交正文末尾的 Agent 署名 trailer；空字符串表示不追加。 */
+    commitTrailer: string;
+    /** 找不到会话拥有者时使用的提交作者名。 */
+    fallbackCommitAuthorName: string;
+    /** 找不到会话拥有者时使用的提交作者邮箱。 */
+    fallbackCommitAuthorEmail: string;
     /** 模型上下文窗口（token）；用于提示词预算与 SDK 压缩阈值。 */
     contextWindow: number;
     /** 单次请求输入 token 上限；0 表示由上下文窗口与输出预留推导。 */
@@ -192,6 +198,9 @@ const defaults: CorvexConfig = {
     uploadMaxBytes: 256 << 10,
     uploadMaxPerMessage: 10,
     uploadMaxPerConversation: 100,
+    commitTrailer: "Assisted-by: AI Agent",
+    fallbackCommitAuthorName: "Corvex",
+    fallbackCommitAuthorEmail: "corvex@localhost",
     contextWindow: 131_072,
     maxInputTokens: 0,
     historyTokenBudget: 24_000,
@@ -461,6 +470,9 @@ function parseConfig(raw: unknown): CorvexConfig {
       uploadMaxBytes: number(agent.upload_max_bytes, defaults.agent.uploadMaxBytes),
       uploadMaxPerMessage: number(agent.upload_max_per_message, defaults.agent.uploadMaxPerMessage),
       uploadMaxPerConversation: number(agent.upload_max_per_conversation, defaults.agent.uploadMaxPerConversation),
+      commitTrailer: string(agent.commit_trailer, defaults.agent.commitTrailer),
+      fallbackCommitAuthorName: string(agent.fallback_commit_author_name, defaults.agent.fallbackCommitAuthorName),
+      fallbackCommitAuthorEmail: string(agent.fallback_commit_author_email, defaults.agent.fallbackCommitAuthorEmail),
       contextWindow: number(agent.context_window, defaults.agent.contextWindow),
       maxInputTokens: number(agent.max_input_tokens, defaults.agent.maxInputTokens),
       historyTokenBudget: number(agent.history_token_budget, defaults.agent.historyTokenBudget),

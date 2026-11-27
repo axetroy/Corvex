@@ -224,6 +224,9 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "agent_request_timeout", kind: "number", min: 1, max: 3_600, step: 10, unit: "second", labelKey: "settingsAgentRequestTimeout", hintKey: "settingsAgentRequestTimeoutHint" },
       { key: "agent_session_timeout", kind: "number", min: 1, max: 86_400, step: 300, unit: "second", labelKey: "settingsAgentSessionTimeout", hintKey: "settingsAgentSessionTimeoutHint" },
       { key: "agent_response_stall_timeout", kind: "number", min: 0, max: 3_600, step: 30, unit: "second", labelKey: "settingsResponseStallTimeout", hintKey: "settingsResponseStallTimeoutHint" },
+      { key: "agent_commit_trailer", kind: "string", allowEmpty: true, maxLength: 200, labelKey: "settingsCommitTrailer", hintKey: "settingsCommitTrailerHint" },
+      { key: "fallback_commit_author_name", kind: "string", maxLength: 120, labelKey: "settingsFallbackAuthorName", hintKey: "settingsFallbackAuthorNameHint" },
+      { key: "fallback_commit_author_email", kind: "string", maxLength: 200, labelKey: "settingsFallbackAuthorEmail", hintKey: "settingsFallbackAuthorEmailHint" },
     ],
   },
   {

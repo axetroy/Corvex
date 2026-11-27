@@ -70,7 +70,7 @@ test/unit/         单元测试；test/fixtures/ 为 CI 配置样本
 - 配置按角色校验；启动不需要 GitLab 凭据，因为 API 与 Git 调用都用登录用户 token。
 - 分支/ref 名称允许 Unicode（含中文），统一用 `src/git/refs.ts` 的 `isValidBranchName` / `branchNamePatternSource`，工具 schema 与运行时校验共用；不要在各处写死 ASCII 正则，否则中文分支会「工具放行、执行拒绝」。
 - 轮末自动保存改动用的是占位提交信息；用户/模型显式给出提交信息时，`GitManager` 只重写仍带占位信息的会话 ref 提交再推送，不能改写真实提交或已发布提交。
-- 所有会话提交（自动保存、`git_commit` / `git_publish`、逐文件撤销）都由 `GitManager` 统一构造：author 是会话拥有者（GitLab noreply 邮箱），正文末尾强制 `Assisted-by: OpenCode:hy4-flash-free`；`run_command`（含容器内执行）禁止 `git commit` / `commit-tree` / `cherry-pick` / `rebase` / `am`，避免绕过署名与会话 ref 绑定。
+- 所有会话提交（自动保存、`git_commit` / `git_publish`、逐文件撤销）都由 `GitManager` 统一构造：author 是会话拥有者（GitLab noreply 邮箱），正文末尾按运行时设置 `agent_commit_trailer` 追加署名 trailer（留空则不追加）；兜底作者由 `fallback_commit_author_name` / `fallback_commit_author_email` 配置；`run_command`（含容器内执行）禁止 `git commit` / `commit-tree` / `cherry-pick` / `rebase` / `am`，避免绕过署名与会话 ref 绑定。
 
 ## 测试
 
@@ -80,4 +80,4 @@ Vitest 限定 `test/**`，避免扫描 `data/` 下的第三方文件；单测放
 
 使用 Conventional Commit（`feat:` / `fix:` / `docs:` / `chore:` 及 scoped 形式），标题中英文均可；一个逻辑改动一个提交，只 stage 相关文件，不要提交 `.env`、本地数据库或 `data/`。CI 跑 lint、typecheck、test、build 和 Docker smoke；tag 推送会触发发版，不要在功能分支打 tag 或创建 release。
 
-**提交署名**：author / committer 保持用户本地 git 身份，**不要把 author 改成 Agent**。Agent 创建的每个提交在 message 末尾（空行之后）必须带一行 trailer：`Assisted-by: OpenCode:hy4-flash-free`，只表示有 Agent 参与，不主张共同著作权（`Co-authored-by` 与把 AI 列为作者均不使用）。这是从现在起的新提交约定，不要重写或 amend 已有提交来补署名。
+**提交署名**：author / committer 保持用户本地 git 身份，**不要把 author 改成 Agent**。Agent 创建的每个提交在 message 末尾（空行之后）必须带一行 trailer，内容以管理中心运行时设置 `agent_commit_trailer` 为准（默认 `Assisted-by: AI Agent`），只表示有 Agent 参与，不主张共同著作权（`Co-authored-by` 与把 AI 列为作者均不使用）。这是从现在起的新提交约定，不要重写或 amend 已有提交来补署名。

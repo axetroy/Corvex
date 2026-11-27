@@ -99,6 +99,10 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "upload_max_bytes", section: "agent", field: "uploadMaxBytes", type: "number", min: 1_024, max: 1 << 20 },
   { key: "upload_max_per_message", section: "agent", field: "uploadMaxPerMessage", type: "number", min: 1, max: 50 },
   { key: "upload_max_per_conversation", section: "agent", field: "uploadMaxPerConversation", type: "number", min: 1, max: 1_000 },
+  // 会话提交署名：trailer 可留空关闭；fallback 作者仅在找不到会话拥有者时使用。
+  { key: "agent_commit_trailer", section: "agent", field: "commitTrailer", type: "string", maxLength: 200, allowEmpty: true },
+  { key: "fallback_commit_author_name", section: "agent", field: "fallbackCommitAuthorName", type: "string", maxLength: 120 },
+  { key: "fallback_commit_author_email", section: "agent", field: "fallbackCommitAuthorEmail", type: "string", maxLength: 200 },
   // GitLab 连接：Server 每次请求时读取。
   // 留空表示尚未配置 GitLab；与 config 层一致，只在非空时校验 URL。
   { key: "gitlab_base_url", section: "gitlab", field: "baseUrl", type: "string", maxLength: 500, allowEmpty: true },
@@ -209,6 +213,14 @@ function parseSettingValue(definition: RuntimeSettingDefinition, raw: string): R
 /** 跨字段约束：与配置校验保持一致，避免运行时可写入配置文件不允许的组合。 */
 function checkRelations(values: RuntimeSettingValues): string[] {
   const problems: string[] = [];
+  const trailer = values.agent_commit_trailer;
+  if (typeof trailer === "string" && trailer && !/^[A-Za-z-]+: .+/.test(trailer)) {
+    problems.push("agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Agent");
+  }
+  const fallbackEmail = values.fallback_commit_author_email;
+  if (typeof fallbackEmail === "string" && fallbackEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(fallbackEmail)) {
+    problems.push("fallback_commit_author_email must be a valid email address");
+  }
   const contextWindow = values.context_window;
   const maxInputTokens = values.max_input_tokens;
   const historyTokenBudget = values.history_token_budget;

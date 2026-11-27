@@ -98,8 +98,11 @@ export class ConversationRunner {
       } catch {
         host = "";
       }
-      return authorFromUser(user, host);
-    });
+      return authorFromUser(user, host, this.fallbackCommitAuthor());
+    }, () => ({
+      trailer: this.config.agent.commitTrailer,
+      fallback: this.fallbackCommitAuthor(),
+    }));
     // GitLab 协作模式的读写工具需要访问同一个客户端；必须把 gitlab 传给 PiAgent，
     // 否则 request.conversationMode==="gitlab" 时扩展根本不会注册。
     this.agent = new PiAgent(config, store, this.repo, undefined, this.hooks);
@@ -966,6 +969,14 @@ export class ConversationRunner {
         error: errorMessage(error),
       });
     }
+  }
+
+  /** 管理中心可配置的兜底提交作者。 */
+  private fallbackCommitAuthor(): { name: string; email: string } {
+    return {
+      name: this.config.agent.fallbackCommitAuthorName,
+      email: this.config.agent.fallbackCommitAuthorEmail,
+    };
   }
 
   /** 斜杠技能查询绑定到会话拥有者，避免跨用户命中个人技能。 */

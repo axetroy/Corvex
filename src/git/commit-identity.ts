@@ -3,16 +3,18 @@
  * 这条规则由 GitManager 在构造 commit-tree 参数时强制执行，不依赖提示词。
  */
 
-/** 只表示 Agent 参与，不主张 AI 共同著作权。 */
-export const agentCommitTrailer = "Assisted-by: OpenCode:hy4-flash-free";
-
 export interface CommitAuthor {
   name: string;
   email: string;
 }
 
-/** 没有任何用户身份可用的兜底（仅测试/系统任务）；绝不写成 Agent。 */
-export const fallbackCommitAuthor: CommitAuthor = { name: "Corvex", email: "corvex@localhost" };
+/** 运行时可配置的提交署名策略；由管理中心设置提供。 */
+export interface CommitPolicy {
+  /** 追加到提交信息末尾的 trailer；空字符串表示不追加。 */
+  trailer: string;
+  /** 找不到会话拥有者时使用的作者身份；绝不写成 Agent。 */
+  fallback: CommitAuthor;
+}
 
 function withoutTrailer(message: string): string {
   return message.trim().split(/\r?\n/)
@@ -21,10 +23,12 @@ function withoutTrailer(message: string): string {
     .trim();
 }
 
-/** 保证提交信息末尾恰好有一条署名 trailer。 */
-export function withAgentTrailer(message: string): string {
+/** 保证提交信息末尾恰好有一条配置的署名 trailer；留空时不追加。 */
+export function withCommitTrailer(message: string, trailer: string): string {
   const body = withoutTrailer(message);
-  return body ? `${body}\n\n${agentCommitTrailer}` : agentCommitTrailer;
+  const configured = trailer.trim();
+  if (!configured) return body;
+  return body ? `${body}\n\n${configured}` : configured;
 }
 
 /** 比较用户给出的提交信息时忽略 trailer，避免自身被当成差异。 */
@@ -36,11 +40,12 @@ export function userCommitMessage(message: string): string {
 export function authorFromUser(
   user: { name?: string; username?: string } | undefined,
   gitlabHost: string,
+  fallback: CommitAuthor = { name: "Corvex", email: "corvex@localhost" },
 ): CommitAuthor {
   const username = user?.username?.trim() || "";
-  const name = user?.name?.trim() || username || fallbackCommitAuthor.name;
+  const name = user?.name?.trim() || username || fallback.name;
   const host = gitlabHost.trim() || "localhost";
-  const email = username ? `${username}@users.noreply.${host}` : fallbackCommitAuthor.email;
+  const email = username ? `${username}@users.noreply.${host}` : fallback.email;
   return { name: name.replace(/[\r\n]/g, " "), email };
 }
 

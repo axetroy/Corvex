@@ -137,6 +137,9 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `agent_session_timeout` | 1–86,400 seconds | Full session timeout; entered in seconds, stored in milliseconds. |
 | `agent_response_stall_timeout` | 0–3,600 seconds | Abort a turn when the model produces no output (headers, text or tool calls) for this long; the console shows a waiting notice while idle. `0` disables the watchdog. Default `180`. |
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
+| `agent_commit_trailer` | String (≤200) | Trailer appended to every conversation commit; empty disables it. Default `Assisted-by: AI Agent`. Conversation authors are always the signed-in users, never the Agent. |
+| `fallback_commit_author_name` | String (≤120) | Commit author name used only when a conversation has no identifiable owner. Default `Corvex`. |
+| `fallback_commit_author_email` | Email (≤200) | Commit author email used only when a conversation has no identifiable owner. Default `corvex@localhost`. |
 | `gitlab_base_url` | HTTP(S) URL | GitLab instance root. |
 | `gitlab_oauth_client_id` | String | OAuth client ID. |
 | `gitlab_oauth_client_secret` | String | OAuth client secret; blank keeps the saved value. |

@@ -118,6 +118,18 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ agent_session_timeout: "1.5" })).toEqual([]);
   });
 
+  it("校验提交署名设置", () => {
+    expect(validateRuntimeSettings({ agent_commit_trailer: "Assisted-by: Acme Agent" })).toEqual([]);
+    expect(validateRuntimeSettings({ agent_commit_trailer: "" })).toEqual([]);
+    expect(validateRuntimeSettings({ agent_commit_trailer: "just text" })).toEqual([
+      "agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Agent",
+    ]);
+    expect(validateRuntimeSettings({ fallback_commit_author_email: "ops@example.com" })).toEqual([]);
+    expect(validateRuntimeSettings({ fallback_commit_author_email: "not-an-email" })).toEqual([
+      "fallback_commit_author_email must be a valid email address",
+    ]);
+  });
+
   it("校验跨字段约束", () => {
     expect(validateRuntimeSettings({ context_window: "8000", max_input_tokens: "8000" }))
       .toEqual(["max_input_tokens must be 0 or less than context_window"]);
