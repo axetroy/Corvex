@@ -2032,10 +2032,12 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   align-items: center;
   gap: 5px;
   padding: 3px 6px 3px 8px;
-  border: 1px solid var(--border-soft);
+  /* 输入框所在区域本身是 --bg-subtle，chip 必须换成面板色 + 更明显的边框才不会糊成一片。 */
+  border: 1px solid var(--border);
   border-radius: 99px;
-  background: var(--bg-subtle);
-  color: var(--text-secondary);
+  background: var(--bg-panel);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 7%);
+  color: var(--text);
   font-size: 12px;
 }
 
