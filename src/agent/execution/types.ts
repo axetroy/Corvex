@@ -17,6 +17,8 @@ export interface ExecutionRequest {
   timeoutMs: number;
   /** 输出上限（字节），调用方已按配置上限裁剪。 */
   maxOutputBytes: number;
+  /** cwd 指向技能目录时，沙箱必须只读挂载，避免命令改写技能文件。 */
+  readonlyCwd?: boolean;
 }
 
 export interface ExecutionResult {

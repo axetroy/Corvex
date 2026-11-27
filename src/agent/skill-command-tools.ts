@@ -11,6 +11,8 @@ import {
 export interface SkillCommandCatalog {
   get(name: string): ConversationSkill | undefined;
   available(): Array<{ skill: string; command: string; description: string }>;
+  /** 技能目录宿主机路径；cwd: "skill" 的命令用它作为只读工作目录。 */
+  resolveSkillDir(name: string): string | undefined;
 }
 
 export interface SkillCommandToolOptions extends RunCommandToolOptions {
@@ -71,8 +73,13 @@ export function createSkillCommandExtension(options: SkillCommandToolOptions): (
         if (!declared.command || declared.command.length > maxCommandCharacters || declared.command.includes("$ARGUMENTS")) {
           return failure(`command "${params.skill}:${params.command}" is not executable`);
         }
+        const skillDir = declared.cwd === "skill" ? options.catalog.resolveSkillDir(skill.name) : undefined;
+        if (declared.cwd === "skill" && !skillDir) {
+          return failure(`skill "${params.skill}" directory is not available`);
+        }
         const body = await executeBoundedCommand(options, toolCallId, {
           command: declared.command,
+          ...(skillDir ? { cwd: skillDir, readonlyCwd: true } : {}),
           ...(declared.timeoutMs !== undefined ? { timeoutMs: declared.timeoutMs } : {}),
           ...(declared.maxOutputBytes !== undefined ? { maxOutputBytes: declared.maxOutputBytes } : {}),
         });

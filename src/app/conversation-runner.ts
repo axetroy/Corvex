@@ -29,6 +29,7 @@ import { resolveCommandRequest } from "./conversation-command.js";
 import type { SkillStore } from "../agent/skill-store.js";
 import type { SkillRegistry } from "../agent/skill-registry.js";
 import { assignSkillLabels } from "../agent/fs/virtual-path.js";
+import { isValidSkillName } from "../agent/skills.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -1393,6 +1394,13 @@ export class ConversationRunner {
                   .flatMap((skill) => (skill.commands ?? []).map((command) => ({
                     skill: skill.commandName, command: command.name, description: command.description,
                   }))),
+                resolveSkillDir: (name) => {
+                  const skill = visibleSkills.find((item) => item.name === name);
+                  if (!skill || !isValidSkillName(name)) return undefined;
+                  return skill.scope === "personal"
+                    ? resolve(this.config.storage.root, "user-skills", skillUserId, name)
+                    : resolve(globalSkillRoot, name);
+                },
               },
               gitlab,
               // 上传目录作为仅本轮有效的只读根注入；模型侧只看到 upload://<id>/<filename>。

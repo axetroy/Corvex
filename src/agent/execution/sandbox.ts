@@ -45,7 +45,7 @@ export function buildContainerArgs(
     "--memory", config.memory,
     "--cpus", String(config.cpus),
     "--pids-limit", String(config.pidsLimit),
-    "--mount", `type=bind,source=${request.cwd},target=${workspaceMount}`,
+    "--mount", `type=bind,source=${request.cwd},target=${workspaceMount}${request.readonlyCwd ? ",readonly" : ""}`,
     // linked worktree 的 `.git` 文件里是宿主机绝对路径（gitdir: <mirror>/worktrees/<name>）。
     // 按同一路径只读挂入镜像，容器内的 git 才能解析 gitdir，否则 `git status` 报
     // `fatal: not a git repository: (null)`。只读保证命令无法改动裸库或别人的会话 ref。

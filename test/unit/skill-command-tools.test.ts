@@ -51,7 +51,7 @@ function baseOptions(overrides: Partial<SkillCommandToolOptions> = {}): SkillCom
     cwd: "/worktree",
     maxTimeoutMs: 600_000,
     maxOutputBytes: 262_144,
-    catalog: { get: () => undefined, available: () => [] },
+    catalog: { get: () => undefined, available: () => [], resolveSkillDir: () => undefined },
     ...overrides,
   };
 }
@@ -62,6 +62,7 @@ describe("run_skill_command tool", () => {
       catalog: {
         get: () => skill([{ name: "test", command: "pnpm test", description: "Run tests" }]),
         available: () => [{ skill: "verify", command: "test", description: "Run tests" }],
+        resolveSkillDir: () => undefined,
       },
     });
     const tool = collectTool(options);
@@ -75,6 +76,7 @@ describe("run_skill_command tool", () => {
           ? skill([{ name: "test", command: "pnpm test", description: "Run tests" }], false)
           : undefined,
         available: () => [],
+        resolveSkillDir: () => undefined,
       },
     }));
     expect((await tool.execute("c1", { skill: "missing", command: "test" })).content[0]!.text).toContain("not available");
@@ -84,6 +86,7 @@ describe("run_skill_command tool", () => {
       catalog: {
         get: () => skill([{ name: "test", command: "pnpm test", description: "Run tests" }]),
         available: () => [],
+        resolveSkillDir: () => undefined,
       },
     }));
     expect((await enabled.execute("c3", { skill: "verify", command: "other" })).content[0]!.text)
@@ -101,6 +104,7 @@ describe("run_skill_command tool", () => {
           name: "test", command: "pnpm test", description: "Run tests", timeoutMs: 900_000, maxOutputBytes: 9_999_999,
         }]),
         available: () => [],
+        resolveSkillDir: () => undefined,
       },
     }));
     const result = await tool.execute("c1", {
@@ -115,6 +119,20 @@ describe("run_skill_command tool", () => {
     expect(onExecuted).toHaveBeenCalledOnce();
   });
 
+  it("runs cwd:skill commands from a read-only skill directory", async () => {
+    const { backend, requests } = fakeBackend();
+    const tool = collectTool(baseOptions({
+      backend,
+      catalog: {
+        get: () => skill([{ name: "lint", command: "sh ./scripts/lint.sh", description: "Lint", cwd: "skill" }]),
+        available: () => [],
+        resolveSkillDir: (name) => (name === "verify" ? "/skills/verify" : undefined),
+      },
+    }));
+    await tool.execute("c1", { skill: "verify", command: "lint" });
+    expect(requests[0]).toMatchObject({ command: "sh ./scripts/lint.sh", cwd: "/skills/verify", readonlyCwd: true });
+  });
+
   it("refuses a declared command that interpolates user arguments", async () => {
     const { backend, requests } = fakeBackend();
     const tool = collectTool(baseOptions({
@@ -122,6 +140,7 @@ describe("run_skill_command tool", () => {
       catalog: {
         get: () => skill([{ name: "bad", command: "echo $ARGUMENTS", description: "unsafe" }]),
         available: () => [],
+        resolveSkillDir: () => undefined,
       },
     }));
     const result = await tool.execute("c1", { skill: "verify", command: "bad" });

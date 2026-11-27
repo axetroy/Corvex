@@ -63,6 +63,7 @@ function parseSkillCommands(value: unknown): SkillCommand[] {
     if (Number.isSafeInteger(record.maxOutputBytes) && (record.maxOutputBytes as number) > 0) {
       command.maxOutputBytes = record.maxOutputBytes as number;
     }
+    if (record.cwd === "worktree" || record.cwd === "skill") command.cwd = record.cwd;
     commands.push(command);
   }
   return commands;

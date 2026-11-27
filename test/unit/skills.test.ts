@@ -138,6 +138,7 @@ metadata:
       command: pnpm vitest run
       description: Run unit tests
       maxOutputBytes: 4096
+      cwd: skill
 ---
 
 Verify $ARGUMENTS.
@@ -146,7 +147,7 @@ Verify $ARGUMENTS.
     expect(parsed.commandsEnabled).toBe(true);
     expect(parsed.commands).toEqual([
       { name: "typecheck", command: "pnpm run typecheck", description: "Run the TypeScript checker", timeoutMs: 120000 },
-      { name: "tests", command: "pnpm vitest run", description: "Run unit tests", maxOutputBytes: 4096 },
+      { name: "tests", command: "pnpm vitest run", description: "Run unit tests", maxOutputBytes: 4096, cwd: "skill" },
     ]);
     expect(validateSkillDocument(parsed)).toEqual([]);
     // 默认关闭，命令即使写了也不会暴露给模型。

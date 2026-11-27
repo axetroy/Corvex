@@ -559,6 +559,8 @@ export interface SkillCommand {
   timeoutMs?: number;
   /** 可选，受执行配置上限约束。 */
   maxOutputBytes?: number;
+  /** 工作目录：worktree（默认）或技能目录（只读挂载）。 */
+  cwd?: "worktree" | "skill";
 }
 
 /** 磁盘技能相对 skills-lock.json 的状态，语义对齐 npx skills 的 list。 */

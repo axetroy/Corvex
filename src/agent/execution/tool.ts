@@ -56,7 +56,7 @@ export function previewCommand(command: string): string {
 export async function executeBoundedCommand(
   options: RunCommandToolOptions,
   toolCallId: string,
-  input: { command: string; timeoutMs?: number; maxOutputBytes?: number },
+  input: { command: string; timeoutMs?: number; maxOutputBytes?: number; cwd?: string; readonlyCwd?: boolean },
 ): Promise<string> {
   // 每条命令用自己的 AbortController：停止单条命令不能 abort 整个 turn 的 signal。
   // 但与 turn signal 关联，整轮取消时命令同样被 kill。
@@ -75,7 +75,8 @@ export async function executeBoundedCommand(
     result = await options.backend.run(
       {
         command: input.command,
-        cwd: options.cwd,
+        cwd: input.cwd ?? options.cwd,
+        ...(input.readonlyCwd ? { readonlyCwd: true } : {}),
         ...(options.mirrorPath ? { mirrorPath: options.mirrorPath } : {}),
         ...(options.cachePath ? { cachePath: options.cachePath } : {}),
         timeoutMs: Math.min(input.timeoutMs ?? options.maxTimeoutMs, options.maxTimeoutMs),
