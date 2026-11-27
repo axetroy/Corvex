@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { readJsonObject, sendJson } from "../respond.js";
 import { parseSkillDocument, validateSkillDocument } from "../../../agent/skills.js";
 import { skillImportLimits } from "../../../agent/skill-import.js";
@@ -90,7 +90,10 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
   });
 
   /** 把上传的 ZIP 或远程来源归一成同一份预览输入。 */
-  const resolveImportSource = async (request: FastifyRequest): Promise<SkillImportPreviewInput> => {
+  const resolveImportSource = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<SkillImportPreviewInput | undefined> => {
     const contentType = String(request.headers["content-type"] ?? "").toLowerCase();
     if (contentType.startsWith("application/zip") || contentType.startsWith("application/octet-stream")) {
       if (!Buffer.isBuffer(request.body)) throw new Error("ZIP archive body is required");
@@ -98,8 +101,9 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
       const filename = String(query.filename ?? "skills.zip");
       return { archive: request.body, source: "upload", sourceValue: filename };
     }
-    const body = request.body as Record<string, unknown> | undefined;
-    if (!body || typeof body !== "object") throw new Error("invalid request body");
+    // Fastify 的 JSON parser 被全局移除，request.body 是原始 Buffer，必须走统一解析。
+    const body = readJsonObject(request, reply);
+    if (!body) return undefined;
     const channel = String(body.channel ?? "") as SkillSourceChannel;
     const value = String(body.value ?? "").trim();
     if (!["url", "github", "gitlab"].includes(channel) || !value) {
@@ -129,7 +133,8 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
   // 导入预览：列出来源里的全部技能，默认全选，由用户勾选后再确认导入。
   app.post("/skills/import/preview", async (request, reply) => {
     try {
-      const resolved = await resolveImportSource(request);
+      const resolved = await resolveImportSource(request, reply);
+      if (!resolved) return;
       if (resolved.archive.byteLength > skillImportLimits.maxArchiveBytes) {
         sendJson(reply, 413, { error: `ZIP exceeds the ${skillImportLimits.maxArchiveBytes} byte limit` });
         return;
