@@ -1332,6 +1332,15 @@ export class ConversationRunner {
                 getTurn: (index) => this.store.getAgentTurn(turn.conversationId, index),
               },
               // 技能命令目录来自磁盘技能的内存快照；执行开关与后端仍由配置决定。
+              managedSkillRoot: resolve(this.config.storage.root, "skills"),
+              managedSkills: this.skills.listCached()
+                .filter((skill) => skill.enabled && skill.status !== "missing")
+                .map((skill) => ({
+                  name: skill.name,
+                  description: skill.description,
+                  skillFile: skill.skillFile || "SKILL.md",
+                  disableModelInvocation: skill.disableModelInvocation,
+                })),
               skillCommandCatalog: {
                 get: (name) => this.skills.getCached(name),
                 available: () => this.skills.listCached()

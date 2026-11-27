@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -144,6 +144,24 @@ describe("SkillStore", () => {
     expect(reopened.getCached("custom")?.commands[0]?.command).toBe("pnpm run typecheck");
     await reopened.setEnabled("custom", false);
     expect((await reopened.get("custom"))?.commands[0]?.command).toBe("pnpm run typecheck");
+  });
+
+  it("discovers SKILL.md in nested directories and keeps bundled files verbatim", async () => {
+    skills = await openStore();
+    await skills.create(sampleDocument);
+    const skillDir = join(directory, "skills", "custom");
+    await mkdir(join(skillDir, "nested", "scripts"), { recursive: true });
+    await rename(join(skillDir, "SKILL.md"), join(skillDir, "nested", "SKILL.md"));
+    await writeFile(join(skillDir, "nested", "scripts", "run.sh"), "#!/bin/sh\necho hi\n");
+    const reopened = new SkillStore(join(directory, "skills"));
+    await reopened.refresh();
+    expect(reopened.getCached("custom")).toMatchObject({ skillFile: "nested/SKILL.md", content: "Do $ARGUMENTS" });
+    // 启停写回发现到的路径，而不是在根目录再造一份 SKILL.md。
+    expect(await reopened.setEnabled("custom", false)).toBe(true);
+    const updated = await readFile(join(skillDir, "nested", "SKILL.md"), "utf8");
+    expect(updated).toContain('corvex-enabled: "false"');
+    expect((await reopened.get("custom"))?.enabled).toBe(false);
+    expect(await readFile(join(skillDir, "nested", "scripts", "run.sh"), "utf8")).toBe("#!/bin/sh\necho hi\n");
   });
 
   it("detects modified, missing and untracked skills against the lock", async () => {

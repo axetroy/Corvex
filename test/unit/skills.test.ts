@@ -77,6 +77,23 @@ describe("SKILL.md skills", () => {
     expect(isValidSkillName("a b")).toBe(false);
   });
 
+  it("parses model-invocation controls from frontmatter", () => {
+    const parsed = parseSkillDocument(`---
+name: deploy
+description: Deploy the service
+disable-model-invocation: true
+user-invocable: false
+---
+
+Deploy $ARGUMENTS.
+`);
+    expect(parsed.disableModelInvocation).toBe(true);
+    expect(parsed.userInvocable).toBe(false);
+    const plain = parseSkillDocument(sample);
+    expect(plain.disableModelInvocation).toBe(false);
+    expect(plain.userInvocable).toBe(true);
+  });
+
   it("parses and validates declared skill commands", () => {
     const withCommands = `---
 name: verify

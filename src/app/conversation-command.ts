@@ -36,7 +36,7 @@ export function resolveCommandRequest(
   const parsed = parseConversationCommand(request);
   if (!parsed) return { effectiveRequest: request, titleRequest: request };
   const skill = getSkill(parsed.command);
-  if (!skill?.enabled) return { effectiveRequest: request, titleRequest: request };
+  if (!skill?.enabled || skill.userInvocable === false) return { effectiveRequest: request, titleRequest: request };
   return {
     effectiveRequest: expandSkillTemplate(skill.content, parsed.message),
     titleRequest: parsed.message || skill.description,

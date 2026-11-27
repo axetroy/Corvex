@@ -529,6 +529,12 @@ export interface ConversationSkill {
   commands: SkillCommand[];
   /** metadata.corvex-commands-enabled === "true"，默认关闭。 */
   commandsEnabled: boolean;
+  /** 是否从模型可见的技能目录里隐藏（frontmatter.disable-model-invocation）。 */
+  disableModelInvocation: boolean;
+  /** 是否允许用户用 `/name` 调用（frontmatter.user-invocable !== false）。 */
+  userInvocable: boolean;
+  /** SKILL.md 相对技能目录的路径；不在根目录时也可用。 */
+  skillFile: string;
 }
 
 /** 技能可在沙箱/本地后端执行的固定命令，由管理员写在 SKILL.md 的 corvex-commands 里。 */

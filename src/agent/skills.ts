@@ -24,6 +24,10 @@ export interface ParsedSkillDocument {
   commands: SkillCommand[];
   /** metadata.corvex-commands-enabled === "true" */
   commandsEnabled: boolean;
+  /** frontmatter.disable-model-invocation：从自动发现目录隐藏，只能用户显式调用。 */
+  disableModelInvocation: boolean;
+  /** frontmatter.user-invocable !== false：是否出现在 `/` 补全与斜杠命令里。 */
+  userInvocable: boolean;
 }
 
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
@@ -92,6 +96,8 @@ export function parseSkillDocument(document: string): ParsedSkillDocument {
     quickLabel: String(metadata["corvex-quick-label"] ?? "").trim(),
     commands: parseSkillCommands(rawMetadata["corvex-commands"]),
     commandsEnabled: metadata["corvex-commands-enabled"] === "true",
+    disableModelInvocation: header["disable-model-invocation"] === true,
+    userInvocable: header["user-invocable"] !== false,
   };
 }
 

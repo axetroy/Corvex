@@ -32,6 +32,7 @@ import { createPlanExtension } from "./plan.js";
 import { createScheduledTaskExtension } from "./schedule-tools.js";
 import { createTurnToolsExtension, type TurnToolAdapter } from "./turn-tools.js";
 import { createSkillCommandExtension, type SkillCommandCatalog } from "./skill-command-tools.js";
+import { buildSkillCatalogSection, createSkillCatalogExtension } from "./skill-catalog.js";
 import { createFsWriteExtension, type WorkspaceFs } from "./fs/index.js";
 import { createGitLabExtension } from "./gitlab/index.js";
 import { createGitExtension, type GitToolAdapter } from "./git/index.js";
@@ -388,6 +389,15 @@ export interface ModelRequest {
   turnTools?: TurnToolAdapter;
   /** 当前会话可见的技能命令目录；只在启用执行环境的对话轮次中提供。 */
   skillCommandCatalog?: SkillCommandCatalog;
+  /** 托管技能根目录：进入 Pi 发现与 skill:// 只读根；只由 Runner 注入。 */
+  managedSkillRoot?: string;
+  /** 模型可见的技能元数据；正文按需用 skill:// 读取，不在此注入。 */
+  managedSkills?: Array<{
+    name: string;
+    description: string;
+    skillFile: string;
+    disableModelInvocation: boolean;
+  }>;
   /**
    * 轮次内插话通道；由 Runner 创建，PiAgent 在会话就绪后绑定。仅对话轮次提供，
    * 其余任务省略即可。
@@ -645,9 +655,29 @@ export class PiAgent {
       ? join(resolve(config.storage.root), "exec-cache", String(request.conversationProjectId))
       : undefined;
     if (cacheDir) await mkdir(cacheDir, { recursive: true, mode: 0o750 });
-    const skillPathsResolved = config.agent.skillPaths.map((path) => resolve(path));
+    const managedSkillRoot = request.managedSkillRoot ? resolve(request.managedSkillRoot) : undefined;
+    const skillPathsResolved = [
+      ...config.agent.skillPaths.map((path) => resolve(path)),
+      // 托管技能也进入 Pi 的发现与 skill:// 根表，使两种来源对模型一致可见。
+      ...(managedSkillRoot ? [managedSkillRoot] : []),
+    ];
     const skillRoots = await Promise.all(skillPathsResolved.map((path) => realpath(path)));
     const skillLabels = assignSkillLabels(skillPathsResolved);
+    const managedSkillAlias = managedSkillRoot ? skillLabels.at(-1) : undefined;
+    // 模型可见的技能目录：只有 description 常驻上下文，正文用它给的 skill:// URI 按需读取。
+    const managedSkillSection = managedSkillAlias && request.managedSkills?.length
+      ? buildSkillCatalogSection(
+          request.managedSkills
+            .filter((skill) => !skill.disableModelInvocation && skill.description)
+            .map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+              location: `skill://${managedSkillAlias}/${skill.name}/${skill.skillFile}`,
+              baseDir: `skill://${managedSkillAlias}/${skill.name}`,
+            })),
+          config.agent.responseLanguage,
+        )
+      : "";
     // 上传附件是仅本轮有效的只读根；realpath 失败（已被用户删除）时跳过，不让整轮失败。
     const uploadEntries = (await Promise.all((request.uploads ?? []).map(async (upload) => {
       const root = await realpath(resolve(upload.rootPath)).catch(() => undefined);
@@ -866,11 +896,12 @@ export class PiAgent {
       noThemes: true,
       noPromptTemplates: true,
       agentsFilesOverride: () => ({ agentsFiles: projectGuidance.files }),
-      additionalSkillPaths: config.agent.skillPaths.map((path) => resolve(path)),
+      additionalSkillPaths: skillPathsResolved,
       extensionFactories: [
         // 把本轮真实注册的全部工具写进系统提示词：SDK 在自定义 systemPrompt 下不会
         // 自动生成 tools 段，模型只能看到函数 schema，无法在能力类提问中感知全部工具。
         createToolCatalogExtension(config.agent.responseLanguage),
+        ...(managedSkillSection ? [createSkillCatalogExtension(managedSkillSection)] : []),
         // 先于其它工具注册：在结果进入会话历史之前按窗口预算截断，避免单轮工具输出
         // 在 SDK 下一次压缩检查之前把窗口顶爆。
         createToolResultBudgetExtension(config.agent.contextWindow),

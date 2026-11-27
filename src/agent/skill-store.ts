@@ -49,6 +49,8 @@ export interface SkillLockEntry {
   packName?: string;
   /** 本地保留的 ZIP（相对技能根目录），让导入包可以离线恢复。 */
   archive?: string;
+  /** SKILL.md 相对技能目录的路径；npx skills 允许它不在根目录。 */
+  skillFile?: string;
 }
 
 export interface SkillLockFile {
@@ -130,6 +132,7 @@ function emptyParsed(name: string): ReturnType<typeof parseSkillDocument> {
   return {
     name, description: "", content: "", license: "", compatibility: "", metadata: {},
     allowedTools: "", enabled: false, quickAction: false, quickLabel: "", commands: [], commandsEnabled: false,
+    disableModelInvocation: false, userInvocable: true,
   };
 }
 
@@ -274,15 +277,47 @@ export class SkillStore {
     return computeSkillHash(await this.collectFiles(folder));
   }
 
+  /**
+   * 按 npm skills 的规则发现 SKILL.md：根目录优先，否则递归子目录，
+   * 跳过点目录与 node_modules；文件按名称排序保证结果稳定。
+   */
+  private async findSkillFile(name: string, hint?: string): Promise<string | undefined> {
+    const root = this.skillDir(name);
+    if (hint && !isAbsolute(hint) && !hint.split(/[\\/]/).includes("..")) {
+      const candidate = join(root, hint);
+      if (await stat(candidate).then((info) => info.isFile()).catch(() => false)) {
+        return hint.replace(/\\/g, "/");
+      }
+    }
+    const walk = async (directory: string, prefix: string): Promise<string | undefined> => {
+      const direct = join(directory, "SKILL.md");
+      if (await stat(direct).then((info) => info.isFile()).catch(() => false)) {
+        return prefix ? `${prefix}/SKILL.md` : "SKILL.md";
+      }
+      const entries = await readdir(directory, { withFileTypes: true }).catch(() => [] as Dirent[]);
+      entries.sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        const nested = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const found = await walk(join(directory, entry.name), nested);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    return walk(root, "");
+  }
+
   /** 读一份技能的 SKILL.md；名称非法或文件缺失时返回 undefined。 */
   async get(name: string): Promise<ManagedSkill | undefined> {
     if (!isValidSkillName(name)) return undefined;
     const lock = await this.readLock();
     const entry = lock.skills[name];
     if (!entry) return undefined;
+    const skillFile = await this.findSkillFile(name, entry.skillFile);
+    if (!skillFile) return this.toSkill(name, "", emptyParsed(name), entry, "missing", entry.updatedAt);
     let document: string;
     try {
-      document = await readFile(join(this.skillDir(name), "SKILL.md"), "utf8");
+      document = await readFile(join(this.skillDir(name), skillFile), "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return this.toSkill(name, "", emptyParsed(name), entry, "missing", entry.updatedAt);
@@ -298,7 +333,9 @@ export class SkillStore {
     const status: SkillStatus = hash === undefined
       ? "missing"
       : hash === entry.computedHash ? "tracked" : "modified";
-    return this.toSkill(name, document, parsed, entry, status, hash ?? entry.updatedAt);
+    const skill = this.toSkill(name, document, parsed, entry, status, hash ?? entry.updatedAt);
+    skill.skillFile = skillFile;
+    return skill;
   }
 
   private toSkill(
@@ -329,6 +366,9 @@ export class SkillStore {
       status,
       commands: parsed.commands ?? [],
       commandsEnabled: parsed.commandsEnabled === true,
+      disableModelInvocation: parsed.disableModelInvocation === true,
+      userInvocable: parsed.userInvocable !== false,
+      skillFile: typeof entry?.skillFile === "string" && entry.skillFile ? entry.skillFile : "SKILL.md",
     };
   }
 
@@ -352,9 +392,11 @@ export class SkillStore {
     }
     for (const entry of diskEntries) {
       if (!entry.isDirectory() || !isValidSkillName(entry.name) || lock.skills[entry.name]) continue;
+      const skillFile = await this.findSkillFile(entry.name);
+      if (!skillFile) continue;
       let document: string;
       try {
-        document = await readFile(join(this.skillDir(entry.name), "SKILL.md"), "utf8");
+        document = await readFile(join(this.skillDir(entry.name), skillFile), "utf8");
       } catch {
         continue;
       }
@@ -364,14 +406,16 @@ export class SkillStore {
       } catch {
         parsed = emptyParsed(entry.name);
       }
-      result.push(this.toSkill(entry.name, document, parsed, undefined, "untracked", new Date().toISOString()));
+      const untracked = this.toSkill(entry.name, document, parsed, undefined, "untracked", new Date().toISOString());
+      untracked.skillFile = skillFile;
+      result.push(untracked);
     }
     return result.sort((left, right) => Number(right.isSystem) - Number(left.isSystem) || left.name.localeCompare(right.name));
   }
 
   /** 供斜杠命令与补全菜单使用的已启用技能。 */
   async listEnabled(): Promise<ManagedSkill[]> {
-    return (await this.list()).filter((skill) => skill.enabled && skill.status !== "missing");
+    return (await this.list()).filter((skill) => skill.enabled && skill.userInvocable && skill.status !== "missing");
   }
 
   async listPacks(): Promise<ManagedSkillPack[]> {
@@ -446,7 +490,9 @@ export class SkillStore {
       const problems = validateSkillDocument(parsed);
       if (problems.length > 0) throw new Error(problems.join("; "));
       const clean = document.trim();
-      await this.writeSkillDocument(name, clean);
+      const skillFile = (await this.findSkillFile(name, entry.skillFile)) ?? "SKILL.md";
+      await this.writeSkillDocument(name, clean, skillFile);
+      entry.skillFile = skillFile;
       entry.computedHash = (await this.folderHash(name))!;
       entry.updatedAt = new Date().toISOString();
       await this.writeLock(lock);
@@ -456,8 +502,8 @@ export class SkillStore {
     });
   }
 
-  private async writeSkillDocument(name: string, document: string): Promise<void> {
-    await atomicWrite(join(this.skillDir(name), "SKILL.md"), document);
+  private async writeSkillDocument(name: string, document: string, relativePath = "SKILL.md"): Promise<void> {
+    await atomicWrite(join(this.skillDir(name), relativePath), document);
   }
 
   /** 系统种子只允许停用，不允许删除；返回 false 表示不存在或受保护。 */
@@ -480,9 +526,11 @@ export class SkillStore {
       const lock = await this.readLock();
       const entry = lock.skills[name];
       if (!entry) return false;
+      const skillFile = await this.findSkillFile(name, entry.skillFile);
+      if (!skillFile) return false;
       let document: string;
       try {
-        document = await readFile(join(this.skillDir(name), "SKILL.md"), "utf8");
+        document = await readFile(join(this.skillDir(name), skillFile), "utf8");
       } catch {
         return false;
       }
@@ -491,7 +539,8 @@ export class SkillStore {
         ? { "corvex-enabled": undefined }
         : { "corvex-enabled": "false" };
       const updated = rewriteFrontmatter(document, metadata);
-      await this.writeSkillDocument(name, updated);
+      await this.writeSkillDocument(name, updated, skillFile);
+      entry.skillFile = skillFile;
       entry.computedHash = (await this.folderHash(name))!;
       entry.updatedAt = new Date().toISOString();
       await this.writeLock(lock);
@@ -542,6 +591,7 @@ export class SkillStore {
             ...(input.ref ? { ref: input.ref } : {}),
             ...(input.commit ? { commit: input.commit } : {}),
             skillPath: skill.sourcePath,
+            skillFile: "SKILL.md",
             computedHash: (await this.folderHash(skill.name))!,
             installedAt: existing?.installedAt ?? now,
             updatedAt: now,
@@ -642,8 +692,13 @@ export class SkillStore {
         const parsed = parseSkillDocument(source);
         const entry = lock.skills[parsed.name];
         let previousDocument = "";
+        let skillFile = "SKILL.md";
         if (entry?.source === "system") {
-          previousDocument = await readFile(join(this.skillDir(parsed.name), "SKILL.md"), "utf8").catch(() => "");
+          const found = await this.findSkillFile(parsed.name, entry.skillFile);
+          if (found) {
+            skillFile = found;
+            previousDocument = await readFile(join(this.skillDir(parsed.name), skillFile), "utf8").catch(() => "");
+          }
           if (previousDocument) {
             const previous = parseSkillDocument(previousDocument);
             if (previous.metadata["corvex-seed-version"] === SKILL_SEED_VERSION) return undefined;
@@ -656,13 +711,14 @@ export class SkillStore {
             document = rewriteFrontmatter(document, { "corvex-enabled": "false" });
           }
         }
-        await this.writeSkillDocument(parsed.name, document);
+        await this.writeSkillDocument(parsed.name, document, skillFile);
         const now = new Date().toISOString();
         return {
           name: parsed.name,
           installedAt: entry?.installedAt ?? now,
           updatedAt: now,
-          computedHash: computeSkillHash([{ path: "SKILL.md", content: Buffer.from(document) }]),
+          skillFile,
+          computedHash: computeSkillHash([{ path: skillFile, content: Buffer.from(document) }]),
         };
       }));
       let changed = false;
@@ -673,6 +729,7 @@ export class SkillStore {
           computedHash: update.computedHash,
           installedAt: update.installedAt,
           updatedAt: update.updatedAt,
+          skillFile: update.skillFile,
         };
         changed = true;
       }
@@ -704,6 +761,7 @@ export class SkillStore {
           source: skill.isSystem ? "system" : "manual",
           sourceType: skill.isSystem ? "system" : "manual",
           sourceUrl: "",
+          skillFile: "SKILL.md",
           computedHash: (await this.folderHash(skill.name))!,
           installedAt: skill.createdAt || now,
           updatedAt: skill.updatedAt || now,
