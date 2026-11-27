@@ -1456,6 +1456,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 
 /* 聊天代码块：与主题面板一致，横向滚动而不撑破消息气泡。 */
 .conversation-message-markdown .x-markdown pre {
+  position: relative;
   max-width: 100%;
   overflow-x: auto;
   margin: 10px 0;
@@ -1465,8 +1466,8 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   background: var(--bg-code);
 }
 
+/* 复制按钮相对 pre 定位（pre 有内边距），否则单行代码块会被 span 高度挤偏。 */
 .conversation-code-block {
-  position: relative;
   display: block;
 }
 
