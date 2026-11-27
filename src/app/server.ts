@@ -7,6 +7,7 @@ import type { ResponseLanguage } from "../model.js";
 import { errorMessage } from "../errors.js";
 import { skillImportLimits } from "../agent/skill-import.js";
 import { maxUploadBytesCeiling, uploadContentType } from "./upload.js";
+import { pruneEmptyUploadDirs } from "./upload-cleanup.js";
 import { currentUser } from "./auth/context.js";
 import { GitLabOAuthService } from "./auth/service.js";
 import type { FastifyRequest } from "fastify";
@@ -161,6 +162,13 @@ export class CorvexServer {
         // 删除 worktree 后残留的空项目目录，与超时无关；每次清理都执行。
         const removed = await this.conversations.pruneEmptyWorkspaceDirs();
         context.removedWorkspaces += removed;
+      } catch (error) {
+        context.errors.push(errorMessage(error));
+      }
+    });
+    this.hooks.storageCleanup.tapPromise({ name: "prune-empty-upload-dirs", stage: 550 }, async (context) => {
+      try {
+        await pruneEmptyUploadDirs(this.config.storage.root);
       } catch (error) {
         context.errors.push(errorMessage(error));
       }

@@ -16,6 +16,7 @@ import { resolveWorktreePath } from "../../../agent/fs/index.js";
 import { errorMessage } from "../../../errors.js";
 import { FilePreviewError } from "../../files/source.js";
 import { maxUploadBytesCeiling, sanitizeUploadFilename, uploadContentType, validateUpload } from "../../upload.js";
+import { withActiveUploadPath } from "../../upload-cleanup.js";
 import type { OpsContext } from "../context.js";
 import {
   idParam,
@@ -109,14 +110,17 @@ async function claimDraftUploads(
     const relativePath = join("uploads", conversationId, id, draft.filename);
     const target = resolve(ctx.config.storage.root, relativePath);
     try {
-      await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
-      await rename(resolve(ctx.config.storage.root, draft.storagePath), target);
-      ctx.store.createConversationUpload({
-        id: draft.id, conversationId, ownerUserId, filename: draft.filename,
-        mime: draft.mime, sizeBytes: draft.sizeBytes, storagePath: relativePath.replace(/\\/g, "/"),
-        sha256: draft.sha256,
-      });
-      ctx.store.deleteDraftUpload(draft.id, ownerUserId);
+      await withActiveUploadPath(resolve(ctx.config.storage.root, draft.storagePath, ".."), () =>
+        withActiveUploadPath(resolve(target, ".."), async () => {
+          await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
+          await rename(resolve(ctx.config.storage.root, draft.storagePath), target);
+          ctx.store.createConversationUpload({
+            id: draft.id, conversationId, ownerUserId, filename: draft.filename,
+            mime: draft.mime, sizeBytes: draft.sizeBytes, storagePath: relativePath.replace(/\\/g, "/"),
+            sha256: draft.sha256,
+          });
+          ctx.store.deleteDraftUpload(draft.id, ownerUserId);
+        }));
       claimed.push(id);
     } catch (error) {
       console.warn("draft upload could not be claimed", { error: errorMessage(error) });
@@ -1014,8 +1018,10 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const id = randomUUID();
     const relativePath = join("uploads", "drafts", user.id, id, filename);
     try {
-      await mkdir(resolve(ctx.config.storage.root, relativePath, ".."), { recursive: true, mode: 0o750 });
-      await writeFile(resolve(ctx.config.storage.root, relativePath), bytes, { mode: 0o600 });
+      await withActiveUploadPath(resolve(ctx.config.storage.root, relativePath, ".."), async () => {
+        await mkdir(resolve(ctx.config.storage.root, relativePath, ".."), { recursive: true, mode: 0o750 });
+        await writeFile(resolve(ctx.config.storage.root, relativePath), bytes, { mode: 0o600 });
+      });
     } catch (error) {
       sendJson(reply, 500, { error: `could not store draft upload: ${errorMessage(error)}` });
       return;
@@ -1084,8 +1090,10 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const relativePath = join("uploads", conversationId, uploadId, filename);
     const target = resolve(ctx.config.storage.root, relativePath);
     try {
-      await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
-      await writeFile(target, bytes, { mode: 0o600 });
+      await withActiveUploadPath(resolve(target, ".."), async () => {
+        await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
+        await writeFile(target, bytes, { mode: 0o600 });
+      });
     } catch (error) {
       sendJson(reply, 500, { error: `could not store upload: ${errorMessage(error)}` });
       return;
