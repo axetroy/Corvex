@@ -234,7 +234,7 @@ export class GitManager {
   private policy(): CommitPolicy {
     return this.commitPolicy?.() ?? {
       trailer: "",
-      fallback: { name: "Corvex", email: "corvex@localhost" },
+      fallback: { name: "Corvex", email: "no.reply@corvex-agent.com" },
     };
   }
 

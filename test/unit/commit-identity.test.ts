@@ -17,7 +17,7 @@ describe("commit attribution", () => {
   });
 
   it("does not treat an already-attributed message as needing a rewrite", () => {
-    const committed = withCommitTrailer("Corvex conversation changes abc", "Assisted-by: Agent");
+    const committed = withCommitTrailer("Corvex conversation changes abc", "Assisted-by: Corvex Agent");
     expect(needsCommitMessageRewrite(committed, "Corvex conversation changes abc")).toBe(false);
     expect(needsCommitMessageRewrite(committed, "do the thing")).toBe(true);
   });

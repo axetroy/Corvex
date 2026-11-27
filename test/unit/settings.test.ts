@@ -122,7 +122,7 @@ describe("validateRuntimeSettings", () => {
     expect(validateRuntimeSettings({ agent_commit_trailer: "Assisted-by: Acme Agent" })).toEqual([]);
     expect(validateRuntimeSettings({ agent_commit_trailer: "" })).toEqual([]);
     expect(validateRuntimeSettings({ agent_commit_trailer: "just text" })).toEqual([
-      "agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Agent",
+      "agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Corvex Agent",
     ]);
     expect(validateRuntimeSettings({ fallback_commit_author_email: "ops@example.com" })).toEqual([]);
     expect(validateRuntimeSettings({ fallback_commit_author_email: "not-an-email" })).toEqual([

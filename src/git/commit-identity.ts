@@ -40,7 +40,7 @@ export function userCommitMessage(message: string): string {
 export function authorFromUser(
   user: { name?: string; username?: string } | undefined,
   gitlabHost: string,
-  fallback: CommitAuthor = { name: "Corvex", email: "corvex@localhost" },
+  fallback: CommitAuthor = { name: "Corvex", email: "no.reply@corvex-agent.com" },
 ): CommitAuthor {
   const username = user?.username?.trim() || "";
   const name = user?.name?.trim() || username || fallback.name;

@@ -200,7 +200,7 @@ const defaults: CorvexConfig = {
     uploadMaxPerConversation: 100,
     commitTrailer: "Assisted-by: AI Agent",
     fallbackCommitAuthorName: "Corvex",
-    fallbackCommitAuthorEmail: "corvex@localhost",
+    fallbackCommitAuthorEmail: "no.reply@corvex-agent.com",
     contextWindow: 131_072,
     maxInputTokens: 0,
     historyTokenBudget: 24_000,

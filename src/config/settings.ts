@@ -215,7 +215,7 @@ function checkRelations(values: RuntimeSettingValues): string[] {
   const problems: string[] = [];
   const trailer = values.agent_commit_trailer;
   if (typeof trailer === "string" && trailer && !/^[A-Za-z-]+: .+/.test(trailer)) {
-    problems.push("agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Agent");
+    problems.push("agent_commit_trailer must look like a git trailer, e.g. Assisted-by: Corvex Agent");
   }
   const fallbackEmail = values.fallback_commit_author_email;
   if (typeof fallbackEmail === "string" && fallbackEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(fallbackEmail)) {

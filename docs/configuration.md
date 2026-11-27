@@ -139,7 +139,7 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
 | `agent_commit_trailer` | String (≤200) | Trailer appended to every conversation commit; empty disables it. Default `Assisted-by: AI Agent`. Conversation authors are always the signed-in users, never the Agent. |
 | `fallback_commit_author_name` | String (≤120) | Commit author name used only when a conversation has no identifiable owner. Default `Corvex`. |
-| `fallback_commit_author_email` | Email (≤200) | Commit author email used only when a conversation has no identifiable owner. Default `corvex@localhost`. |
+| `fallback_commit_author_email` | Email (≤200) | Commit author email used only when a conversation has no identifiable owner. Default `no.reply@corvex-agent.com`. |
 | `gitlab_base_url` | HTTP(S) URL | GitLab instance root. |
 | `gitlab_oauth_client_id` | String | OAuth client ID. |
 | `gitlab_oauth_client_secret` | String | OAuth client secret; blank keeps the saved value. |
