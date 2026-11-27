@@ -234,7 +234,11 @@ describe("CorvexServer", () => {
       });
       expect(createTask.status).toBe(201);
       const task = (await createTask.json()) as { id: string };
-      expect((await fetch(`${base}/api/ops/me/scheduled-tasks`, { headers: authHeaders })).status).toBe(200);
+      const taskList = await fetch(`${base}/api/ops/me/scheduled-tasks`, { headers: authHeaders });
+      expect(taskList.status).toBe(200);
+      const listedTasks = (await taskList.json()) as { items: { projectName?: string; targetBranch?: string }[] };
+      expect(listedTasks.items.find((item) => item.projectName)?.projectName).toBe("group/project");
+      expect(listedTasks.items.find((item) => item.targetBranch)?.targetBranch).toBe("main");
       expect([401, 403]).toContain((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "POST", headers: { ...viewerHeaders, "content-type": "application/json" }, body: "{}" })).status);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/cancel`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/resume`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);

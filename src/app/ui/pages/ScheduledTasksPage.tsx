@@ -5,7 +5,8 @@ import { errorMessage } from "../../../errors.js";
 import type { Copy, Locale } from "../lib/i18n.js";
 import { formatDate } from "../lib/format.js";
 import { Loading, PageHeading, Panel } from "../components/common.js";
-import type { ScheduledTask, ScheduledTaskRun } from "../lib/types.js";
+import type { ScheduledTaskRun, ScheduledTaskView } from "../lib/types.js";
+import { conversationsPath } from "../lib/routing.js";
 import "./ScheduledTasksPage.css";
 
 interface Props {
@@ -16,9 +17,9 @@ interface Props {
 }
 
 /** 一张任务卡片里的「标签 + 值」，让密集的元数据有稳定的两列基线。 */
-function MetaItem({ label, children }: { label: string; children: ReactNode }) {
+function MetaItem({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="scheduled-task-meta-item">
+    <div className={`scheduled-task-meta-item${wide ? " is-wide" : ""}`}>
       <span className="scheduled-task-meta-label">{label}</span>
       <span className="scheduled-task-meta-value">{children}</span>
     </div>
@@ -37,14 +38,14 @@ function ExamplePrompts({ copy }: { copy: Copy }) {
 
 /** 计划任务管理页：卡片式布局，查看任务、下次运行、最近记录，并可暂停或删除。新建主要通过在对话里用自然语言创建。 */
 export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: Props) {
-  const [tasks, setTasks] = useState<ScheduledTask[]>();
+  const [tasks, setTasks] = useState<ScheduledTaskView[]>();
   const [runs, setRuns] = useState<Record<string, ScheduledTaskRun[]>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
 
   const load = useCallback(() => {
     setError("");
-    fetchJson<{ items: ScheduledTask[] }>("/api/ops/me/scheduled-tasks", copy)
+    fetchJson<{ items: ScheduledTaskView[] }>("/api/ops/me/scheduled-tasks", copy)
       .then(async (response) => {
         setTasks(response.items);
         const entries = await Promise.all(response.items.map(async (task) => {
@@ -64,7 +65,7 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
 
   useEffect(load, [load]);
 
-  const act = async (task: ScheduledTask, action: "cancel" | "resume" | "run" | "delete") => {
+  const act = async (task: ScheduledTaskView, action: "cancel" | "resume" | "run" | "delete") => {
     setBusy(task.id);
     setError("");
     try {
@@ -116,9 +117,15 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
               const history = runs[task.id] ?? [];
               const latest = history[0];
               const lastRun = latest ? (
-                <span className="scheduled-task-last-run" title={latest.error || undefined}>
-                  {formatDate(latest.finishedAt, copy, locale)} · {latest.status}
-                </span>
+                history.length > 1 ? (
+                  <button type="button" className="scheduled-task-last-run is-clickable" title={latest.error || copy.scheduledTaskHistoryTitle}>
+                    {formatDate(latest.finishedAt, copy, locale)} · {latest.status}
+                  </button>
+                ) : (
+                  <span className="scheduled-task-last-run" title={latest.error || undefined}>
+                    {formatDate(latest.finishedAt, copy, locale)} · {latest.status}
+                  </span>
+                )
               ) : (
                 <span>{copy.none}</span>
               );
@@ -141,6 +148,12 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                     </Tag>
                   </div>
                   <div className="scheduled-task-meta">
+                    <MetaItem label={copy.scheduledTaskColumnContext} wide>
+                      <span className="scheduled-task-context">
+                        <span>{task.projectName || copy.none}</span>
+                        <Typography.Text code>{task.targetBranch || copy.none}</Typography.Text>
+                      </span>
+                    </MetaItem>
                     <MetaItem label={copy.scheduledTaskColumnId}>
                       <Typography.Text code className="scheduled-task-id" title={task.id}>{task.id.slice(0, 8)}</Typography.Text>
                     </MetaItem>
@@ -178,6 +191,13 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                     </MetaItem>
                   </div>
                   <div className="scheduled-task-actions" aria-label={copy.scheduledTaskColumnActions}>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => { window.location.hash = conversationsPath(task.conversationId); }}
+                    >
+                      {copy.scheduledTaskOpenConversation}
+                    </Button>
                     {task.status === "active" ? (
                       <>
                         <Popconfirm title={copy.scheduledTaskRunConfirm} onConfirm={() => void act(task, "run")}>

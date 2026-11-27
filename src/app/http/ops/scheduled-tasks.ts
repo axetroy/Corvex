@@ -15,7 +15,16 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
       me.get("/scheduled-tasks", async (request, reply) => {
         const user = requireUser(request, reply);
         if (!user) return;
-        sendJson(reply, 200, { items: ctx.store.listScheduledTasks(user.id) });
+        const items = ctx.store.listScheduledTasks(user.id).map((task) => {
+          const conversation = ctx.store.getConversation(task.conversationId);
+          return {
+            ...task,
+            projectName: conversation?.projectName ?? "",
+            targetBranch: conversation?.targetBranch ?? "",
+            conversationTitle: conversation?.title ?? "",
+          };
+        });
+        sendJson(reply, 200, { items });
       });
 
       me.get("/scheduled-tasks/:id/runs", async (request, reply) => {

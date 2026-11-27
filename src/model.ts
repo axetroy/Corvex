@@ -312,6 +312,13 @@ export type ScheduledTaskCard =
   | { type: "list"; tasks: ScheduledTaskCardItem[] }
   | { type: "cancelled"; taskId: string; found: boolean };
 
+/** 计划任务附带其所在对话的仓库/分支上下文，供运维台展示与跳转。 */
+export interface ScheduledTaskView extends ScheduledTask {
+  projectName: string;
+  targetBranch: string;
+  conversationTitle: string;
+}
+
 export interface ScheduledTaskRun {
   id: number;
   taskId: string;

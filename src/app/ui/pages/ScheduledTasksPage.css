@@ -150,9 +150,34 @@
   font-size: 11px;
 }
 
+/* 只有真有多条记录、可点开历史时才给出可点击外观。 */
 .scheduled-task-last-run {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.scheduled-task-last-run.is-clickable {
   cursor: pointer;
   border-bottom: 1px dashed var(--border-soft);
+}
+
+.scheduled-task-last-run.is-clickable:hover {
+  color: var(--primary);
+}
+
+.scheduled-task-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.scheduled-task-meta-item.is-wide {
+  grid-column: 1 / -1;
 }
 
 .scheduled-task-history {
