@@ -1,0 +1,255 @@
+/**
+ * 侧栏会话列表的样式。
+ * 这些选择器原本放在 ConversationsPage.css，但侧栏由 App 外壳直接渲染，
+ * 而 ConversationsPage 是 lazy() 加载的，导致首屏侧栏没有样式、点进会话才补齐。
+ * 因此把样式放在组件自己的 CSS 里，随外壳一起进入首屏 chunk。
+ */
+
+:root {
+  --conversation-border: var(--border);
+  --conversation-border-strong: var(--border-strong);
+  --conversation-muted: var(--text-muted);
+  --conversation-ink: var(--text);
+  --conversation-brand: var(--primary);
+  --conversation-brand-soft: var(--primary-soft);
+}
+
+/* 会话列表已并入左侧导航：去掉与主区域之间的重复边框，占满侧栏剩余高度。 */
+.sidebar .conversation-sidebar {
+  border-right: 0;
+}
+
+.conversation-sidebar {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--conversation-border);
+  background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-subtle) 100%);
+}
+
+/* 与右侧标签栏保持一致的高度：两侧内容从同一条水平线开始，不会因按钮更高而错位。 */
+.conversation-sidebar-heading {
+  position: relative;
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--conversation-border);
+}
+
+.conversation-archived-toggle.ant-btn {
+  position: absolute;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--conversation-muted);
+
+  &.is-active {
+    color: var(--conversation-brand);
+  }
+}
+
+.conversation-new-button {
+  &.ant-btn {
+    display: flex;
+    width: 200px;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 7px rgb(23 105 170 / 18%);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  & > span[aria-hidden="true"] {
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1;
+  }
+}
+
+.conversation-sidebar-list {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  /* 列表只做纵向滚动：分组标题、长标题都不应产生横向滚动条。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+
+  & > .ant-empty {
+    margin: auto;
+    padding: 24px 12px;
+  }
+}
+
+.conversation-summary-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 12px 5px 4px;
+
+  & > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &.is-archived {
+    opacity: 0.55;
+    font-style: italic;
+  }
+}
+
+/* 运行中的会话：列表项右侧一个呼吸的蓝点，比文字标签更轻量。 */
+.conversation-summary-active {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 0 rgb(47 127 224 / 55%);
+  animation: conversation-summary-pulse 1.4s ease-out infinite;
+}
+
+@keyframes conversation-summary-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(47 127 224 / 55%); }
+  70% { box-shadow: 0 0 0 6px rgb(47 127 224 / 0%); }
+  100% { box-shadow: 0 0 0 0 rgb(47 127 224 / 0%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-summary-active {
+    animation: none;
+  }
+}
+
+.ant-conversations-group-label {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 仓库分组标题：浅色吸顶条 + 色点 + 分隔线，跨仓库时一眼可辨。 */
+.conversation-sidebar-list .ant-conversations .ant-conversations-group-title {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  height: 30px;
+  min-height: 30px;
+  margin-top: 4px;
+  padding-inline: 12px;
+  border-top: 1px solid var(--conversation-border);
+  background: var(--bg-subtle);
+  color: var(--conversation-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.conversation-group-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* 分组可收起时，标题占满剩余宽度，让右侧箭头始终可见且不挤压仓库名。 */
+.conversation-sidebar-list .ant-conversations-group-title-collapsible .conversation-group-label {
+  flex: 1;
+}
+
+.conversation-sidebar-list .ant-conversations-group-collapse-trigger {
+  flex: 0 0 auto;
+  margin-inline-start: 8px;
+  color: var(--conversation-muted);
+  font-size: 10px;
+}
+
+/* 减少动态效果时跳过 Ant 的高度动画，直接隐藏已收起分组的内容。 */
+@media (prefers-reduced-motion: reduce) {
+  .conversation-sidebar-list .ant-conversations-group-title:has(.ant-conversations-group-collapse-trigger-close) + * {
+    display: none;
+  }
+}
+
+.conversation-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-group-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.conversation-sidebar-list .ant-conversations {
+  width: 100%;
+  max-width: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  /* 浏览器实际出现横向滚动条的是这个内层列表，必须在这里也限制横向溢出。 */
+  overflow-x: hidden;
+}
+
+.conversation-sidebar-list .ant-conversations-item,
+.conversation-sidebar-list .ant-conversations-group-title {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.conversation-sidebar-list .ant-conversations-item {
+  width: 100%;
+  min-height: 40px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+}
+
+.conversation-sidebar-list .ant-conversations-item:hover {
+  background: var(--bg-hover);
+}
+
+.conversation-sidebar-list .ant-conversations-item-active,
+.conversation-sidebar-list .ant-conversations-item-active:hover {
+  background: var(--conversation-brand-soft);
+  box-shadow: inset 2px 0 0 var(--conversation-brand);
+}
+
+.conversation-load-more {
+  width: calc(100% - 20px);
+  margin: 6px 10px 10px;
+}
+
+@media (max-width: 640px) {
+  .conversation-sidebar-heading {
+    padding: 0 14px;
+  }
+
+  .conversation-sidebar-list .ant-conversations {
+    max-height: 108px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+}
