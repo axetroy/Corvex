@@ -683,7 +683,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       const result = await fetch("/api/ops/conversations", {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, targetBranch: selectedBranch, message, responseLanguage: locale === "zh-CN" ? "zh-CN" : "en" }),
+        body: JSON.stringify({
+          projectId: project.id,
+          targetBranch: selectedBranch,
+          message,
+          responseLanguage: locale === "zh-CN" ? "zh-CN" : "en",
+          draftUploadIds: attachments.filter((item) => item.draft).map((item) => item.id),
+        }),
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
       });
@@ -694,6 +700,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
       }
       const created = await result.json() as { conversationId: string };
       setDraftMessage("");
+      setAttachments([]);
       setSelectedConversationId(created.conversationId);
       selectedConversationIdRef.current = created.conversationId;
       onConversationChange(created.conversationId);
@@ -734,7 +741,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   async function uploadFiles(files: readonly File[]) {
-    if (showCreate || !currentConversation || files.length === 0) return;
+    if (files.length === 0 || (!showCreate && !currentConversation)) return;
     const room = uploadLimits.maxPerMessage - attachments.length;
     if (room <= 0) {
       setError(copy.attachmentLimit);
@@ -748,14 +755,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         const limit = isImageAttachment(file) ? imageUploadMaxBytes : uploadLimits.maxBytes;
         if (file.size === 0 || file.size > limit) throw new Error(copy.attachmentTooLarge);
         if (!isSupportedAttachment(file)) throw new Error(copy.attachmentUnsupported);
-        const created = await sendBinary<PendingAttachment>(
-          uploadUrl(currentConversation.id, file.name, file.type || (isImageAttachment(file) ? "image/png" : "text/plain")),
-          await file.arrayBuffer(),
-          uploadContentType,
-          copy,
-        );
+        const declaredMime = file.type || (isImageAttachment(file) ? "image/png" : "text/plain");
+        const query = new URLSearchParams({ filename: file.name, mime: declaredMime });
+        const path = showCreate
+          ? `/api/ops/uploads/draft?${query.toString()}`
+          : uploadUrl(currentConversation!.id, file.name, declaredMime);
+        const created = await sendBinary<PendingAttachment>(path, await file.arrayBuffer(), uploadContentType, copy);
         setAttachments((current) => [...current, {
           id: created.id, filename: created.filename, sizeBytes: created.sizeBytes, mime: created.mime,
+          ...(showCreate ? { draft: true } : {}),
         }]);
       }
     } catch (cause) {
@@ -766,11 +774,15 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   }
 
   async function removeAttachment(id: string) {
-    setAttachments((current) => current.filter((item) => item.id !== id));
-    if (!currentConversation) return;
-    // 上传失败/取消不应阻断用户；服务端残留由会话删除清理兜底。
+    const item = attachments.find((attachment) => attachment.id === id);
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    // 上传失败/取消不应阻断用户；服务端残留由清理兜底。
     try {
-      await sendJson(`/api/ops/conversations/${encodeURIComponent(currentConversation.id)}/uploads/${encodeURIComponent(id)}`, {}, copy, "DELETE");
+      if (item?.draft) {
+        await sendJson(`/api/ops/uploads/draft/${encodeURIComponent(id)}`, {}, copy, "DELETE");
+      } else if (currentConversation) {
+        await sendJson(`/api/ops/conversations/${encodeURIComponent(currentConversation.id)}/uploads/${encodeURIComponent(id)}`, {}, copy, "DELETE");
+      }
     } catch {
       // 已本地移除，不再打扰用户。
     }
@@ -1544,10 +1556,12 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       <div className="conversation-attachment-chips">
                         {attachments.map((item) => (
                           <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
-                            {item.mime.startsWith("image/") && selectedConversationId ? (
+                            {item.mime.startsWith("image/") && (item.draft || selectedConversationId) ? (
                               <img
                                 className="conversation-attachment-thumb"
-                                src={`/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
+                                src={item.draft
+                                  ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/image`
+                                  : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
                                 alt=""
                               />
                             ) : <FileIcon />}

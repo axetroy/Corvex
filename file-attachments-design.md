@@ -68,6 +68,7 @@
 - **如何给模型**：**不新增工具**。在 `pi.ts` 构造 `ReadRoot[]` 时，把"本附件目录"作为**仅本轮有效的只读根**加入（realpath 后，label 为附件 ID），模型用现成的 `read_file` 按 `upload://<id>/<文件名>` 读取；同时在 `buildConversationPrompt`（`conversation-runner.ts`）追加一段有界清单「本轮上传文件：`<name>` → `upload://<id>/<name>`，大小 N」，标注为不可信数据。清单**不含任何宿主机路径**。这样不塞满上下文，也不扩大写权限。
 - **类型**：首版支持**任意 UTF-8 文本文件**，包括 `.py` / `.ts` / `.js` / `.html` / `.css` / `.yaml` 等源码文件。是否接受只看真实字节（无 NUL、严格 UTF-8、无二进制魔数），**不按扩展名或声明的 MIME 白名单拦截**——浏览器对常见源码文件常返回空 MIME 或 `text/x-*`，白名单会误伤。`#!/` shebang 是文本，不作为可执行文件拒绝；读脚本文本不等于执行它。图片已支持（见 4.1），PDF 仍延期。
 - **消息内展示**：用户消息落库时同时写入附件快照（ID / 文件名 / MIME / 大小），气泡里显示附件 chip 与图片缩略图。即使附件记录后续被删除，历史消息仍能显示文件名；缩略图 404 时回退为文件图标。旧库按 `conversation_turns.upload_ids` 一次性回填快照。
+- **新建对话**：此时还没有会话 ID，附件先通过 `POST /api/ops/uploads/draft` 按登录用户存草稿（`draft_uploads` 表 + `uploads/drafts/<user>/`），可预览/删除，创建对话时把 `draftUploadIds` 交给 `POST /api/ops/conversations`：服务端搬文件、写入正式附件表、绑定到首轮消息，草稿超过一天会在下次上传时清理。
 - **限额**：单文件默认 256 KiB（与 `read_file` 的 `maxReadBytes` 对齐，`read.ts:14`），每次消息最多 10 个附件；进入系统提示词的清单只含文件名/大小/路径（不含正文），正文由模型按需 `read_file`。
 
 ### 3.2 数据模型（`src/store.ts`）

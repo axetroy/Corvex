@@ -25,6 +25,8 @@ export interface PendingAttachment {
   sizeBytes: number;
   /** 服务端按字节检测出的真实 MIME；image/* 表示图片附件。 */
   mime: string;
+  /** 新建对话时还没有会话 ID，附件先存草稿，创建后由服务端认领。 */
+  draft?: boolean;
 }
 
 /** 构造上传端点 URL；文件名与 MIME 走 query，正文走原始 body。 */

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { conversationWorkspaceName } from "../../../git/manager.js";
@@ -95,6 +95,36 @@ function ownedConversation(
   return conversation;
 }
 
+/** 把新建对话前暂存的草稿附件搬到正式会话目录并写入附件表。 */
+async function claimDraftUploads(
+  ctx: OpsContext,
+  ids: readonly string[],
+  ownerUserId: string,
+  conversationId: string,
+): Promise<string[]> {
+  const claimed: string[] = [];
+  for (const id of ids) {
+    const draft = ctx.store.getDraftUpload(id, ownerUserId);
+    if (!draft) continue;
+    const relativePath = join("uploads", conversationId, id, draft.filename);
+    const target = resolve(ctx.config.storage.root, relativePath);
+    try {
+      await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
+      await rename(resolve(ctx.config.storage.root, draft.storagePath), target);
+      ctx.store.createConversationUpload({
+        id: draft.id, conversationId, ownerUserId, filename: draft.filename,
+        mime: draft.mime, sizeBytes: draft.sizeBytes, storagePath: relativePath.replace(/\\/g, "/"),
+        sha256: draft.sha256,
+      });
+      ctx.store.deleteDraftUpload(draft.id, ownerUserId);
+      claimed.push(id);
+    } catch (error) {
+      console.warn("draft upload could not be claimed", { error: errorMessage(error) });
+    }
+  }
+  return claimed;
+}
+
 /** 对话工作台：列表、详情、轮次、轨迹、流式正文与统计。 */
 export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext): void {
   app.get("/api/ops/conversations", async (request, reply) => {
@@ -127,6 +157,21 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en"
       ? body.responseLanguage
       : undefined;
+    const draftUploadIds: string[] = [];
+    if (body.draftUploadIds !== undefined) {
+      if (!Array.isArray(body.draftUploadIds) || body.draftUploadIds.length > ctx.config.agent.uploadMaxPerMessage ||
+          body.draftUploadIds.some((id) => typeof id !== "string" || id.length === 0 || id.length > 128)) {
+        sendJson(reply, 400, { error: "invalid draftUploadIds" });
+        return;
+      }
+      for (const id of body.draftUploadIds as string[]) {
+        if (!ctx.store.getDraftUpload(id, user.id)) {
+          sendJson(reply, 404, { error: `draft upload ${id} not found` });
+          return;
+        }
+        draftUploadIds.push(id);
+      }
+    }
     if (
       projectId === undefined ||
       !targetBranch || targetBranch.length > 255 ||
@@ -151,6 +196,13 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
         request: message,
         ...(mode ? { mode } : {}),
       });
+      // 会话与首轮已存在，此时才能把草稿附件认领进来并绑定到首轮。
+      const uploadIds = await claimDraftUploads(
+        ctx, draftUploadIds, user.id, created.conversationId,
+      );
+      if (uploadIds.length > 0) {
+        ctx.store.attachUploadsToTurn(created.turnId, uploadIds);
+      }
       const titleLanguage = responseLanguage ?? ctx.config.agent.responseLanguage;
       const title = await callAsyncHook(ctx.hooks.conversationStart, {
         conversationId: created.conversationId,
@@ -915,6 +967,83 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       maxPerConversation: ctx.config.agent.uploadMaxPerConversation,
       visionSupported: ctx.config.agent.visionEnabled,
     });
+  });
+
+  app.delete("/api/ops/uploads/draft/:id", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
+    const id = idParam((request.params as { id: string }).id);
+    const draft = id ? ctx.store.getDraftUpload(id!, user.id) : undefined;
+    if (!id || !draft) {
+      sendJson(reply, 404, { error: "draft upload not found" });
+      return;
+    }
+    ctx.store.deleteDraftUpload(id, user.id);
+    await rm(resolve(ctx.config.storage.root, draft.storagePath), { recursive: true, force: true });
+    sendJson(reply, 200, { deleted: true });
+  });
+
+  /** 新建对话时的草稿上传：尚无会话 ID，先按登录用户暂存，创建对话后认领。 */
+  app.post("/api/ops/uploads/draft", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
+    const contentType = (request.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+    if (contentType !== uploadContentType) {
+      sendJson(reply, 415, { error: `content-type must be ${uploadContentType}` });
+      return;
+    }
+    const filename = sanitizeUploadFilename(queryParam(request.query, "filename") ?? "");
+    const bytes = request.body;
+    if (!filename || !Buffer.isBuffer(bytes)) {
+      sendJson(reply, 400, { error: "invalid upload" });
+      return;
+    }
+    const validation = validateUpload({ filename, mime: "", bytes });
+    if (!validation.ok) {
+      sendJson(reply, 400, { error: validation.error });
+      return;
+    }
+    // 顺手清理该用户超过一天的草稿，避免长期占用空间。
+    const staleCutoff = Date.now() - 86_400_000;
+    for (const old of ctx.store.listDraftUploads(user.id)) {
+      if (Date.parse(old.createdAt) < staleCutoff) {
+        ctx.store.deleteDraftUpload(old.id, user.id);
+        await rm(resolve(ctx.config.storage.root, old.storagePath), { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+    const id = randomUUID();
+    const relativePath = join("uploads", "drafts", user.id, id, filename);
+    try {
+      await mkdir(resolve(ctx.config.storage.root, relativePath, ".."), { recursive: true, mode: 0o750 });
+      await writeFile(resolve(ctx.config.storage.root, relativePath), bytes, { mode: 0o600 });
+    } catch (error) {
+      sendJson(reply, 500, { error: `could not store draft upload: ${errorMessage(error)}` });
+      return;
+    }
+    const draft = ctx.store.createDraftUpload({
+      id, ownerUserId: user.id, filename, mime: validation.mime,
+      sizeBytes: bytes.length, storagePath: relativePath.replace(/\\/g, "/"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    sendJson(reply, 201, draft);
+  });
+
+  /** 草稿图片预览，供新对话输入框里的缩略图使用。 */
+  app.get("/api/ops/uploads/draft/:id/image", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
+    const id = idParam((request.params as { id: string }).id);
+    const draft = id ? ctx.store.getDraftUpload(id!, user.id) : undefined;
+    if (!id || !draft || !draft.mime.startsWith("image/")) {
+      sendJson(reply, 404, { error: "draft image not found" });
+      return;
+    }
+    try {
+      const data = await readFile(resolve(ctx.config.storage.root, draft.storagePath));
+      sendBinary(reply, data, draft.mime, { "cache-control": "private, max-age=300" });
+    } catch (error) {
+      sendJson(reply, 404, { error: `draft image unavailable: ${errorMessage(error)}` });
+    }
   });
 
   // 上传文本附件：落在 storage/uploads/<conversationId>/ 下，绝不进 worktree（避免被 git add 提交/推送）。

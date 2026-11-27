@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,11 +9,21 @@ import { createTokenCipher } from "../../src/tokens.js";
 import type { CorvexConfig } from "../../src/config/config.js";
 import { uploadContentType } from "../../src/app/upload.js";
 
-function config(root: string): CorvexConfig {
+async function listen(server: ReturnType<typeof createServer>): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("test server has no TCP address");
+  return address.port;
+}
+
+function config(root: string, gitlabBaseUrl = "http://127.0.0.1:1"): CorvexConfig {
   return {
     server: { listen: "127.0.0.1:0", readTimeout: 5000, shutdownTimeout: 5000 },
     operations: { username: "", password: "" },
-    gitlab: { baseUrl: "http://127.0.0.1:1", blockedUserIds: [], botUsername: "" },
+    gitlab: { baseUrl: gitlabBaseUrl, blockedUserIds: [], botUsername: "" },
     storage: { root, database: ":memory:", retentionDays: 90, auditRetentionDays: 365 },
     agent: {
       responseLanguage: "en", baseUrl: "https://api.openai.com/v1", model: "test", apiKey: "",
@@ -111,6 +122,23 @@ describe("upload API", () => {
       expect(preview.headers.get("content-type")).toBe("image/png");
       expect(Buffer.from(await preview.arrayBuffer())).toEqual(png);
 
+      // 新建对话前的草稿上传：按用户暂存，可预览、可删除。
+      const draft = await fetch(
+        `${base}/api/ops/uploads/draft?filename=notes.txt&mime=text/plain`,
+        { method: "POST", headers: { ...ownerHeaders, "content-type": uploadContentType }, body: Buffer.from("draft body") },
+      );
+      expect(draft.status).toBe(201);
+      const draftMeta = (await draft.json()) as { id: string; filename: string; mime: string };
+      expect(draftMeta).toMatchObject({ filename: "notes.txt", mime: "text/plain" });
+      expect((await fetch(`${base}/api/ops/uploads/draft?filename=notes.txt`, {
+        method: "POST", headers: { ...otherHeaders, "content-type": uploadContentType }, body: Buffer.from("x"),
+      })).status).toBe(201);
+      const draftPreview = await fetch(`${base}/api/ops/uploads/draft/${draftMeta.id}/image`, { headers: ownerHeaders });
+      expect(draftPreview.status).toBe(404); // 文本草稿没有图片预览
+      expect((await fetch(`${base}/api/ops/uploads/draft/${draftMeta.id}`, {
+        method: "DELETE", headers: ownerHeaders,
+      })).status).toBe(200);
+
       // 运行时设置改小后立即生效：Server 持有同一 config 对象引用。
       runtimeConfig.agent.uploadMaxBytes = 4;
       const tooLarge = await post(ownerHeaders, Buffer.from("hello"));
@@ -119,6 +147,59 @@ describe("upload API", () => {
     } finally {
       controller.abort();
       await running;
+    }
+  });
+
+  it("claims draft uploads when a new conversation is created", async () => {
+    temp = await mkdtemp(join(tmpdir(), "corvex-draft-claim-"));
+    const fakeGitLab = createServer((request, response) => {
+      const path = new URL(request.url ?? "/", "http://localhost").pathname;
+      const replies: Record<string, unknown> = {
+        "/api/v4/projects/2": {
+          id: 2, name: "Project", path_with_namespace: "group/project",
+          http_url_to_repo: "http://127.0.0.1:1/group/project.git", default_branch: "main",
+        },
+        "/api/v4/projects/2/repository/branches/main": { name: "main", commit: { id: "b".repeat(40) } },
+      };
+      response.writeHead(path in replies ? 200 : 404, { "content-type": "application/json" });
+      response.end(JSON.stringify(replies[path] ?? { message: "not found" }));
+    });
+    const glPort = await listen(fakeGitLab);
+    const store = await AppStore.open(":memory:");
+    const headers = login(store, 1, "owner").headers;
+    const application = new CorvexServer(config(temp, `http://127.0.0.1:${glPort}`), store);
+    const controller = new AbortController();
+    const running = application.run(controller.signal);
+    try {
+      let base = "";
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          base = `http://127.0.0.1:${application.getListeningAddress().port}`;
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      const draft = await fetch(`${base}/api/ops/uploads/draft?filename=plan.txt&mime=text/plain`, {
+        method: "POST", headers: { ...headers, "content-type": uploadContentType }, body: Buffer.from("plan body"),
+      });
+      expect(draft.status).toBe(201);
+      const { id: draftId } = (await draft.json()) as { id: string };
+      const created = await fetch(`${base}/api/ops/conversations`, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: 2, targetBranch: "main", message: "do it", draftUploadIds: [draftId],
+        }),
+      });
+      expect([201, 202]).toContain(created.status);
+      const conversation = (await created.json()) as { conversationId: string };
+      const userMessage = store.getConversation(conversation.conversationId)?.messages.find((m) => m.role === "user");
+      expect(userMessage?.attachments).toMatchObject([{ id: draftId, filename: "plan.txt", mime: "text/plain" }]);
+      expect(store.listConversationUploads(conversation.conversationId)).toHaveLength(1);
+    } finally {
+      controller.abort();
+      await running;
+      fakeGitLab.close();
     }
   });
 });

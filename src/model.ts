@@ -343,6 +343,18 @@ export interface ScheduledTaskRun {
  * 用户上传的文本附件：落盘在 storage/uploads/<conversationId>/ 下，不进入 worktree。
  * 作为仅本轮有效的只读根暴露给模型，用现成 read_file 读取。
  */
+/** 新建对话时尚无会话 ID，先按用户存草稿；创建对话后认领为正式附件。 */
+export interface DraftUpload {
+  id: string;
+  ownerUserId: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  storagePath: string;
+  sha256: string;
+  createdAt: string;
+}
+
 export interface ConversationUpload {
   id: string;
   conversationId: string;
@@ -657,6 +669,8 @@ export function normalizeConversationTitle(raw: string, language: ResponseLangua
 }
 
 export interface CreateConversationInput {
+  /** 预分配的会话 ID；用于先认领草稿附件再创建会话。省略时由存储层生成。 */
+  id?: string;
   /** 拥有该会话的本地用户 ID。 */
   ownerUserId: string;
   projectId: number;

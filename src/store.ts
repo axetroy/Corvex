@@ -28,6 +28,7 @@ import {
   type ConversationMessageAttachment,
   type ConversationSkill,
   type ConversationUpload,
+  type DraftUpload,
   type ScheduledTaskCard,
   type ScheduledTask,
   type ScheduledTaskRun,
@@ -1034,7 +1035,7 @@ export class AppStore {
 
   createConversation(input: CreateConversationInput): CreatedConversationTurn {
     this.validateConversationInput(input);
-    const conversationId = randomUUID();
+    const conversationId = input.id ?? randomUUID();
     const mode = input.mode ?? defaultConversationMode;
     const now = new Date().toISOString();
     return this.transaction(() => {
@@ -1421,6 +1422,58 @@ export class AppStore {
       position: Number(row.position),
       createdAt: String(row.created_at),
     }));
+  }
+
+  createDraftUpload(input: Omit<DraftUpload, "createdAt">): DraftUpload {
+    const createdAt = new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO draft_uploads(id,owner_user_id,filename,mime,size_bytes,storage_path,sha256,created_at)
+       VALUES(?,?,?,?,?,?,?,?)`,
+    ).run(
+      input.id, input.ownerUserId, input.filename, input.mime,
+      input.sizeBytes, input.storagePath, input.sha256, createdAt,
+    );
+    return this.getDraftUpload(input.id, input.ownerUserId)!;
+  }
+
+  getDraftUpload(id: string, ownerUserId: string): DraftUpload | undefined {
+    const row = this.db.prepare("SELECT * FROM draft_uploads WHERE id=? AND owner_user_id=?").get(id, ownerUserId) as
+      Record<string, unknown> | undefined;
+    return row ? {
+      id: String(row.id), ownerUserId: String(row.owner_user_id), filename: String(row.filename),
+      mime: String(row.mime), sizeBytes: Number(row.size_bytes), storagePath: String(row.storage_path),
+      sha256: String(row.sha256), createdAt: String(row.created_at),
+    } : undefined;
+  }
+
+  listDraftUploads(ownerUserId: string): DraftUpload[] {
+    return (this.db.prepare(
+      "SELECT * FROM draft_uploads WHERE owner_user_id=? ORDER BY created_at,id",
+    ).all(ownerUserId) as Record<string, unknown>[]).map((row) => ({
+      id: String(row.id), ownerUserId: String(row.owner_user_id), filename: String(row.filename),
+      mime: String(row.mime), sizeBytes: Number(row.size_bytes), storagePath: String(row.storage_path),
+      sha256: String(row.sha256), createdAt: String(row.created_at),
+    }));
+  }
+
+  deleteDraftUpload(id: string, ownerUserId: string): boolean {
+    return this.db.prepare("DELETE FROM draft_uploads WHERE id=? AND owner_user_id=?").run(id, ownerUserId).changes === 1;
+  }
+
+  /** 把认领后的附件绑定到首轮及其用户消息；新建对话的草稿附件在会话创建后调用。 */
+  attachUploadsToTurn(turnId: string, uploadIds: readonly string[]): void {
+    const snapshot = uploadIds.flatMap((id) => {
+      const upload = this.getConversationUpload(id);
+      return upload ? [{
+        id: upload.id, filename: upload.filename, mime: upload.mime, sizeBytes: upload.sizeBytes,
+      }] : [];
+    });
+    this.transaction(() => {
+      this.db.prepare("UPDATE conversation_turns SET upload_ids=? WHERE id=?").run(JSON.stringify(uploadIds), turnId);
+      this.db.prepare(
+        "UPDATE conversation_messages SET upload_snapshot=? WHERE id=(SELECT user_message_id FROM conversation_turns WHERE id=?)",
+      ).run(JSON.stringify(snapshot), turnId);
+    });
   }
 
   /** 列出某对话的上传附件，按创建时间升序。 */
@@ -3160,6 +3213,11 @@ export class AppStore {
         content TEXT NOT NULL, position INTEGER NOT NULL, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS conversation_followups_order_idx ON conversation_followups(conversation_id,position);
+      CREATE TABLE IF NOT EXISTS draft_uploads (
+        id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL, storage_path TEXT NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS draft_uploads_owner_idx ON draft_uploads(owner_user_id,created_at);
       CREATE TABLE IF NOT EXISTS conversation_uploads (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
         owner_user_id TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL,
