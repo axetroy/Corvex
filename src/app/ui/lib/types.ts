@@ -222,6 +222,8 @@ export const settingGroups: readonly SettingGroup[] = [
       { key: "web_search_backends", kind: "list", item: "path", labelKey: "settingsWebSearchBackends", hintKey: "settingsWebSearchBackendsHint" },
       { key: "web_search_max_queries", kind: "number", min: 1, max: 50, step: 1, labelKey: "settingsWebSearchMaxQueries", hintKey: "settingsWebSearchMaxQueriesHint" },
       { key: "tavily_api_key", kind: "string", secret: true, allowEmpty: true, maxLength: 200, labelKey: "settingsTavilyApiKey", hintKey: "settingsTavilyApiKeyHint" },
+      { key: "exa_api_key", kind: "string", secret: true, allowEmpty: true, maxLength: 200, labelKey: "settingsExaApiKey", hintKey: "settingsExaApiKeyHint" },
+      { key: "you_api_key", kind: "string", secret: true, allowEmpty: true, maxLength: 200, labelKey: "settingsYouApiKey", hintKey: "settingsYouApiKeyHint" },
       { key: "searxng_base_url", kind: "string", allowEmpty: true, maxLength: 500, labelKey: "settingsSearxngBaseUrl", hintKey: "settingsSearxngBaseUrlHint" },
     ],
   },

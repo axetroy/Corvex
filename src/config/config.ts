@@ -67,6 +67,10 @@ export interface CorvexConfig {
     searxngBaseUrl: string;
     /** 可选 Tavily API key；设置后改用账号额度，留空走 keyless。 */
     tavilyApiKey: string;
+    /** 可选 Exa API key；设置后走 Exa keyed API，留空走 keyless MCP。 */
+    exaApiKey: string;
+    /** 可选 You.com API key；设置后走 keyed API，留空走 keyless MCP。 */
+    youApiKey: string;
     /** 每个对话轮次最多调用的 Git 工具次数；0 表示不限制。 */
     gitToolCallLimit: number;
     /** 首次 publish 到功能分支后是否自动创建（或复用）合并请求。 */
@@ -197,6 +201,8 @@ const defaults: CorvexConfig = {
     webSearchBackends: ["tavily", "exa", "you", "wikipedia", "hackernews", "duckduckgo", "searxng"],
     searxngBaseUrl: "",
     tavilyApiKey: "",
+    exaApiKey: "",
+    youApiKey: "",
     gitToolCallLimit: 40,
     autoCreateMergeRequest: true,
     reasoningEnabled: true,
@@ -472,6 +478,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       webSearchBackends: stringArray(agent.web_search_backends, defaults.agent.webSearchBackends),
       searxngBaseUrl: string(agent.searxng_base_url, defaults.agent.searxngBaseUrl),
       tavilyApiKey: string(agent.tavily_api_key, defaults.agent.tavilyApiKey),
+      exaApiKey: string(agent.exa_api_key, defaults.agent.exaApiKey),
+      youApiKey: string(agent.you_api_key, defaults.agent.youApiKey),
       gitToolCallLimit: number(agent.git_tool_call_limit, defaults.agent.gitToolCallLimit),
       autoCreateMergeRequest: boolean(agent.auto_create_merge_request, defaults.agent.autoCreateMergeRequest),
       thinkingLevel: parseThinkingLevel(agent.thinking_level) ?? defaults.agent.thinkingLevel,

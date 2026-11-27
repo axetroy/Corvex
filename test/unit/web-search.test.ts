@@ -123,6 +123,36 @@ describe("keyless web search", () => {
     expect(headers["X-Tavily-Access-Mode"]).toBeUndefined();
   });
 
+  it("uses the Exa keyed API when a key is configured", async () => {
+    const recorderMock = recorder({
+      results: [{ title: "Exa", url: "https://docs.example.org/exa", text: "Keyed result" }],
+    });
+    const result = await searchWeb("exa", 3, {
+      backends: ["exa"],
+      apiKeys: { exa: "exa-test" },
+      dependencies: recorderMock.dependencies,
+    });
+    expect(recorderMock.calls[0]?.url).toBe("https://api.exa.ai/search");
+    const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer exa-test");
+    expect(result.source).toBe("exa");
+  });
+
+  it("uses the You.com keyed API with X-API-Key when configured", async () => {
+    const recorderMock = recorder({
+      results: { web: [{ title: "You", url: "https://docs.example.org/you", description: "Keyed result" }] },
+    });
+    const result = await searchWeb("you", 3, {
+      backends: ["you"],
+      apiKeys: { you: "ydc-test" },
+      dependencies: recorderMock.dependencies,
+    });
+    expect(recorderMock.calls[0]?.url).toBe("https://ydc-index.io/v1/search");
+    const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBe("ydc-test");
+    expect(result.source).toBe("you");
+  });
+
   it("validates the query length before calling the network", async () => {
     const recorderMock = recorder({ results: [] });
     await expect(searchWeb("", 5, { dependencies: recorderMock.dependencies })).rejects.toThrow("between 1 and 500");

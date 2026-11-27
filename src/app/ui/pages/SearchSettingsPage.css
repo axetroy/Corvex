@@ -1,89 +1,76 @@
-.search-settings-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.search-settings-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.search-settings-head .ant-typography {
-  margin-bottom: 4px;
-}
-
-.search-settings-grid {
-  display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.2fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.search-settings-credentials {
-  grid-column: 1 / -1;
-}
-
+/* 搜索设置页只定义本页特有的行与后端列表；页头、宽度、面板沿用 AdminPage / Panel。 */
 .search-setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 24px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 
 .search-setting-row:last-child {
   border-bottom: 0;
+  padding-bottom: 0;
 }
 
 .search-setting-label {
-  color: var(--text);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 600;
 }
 
 .search-setting-hint {
-  margin-top: 2px;
+  margin-top: 3px;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.5;
 }
 
 .search-settings-spaced {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .search-settings-blocked {
   width: 100%;
-  margin: 6px 0 10px;
+  max-width: 420px;
+  margin-top: 8px;
 }
 
 .search-backend-hint {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .search-backend-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 .search-backend-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
   cursor: grab;
 }
 
+.search-backend-row:last-child {
+  border-bottom: 0;
+}
+
+.search-backend-row:hover {
+  background: var(--bg-hover);
+}
+
 .search-backend-row.is-enabled {
-  border-color: var(--primary-soft);
   background: var(--primary-tint);
 }
 
@@ -119,23 +106,21 @@
 }
 
 .search-backend-name code {
-  color: var(--text);
+  color: var(--primary);
   font-weight: 600;
 }
 
 .search-backend-desc {
-  margin-top: 2px;
+  margin-top: 3px;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;
 }
 
-.search-backend-actions {
-  flex: none;
+.search-settings-modal-hint {
+  margin-top: 12px;
 }
 
-@media (max-width: 1100px) {
-  .search-settings-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.search-backend-actions {
+  flex: none;
 }

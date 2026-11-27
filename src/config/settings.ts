@@ -85,6 +85,8 @@ export const runtimeSettingDefinitions: readonly RuntimeSettingDefinition[] = [
   { key: "web_search_backends", section: "agent", field: "webSearchBackends", type: "list", item: "path" },
   { key: "searxng_base_url", section: "agent", field: "searxngBaseUrl", type: "string", maxLength: 500, allowEmpty: true },
   { key: "tavily_api_key", section: "agent", field: "tavilyApiKey", type: "string", maxLength: 200, allowEmpty: true },
+  { key: "exa_api_key", section: "agent", field: "exaApiKey", type: "string", maxLength: 200, allowEmpty: true },
+  { key: "you_api_key", section: "agent", field: "youApiKey", type: "string", maxLength: 200, allowEmpty: true },
   { key: "git_tool_call_limit", section: "agent", field: "gitToolCallLimit", type: "number", min: 0, max: 200 },
   // 子模块白名单与专用 token：默认只允许配置 GitLab 同源，第三方必须显式放行。
   { key: "agent_submodule_allowed_hosts", section: "agent", field: "submoduleAllowedHosts", type: "list", item: "path" },
@@ -131,6 +133,8 @@ export const secretRuntimeSettingKeys = new Set([
   "gitlab_oauth_client_secret",
   "agent_submodule_host_tokens",
   "tavily_api_key",
+  "exa_api_key",
+  "you_api_key",
 ]);
 
 /** 运行时设置值；列表项统一以字符串数组回显，写入时按定义转换。 */

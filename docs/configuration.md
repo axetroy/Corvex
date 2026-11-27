@@ -139,6 +139,8 @@ Editable keys (stored in SQLite with these underscored names; the YAML equivalen
 | `skill_paths` | List of paths | Trusted Skill roots, read at the next session creation. |
 | `web_search_backends` | List of backend ids | Free search backends in preference order: `tavily`, `exa`, `you`, `wikipedia`, `hackernews`, `duckduckgo`, `searxng`. Actual order is a composite score of source quality, success rate and latency; rate-limited backends cool down. |
 | `tavily_api_key` | String (secret, ≤200) | Optional Tavily key; empty uses the free keyless allowance. Never echoed back. |
+| `exa_api_key` | String (secret, ≤200) | Optional Exa key; empty uses the keyless MCP endpoint. Never echoed back. |
+| `you_api_key` | String (secret, ≤200) | Optional You.com key; empty uses the keyless free MCP profile. Never echoed back. |
 | `searxng_base_url` | HTTP(S) URL | Self-hosted SearXNG root with JSON format enabled; empty skips the backend. |
 | `agent_commit_trailer` | String (≤200) | Trailer appended to every conversation commit; empty disables it. Default `Assisted-by: AI Agent`. Conversation authors are always the signed-in users, never the Agent. |
 | `fallback_commit_author_name` | String (≤120) | Commit author name used only when a conversation has no identifiable owner. Default `Corvex`. |

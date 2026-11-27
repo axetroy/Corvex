@@ -56,6 +56,8 @@ export interface WebSearchOptions {
   searxngBaseUrl?: string;
   /** 可选 Tavily key；配置后改用账号额度而非 keyless 共享额度。 */
   tavilyApiKey?: string;
+  /** 各后端的可选 API key；有 key 时走 keyed API，否则走 keyless。 */
+  apiKeys?: Partial<Record<"tavily" | "exa" | "you", string>>;
 }
 
 const defaultDependencies: WebSearchDependencies = {
@@ -141,7 +143,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 /** Tavily：keyless 模式，响应与付费 key 一致。 */
 async function tavily(query: string, count: number, options: WebSearchOptions, signal: AbortSignal): Promise<RawResult[]> {
-  const apiKey = (options.tavilyApiKey ?? "").trim();
+  const apiKey = (options.apiKeys?.tavily ?? options.tavilyApiKey ?? "").trim();
   const payload = asRecord(await getJson("https://api.tavily.com/search", {
     method: "POST",
     headers: {
@@ -264,6 +266,48 @@ function parseMcpResult(body: string): unknown {
   }
 }
 
+/** Exa keyed API：有 key 时走账号额度，结果与 keyless MCP 统一收窄。 */
+async function exaKeyed(query: string, count: number, options: WebSearchOptions, signal: AbortSignal): Promise<RawResult[]> {
+  const key = (options.apiKeys?.exa ?? "").trim();
+  if (!key) return [];
+  const payload = asRecord(await getJson("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ query, numResults: count, type: "auto", contents: { highlights: true } }),
+  }, options.dependencies ?? defaultDependencies, signal));
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  return results.filter((item) => item && typeof item === "object").map((item) => {
+    const entry = asRecord(item);
+    const highlights = Array.isArray(entry.highlights) ? entry.highlights.map(String).join(" ") : "";
+    return {
+      title: String(entry.title ?? ""),
+      url: String(entry.url ?? ""),
+      snippet: highlights || String(entry.text ?? ""),
+    };
+  });
+}
+
+/** You.com keyed API：X-API-Key 头（无 Bearer 前缀），结果在 results.web。 */
+async function youKeyed(query: string, count: number, options: WebSearchOptions, signal: AbortSignal): Promise<RawResult[]> {
+  const key = (options.apiKeys?.you ?? "").trim();
+  if (!key) return [];
+  const payload = asRecord(await getJson("https://ydc-index.io/v1/search", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json", "X-API-Key": key },
+    body: JSON.stringify({ query, count }),
+  }, options.dependencies ?? defaultDependencies, signal));
+  const web = asRecord(payload.results).web;
+  const results = Array.isArray(web) ? web : [];
+  return results.filter((item) => item && typeof item === "object").map((item) => {
+    const entry = asRecord(item);
+    return {
+      title: String(entry.title ?? ""),
+      url: String(entry.url ?? ""),
+      snippet: String(entry.description ?? entry.snippet ?? ""),
+    };
+  });
+}
+
 /** Exa / You.com 的 keyless MCP 端点：通过 JSON-RPC 调用免费搜索工具。 */
 async function mcpBackend(
   url: string,
@@ -315,8 +359,12 @@ async function mcpBackend(
 
 const implementations: Record<WebSearchBackendId, (query: string, count: number, options: WebSearchOptions, signal: AbortSignal) => Promise<RawResult[]>> = {
   tavily,
-  exa: (query, count, options, signal) => mcpBackend("https://mcp.exa.ai/mcp", "web_search_exa", query, options, signal),
-  you: (query, count, options, signal) => mcpBackend("https://api.you.com/mcp?profile=free", "you-search", query, options, signal),
+  exa: (query, count, options, signal) => (options.apiKeys?.exa?.trim()
+    ? exaKeyed(query, count, options, signal)
+    : mcpBackend("https://mcp.exa.ai/mcp", "web_search_exa", query, options, signal)),
+  you: (query, count, options, signal) => (options.apiKeys?.you?.trim()
+    ? youKeyed(query, count, options, signal)
+    : mcpBackend("https://api.you.com/mcp?profile=free", "you-search", query, options, signal)),
   wikipedia,
   hackernews,
   duckduckgo,
@@ -397,13 +445,14 @@ export function createWebSearchExtension(
   maxQueriesPerSession: number,
   blockedHostValues: readonly string[],
   signal?: AbortSignal,
-  searchOptions: Pick<WebSearchOptions, "backends" | "searxngBaseUrl" | "tavilyApiKey"> = {},
+  searchOptions: Pick<WebSearchOptions, "backends" | "searxngBaseUrl" | "tavilyApiKey" | "apiKeys"> = {},
 ): (pi: ExtensionAPI) => void {
   const client = createWebSearchClient({
     blockedHosts: blockedHostValues, signal,
     backends: searchOptions.backends,
     searxngBaseUrl: searchOptions.searxngBaseUrl,
     tavilyApiKey: searchOptions.tavilyApiKey,
+    apiKeys: searchOptions.apiKeys,
   });
   return (pi) => {
     let queries = 0;

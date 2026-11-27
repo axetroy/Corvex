@@ -934,6 +934,11 @@ export class PiAgent {
                 backends: config.agent.webSearchBackends,
                 searxngBaseUrl: config.agent.searxngBaseUrl,
                 tavilyApiKey: config.agent.tavilyApiKey,
+                apiKeys: {
+                  tavily: config.agent.tavilyApiKey,
+                  exa: config.agent.exaApiKey,
+                  you: config.agent.youApiKey,
+                },
               },
             )]
           : []),
