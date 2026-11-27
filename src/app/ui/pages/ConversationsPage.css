@@ -756,13 +756,14 @@
   align-items: center;
   gap: 5px;
   color: var(--conversation-ink);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .conversations-layout .conversation-prompts > .ant-prompts-list > .ant-prompts-item-has-nest .ant-prompts-label {
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .conversation-prompt-group-label svg {
@@ -809,8 +810,8 @@
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item .ant-prompts-label {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .conversations-layout .conversation-prompts .ant-prompts-nested .ant-prompts-item:hover {
