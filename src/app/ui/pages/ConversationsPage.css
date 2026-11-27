@@ -131,10 +131,10 @@
   overflow: hidden;
 }
 
+/* 宽度随项目名自适应，过长时由 max-width 收口并交给 MiddleEllipsis 截断。 */
 .conversation-workspace-repo {
-  flex: 0 1 300px;
-  width: 300px;
-  max-width: 100%;
+  flex: 0 1 auto;
+  max-width: 300px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -2514,8 +2514,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 
 @media (max-width: 900px) {
   .conversation-workspace-repo {
-    flex-basis: 140px;
-    width: 140px;
+    max-width: 140px;
   }
 
   .conversation-workspace-project {

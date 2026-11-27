@@ -23,7 +23,9 @@ export const MiddleEllipsis = memo(function MiddleEllipsis({
       if (!context) return;
       context.font = getComputedStyle(node).font;
       if (node.clientWidth <= 0) return;
-      const next = fitMiddleEllipsis(text, (value) => context.measureText(value).width, node.clientWidth);
+      // clientWidth 是向下取整的整数，canvas 测宽是浮点；自适应容器恰好等于文本宽度时，
+      // 不到 1px 的取整差会误判为放不下而截断。留 1px 容差消除这种抖动。
+      const next = fitMiddleEllipsis(text, (value) => context.measureText(value).width, node.clientWidth + 1);
       setParts((current) =>
         current.head === next.head && current.tail === next.tail ? current : next,
       );
