@@ -40,7 +40,7 @@ import { createProviderTokenCounter } from "./token-counter.js";
 import { domainSummaryInstructions } from "./domain-summary.js";
 import { createMicrocompactExtension, resolveMicrocompactPolicy } from "./microcompact.js";
 import { estimateConservativeTokens } from "./budget.js";
-import { boundSessionEntries } from "./session-persistence.js";
+import { boundSessionEntries, stripImageContent, type SessionEntryLike } from "./session-persistence.js";
 import { createToolLoopState, recordToolCall, type ToolLoopNotice } from "./tool-loop.js";
 import { createTaskBudgetState, observeTaskBudget, wrapUpNotice } from "./task-budget.js";
 import { LocalExecutionBackend, SandboxExecutionBackend, createExecutionExtension, previewCommand, type ExecDelta, type ExecutionBackend } from "./execution/index.js";
@@ -336,7 +336,11 @@ export interface ModelRequest {
    * 本轮上传附件（ID + 内部物理目录）；仅对话轮次提供。物理路径只用于构造只读根，
    * 模型侧只看到 upload://<id>/<filename>，不接触宿主机路径。
    */
-  uploads?: { id: string; path: string }[];
+  uploads?: { id: string; rootPath: string }[];
+  /**
+   * 本轮图片附件：data 必须是裸 Base64（SDK 自己拼 data URL），仅视觉模型提供。
+   */
+  images?: { data: string; mimeType: string; filename: string }[];
   /**
    * 助手正文的流式回调。模型每开始一轮输出回调一次 `reset: true`，随后携带该轮
    * 已累计的正文；用累计值而不是增量，客户端漏事件后仍能自愈。仅对话轮次使用，
@@ -472,7 +476,8 @@ export class PiAgent {
       throw new Error("system and user prompts are required");
     }
     const promptBytes = Buffer.byteLength(request.systemPrompt) + Buffer.byteLength(request.userPrompt) +
-      (request.history ?? []).reduce((sum, message) => sum + Buffer.byteLength(message.content), 0);
+      (request.history ?? []).reduce((sum, message) => sum + Buffer.byteLength(message.content), 0) +
+      (request.images ?? []).reduce((sum, image) => sum + image.data.length, 0);
     const promptByteLimit = resolveMaxPromptBytes(this.config.agent);
     if (promptBytes > promptByteLimit) {
       throw new Error(`agent prompt exceeds the ${promptByteLimit}-byte request budget`);
@@ -642,7 +647,7 @@ export class PiAgent {
     const skillLabels = assignSkillLabels(skillPathsResolved);
     // 上传附件是仅本轮有效的只读根；realpath 失败（已被用户删除）时跳过，不让整轮失败。
     const uploadEntries = (await Promise.all((request.uploads ?? []).map(async (upload) => {
-      const root = await realpath(resolve(upload.path)).catch(() => undefined);
+      const root = await realpath(resolve(upload.rootPath)).catch(() => undefined);
       return root ? { id: upload.id, path: root } : undefined;
     }))).filter((entry): entry is { id: string; path: string } => entry !== undefined);
     // 虚拟路径协议的根表：模型只看到 worktree:// / skill://<alias> / upload://<id>。
@@ -731,7 +736,7 @@ export class PiAgent {
           api: "openai-completions",
           provider: providerId,
           baseUrl: config.agent.baseUrl.replace(/\/+$/, ""),
-          input: ["text"],
+          input: config.agent.visionEnabled ? ["text", "image"] : ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           // 推理默认开启：关闭会让模型在工具调用之间跳过思考，容易凭对话文本臆测而不是核实。
           // 不支持推理的服务商可在运维台关闭；用户可在输入框旁单独调整思考等级。
@@ -1329,7 +1334,13 @@ export class PiAgent {
           "llm",
           trace.taskType,
           `${providerLabel}/${event.message.responseModel ?? event.message.model}`,
-          modelCallCount === 0 ? JSON.stringify(request) : null,
+          // 图片 Base64 绝不进轨迹；只留文件名/类型/字节数元数据。
+          modelCallCount === 0 ? JSON.stringify({
+            ...request,
+            images: request.images?.map(({ filename, mimeType, data }) => ({
+              filename, mimeType, bytes: Buffer.byteLength(data, "base64"),
+            })),
+          }) : null,
           {
             round,
             input: JSON.stringify({
@@ -1499,7 +1510,10 @@ export class PiAgent {
       if (signal?.aborted) throw new Error(
         signal.reason instanceof Error ? signal.reason.message : "Pi agent run was aborted",
       );
-      await session.prompt(request.userPrompt);
+      // 图片作为本轮用户消息的多模态内容注入；data 必须是裸 Base64，SDK 自己拼 data URL。
+      await session.prompt(request.userPrompt, request.images?.length
+        ? { images: request.images.map(({ data, mimeType }) => ({ type: "image", data, mimeType })) }
+        : undefined);
       // 外部取消优先：中止后的半截文本不能当作完成结果。
       if (signal?.aborted) throw new Error(
         signal.reason instanceof Error ? signal.reason.message : "Pi agent run was aborted",
@@ -1559,7 +1573,7 @@ export class PiAgent {
             // 只持久化活动分支；超限时保留压缩点与最近消息链，而不是放弃整个会话。
             const bounded = boundSessionEntries(
               header as unknown as Parameters<typeof boundSessionEntries>[0],
-              manager.getBranch() as unknown as Parameters<typeof boundSessionEntries>[1],
+              stripImageContent(manager.getBranch() as unknown as readonly SessionEntryLike[]),
               maxPersistedSessionBytes,
             );
             if (bounded.entries.length > 0) {

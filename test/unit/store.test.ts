@@ -141,7 +141,15 @@ describe("AppStore", () => {
       contextWindow: 200_000,
       maxOutputTokens: 8_192,
     });
-    expect(second).toMatchObject({ providerId: provider.id, active: false });
+    expect(second).toMatchObject({ providerId: provider.id, active: false, supportsVision: false });
+    const vision = store.createProviderModel(provider.id, {
+      name: "vision-model", contextWindow: 200_000, maxOutputTokens: 8_192, supportsVision: true,
+    });
+    expect(vision?.supportsVision).toBe(true);
+    expect(store.updateProviderModel(provider.id, vision!.id, {
+      name: "vision-model", contextWindow: 200_000, maxOutputTokens: 8_192, supportsVision: false,
+    })?.supportsVision).toBe(false);
+    expect(store.deleteProviderModel(provider.id, vision!.id)).toBe(true);
     expect(store.activateProviderModel(provider.id, second!.id)?.active).toBe(true);
     expect(store.getActiveModel()?.provider.id).toBe(provider.id);
     expect(store.getActiveModel()?.model.id).toBe(second!.id);

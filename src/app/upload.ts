@@ -3,10 +3,20 @@
 import { dirname, resolve } from "node:path";
 import type { ConversationUpload, ResponseLanguage } from "../model.js";
 import { redactSensitiveText } from "../redact.js";
-import { maxUploadBytes, maxUploadBytesCeiling, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl } from "../upload-constants.js";
+import {
+  imageUploadMaxBytes, maxImagesPerMessage, maxUploadBytes, maxUploadBytesCeiling,
+  maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl,
+} from "../upload-constants.js";
 import { detectUploadKind } from "./upload-magic.js";
+import { detectImageMime } from "./files/image-mime.js";
 
-export { maxUploadBytes, maxUploadBytesCeiling, maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl };
+export {
+  imageUploadMaxBytes, maxImagesPerMessage, maxUploadBytes, maxUploadBytesCeiling,
+  maxUploadsPerConversation, maxUploadsPerMessage, uploadContentType, uploadUrl,
+};
+
+/** 真正可进入模型的图片格式；其它图片（BMP/AVIF/SVG/ICO）只用于预览，不作附件。 */
+const supportedImageMime = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 /**
  * 是否接受上传只看真实字节（UTF-8 文本且无 NUL/二进制头），不看扩展名或声明的 MIME。
@@ -42,9 +52,8 @@ export function sanitizeUploadFilename(raw: string): string {
   return out;
 }
 
-export type UploadValidation = { ok: true } | { ok: false; error: string };
+export type UploadValidation = { ok: true; mime: string } | { ok: false; error: string };
 
-/** 校验 MIME、文件名、大小与内容（无 NUL、严格 UTF-8）。 */
 /**
  * 把本轮附件转成「内部只读根 + 虚拟 URI 清单」。清单只含文件名/大小/upload:// URI，不含正文，
  * 也不含任何宿主机路径；正文由模型按需用 read_file 读取，避免一次塞满上下文。
@@ -53,12 +62,18 @@ export function buildUploadContext(
   uploads: readonly ConversationUpload[],
   storageRoot: string,
   language: ResponseLanguage,
-): { uploads: { id: string; path: string }[]; manifest: string } {
+): {
+  uploads: { id: string; mime: string; filename: string; rootPath: string; filePath: string }[];
+  manifest: string;
+} {
   if (uploads.length === 0) return { uploads: [], manifest: "" };
   const entries = uploads.map((upload) => ({
     id: upload.id,
-    // 内部物理路径，只用于构造只读根，绝不进入提示词。
-    path: resolve(storageRoot, dirname(upload.storagePath)),
+    mime: upload.mime,
+    filename: upload.filename,
+    // 内部物理路径，只用于服务端读取，绝不进入提示词。
+    rootPath: resolve(storageRoot, dirname(upload.storagePath)),
+    filePath: resolve(storageRoot, upload.storagePath),
   }));
   const lines = uploads.map((upload) => {
     // 文件名来自用户，先脱敏并去掉换行，避免在提示词里伪造结构。
@@ -75,10 +90,13 @@ export function validateUpload(input: {
   filename: string;
   mime: string;
   bytes: Buffer;
-  /** 由运行时设置决定；省略时用默认值，便于单测与内部调用。 */
+  /** 文本上限，由运行时设置决定；省略时用默认值。 */
   maxBytes?: number;
+  /** 图片上限，省略时用 4 MiB 默认值。 */
+  imageMaxBytes?: number;
 }): UploadValidation {
   const maxBytes = input.maxBytes ?? maxUploadBytes;
+  const imageMaxBytes = input.imageMaxBytes ?? imageUploadMaxBytes;
   const filename = sanitizeUploadFilename(input.filename);
   if (!filename) return { ok: false, error: "invalid upload filename" };
   const lower = filename.toLowerCase();
@@ -87,12 +105,20 @@ export function validateUpload(input: {
     return { ok: false, error: "executable filenames are not allowed" };
   }
   if (input.bytes.length === 0) return { ok: false, error: "upload is empty" };
-  if (input.bytes.length > maxBytes) return { ok: false, error: `upload exceeds the ${maxBytes}-byte limit` };
   // 魔数优先于扩展名与声明的 MIME：伪装的脚本/图片/压缩包一律拒绝。
   const kind = detectUploadKind(input.bytes);
+  if (kind === "image") {
+    if (input.bytes.length > imageMaxBytes) {
+      return { ok: false, error: `image exceeds the ${imageMaxBytes}-byte limit` };
+    }
+    const detected = detectImageMime(filename, input.bytes);
+    if (!detected || !supportedImageMime.has(detected)) {
+      return { ok: false, error: "unsupported or mismatched image format; use PNG, JPEG, GIF or WebP" };
+    }
+    return { ok: true, mime: detected };
+  }
   if (kind !== "text") {
-    const messages: Record<Exclude<typeof kind, "text">, string> = {
-      image: "image uploads are not supported yet",
+    const messages: Record<Exclude<typeof kind, "image" | "text">, string> = {
       pdf: "PDF uploads are not supported yet",
       archive: "archive uploads are not supported",
       executable: "executable or script content is not allowed",
@@ -100,5 +126,6 @@ export function validateUpload(input: {
     };
     return { ok: false, error: messages[kind] };
   }
-  return { ok: true };
+  if (input.bytes.length > maxBytes) return { ok: false, error: `upload exceeds the ${maxBytes}-byte limit` };
+  return { ok: true, mime: input.mime.trim().toLowerCase() || "text/plain" };
 }

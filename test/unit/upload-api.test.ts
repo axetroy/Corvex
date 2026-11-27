@@ -97,6 +97,20 @@ describe("upload API", () => {
       expect(store.getConversationUpload(upload.id)).toBeUndefined();
       expect(store.listConversationUploads(id)).toHaveLength(0);
 
+      // 图片按魔数识别真实 MIME，并提供鉴权预览端点。
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+      const imageUpload = await fetch(
+        `${base}/api/ops/conversations/${id}/uploads?filename=shot.png&mime=image/png`,
+        { method: "POST", headers: { ...ownerHeaders, "content-type": uploadContentType }, body: png },
+      );
+      expect(imageUpload.status).toBe(201);
+      const imageMeta = (await imageUpload.json()) as { id: string; mime: string };
+      expect(imageMeta.mime).toBe("image/png");
+      const preview = await fetch(`${base}/api/ops/conversations/${id}/uploads/${imageMeta.id}/image`, { headers: ownerHeaders });
+      expect(preview.status).toBe(200);
+      expect(preview.headers.get("content-type")).toBe("image/png");
+      expect(Buffer.from(await preview.arrayBuffer())).toEqual(png);
+
       // 运行时设置改小后立即生效：Server 持有同一 config 对象引用。
       runtimeConfig.agent.uploadMaxBytes = 4;
       const tooLarge = await post(ownerHeaders, Buffer.from("hello"));

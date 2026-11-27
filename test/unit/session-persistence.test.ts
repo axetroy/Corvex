@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boundSessionEntries, type SessionEntryLike } from "../../src/agent/session-persistence.js";
+import { boundSessionEntries, stripImageContent, type SessionEntryLike } from "../../src/agent/session-persistence.js";
 
 const header: SessionEntryLike = { type: "session", id: "h", timestamp: "t", cwd: "/tmp" };
 const message = (id: string, size: number, parentId: string | null = null): SessionEntryLike => ({
@@ -7,6 +7,28 @@ const message = (id: string, size: number, parentId: string | null = null): Sess
   id,
   parentId,
   message: { role: "user", content: "x".repeat(size) },
+});
+
+describe("image content stripping", () => {
+  it("replaces image blocks with a placeholder without mutating the original entries", () => {
+    const entries: SessionEntryLike[] = [{
+      type: "message", id: "m1",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image", data: "QUJD", mimeType: "image/png" },
+        ],
+      },
+    }];
+    const stripped = stripImageContent(entries);
+    expect(stripped[0]!.message.content).toEqual([
+      { type: "text", text: "look" },
+      { type: "text", text: "[image omitted]" },
+    ]);
+    expect(JSON.stringify(stripped)).not.toContain("QUJD");
+    expect((entries[0]!.message as { content: unknown[] }).content[1]).toMatchObject({ type: "image" });
+  });
 });
 
 describe("bounded session persistence", () => {

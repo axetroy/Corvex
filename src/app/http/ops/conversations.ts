@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { conversationWorkspaceName } from "../../../git/manager.js";
@@ -913,6 +913,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       ceilingBytes: maxUploadBytesCeiling,
       maxPerMessage: ctx.config.agent.uploadMaxPerMessage,
       maxPerConversation: ctx.config.agent.uploadMaxPerConversation,
+      visionSupported: ctx.config.agent.visionEnabled,
     });
   });
 
@@ -938,7 +939,9 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       sendJson(reply, 400, { error: "upload body must be binary" });
       return;
     }
-    const validation = validateUpload({ filename, mime: declaredMime, bytes, maxBytes: ctx.config.agent.uploadMaxBytes });
+    const validation = validateUpload({
+      filename, mime: declaredMime, bytes, maxBytes: ctx.config.agent.uploadMaxBytes,
+    });
     if (!validation.ok) {
       sendJson(reply, 400, { error: validation.error });
       return;
@@ -963,7 +966,8 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
       conversationId,
       ownerUserId: conversation.ownerUserId,
       filename,
-      mime: declaredMime,
+      // 图片用魔数检测出的真实 MIME；文本沿用客户端声明值。
+      mime: validation.mime,
       sizeBytes: bytes.length,
       storagePath: relativePath.replace(/\\/g, "/"),
       sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -1003,6 +1007,31 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     const auth = requireUser(request, reply);
     if (auth) ctx.store.insertUploadAudit(auth.gitlabUserId, conversationId, uploadId, "deleted");
     sendJson(reply, 200, { deleted: true });
+  });
+
+  /** 图片附件预览：按 uploadId 校验归属后返回原始字节，供对话 chips 显示缩略图。 */
+  app.get("/api/ops/conversations/:id/uploads/:uploadId/image", async (request, reply) => {
+    const params = request.params as { id: string; uploadId: string };
+    const conversationId = idParam(params.id);
+    const uploadId = idParam(params.uploadId);
+    if (!conversationId || !uploadId) {
+      sendJson(reply, 400, { error: "invalid conversation ID or upload ID" });
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const upload = ctx.store.getConversationUpload(uploadId);
+    if (!upload || upload.conversationId !== conversationId || upload.ownerUserId !== conversation.ownerUserId ||
+        !upload.mime.startsWith("image/")) {
+      sendJson(reply, 404, { error: "image upload not found" });
+      return;
+    }
+    try {
+      const data = await readFile(resolve(ctx.config.storage.root, upload.storagePath));
+      sendBinary(reply, data, upload.mime, { "cache-control": "private, max-age=300" });
+    } catch (error) {
+      sendJson(reply, 404, { error: `image unavailable: ${errorMessage(error)}` });
+    }
   });
 
   app.get("/api/ops/conversations/:id/followups", async (request, reply) => {

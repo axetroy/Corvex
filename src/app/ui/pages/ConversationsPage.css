@@ -2039,10 +2039,23 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   font-size: 12px;
 }
 
-.conversation-attachment-chip svg {
+.conversation-attachment-chip svg,
+.conversation-attachment-thumb {
   width: 13px;
   height: 13px;
   flex: none;
+}
+
+.conversation-attachment-thumb {
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.conversation-attachment-warning {
+  margin: 0 2px;
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .conversation-attachment-name {

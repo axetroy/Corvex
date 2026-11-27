@@ -38,4 +38,4 @@
 
 ## 文件附件：剩余的类型（延期）
 
-只剩下 P2-b：图片/PDF（需要按模型检测视觉能力、魔数校验与 Base64 预算隔离）以及目录附件。见 [file-attachments-design.md](file-attachments-design.md)（中文）。文本上传、运行时大小/数量限额、虚拟路径协议与源码文件支持均已实现。
+图片已实现：PNG/JPEG/GIF/WebP 按魔数识别，卡片显示缩略图，只对勾选了视觉能力的模型作为多模态内容注入；Base64 不进轨迹、不跨轮持久化。仍延期：PDF 与目录附件。见 [file-attachments-design.md](file-attachments-design.md)（中文）。

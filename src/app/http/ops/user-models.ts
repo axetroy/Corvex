@@ -34,7 +34,7 @@ function parseProviderBody(body: Record<string, unknown>): { name: string; baseU
 function parseModelBody(
   body: Record<string, unknown>,
   problems: string[] = [],
-): { name: string; contextWindow: number; maxOutputTokens: number } | undefined {
+): { name: string; contextWindow: number; maxOutputTokens: number; supportsVision: boolean } | undefined {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const contextWindow = body.contextWindow;
   const maxOutputTokens = body.maxOutputTokens;
@@ -58,7 +58,7 @@ function parseModelBody(
     );
     return undefined;
   }
-  return { name, contextWindow, maxOutputTokens };
+  return { name, contextWindow, maxOutputTokens, supportsVision: body.supportsVision === true };
 }
 
 function methodNotAllowed(reply: FastifyReply): void {

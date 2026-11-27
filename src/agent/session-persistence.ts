@@ -5,6 +5,25 @@
  * 只处理结构化条目，不修改内容本身：丢弃整条入链前缀即可保证 parentId 链在保留段内连续。
  */
 
+/**
+ * 递归剥离会话条目里的图片内容块：图片只在发起它的那一轮有效，
+ * 不能随完整会话跨轮恢复，更不能把 Base64 持久化到 SQLite。
+ */
+export function stripImageContent(entries: readonly SessionEntryLike[]): SessionEntryLike[] {
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (record.type === "image" && typeof record.data === "string" && typeof record.mimeType === "string") {
+        return { type: "text", text: "[image omitted]" };
+      }
+      return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, walk(item)]));
+    }
+    return value;
+  };
+  return entries.map((entry): SessionEntryLike => walk(entry) as SessionEntryLike);
+}
+
 export interface SessionEntryLike {
   id: string;
   parentId?: string | null;

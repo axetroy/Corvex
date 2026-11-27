@@ -8,7 +8,7 @@ import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
 import { fetchJson, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
-import { maxUploadBytesCeiling, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
+import { imageUploadMaxBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
 import { mergeContextNotice } from "../lib/conversationTimelineMerge.js";
@@ -309,7 +309,9 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   /** 服务端运行时限额；拉取失败时退回默认常量，避免阻塞输入框。 */
-  const [uploadLimits, setUploadLimits] = useState({ maxBytes: maxUploadBytesCeiling, maxPerMessage: maxUploadsPerMessage });
+  const [uploadLimits, setUploadLimits] = useState({
+    maxBytes: 256 * 1024, maxPerMessage: maxUploadsPerMessage, visionSupported: false,
+  });
   const [draggingAttachment, setDraggingAttachment] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
@@ -430,10 +432,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
 
   useEffect(() => {
     let active = true;
-    void fetchJson<{ maxBytes: number; maxPerMessage: number }>("/api/ops/me/upload-limits", copy)
+    void fetchJson<{ maxBytes: number; maxPerMessage: number; visionSupported: boolean }>("/api/ops/me/upload-limits", copy)
       .then((limits) => {
         if (!active) return;
-        setUploadLimits({ maxBytes: limits.maxBytes, maxPerMessage: limits.maxPerMessage });
+        setUploadLimits({
+          maxBytes: limits.maxBytes,
+          maxPerMessage: limits.maxPerMessage,
+          visionSupported: limits.visionSupported,
+        });
       })
       .catch(() => undefined);
     return () => { active = false; };
@@ -686,10 +692,16 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
    * 客户端只拦截「明显是二进制」的文件；.py/.ts/.html/.sh 等源码文件即使浏览器
    * 给出空 MIME 或 text/x-* 也应放行，最终按真实字节由服务端判定。
    */
-  function isTextAttachment(file: File): boolean {
+  const supportedImageMime = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+  function isImageAttachment(file: File): boolean {
+    return supportedImageMime.has(file.type.toLowerCase()) || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
+  }
+  function isSupportedAttachment(file: File): boolean {
     const mime = file.type.toLowerCase();
-    if (/^(image|audio|video)\//.test(mime) || ["application/pdf", "application/zip"].includes(mime)) return false;
-    return !/\.(png|jpe?g|gif|webp|bmp|avif|pdf|zip|tar|gz|xz|7z|rar|exe|dll|so|dylib|app|dmg|deb|rpm|apk|msi)$/i.test(file.name);
+    if (/^(audio|video)\//.test(mime) || ["application/pdf", "application/zip"].includes(mime)) return false;
+    // 声明为图片但不属于四种支持格式时直接拒绝；服务端仍会按字节复核。
+    if (mime.startsWith("image/") && !supportedImageMime.has(mime)) return false;
+    return !/\.(bmp|avif|ico|svg|pdf|zip|tar|gz|xz|7z|rar|exe|dll|so|dylib|app|dmg|deb|rpm|apk|msi)$/i.test(file.name);
   }
 
   function uploadErrorToCopy(error: string): string {
@@ -712,17 +724,18 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     setError("");
     try {
       for (const file of files.slice(0, room)) {
-        // 客户端只按硬顶预检；实际限额由服务端运行时设置决定，超限会返回明确错误。
-        if (file.size === 0 || file.size > uploadLimits.maxBytes) throw new Error(copy.attachmentTooLarge);
-        if (!isTextAttachment(file)) throw new Error(copy.attachmentUnsupported);
+        // 客户端按文件类型预检；服务端仍按真实字节与运行时限额复核。
+        const limit = isImageAttachment(file) ? imageUploadMaxBytes : uploadLimits.maxBytes;
+        if (file.size === 0 || file.size > limit) throw new Error(copy.attachmentTooLarge);
+        if (!isSupportedAttachment(file)) throw new Error(copy.attachmentUnsupported);
         const created = await sendBinary<PendingAttachment>(
-          uploadUrl(currentConversation.id, file.name, file.type || "text/plain"),
+          uploadUrl(currentConversation.id, file.name, file.type || (isImageAttachment(file) ? "image/png" : "text/plain")),
           await file.arrayBuffer(),
           uploadContentType,
           copy,
         );
         setAttachments((current) => [...current, {
-          id: created.id, filename: created.filename, sizeBytes: created.sizeBytes,
+          id: created.id, filename: created.filename, sizeBytes: created.sizeBytes, mime: created.mime,
         }]);
       }
     } catch (cause) {
@@ -1511,7 +1524,13 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                       <div className="conversation-attachment-chips">
                         {attachments.map((item) => (
                           <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
-                            <FileIcon />
+                            {item.mime.startsWith("image/") && selectedConversationId ? (
+                              <img
+                                className="conversation-attachment-thumb"
+                                src={`/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
+                                alt=""
+                              />
+                            ) : <FileIcon />}
                             <span className="conversation-attachment-name">{item.filename}</span>
                             <button
                               type="button"
@@ -1525,11 +1544,14 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         ))}
                       </div>
                     ) : null}
+                    {attachments.some((item) => item.mime.startsWith("image/")) && !uploadLimits.visionSupported ? (
+                      <div className="conversation-attachment-warning" role="status">{copy.attachmentVisionUnsupported}</div>
+                    ) : null}
                     <input
                       ref={attachmentInputRef}
                       type="file"
                       multiple
-                      accept="text/*,.md,.txt,.csv,.json,.jsonl,.yaml,.yml,.toml,.xml,.py,.js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts,.html,.htm,.css,.scss,.less,.java,.go,.rs,.c,.h,.cc,.cpp,.hpp,.cs,.rb,.php,.sh,.bash,.zsh,.sql,.lua,.swift,.kt,.scala,.vue,.svelte,.ini,.cfg,.conf,.env,.gitignore,.dockerfile,.gradle,.tf,.proto,.graphql"
+                      accept="text/*,.md,.txt,.csv,.json,.jsonl,.yaml,.yml,.toml,.xml,.py,.js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts,.html,.htm,.css,.scss,.less,.java,.go,.rs,.c,.h,.cc,.cpp,.hpp,.cs,.rb,.php,.sh,.bash,.zsh,.sql,.lua,.swift,.kt,.scala,.vue,.svelte,.ini,.cfg,.conf,.env,.gitignore,.dockerfile,.gradle,.tf,.proto,.graphql,image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp"
                       style={{ display: "none" }}
                       onChange={(event) => {
                         const files = Array.from(event.target.files ?? []);

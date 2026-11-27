@@ -38,4 +38,4 @@ Two trigger modes are still pending: GitLab webhook event triggers, and creating
 
 ## File attachments: remaining types (deferred)
 
-Only P2-b is left: images/PDF (requiring per-model vision capability detection, magic-byte validation and Base64 budget isolation) and directory attachments. See [file-attachments-design.md](file-attachments-design.md) (Chinese). Text uploads, runtime size/count limits, the virtual path protocol and source-file support are already implemented.
+Images are implemented: supported PNG/JPEG/GIF/WebP uploads are detected by magic bytes, rendered as thumbnails and injected as multimodal content only for models whose `supportsVision` flag is enabled; the base64 never enters traces or cross-turn session persistence. Still deferred: PDF and directory attachments. See [file-attachments-design.md](file-attachments-design.md) (Chinese).

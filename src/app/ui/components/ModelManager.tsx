@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Input, InputNumber, Modal, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Checkbox, Input, InputNumber, Modal, Space, Table, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
@@ -16,6 +16,7 @@ interface ModelDraft {
   name: string;
   contextWindow: number;
   maxOutputTokens: number;
+  supportsVision: boolean;
 }
 
 interface TestResult {
@@ -31,7 +32,7 @@ function emptyProvider(): ProviderDraft {
 }
 
 function emptyModel(): ModelDraft {
-  return { name: "", contextWindow: 131_072, maxOutputTokens: 8_192 };
+  return { name: "", contextWindow: 131_072, maxOutputTokens: 8_192, supportsVision: false };
 }
 
 /**
@@ -173,7 +174,7 @@ export function ModelManager({
     setModelTest(undefined);
     setModelTarget({ provider, model });
     setModelDraft(model
-      ? { name: model.name, contextWindow: model.contextWindow, maxOutputTokens: model.maxOutputTokens }
+      ? { name: model.name, contextWindow: model.contextWindow, maxOutputTokens: model.maxOutputTokens, supportsVision: model.supportsVision }
       : emptyModel());
   }
 
@@ -323,6 +324,13 @@ export function ModelManager({
                     render: (value: number) => value.toLocaleString("en-US"),
                   },
                   {
+                    title: copy.modelManagerVision,
+                    key: "supportsVision",
+                    width: "13%",
+                    render: (_: unknown, model: ProviderModel) =>
+                      model.supportsVision ? <span className="settings-badge">{copy.modelManagerVision}</span> : null,
+                  },
+                  {
                     title: copy.modelManagerActive,
                     key: "active",
                     width: "13%",
@@ -433,6 +441,15 @@ export function ModelManager({
               onChange={(value) => setModelDraft({ ...modelDraft, maxOutputTokens: Number(value) || 1 })}
             />
             <Typography.Text type="secondary" className="settings-field-hint">{copy.settingsMaxOutputTokensHint}</Typography.Text>
+          </div>
+          <div className="settings-field">
+            <Typography.Text strong>{copy.modelManagerVision}</Typography.Text>
+            <Checkbox
+              checked={modelDraft.supportsVision}
+              onChange={(event) => setModelDraft({ ...modelDraft, supportsVision: event.target.checked })}
+            >
+              {copy.modelManagerVisionHint}
+            </Checkbox>
           </div>
         </div>
         <div className="settings-test-row">

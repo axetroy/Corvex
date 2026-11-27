@@ -44,6 +44,8 @@ export interface CorvexConfig {
     model: string;
     /** 当前模型的供应商展示名；来自控制台模型目录，仅用于展示，不参与连接。 */
     providerName?: string;
+    /** 当前激活模型是否支持图片输入；由模型目录同步，决定附件是否走多模态。 */
+    visionEnabled: boolean;
     /** 探测或超窗后自动下调模型上下文窗口；关闭后只按人工设置运行。 */
     autoContextTune?: boolean;
     apiKey: string;
@@ -168,6 +170,7 @@ const defaults: CorvexConfig = {
     responseLanguage: "en",
     baseUrl: "https://api.openai.com/v1",
     model: "",
+    visionEnabled: false,
     autoContextTune: true,
     apiKey: "",
     requestTimeout: 120_000,
@@ -423,6 +426,8 @@ function parseConfig(raw: unknown): CorvexConfig {
       baseUrl:
         process.env.CORVEX_MODEL_BASE_URL ?? string(agent.base_url, defaults.agent.baseUrl),
       model: process.env.CORVEX_MODEL_NAME ?? string(agent.model, defaults.agent.model),
+      // 视觉能力来自模型目录，不由 YAML 提供；启动时由 applyActiveModel 同步。
+      visionEnabled: false,
       autoContextTune: boolean(agent.auto_context_tune, defaults.agent.autoContextTune ?? true),
       apiKey: "",
       requestTimeout: duration(

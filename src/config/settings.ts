@@ -324,6 +324,7 @@ export function validateRuntimeSettings(overrides: Record<string, string>): stri
 export function applyActiveModel(config: CorvexConfig, active: ActiveModel): void {
   config.agent.model = active.model.name;
   config.agent.providerName = active.provider.name;
+  config.agent.visionEnabled = active.model.supportsVision;
   config.agent.baseUrl = active.provider.baseUrl;
   config.agent.apiKey = active.provider.apiKey;
   config.agent.contextWindow = active.model.contextWindow;

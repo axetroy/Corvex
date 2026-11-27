@@ -21,6 +21,7 @@ import { buildStaleConflictNote, type StaleConflictDetail } from "./stale-confli
 import { buildConversationPrompt, chunkForSummary, estimateConservativeTokens, resolveHistoryBudgetTokens, trimHistory } from "../agent/budget.js";
 import { buildToolEvidence } from "../agent/tool-evidence.js";
 import { buildUploadContext } from "./upload.js";
+import { imageUploadMaxBytes, maxImagesPerMessage } from "../upload-constants.js";
 import { verifyAnswerClaims } from "../agent/claim-verification.js";
 import { parseFollowups } from "../agent/followups.js";
 import { getConversationSystemPrompt, getConversationTitleSystemPrompt, getSummarySystemPrompt } from "../agent/prompts.js";
@@ -1246,6 +1247,24 @@ export class ConversationRunner {
         .slice(-10);
       const toolEvidence = buildToolEvidence(this.store.getToolEvidence(historyTurnIds));
       const uploadContext = buildUploadContext(this.store.getTurnUploads(turn.turnId), this.config.storage.root, language);
+      // 图片只在视觉模型开启时转成多模态内容；否则明确告知用户，避免"上传了但没看到"的困惑。
+      const imageUploads = uploadContext.uploads.filter((item) => item.mime.startsWith("image/"));
+      const images: { data: string; mimeType: string; filename: string }[] = [];
+      let imageNotice = "";
+      if (imageUploads.length > 0 && !this.config.agent.visionEnabled) {
+        imageNotice = language === "zh-CN"
+          ? "\n\n[本轮上传的图片未发送给模型：当前模型不支持图片输入。]"
+          : "\n\n[Uploaded images were not sent: the current model does not support image input.]";
+      } else {
+        let totalBytes = 0;
+        const budget = imageUploadMaxBytes * maxImagesPerMessage;
+        for (const item of imageUploads.slice(0, maxImagesPerMessage)) {
+          const bytes = await readFileFs(item.filePath);
+          if (bytes.length > imageUploadMaxBytes || totalBytes + bytes.length > budget) continue;
+          totalBytes += bytes.length;
+          images.push({ data: bytes.toString("base64"), mimeType: item.mime, filename: item.filename });
+        }
+      }
       const userPrompt = buildConversationPrompt({
         repository: {
           project: turn.projectName,
@@ -1255,7 +1274,7 @@ export class ConversationRunner {
         summary: turn.summary,
         currentRequest: effectiveRequest,
         toolEvidence,
-      }) + (uploadContext.manifest ? `\n\n${uploadContext.manifest}` : "");
+      }) + (uploadContext.manifest ? `\n\n${uploadContext.manifest}` : "") + imageNotice;
       // 出站前按 token 预算裁剪历史：注入多少由预算决定，而不是由条数决定，
       // 否则 30 条 × 20K 字符的历史足以撑爆任何窗口。预算同时受
       // `agent.max_input_tokens` 约束，使这个配置真正限制单次请求的输入。
@@ -1309,7 +1328,8 @@ export class ConversationRunner {
               },
               gitlab,
               // 上传目录作为仅本轮有效的只读根注入；模型侧只看到 upload://<id>/<filename>。
-              uploads: uploadContext.uploads,
+              uploads: uploadContext.uploads.map(({ id, rootPath }) => ({ id, rootPath })),
+              images,
               systemPrompt,
               userPrompt,
               history,

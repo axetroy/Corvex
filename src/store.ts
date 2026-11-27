@@ -2668,9 +2668,12 @@ export class AppStore {
       const first = ownerUserId === undefined &&
         (this.db.prepare("SELECT COUNT(*) AS count FROM provider_models").get() as { count: number }).count === 0;
       this.db.prepare(
-        `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,active,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?)`,
-      ).run(id, providerId, input.name, input.contextWindow, input.maxOutputTokens, first ? 1 : 0, now, now);
+        `INSERT INTO provider_models (id,provider_id,name,context_window,max_output_tokens,supports_vision,active,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        id, providerId, input.name, input.contextWindow, input.maxOutputTokens,
+        input.supportsVision ? 1 : 0, first ? 1 : 0, now, now,
+      );
       return this.getProviderModel(providerId, id);
     });
   }
@@ -2679,8 +2682,11 @@ export class AppStore {
     const provider = ownerUserId === undefined ? this.getModelProvider(providerId) : this.getModelProvider(providerId, ownerUserId);
     if (!provider || (ownerUserId !== undefined && provider.ownerUserId !== ownerUserId)) return undefined;
     const result = this.db.prepare(
-      "UPDATE provider_models SET name=?,context_window=?,max_output_tokens=?,updated_at=? WHERE provider_id=? AND id=?",
-    ).run(input.name, input.contextWindow, input.maxOutputTokens, new Date().toISOString(), providerId, id);
+      "UPDATE provider_models SET name=?,context_window=?,max_output_tokens=?,supports_vision=?,updated_at=? WHERE provider_id=? AND id=?",
+    ).run(
+      input.name, input.contextWindow, input.maxOutputTokens,
+      input.supportsVision ? 1 : 0, new Date().toISOString(), providerId, id,
+    );
     return result.changes === 1 ? this.getProviderModel(providerId, id) : undefined;
   }
 
@@ -2939,6 +2945,7 @@ export class AppStore {
       name: stringColumn(row, "name"),
       contextWindow: numberColumn(row, "context_window"),
       maxOutputTokens: numberColumn(row, "max_output_tokens"),
+      supportsVision: numberColumn(row, "supports_vision") === 1,
       active: numberColumn(row, "active") === 1,
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
@@ -3175,6 +3182,7 @@ export class AppStore {
       CREATE TABLE IF NOT EXISTS provider_models (
         id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
         name TEXT NOT NULL, context_window INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL,
+        supports_vision INTEGER NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS provider_models_provider_idx ON provider_models(provider_id,created_at,id);
@@ -3496,6 +3504,13 @@ export class AppStore {
       this.db
         .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
         .run("schema:no-shared-gitlab-tokens", now, now, "migration");
+    }
+    // 旧库模型表没有视觉能力列；默认关闭，升级后由管理员在模型管理里开启。
+    const providerModelColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(provider_models)").all() as { name: string }[]).map((column) => column.name),
+    );
+    if (!providerModelColumns.has("supports_vision")) {
+      this.db.exec("ALTER TABLE provider_models ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0");
     }
     // 旧版本把错过的一次性任务留在 active，并用 9999 哨兵当下次触发时间；统一标为已完成。
     const stuckOnceMigration = this.db

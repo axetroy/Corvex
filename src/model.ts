@@ -454,6 +454,8 @@ export interface ProviderModel {
   name: string;
   contextWindow: number;
   maxOutputTokens: number;
+  /** 该模型是否支持图片输入；决定是否把附件作为多模态内容发送。 */
+  supportsVision: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -463,6 +465,7 @@ export interface ProviderModelInput {
   name: string;
   contextWindow: number;
   maxOutputTokens: number;
+  supportsVision?: boolean;
 }
 
 /** 供应商及其模型，供控制台一次读取完整列表。 */

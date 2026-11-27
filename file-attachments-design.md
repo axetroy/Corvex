@@ -101,11 +101,11 @@
 | P0（完成） | `conversation_uploads` 表 + 上传 API（纯文本、限额、归属校验）+ 本轮临时只读根 + 提示词清单 + 消息关联 |
 | P1（完成） | composer 附件按钮/拖拽/chips UI + 双语 + `conversationDelete` 清理联动 |
 | P2-a（完成） | 运行时大小/数量设置 + 按真实字节的类型检测（拒绝伪装可执行文件） |
-| P2-b | 图片/PDF（模型能力检测）、目录附件 |
+| P2-b（图片完成） | 图片附件：按模型视觉能力注入多模态消息、魔数校验、缩略图；PDF 与目录附件仍延期 |
 
 实现补充：默认单文件 256 KiB、单消息 10 个、单会话累计 100 个；三个值都是运维台运行时设置（`upload_max_bytes` / `upload_max_per_message` / `upload_max_per_conversation`），通过 `GET /api/ops/me/upload-limits` 暴露给 composer 预检。Fastify 的 parser `bodyLimit` 用 1 MiB 硬顶，路由按运行时值复核，改设置无需重启。上传走专用 content-type `application/x-corvex-upload`。附件只能随新建轮次发送，插话/排队路径明确拒绝。魔数检测在 `src/app/upload-magic.ts`，按字节识别 text/image/pdf/archive/executable/binary，伪装成 `.txt` 的图片、脚本、ELF、ZIP 一律拒绝。限额常量集中在 `src/upload-constants.ts`，前后端共用（必须放在 `src/app/ui/` 之外，否则 `tsconfig.json` 排除 UI 目录会导致 `dist/app/upload.js` 找不到模块）。
 
-## 4.1 P2-b 图片支持详细方案（尚未实现）
+## 4.1 P2-b 图片支持（已实现；PDF/目录附件仍延期）
 
 ### SDK 能力（已确认，无需替代方案）
 
