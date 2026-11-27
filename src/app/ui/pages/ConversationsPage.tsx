@@ -1944,7 +1944,8 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         open={Boolean(previewing)}
         title={previewing ? `${copy.attachmentPreviewTitle} · ${previewing.filename}` : copy.attachmentPreviewTitle}
         footer={null}
-        width="min(1180px, 96vw)"
+        width="min(1040px, 92vw)"
+        centered
         styles={{ body: { padding: 12 } }}
         onCancel={() => setPreviewing(null)}
         destroyOnHidden
