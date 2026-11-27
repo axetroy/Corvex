@@ -1,4 +1,4 @@
-import { fetchWebResponse, createPinnedRequest, validateWebUrl } from "./web-read.js";
+import { fetchWebResponse, createPinnedRequest, defaultDependencies, validateWebUrl } from "./web-read.js";
 import { discoverSkillsFromZip, skillImportLimits, type SkillImportResult } from "./skill-import.js";
 import type { GitLabClient } from "../gitlab/client.js";
 
@@ -32,7 +32,9 @@ async function downloadArchive(urlValue: string, options: SkillSourceOptions): P
   const { response } = await fetchWebResponse(url.toString(), {
     signal: options.signal,
     dependencies: {
-      resolve: async (hostname) => [{ address: hostname, family: hostname.includes(":") ? 6 : 4 }],
+      // 必须用真实 DNS 解析出 IP：SSRF 校验要求所有地址都是公网 IP，
+      // 把域名当地址返回会直接触发「does not resolve exclusively to public IP addresses」。
+      resolve: defaultDependencies.resolve,
       request: createPinnedRequest(skillImportLimits.maxArchiveBytes, zipAccept),
     },
   });
