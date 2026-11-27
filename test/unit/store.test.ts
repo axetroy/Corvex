@@ -371,6 +371,30 @@ describe("AppStore", () => {
     expect(entry.execOutput.exitCode).toBe(0);
   });
 
+  it("updates scheduled task fields without changing its status", async () => {
+    store = await AppStore.open(":memory:");
+    const created = store.createConversation({
+      projectId: 1, projectName: "g/p", targetBranch: "main",
+      headSha: "a".repeat(40), actorId: 0, request: "x", ownerUserId: "u1",
+    });
+    const task = store.createScheduledTask({
+      ownerUserId: "u1", conversationId: created.conversationId, prompt: "old",
+      kind: "cron", cron: "0 9 * * *", runAt: "", nextRunAt: "2026-11-28T09:00:00.000Z", expiresAt: "",
+    });
+    store.setScheduledTaskStatus(task.id, "u1", "paused");
+    const updated = store.updateScheduledTask(task.id, {
+      prompt: "new", kind: "cron", cron: "0 10 * * 1", timezone: "Asia/Shanghai",
+      runAt: "", nextRunAt: "2026-11-28T10:00:00.000Z", expiresAt: "",
+    });
+    expect(updated).toMatchObject({
+      prompt: "new", cron: "0 10 * * 1", timezone: "Asia/Shanghai", status: "paused",
+    });
+    expect(store.updateScheduledTask("missing", {
+      prompt: "x", kind: "cron", cron: "* * * * *", timezone: "UTC",
+      runAt: "", nextRunAt: "", expiresAt: "",
+    })).toBeUndefined();
+  });
+
   it("aggregates branch activity for branch ranking", async () => {
     store = await AppStore.open(":memory:");
     for (const branch of ["main", "main", "feature/im"]) {

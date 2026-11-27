@@ -87,9 +87,25 @@ describe("ScheduledTasksScheduler", () => {
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     scheduler.tick();
-    await vi.waitFor(() => expect(s.getScheduledTask(task.id)).toBeUndefined());
+    // 失败的一次性任务保留为已完成，供用户查看失败原因与运行历史。
+    await vi.waitFor(() => expect(s.getScheduledTask(task.id)).toMatchObject({ status: "done", lastStatus: "failed" }));
+    expect(s.listScheduledTaskRuns(task.id)).toHaveLength(1);
     expect(runTurn).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("marks a missed one-shot task as done instead of leaving a year-9999 sentinel", async () => {
+    const nowMs = dueAt();
+    const { scheduler, store: s, created } = await makeScheduler({ now: () => nowMs, clientForUser: async () => fakeClient() });
+    const task = s.createScheduledTask({
+      ownerUserId: "u1", conversationId: created.conversationId, prompt: "one shot",
+      kind: "once", cron: "", runAt: "2026-11-27T08:00:00.000Z", nextRunAt: "2026-11-27T08:00:00.000Z", expiresAt: "",
+    });
+    scheduler.recover();
+    const finished = s.getScheduledTask(task.id);
+    expect(finished).toMatchObject({ status: "done", lastStatus: "missed" });
+    expect(finished?.nextRunAt).not.toContain("9999");
+    expect(s.listScheduledTaskRuns(task.id)).toMatchObject([{ status: "missed" }]);
   });
 
   it("runNow executes once without changing the recurring schedule", async () => {

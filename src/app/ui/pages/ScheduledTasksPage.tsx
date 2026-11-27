@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Alert, Button, Popconfirm, Popover, Tag, Typography } from "antd";
+import { Alert, Button, Form, Input, Modal, Popconfirm, Popover, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy, Locale } from "../lib/i18n.js";
@@ -42,6 +42,9 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
   const [runs, setRuns] = useState<Record<string, ScheduledTaskRun[]>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [editing, setEditing] = useState<ScheduledTaskView | null>(null);
+  const [form] = Form.useForm<{ prompt: string; schedule: string; timezone: string }>();
+  const [, modalContextHolder] = Modal.useModal();
 
   const load = useCallback(() => {
     setError("");
@@ -86,10 +89,41 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
     }
   };
 
+  const openEdit = (task: ScheduledTaskView) => {
+    setError("");
+    setEditing(task);
+    form.setFieldsValue({
+      prompt: task.prompt,
+      schedule: task.kind === "cron" ? task.cron : task.runAt,
+      timezone: task.timezone,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    const values = await form.validateFields();
+    setBusy(editing.id);
+    setError("");
+    try {
+      await sendJson(`/api/ops/me/scheduled-tasks/${encodeURIComponent(editing.id)}`, {
+        prompt: values.prompt,
+        schedule: values.schedule,
+        timezone: values.timezone,
+      }, copy, "PUT");
+      setEditing(null);
+      load();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (!tasks) return <Loading>{copy.loading}</Loading>;
 
   return (
     <div className="scheduled-tasks-page">
+      {modalContextHolder}
       <PageHeading title={copy.scheduledTaskTitle} description={copy.scheduledTaskHint} />
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError("")} /> : null}
       <Panel title={copy.scheduledTaskGuideTitle}>
@@ -126,9 +160,11 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                     {formatDate(latest.finishedAt, copy, locale)} · {latest.status}
                   </span>
                 )
-              ) : (
-                <span>{copy.none}</span>
-              );
+              ) : task.lastStatus ? (
+                <span className="scheduled-task-last-run" title={task.lastError || undefined}>
+                  {formatDate(task.lastRunAt, copy, locale)} · {task.lastStatus}
+                </span>
+              ) : null;
               const statusLabel = task.status === "active"
                 ? copy.scheduledTaskActive
                 : task.status === "paused"
@@ -166,7 +202,7 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                       ) : null}
                     </MetaItem>
                     <MetaItem label={copy.scheduledTaskColumnNext}>
-                      {formatDate(task.nextRunAt, copy, locale)}
+                      {task.status === "done" || task.nextRunAt.startsWith("9999") ? copy.none : formatDate(task.nextRunAt, copy, locale)}
                     </MetaItem>
                     <MetaItem label={copy.scheduledTaskColumnLastRun}>
                       {history.length > 1 ? (
@@ -185,9 +221,9 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                             </div>
                           }
                         >
-                          {lastRun}
+                          {lastRun ?? <span>{copy.none}</span>}
                         </Popover>
-                      ) : lastRun}
+                      ) : (lastRun ?? <span>{copy.none}</span>)}
                     </MetaItem>
                   </div>
                   <div className="scheduled-task-actions" aria-label={copy.scheduledTaskColumnActions}>
@@ -198,6 +234,9 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                     >
                       {copy.scheduledTaskOpenConversation}
                     </Button>
+                    {task.status !== "done" ? (
+                      <Button type="link" size="small" onClick={() => openEdit(task)}>{copy.scheduledTaskEdit}</Button>
+                    ) : null}
                     {task.status === "active" ? (
                       <>
                         <Popconfirm title={copy.scheduledTaskRunConfirm} onConfirm={() => void act(task, "run")}>
@@ -207,11 +246,11 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
                           <Button size="small" loading={busy === task.id}>{copy.scheduledTaskPause}</Button>
                         </Popconfirm>
                       </>
-                    ) : (
+                    ) : task.status === "paused" ? (
                       <Button size="small" loading={busy === task.id} onClick={() => void act(task, "resume")}>
                         {copy.scheduledTaskResume}
                       </Button>
-                    )}
+                    ) : null}
                     <Popconfirm title={copy.scheduledTaskDeleteConfirm} onConfirm={() => void act(task, "delete")}>
                       <Button size="small" danger loading={busy === task.id}>{copy.scheduledTaskDelete}</Button>
                     </Popconfirm>
@@ -222,6 +261,28 @@ export function ScheduledTasksPage({ copy, locale, onNavigateToConversations }: 
           </div>
         )}
       </Panel>
+      <Modal
+        open={Boolean(editing)}
+        title={copy.scheduledTaskEditTitle}
+        okText={copy.scheduledTaskSave}
+        cancelText={copy.scheduledTaskCancelEdit}
+        confirmLoading={Boolean(editing && busy === editing.id)}
+        onCancel={() => setEditing(null)}
+        onOk={() => void saveEdit()}
+        destroyOnHidden
+      >
+        <Form form={form} layout="vertical" requiredMark={false}>
+          <Form.Item name="prompt" label={copy.scheduledTaskEditPrompt} rules={[{ required: true, max: 8_000 }]}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="schedule" label={copy.scheduledTaskEditSchedule} rules={[{ required: true, max: 200 }]}>
+            <Input placeholder="0 9 * * 1" />
+          </Form.Item>
+          <Form.Item name="timezone" label={copy.scheduledTaskEditTimezone} rules={[{ required: true }]}>
+            <Input placeholder="UTC" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

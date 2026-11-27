@@ -1608,6 +1608,20 @@ export class AppStore {
     return this.getScheduledTask(id)!;
   }
 
+  /** 编辑任务的时间与内容；状态保持不变，避免改一次就意外重新启用已停用任务。 */
+  updateScheduledTask(
+    id: string,
+    input: { prompt: string; kind: ScheduleKind; cron: string; timezone: string; runAt: string; nextRunAt: string; expiresAt: string },
+  ): ScheduledTask | undefined {
+    const changes = this.db.prepare(
+      `UPDATE scheduled_tasks SET prompt=?,kind=?,cron=?,timezone=?,run_at=?,next_run_at=?,expires_at=?,updated_at=? WHERE id=?`,
+    ).run(
+      input.prompt, input.kind, input.cron, input.timezone, input.runAt,
+      input.nextRunAt, input.expiresAt, new Date().toISOString(), id,
+    ).changes;
+    return changes === 1 ? this.getScheduledTask(id) : undefined;
+  }
+
   getScheduledTask(id: string): ScheduledTask | undefined {
     const row = this.db.prepare("SELECT * FROM scheduled_tasks WHERE id=?").get(id) as Record<string, unknown> | undefined;
     return row ? this.readScheduledTaskRow(row) : undefined;
@@ -1652,13 +1666,17 @@ export class AppStore {
     });
   }
 
-  /** 任务执行完成：写运行记录；一次性任务删除，循环任务更新最近状态与错误。 */
+  /**
+   * 任务执行/错过后写运行记录。一次性任务标记为 done 而不是删除，保留运行历史与对话入口；
+   * 循环任务只更新最近状态，下次触发时间保持原样。
+   */
   completeScheduledTask(input: {
     id: string;
     status: string;
     turnId: string;
     error: string;
-    delete: boolean;
+    /** 一次性任务：结束后置为 done 并清掉下次触发时间。 */
+    finish: boolean;
     finishedAt: string;
   }): void {
     this.transaction(() => {
@@ -1666,8 +1684,10 @@ export class AppStore {
       this.db.prepare(
         "INSERT INTO scheduled_task_runs(task_id,started_at,finished_at,status,turn_id,error) VALUES(?,?,?,?,?,?)",
       ).run(input.id, input.finishedAt, input.finishedAt, input.status, input.turnId, error);
-      if (input.delete) {
-        this.db.prepare("DELETE FROM scheduled_tasks WHERE id=?").run(input.id);
+      if (input.finish) {
+        this.db.prepare(
+          "UPDATE scheduled_tasks SET status='done',next_run_at=?,last_run_at=?,last_status=?,last_error=?,updated_at=? WHERE id=?",
+        ).run(input.finishedAt, input.finishedAt, input.status, error, input.finishedAt, input.id);
       } else {
         this.db.prepare(
           "UPDATE scheduled_tasks SET last_run_at=?,last_status=?,last_error=?,updated_at=? WHERE id=?",
@@ -3476,6 +3496,19 @@ export class AppStore {
       this.db
         .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
         .run("schema:no-shared-gitlab-tokens", now, now, "migration");
+    }
+    // 旧版本把错过的一次性任务留在 active，并用 9999 哨兵当下次触发时间；统一标为已完成。
+    const stuckOnceMigration = this.db
+      .prepare("SELECT value FROM runtime_settings WHERE key='schema:finish-stuck-once-tasks'")
+      .get() as { value: string } | undefined;
+    if (!stuckOnceMigration) {
+      const now = new Date().toISOString();
+      this.db.prepare(
+        "UPDATE scheduled_tasks SET status='done',next_run_at=?,last_status=COALESCE(NULLIF(last_status,''),'missed'),updated_at=? WHERE kind='once' AND status='active' AND next_run_at LIKE '9999%'",
+      ).run(now, now);
+      this.db
+        .prepare("INSERT INTO runtime_settings(key,value,updated_at,updated_by) VALUES(?,?,?,?)")
+        .run("schema:finish-stuck-once-tasks", now, now, "migration");
     }
     this.db.prepare("DELETE FROM user_sessions WHERE expires_at <= ?").run(Date.now());
     // 早期模型可能把整段回答当作标题；按当前规则收敛已有的长标题。

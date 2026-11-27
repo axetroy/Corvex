@@ -240,6 +240,19 @@ describe("CorvexServer", () => {
       expect(listedTasks.items.find((item) => item.projectName)?.projectName).toBe("group/project");
       expect(listedTasks.items.find((item) => item.targetBranch)?.targetBranch).toBe("main");
       expect([401, 403]).toContain((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, { method: "POST", headers: { ...viewerHeaders, "content-type": "application/json" }, body: "{}" })).status);
+      const edited = await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, {
+        method: "PUT", headers: jsonHeaders,
+        body: JSON.stringify({ prompt: "edited CI check", schedule: "0 10 * * *", timezone: "UTC" }),
+      });
+      expect(edited.status).toBe(200);
+      expect(((await edited.json()) as { prompt: string }).prompt).toBe("edited CI check");
+      // 循环与否由计划字符串推导：合法 cron → cron，未来时间 → once。
+      const asOnce = await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}`, {
+        method: "PUT", headers: jsonHeaders,
+        body: JSON.stringify({ prompt: "one shot", schedule: "2027-01-01T00:00:00.000Z", timezone: "UTC" }),
+      });
+      expect(asOnce.status).toBe(200);
+      expect(((await asOnce.json()) as { kind: string }).kind).toBe("once");
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/cancel`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/resume`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(200);
       expect((await fetch(`${base}/api/ops/me/scheduled-tasks/${task.id}/run`, { method: "POST", headers: jsonHeaders, body: "{}" })).status).toBe(202);

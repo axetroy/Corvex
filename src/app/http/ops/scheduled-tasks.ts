@@ -98,6 +98,70 @@ export function registerScheduledTaskRoutes(app: FastifyInstance, ctx: OpsContex
         sendJson(reply, 201, task);
       });
 
+      me.put("/scheduled-tasks/:id", async (request, reply) => {
+        const user = requireUser(request, reply);
+        if (!user) return;
+        const id = (request.params as { id: string }).id;
+        const task = ctx.store.getScheduledTask(id);
+        if (!task || task.ownerUserId !== user.id) {
+          sendJson(reply, 404, { error: "scheduled task not found" });
+          return;
+        }
+        if (task.status === "done") {
+          sendJson(reply, 409, { error: "completed tasks cannot be edited" });
+          return;
+        }
+        const body = readJsonObject(request, reply);
+        if (!body) return;
+        const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+        const schedule = typeof body.schedule === "string" ? body.schedule.trim() : "";
+        const timezone = typeof body.timezone === "string" && body.timezone.trim()
+          ? body.timezone.trim() : task.timezone;
+        if (!prompt || prompt.length > 8_000 || !schedule || schedule.length > 200) {
+          sendJson(reply, 400, { error: "prompt and schedule are required" });
+          return;
+        }
+        if (!isValidTimeZone(timezone)) {
+          sendJson(reply, 400, { error: "invalid IANA timezone" });
+          return;
+        }
+        const now = Date.now();
+        // 是否循环由计划字符串本身决定：合法 5 段 cron 即循环，否则按一次性时间解析。
+        const cronSchedule = parseCron(schedule);
+        let kind: "once" | "cron";
+        let cron = "";
+        let runAt = "";
+        let next: Date | undefined;
+        if (cronSchedule) {
+          kind = "cron";
+          cron = schedule;
+          next = timezone === "UTC" ? nextRunAt(cronSchedule, new Date(now)) : nextRunAtInZone(cronSchedule, new Date(now), timezone);
+        } else {
+          const parsed = parseRunAt(schedule, new Date(now));
+          if (!parsed || parsed.getTime() <= now) {
+            sendJson(reply, 400, { error: "invalid schedule: expected a 5-field cron or a future time" });
+            return;
+          }
+          kind = "once";
+          runAt = parsed.toISOString();
+          next = parsed;
+        }
+        if (!next) {
+          sendJson(reply, 400, { error: "schedule never fires" });
+          return;
+        }
+        const updated = ctx.store.updateScheduledTask(id, {
+          prompt, kind, cron, timezone, runAt,
+          nextRunAt: next.toISOString(),
+          expiresAt: kind === "cron" ? new Date(now + 30 * 86_400_000).toISOString() : "",
+        });
+        if (!updated) {
+          sendJson(reply, 404, { error: "scheduled task not found" });
+          return;
+        }
+        sendJson(reply, 200, updated);
+      });
+
       me.post("/scheduled-tasks/:id/cancel", async (request, reply) => {
         const user = requireUser(request, reply);
         if (!user) return;

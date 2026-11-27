@@ -128,6 +128,8 @@ Claude Code 官方文档把调度分成三层，边界清晰：
 - UI：运维台新增"计划任务"页（`src/app/ui/pages/ScheduledTasksPage.tsx`），列表展示 prompt、cron/可读计划、下次运行、状态、最近运行；提供删除/暂停。新建主入口仍是在对话里用自然语言创建（模型调 `schedule_task`），UI 只做管理与可见性。任务页用卡片网格 + 常驻「怎么玩」引导与示例语句，空态可一键跳回对话。
 - **对话内结构化卡片**：三个工具的 `execute` 在 `details` 里返回由落库结果生成的结构化载荷（type 为 `scheduled_task_card`），`pi.ts` 在 `tool_execution_end` 逐字段校验后经 `onScheduleCard` → SSE `scheduled_task_card` 推送；Runner 把它写入过程快照（`kind: "scheduleCard"`），`store.readConversationProcess` 读取时同样校验，刷新后卡片不丢。`ScheduledTaskCardView` 在助手正文附近常驻渲染创建/列表/取消卡片，并带「查看计划任务」跳转。数据来自服务端而非模型自由文本，避免幻觉 ID/时间，也不依赖模型是否回显。
 - **任务卡片上下文与跳转**：列表接口给每条任务附带所在对话的仓库、分支与标题；卡片展示「仓库 / 分支」，并提供「查看对话」跳到该任务的绑定对话。最近运行只在有多条记录时才可点击展开历史，避免无动作的手势提示。
+- **一次性任务生命周期**：执行成功或失败后不删除任务，而是写运行记录并把状态置为 `done`、清掉下次触发时间，这样失败原因、运行历史和对话入口都能查看；启动时发现错过的触发也按 `missed` 记录并置为完成，不补跑。旧库里卡在 `active` + `9999` 哨兵时间的数据由迁移统一收敛为 `done`。状态文案统一为「启用 / 已停用 / 已完成」，停用即原 `paused`。
+- **编辑**：`PUT /api/ops/me/scheduled-tasks/:id` 可改任务内容与计划（cron 或相对时间）、时区与循环类型，重新计算下次触发时间；不改动当前启用状态，已完成的任务不可编辑。运维台卡片提供「编辑」弹窗（antd Form + `Modal.useModal()`，符合 CSP）。
 - i18n：en/zhCN 同步加 `scheduledTask*` 文案。
 
 ### 3.6 待定问题（实现前需确认）

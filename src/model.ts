@@ -260,7 +260,7 @@ export interface ConversationStreamTool {
 
 export type ConversationStreamContext = { id: string; text: string };
 
-/** 计划任务的调度类型：一次性到点执行后删除，或按 cron 循环。 */
+/** 计划任务的调度类型：一次性到点执行一次后置为完成，或按 cron 循环。 */
 export type ScheduleKind = "once" | "cron";
 /** 计划任务状态：启用 / 暂停 / 一次性已完成。 */
 export type ScheduledTaskStatus = "active" | "paused" | "done";

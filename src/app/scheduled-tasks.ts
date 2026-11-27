@@ -40,10 +40,20 @@ export class ScheduledTasksScheduler {
     const nowMs = this.now();
     const nowIso = new Date(nowMs).toISOString();
     for (const task of this.ctx.store.dueScheduledTasks(nowIso)) {
-      // 一次性任务错过的触发不补跑，直接标完成；循环任务跳到 cron 推导的下一个未来时刻。
-      const next = task.kind === "once"
-        ? "9999-12-31T23:59:59.999Z"
-        : this.advanceSchedule(task, new Date(nowMs));
+      if (task.kind === "once") {
+        // 错过的触发不补跑：留一条 missed 记录并置为完成，避免任务永远停在 active + 哨兵时间。
+        this.ctx.store.completeScheduledTask({
+          id: task.id,
+          status: "missed",
+          turnId: "",
+          error: "missed trigger was not replayed",
+          finish: true,
+          finishedAt: nowIso,
+        });
+        continue;
+      }
+      // 循环任务跳到 cron 推导的下一个未来时刻。
+      const next = this.advanceSchedule(task, new Date(nowMs));
       this.ctx.store.claimDueScheduledTask(task.id, task.nextRunAt, next);
     }
   }
@@ -143,7 +153,7 @@ export class ScheduledTasksScheduler {
         status,
         turnId,
         error: errorText,
-        delete: task.kind === "once",
+        finish: task.kind === "once",
         finishedAt: new Date(this.now()).toISOString(),
       });
     }
