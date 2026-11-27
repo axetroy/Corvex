@@ -100,6 +100,9 @@ describe("upload API", () => {
       expect(list.status).toBe(200);
       expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(1);
       expect((await fetch(`${base}/api/ops/conversations/${id}/uploads`, { headers: otherHeaders })).status).toBe(404);
+      const textContent = await fetch(`${base}/api/ops/conversations/${id}/uploads/${upload.id}/content`, { headers: ownerHeaders });
+      expect(textContent.status).toBe(200);
+      expect(await textContent.text()).toBe("hello 世界");
 
       const removed = await fetch(`${base}/api/ops/conversations/${id}/uploads/${upload.id}`, {
         method: "DELETE", headers: ownerHeaders,
@@ -135,6 +138,9 @@ describe("upload API", () => {
       })).status).toBe(201);
       const draftPreview = await fetch(`${base}/api/ops/uploads/draft/${draftMeta.id}/image`, { headers: ownerHeaders });
       expect(draftPreview.status).toBe(404); // 文本草稿没有图片预览
+      const draftContent = await fetch(`${base}/api/ops/uploads/draft/${draftMeta.id}/content`, { headers: ownerHeaders });
+      expect(draftContent.status).toBe(200);
+      expect(await draftContent.text()).toBe("draft body");
       expect((await fetch(`${base}/api/ops/uploads/draft/${draftMeta.id}`, {
         method: "DELETE", headers: ownerHeaders,
       })).status).toBe(200);

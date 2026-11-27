@@ -30,6 +30,33 @@ export async function fetchJson<T>(path: string, copy: Copy): Promise<T> {
   return await requestJson<T>(path, copy);
 }
 
+/** 从只读接口取纯文本（如附件内容）；复用统一的鉴权失败与错误提示处理。 */
+export async function fetchText(path: string, copy: Copy): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      headers: { accept: "text/plain" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(copy.requestTimeoutTemplate.replace("{seconds}", String(requestTimeoutMs / 1000)), { cause: error });
+    }
+    throw error;
+  }
+  if (response.status === 401) {
+    handleUnauthorized(response, await response.clone().text());
+    throw new Error(copy.authRequired);
+  }
+  if (!response.ok) {
+    throw new Error(copy.requestFailedTemplate
+      .replace("{status}", String(response.status))
+      .replace("{message}", (await response.text()).trim() || response.statusText));
+  }
+  return await response.text();
+}
+
 /** 以 JSON 请求体调用 Agent 控制台接口（PUT/POST）；错误信息取服务端返回的 error 字段。 */
 export async function sendJson<T>(path: string, body: unknown, copy: Copy, method = "PUT"): Promise<T> {
   return await requestJson<T>(path, copy, { method, body });

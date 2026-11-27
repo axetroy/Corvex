@@ -2033,6 +2033,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-attachment-chip {
+  cursor: pointer;
   position: relative;
   display: inline-flex;
   width: 168px;
@@ -2130,6 +2131,7 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-message-attachment {
+  cursor: pointer;
   display: inline-flex;
   max-width: 220px;
   align-items: center;
@@ -2155,6 +2157,26 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 附件预览弹窗：Monaco / 图片预览器都撑满弹窗内容区。 */
+.conversation-attachment-preview {
+  height: min(60vh, 520px);
+  min-height: 320px;
+}
+
+.conversation-attachment-preview-loading,
+.conversation-attachment-preview-error {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conversation-attachment-preview-error {
+  color: var(--danger);
 }
 
 .conversation-attachment-warning {

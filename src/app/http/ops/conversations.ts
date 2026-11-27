@@ -1138,6 +1138,48 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: OpsContext
     sendJson(reply, 200, { deleted: true });
   });
 
+  /** 文本附件内容：供输入框/消息气泡里的 Monaco 只读预览。 */
+  app.get("/api/ops/conversations/:id/uploads/:uploadId/content", async (request, reply) => {
+    const params = request.params as { id: string; uploadId: string };
+    const conversationId = idParam(params.id);
+    const uploadId = idParam(params.uploadId);
+    if (!conversationId || !uploadId) {
+      sendJson(reply, 400, { error: "invalid conversation ID or upload ID" });
+      return;
+    }
+    const conversation = ownedConversation(ctx, request, reply, conversationId);
+    if (!conversation) return;
+    const upload = ctx.store.getConversationUpload(uploadId);
+    if (!upload || upload.conversationId !== conversationId || upload.ownerUserId !== conversation.ownerUserId) {
+      sendJson(reply, 404, { error: "upload not found" });
+      return;
+    }
+    try {
+      const data = await readFile(resolve(ctx.config.storage.root, upload.storagePath));
+      sendBinary(reply, data, `${upload.mime || "text/plain"}; charset=utf-8`);
+    } catch (error) {
+      sendJson(reply, 404, { error: `upload unavailable: ${errorMessage(error)}` });
+    }
+  });
+
+  /** 草稿文本附件内容：新建对话时用 Monaco 只读预览。 */
+  app.get("/api/ops/uploads/draft/:id/content", async (request, reply) => {
+    const user = requireUser(request, reply);
+    if (!user) return;
+    const id = idParam((request.params as { id: string }).id);
+    const draft = id ? ctx.store.getDraftUpload(id!, user.id) : undefined;
+    if (!id || !draft) {
+      sendJson(reply, 404, { error: "draft upload not found" });
+      return;
+    }
+    try {
+      const data = await readFile(resolve(ctx.config.storage.root, draft.storagePath));
+      sendBinary(reply, data, `${draft.mime || "text/plain"}; charset=utf-8`);
+    } catch (error) {
+      sendJson(reply, 404, { error: `draft upload unavailable: ${errorMessage(error)}` });
+    }
+  });
+
   /** 图片附件预览：按 uploadId 校验归属后返回原始字节，供对话 chips 显示缩略图。 */
   app.get("/api/ops/conversations/:id/uploads/:uploadId/image", async (request, reply) => {
     const params = request.params as { id: string; uploadId: string };

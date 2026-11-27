@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
@@ -7,7 +7,7 @@ import type { BubbleItemType, PromptsItemType } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
 import { markdownCodeComponents } from "../components/MarkdownCode.js";
 import "./ConversationsPage.css";
-import { fetchJson, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
+import { fetchJson, fetchText, handleUnauthorized, sendBinary, sendJson } from "../lib/api.js";
 import { imageUploadMaxBytes, maxUploadsPerMessage, uploadContentType, uploadUrl, type PendingAttachment } from "../../../upload-constants.js";
 import { streamConversationTurn } from "../lib/stream.js";
 import { resolveWaitingSince, resolveWaitingStage } from "../lib/conversationWaiting.js";
@@ -40,6 +40,9 @@ import { ConversationGitGraph } from "../components/ConversationGitGraph.js";
 import { ConversationGitChanges } from "../components/ConversationGitChanges.js";
 import { ConversationTurnNav } from "../components/ConversationTurnNav.js";
 import { ScheduledTaskCardView } from "../components/ScheduledTaskCardView.js";
+import { ImagePreview } from "../components/ImagePreview.js";
+
+const CodeViewer = lazy(() => import("../components/CodeViewer.js").then((module) => ({ default: module.CodeViewer })));
 import type { ProjectOption } from "../lib/projectPicker.js";
 import { ErrorBanner, ExpandableText } from "../components/common.js";
 
@@ -139,6 +142,7 @@ function MessageContent({
   conversationId,
   cards,
   locale,
+  onPreviewAttachment,
 }: {
   message: ConversationMessage;
   copy: Copy;
@@ -146,6 +150,8 @@ function MessageContent({
   conversationId?: string;
   /** 计划任务工具的结构化结果；在过程块之外始终可见，可点击跳转管理页。 */
   cards?: readonly ScheduledTaskCard[];
+  /** 点击消息里的附件时打开预览。 */
+  onPreviewAttachment?: (item: { id: string; filename: string; mime: string; draft?: boolean }) => void;
   streaming?: boolean;
   timeline: readonly ConversationTimelineSegment[];
   waitingSince?: number | null;
@@ -171,7 +177,20 @@ function MessageContent({
         {message.attachments.length ? (
           <div className="conversation-message-attachments">
             {message.attachments.map((attachment) => (
-              <span className="conversation-message-attachment" key={attachment.id} title={attachment.filename}>
+              <span
+                className="conversation-message-attachment"
+                key={attachment.id}
+                title={attachment.filename}
+                role="button"
+                tabIndex={0}
+                onClick={() => onPreviewAttachment?.(attachment)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onPreviewAttachment?.(attachment);
+                  }
+                }}
+              >
                 {attachment.mime.startsWith("image/") && conversationId ? (
                   <img
                     src={`/api/ops/conversations/${encodeURIComponent(conversationId)}/uploads/${encodeURIComponent(attachment.id)}/image`}
@@ -333,6 +352,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     maxBytes: 256 * 1024, maxPerMessage: maxUploadsPerMessage, visionSupported: false,
   });
   const [draggingAttachment, setDraggingAttachment] = useState(false);
+  /** 正在预览的附件；文本走 Monaco 只读，图片走 ImagePreview。 */
+  const [previewing, setPreviewing] = useState<{ id: string; filename: string; mime: string; draft?: boolean } | null>(null);
+  const [previewText, setPreviewText] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   /** 正在流式输出的轮次与累计正文；仅在轮次运行中展示，落库后以详情为准。 */
   const [streamedReply, setStreamedReply] = useState<{ turnId: string; text: string }>();
@@ -801,6 +824,23 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
+  function attachmentSource(item: { id: string; draft?: boolean }, kind: "image" | "content"): string {
+    const suffix = kind === "image" ? "image" : "content";
+    return item.draft
+      ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/${suffix}`
+      : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/${suffix}`;
+  }
+
+  function openAttachmentPreview(item: { id: string; filename: string; mime: string; draft?: boolean }) {
+    setPreviewing(item);
+    setPreviewError("");
+    setPreviewText("");
+    if (item.mime.startsWith("image/")) return;
+    void fetchText(attachmentSource(item, "content"), copy)
+      .then(setPreviewText)
+      .catch((cause: unknown) => setPreviewError(errorMessage(cause)));
+  }
+
   async function sendReply(message: string, delivery?: "steer" | "queue" | "interrupt") {
     if (!currentConversation || !message.trim() || busy || replySubmitting.current || pendingReplyConversations.has(currentConversation.id)) return;
     const replyConversationId = currentConversation.id;
@@ -1222,6 +1262,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         copy={copy}
         locale={locale}
         cards={cards}
+        onPreviewAttachment={openAttachmentPreview}
         streaming={streaming}
         timeline={timeline}
         waitingSince={streaming ? waitingSince : null}
@@ -1596,13 +1637,24 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                         <div className="conversation-attachment-list">
                           <div className="conversation-attachment-chips">
                             {attachments.map((item) => (
-                              <span key={item.id} className="conversation-attachment-chip" title={item.filename}>
+                              <span
+                                key={item.id}
+                                className="conversation-attachment-chip"
+                                title={item.filename}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => openAttachmentPreview(item)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    openAttachmentPreview(item);
+                                  }
+                                }}
+                              >
                                 {item.mime.startsWith("image/") && (item.draft || selectedConversationId) ? (
                                   <img
                                     className="conversation-attachment-thumb"
-                                    src={item.draft
-                                      ? `/api/ops/uploads/draft/${encodeURIComponent(item.id)}/image`
-                                      : `/api/ops/conversations/${encodeURIComponent(selectedConversationId)}/uploads/${encodeURIComponent(item.id)}/image`}
+                                    src={attachmentSource(item, "image")}
                                     alt=""
                                     onError={(event) => { event.currentTarget.style.visibility = "hidden"; }}
                                   />
@@ -1618,7 +1670,10 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                                   className="conversation-attachment-remove"
                                   aria-label={`${copy.removeAttachment}: ${item.filename}`}
                                   title={copy.removeAttachment}
-                                  onClick={() => void removeAttachment(item.id)}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void removeAttachment(item.id);
+                                  }}
                                 >
                                   ×
                                 </button>
@@ -1845,6 +1900,38 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
         </Panel>
         </Group>
       </section>
+      <Modal
+        open={Boolean(previewing)}
+        title={previewing ? `${copy.attachmentPreviewTitle} · ${previewing.filename}` : copy.attachmentPreviewTitle}
+        footer={null}
+        width="min(860px, 92vw)"
+        onCancel={() => setPreviewing(null)}
+        destroyOnHidden
+      >
+        {previewing ? (
+          <div className="conversation-attachment-preview">
+            {previewError ? (
+              <div className="conversation-attachment-preview-error">{copy.attachmentPreviewFailed}</div>
+            ) : previewing.mime.startsWith("image/") ? (
+              <ImagePreview
+                src={attachmentSource(previewing, "image")}
+                alt={previewing.filename}
+                copy={copy}
+              />
+            ) : previewText ? (
+              <Suspense fallback={<div className="conversation-attachment-preview-loading">{copy.attachmentPreviewLoading}</div>}>
+                <CodeViewer
+                  path={previewing.filename}
+                  value={previewText}
+                  readOnlyMessage={copy.filePanelReadOnlyMessage}
+                />
+              </Suspense>
+            ) : (
+              <div className="conversation-attachment-preview-loading">{copy.attachmentPreviewLoading}</div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </>
   );
 }
