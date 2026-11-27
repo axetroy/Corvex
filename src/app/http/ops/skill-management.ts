@@ -34,6 +34,13 @@ export function registerSkillManagementRoutes(app: FastifyInstance, options: Ski
     sendJson(reply, 200, { items: await options.storeForRequest(request).list() });
   });
 
+  // 磁盘被直接编辑时先按指纹刷新，再返回解析/发现诊断。
+  app.get("/skills/diagnostics", async (request, reply) => {
+    const store = options.storeForRequest(request);
+    await store.refreshIfStale();
+    sendJson(reply, 200, { items: store.diagnostics() });
+  });
+
   app.post("/skills", async (request, reply) => {
     const body = readJsonObject(request, reply);
     if (!body) return;

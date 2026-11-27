@@ -296,3 +296,17 @@
 .skill-status-missing {
   color: var(--danger);
 }
+
+.skill-diagnostics {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.skill-diagnostic-error {
+  color: var(--danger);
+}
+
+.skill-diagnostic-warning {
+  color: var(--warning);
+}

@@ -29,6 +29,7 @@ export function SkillManager({ copy }: { copy: Copy }) {
   const [packs, setPacks] = useState<SkillPack[]>([]);
   const [personalSkills, setPersonalSkills] = useState<ConversationSkill[]>([]);
   const [personalPacks, setPersonalPacks] = useState<SkillPack[]>([]);
+  const [diagnostics, setDiagnostics] = useState<Array<{ level: string; skill: string; message: string }>>([]);
   const [editorBase, setEditorBase] = useState("/api/ops/admin/skills");
   const [importOpen, setImportOpen] = useState(false);
   const [personalImportOpen, setPersonalImportOpen] = useState(false);
@@ -54,6 +55,12 @@ export function SkillManager({ copy }: { copy: Copy }) {
     fetchJson<{ items: SkillPack[] }>("/api/ops/me/skills/packs", copy)
       .then((result) => { if (active) setPersonalPacks(result.items ?? []); })
       .catch(() => undefined);
+    void Promise.all([
+      fetchJson<{ items: Array<{ level: string; skill: string; message: string }> }>("/api/ops/admin/skills/diagnostics", copy),
+      fetchJson<{ items: Array<{ level: string; skill: string; message: string }> }>("/api/ops/me/skills/diagnostics", copy),
+    ]).then(([global, personal]) => {
+      if (active) setDiagnostics([...(global.items ?? []), ...(personal.items ?? [])]);
+    }).catch(() => undefined);
     return () => { active = false; };
   }, [copy, notice]);
 
@@ -218,6 +225,18 @@ export function SkillManager({ copy }: { copy: Copy }) {
       </Typography.Paragraph>
       {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
       {notice ? <Typography.Text type="success">{notice}</Typography.Text> : null}
+      <Typography.Title level={5} style={{ marginTop: 12 }}>{copy.skillDiagnosticsTitle}</Typography.Title>
+      {diagnostics.length === 0 ? (
+        <Typography.Text type="secondary">{copy.skillDiagnosticNone}</Typography.Text>
+      ) : (
+        <ul className="skill-diagnostics">
+          {diagnostics.map((item, index) => (
+            <li key={`${item.skill}-${index}`} className={`skill-diagnostic-${item.level}`}>
+              {item.skill}: {item.message}
+            </li>
+          ))}
+        </ul>
+      )}
       <Space>
         <Button type="primary" onClick={() => openCreate()}>{copy.skillManagerAdd}</Button>
         <Button onClick={() => setImportOpen(true)}>{copy.skillManagerImport}</Button>

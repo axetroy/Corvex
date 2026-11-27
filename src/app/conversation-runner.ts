@@ -973,7 +973,9 @@ export class ConversationRunner {
   ): Promise<void> {
     if (turn.history.length > 0) return;
     if (this.registry) {
-      await this.registry.ensureUser(this.store.getConversation(turn.conversationId)?.ownerUserId ?? "");
+      const owner = this.store.getConversation(turn.conversationId)?.ownerUserId ?? "";
+      await this.registry.ensureUser(owner);
+      await this.registry.refreshIfStale(owner);
     }
     try {
       const title = await callAsyncHook(this.hooks.conversationTitleRefine, {
@@ -1253,7 +1255,9 @@ export class ConversationRunner {
       };
       // 斜杠指令按当前用户可见的技能模板展开；命令名不进入发给模型的请求。
       if (this.registry) {
-        await this.registry.ensureUser(this.store.getConversation(turn.conversationId)?.ownerUserId ?? "");
+        const owner = this.store.getConversation(turn.conversationId)?.ownerUserId ?? "";
+        await this.registry.ensureUser(owner);
+        await this.registry.refreshIfStale(owner);
       }
       const { effectiveRequest } = resolveCommandRequest(turn.request, this.skillLookup(turn.conversationId));
       const systemPrompt = getConversationSystemPrompt(language, turn.mode, this.config.agent.followupsEnabled);

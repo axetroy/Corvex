@@ -146,6 +146,20 @@ describe("SkillStore", () => {
     expect((await reopened.get("custom"))?.commands[0]?.command).toBe("pnpm run typecheck");
   });
 
+  it("detects direct disk edits and reports parse diagnostics", async () => {
+    skills = await openStore();
+    await skills.create(sampleDocument);
+    await skills.refresh();
+    expect(await skills.refreshIfStale()).toBe(false);
+    expect(skills.diagnostics()).toEqual([]);
+    await writeFile(join(directory, "skills", "custom", "SKILL.md"), "not a skill document");
+    // 直接改文件也要被下一轮发现。
+    expect(await skills.refreshIfStale()).toBe(true);
+    expect((await skills.get("custom"))?.status).toBe("modified");
+    const issues = skills.diagnostics();
+    expect(issues.some((issue) => issue.skill === "custom" && issue.level === "error")).toBe(true);
+  });
+
   it("discovers SKILL.md in nested directories and keeps bundled files verbatim", async () => {
     skills = await openStore();
     await skills.create(sampleDocument);

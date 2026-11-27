@@ -61,6 +61,13 @@ export interface SkillLockFile {
 export type ManagedSkill = ConversationSkill;
 export type ManagedSkillPack = SkillPack;
 
+/** 技能文件被发现/解析时产生的问题；管理端展示，模型目录不暴露。 */
+export interface SkillDiagnostic {
+  level: "warning" | "error";
+  skill: string;
+  message: string;
+}
+
 export interface SkillImportPackInput {
   name: string;
   archive: Buffer;
@@ -165,11 +172,84 @@ export class SkillStore {
 
   /** 启动时与每次写后重建的内存镜像；斜杠命令解析是同步的，读它即可。 */
   private cache = new Map<string, ManagedSkill>();
+  private lastSignature = "";
+  private currentDiagnostics: SkillDiagnostic[] = [];
 
   /** 重建同步读取用的缓存；磁盘是权威来源，缓存只是快照。 */
   async refresh(): Promise<void> {
     const skills = await this.list();
     this.cache = new Map(skills.filter((skill) => skill.status !== "missing").map((skill) => [skill.name, skill]));
+    this.currentDiagnostics = await this.collectDiagnostics();
+    this.lastSignature = await this.computeSignature();
+  }
+
+  /**
+   * 每轮调用：直接改磁盘文件也能被发现，无需重启或走管理 API。
+   * 用锁文件与各 SKILL.md 的 mtime 做廉价指纹，命中时完全不读文件。
+   */
+  async refreshIfStale(): Promise<boolean> {
+    if (await this.computeSignature() === this.lastSignature) return false;
+    await this.refresh();
+    return true;
+  }
+
+  /** 管理端可见的解析/发现诊断；模型目录不暴露。 */
+  diagnostics(): SkillDiagnostic[] {
+    return [...this.currentDiagnostics];
+  }
+
+  private async computeSignature(): Promise<string> {
+    const parts: string[] = [];
+    const lockInfo = await stat(this.lockPath).catch(() => undefined);
+    parts.push(`lock:${lockInfo?.mtimeMs ?? 0}`);
+    let entries: Dirent[];
+    try {
+      entries = await readdir(this.root, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      entries = [];
+    }
+    for (const entry of entries.filter((item) => item.isDirectory() && isValidSkillName(item.name))) {
+      const file = await this.findSkillFile(entry.name);
+      const info = file
+        ? await stat(join(this.skillDir(entry.name), file)).catch(() => undefined)
+        : undefined;
+      parts.push(`${entry.name}:${file ?? ""}:${info?.mtimeMs ?? 0}`);
+    }
+    return parts.join("|");
+  }
+
+  /** 汇总坏文档、缺描述、目录名与 frontmatter 名不一致等问题。 */
+  private async collectDiagnostics(): Promise<SkillDiagnostic[]> {
+    const lock = await this.readLock();
+    const result: SkillDiagnostic[] = [];
+    for (const [name, entry] of Object.entries(lock.skills)) {
+      if (!isValidSkillName(name)) continue;
+      const file = await this.findSkillFile(name, entry.skillFile);
+      if (!file) {
+        result.push({ level: "error", skill: name, message: "SKILL.md not found in the skill directory" });
+        continue;
+      }
+      let document: string;
+      try {
+        document = await readFile(join(this.skillDir(name), file), "utf8");
+      } catch {
+        result.push({ level: "error", skill: name, message: "SKILL.md could not be read" });
+        continue;
+      }
+      try {
+        const parsed = parseSkillDocument(document);
+        if (!parsed.description) {
+          result.push({ level: "warning", skill: name, message: "description is missing; the model cannot route to this skill" });
+        }
+        if (parsed.name !== name) {
+          result.push({ level: "warning", skill: name, message: `frontmatter name "${parsed.name}" differs from directory name "${name}"` });
+        }
+      } catch (error) {
+        result.push({ level: "error", skill: name, message: error instanceof Error ? error.message : "invalid SKILL.md" });
+      }
+    }
+    return result;
   }
 
   /** 同步读取已加载的技能，供斜杠命令解析等不能 await 的调用点使用。 */
