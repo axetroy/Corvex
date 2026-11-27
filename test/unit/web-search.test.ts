@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { backendScore, createWebSearchExtension, searchWeb } from "../../src/agent/web-search.ts";
+import { SearchHealth } from "../../src/agent/search-health.ts";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -121,6 +122,20 @@ describe("keyless web search", () => {
     const headers = recorderMock.calls[0]?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer tvly-test");
     expect(headers["X-Tavily-Access-Mode"]).toBeUndefined();
+  });
+
+  it("exposes a shared health snapshot for the admin page", async () => {
+    const health = new SearchHealth();
+    const recorderMock = recorder({ results: [{ title: "Node", url: "https://docs.example.org/node", content: "OK" }] });
+    await searchWeb("node", 3, {
+      backends: ["tavily"],
+      health,
+      dependencies: recorderMock.dependencies,
+    });
+    const snapshot = health.snapshot(["tavily"]);
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0]).toMatchObject({ id: "tavily", successes: 1, failures: 0 });
+    expect(snapshot[0]!.score).toBeGreaterThan(0);
   });
 
   it("uses the Exa keyed API when a key is configured", async () => {

@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage } from "../errors.js";
 import { normalizeWebHost, validateWebUrl } from "./web-read.js";
+import { scoreBackend, SearchHealth, type BackendHealth } from "./search-health.js";
 
 /**
  * 多后端公网搜索：全部后端都免费，keyless 优先。
@@ -23,17 +24,6 @@ const maxSnippetChars = 800;
 const maxTotalSnippetChars = 12_000;
 const requestTimeoutMs = 10_000;
 const cooldownMs = 60_000;
-
-/** 来源质量基线：通用搜索高于百科/社区兜底；SearXNG 取决于自托管实例。 */
-const qualityWeight: Record<WebSearchBackendId, number> = {
-  tavily: 1,
-  exa: 0.95,
-  you: 0.9,
-  searxng: 0.85,
-  wikipedia: 0.7,
-  hackernews: 0.65,
-  duckduckgo: 0.6,
-};
 
 export interface WebSearchResult {
   results: Array<{ title: string; url: string; snippet: string }>;
@@ -58,6 +48,8 @@ export interface WebSearchOptions {
   tavilyApiKey?: string;
   /** 各后端的可选 API key；有 key 时走 keyed API，否则走 keyless。 */
   apiKeys?: Partial<Record<"tavily" | "exa" | "you", string>>;
+  /** 共享健康分状态；缺省为每个客户端自建一份。 */
+  health?: SearchHealth;
 }
 
 const defaultDependencies: WebSearchDependencies = {
@@ -70,26 +62,9 @@ interface RawResult {
   snippet: string;
 }
 
-interface BackendHealth {
-  successes: number;
-  failures: number;
-  latencyMs: number;
-  cooldownUntil: number;
-}
-
-function newHealth(): Record<WebSearchBackendId, BackendHealth> {
-  return Object.fromEntries(webSearchBackends.map((id) => [id, {
-    successes: 0, failures: 0, latencyMs: 0, cooldownUntil: 0,
-  }])) as Record<WebSearchBackendId, BackendHealth>;
-}
-
-/** 综合评分：质量基线 × 贝叶斯成功率 × 延迟因子；冷却中的后端直接垫底。 */
+/** 兼容旧导出的评分函数。 */
 export function backendScore(id: WebSearchBackendId, health: BackendHealth, now = Date.now()): number {
-  if (health.cooldownUntil > now) return -1;
-  const total = health.successes + health.failures;
-  const reliability = total === 0 ? 0.8 : (health.successes + 1) / (total + 2);
-  const latency = health.latencyMs > 0 ? Math.max(0.4, 1 - health.latencyMs / 10_000) : 1;
-  return qualityWeight[id] * reliability * latency;
+  return scoreBackend(id, health, now);
 }
 
 function truncate(value: string, max: number): string {
@@ -379,13 +354,12 @@ export interface WebSearchClient {
 
 /** 创建一个带健康分状态的搜索客户端；每个 Pi session 独立。 */
 export function createWebSearchClient(options: WebSearchOptions = {}): WebSearchClient {
-  const health = newHealth();
+  const health = options.health ?? new SearchHealth();
   const configured = (options.backends ?? webSearchBackends)
     .filter((id): id is WebSearchBackendId => (webSearchBackends as readonly string[]).includes(id));
   const unique = [...new Set(configured)];
   return {
-    scores: () => unique.map((id) => ({ id, score: backendScore(id, health[id]) }))
-      .sort((left, right) => right.score - left.score),
+    scores: () => health.snapshot(unique).map(({ id, score }) => ({ id, score })),
     async search(query, count) {
       const trimmed = query.trim();
       if (!trimmed || trimmed.length > maxQueryChars) {
@@ -395,7 +369,7 @@ export function createWebSearchClient(options: WebSearchOptions = {}): WebSearch
       const timeout = AbortSignal.timeout(requestTimeoutMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       const blockedHosts = normalizeBlockedHosts(options.blockedHosts ?? []);
-      const ordered = [...unique].sort((left, right) => backendScore(right, health[right]) - backendScore(left, health[left]));
+      const ordered = health.snapshot(unique).map((entry) => entry.id);
       const failures: string[] = [];
       let lastNotice = "";
       for (const id of ordered) {
@@ -403,19 +377,18 @@ export function createWebSearchClient(options: WebSearchOptions = {}): WebSearch
         try {
           const raw = await implementations[id](trimmed, limited, options, signal);
           const results = narrowResults(raw, limited, blockedHosts);
-          health[id].latencyMs = Date.now() - started;
+          const latencyMs = Date.now() - started;
           if (results.length === 0) {
-            health[id].failures++;
+            health.failure(id, false, cooldownMs);
             failures.push(`${id}: empty`);
             continue;
           }
-          health[id].successes++;
+          health.success(id, latencyMs);
           return { results, source: id };
         } catch (error) {
-          health[id].failures++;
+          health.failure(id, errorMessage(error) === "RATE_LIMITED", cooldownMs);
           const message = errorMessage(error);
           if (message === "RATE_LIMITED") {
-            health[id].cooldownUntil = Date.now() + cooldownMs;
             lastNotice = `${id} is rate-limited; try again later.`;
           } else {
             failures.push(`${id}: ${message}`);
@@ -445,7 +418,7 @@ export function createWebSearchExtension(
   maxQueriesPerSession: number,
   blockedHostValues: readonly string[],
   signal?: AbortSignal,
-  searchOptions: Pick<WebSearchOptions, "backends" | "searxngBaseUrl" | "tavilyApiKey" | "apiKeys"> = {},
+  searchOptions: Pick<WebSearchOptions, "backends" | "searxngBaseUrl" | "tavilyApiKey" | "apiKeys" | "health"> = {},
 ): (pi: ExtensionAPI) => void {
   const client = createWebSearchClient({
     blockedHosts: blockedHostValues, signal,
@@ -453,6 +426,7 @@ export function createWebSearchExtension(
     searxngBaseUrl: searchOptions.searxngBaseUrl,
     tavilyApiKey: searchOptions.tavilyApiKey,
     apiKeys: searchOptions.apiKeys,
+    health: searchOptions.health,
   });
   return (pi) => {
     let queries = 0;

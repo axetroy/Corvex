@@ -4,6 +4,11 @@ import { readJsonObject, sendJson } from "../respond.js";
 
 /** 运行时设置：读取当前值与生效值，保存整份可编辑键。 */
 export function registerSettingsRoutes(app: FastifyInstance, ctx: OpsContext): void {
+  // 搜索后端的综合评分与原始指标；管理页按此展示与解释调度顺序。
+  app.get("/api/ops/search/scores", async (_request, reply) => {
+    sendJson(reply, 200, { items: ctx.searchHealth.snapshot() });
+  });
+
   app.get("/api/ops/settings", async (_request, reply) => {
     sendJson(reply, 200, ctx.settings.read());
   });

@@ -9,6 +9,7 @@ import { errorMessage } from "../errors.js";
 import { skillImportLimits } from "../agent/skill-import.js";
 import { SkillStore } from "../agent/skill-store.js";
 import { SkillRegistry } from "../agent/skill-registry.js";
+import { SearchHealth } from "../agent/search-health.js";
 import { maxUploadBytesCeiling, uploadContentType } from "./upload.js";
 import { pruneEmptyUploadDirs } from "./upload-cleanup.js";
 import { currentUser } from "./auth/context.js";
@@ -59,6 +60,7 @@ export class CorvexServer {
   private readonly conversations: ConversationRunner;
   private readonly skills: SkillStore;
   private readonly skillRegistry: SkillRegistry;
+  private readonly searchHealth = new SearchHealth();
   private readonly settings: SettingsService;
   private readonly executionConfig: ExecutionConfigService;
   private readonly cipher: TokenCipher;
@@ -82,7 +84,7 @@ export class CorvexServer {
     this.oauth = new GitLabOAuthService(config, store, this.cipher);
     this.skillRegistry = new SkillRegistry(resolve(config.storage.root));
     this.skills = this.skillRegistry.global;
-    this.conversations = new ConversationRunner(config, store, this.hooks, this.skills, this.skillRegistry);
+    this.conversations = new ConversationRunner(config, store, this.hooks, this.skills, this.skillRegistry, this.searchHealth);
     this.scheduledTasks = new ScheduledTasksScheduler({
       config, store, conversations: this.conversations,
       clientForUser: (userId) => this.clientForUser(userId),
@@ -318,6 +320,7 @@ export class CorvexServer {
       store: this.store,
       skills: this.skills,
       skillRegistry: this.skillRegistry,
+      searchHealth: this.searchHealth,
       conversations: this.conversations,
       oauth: this.oauth,
       hooks: this.hooks,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input, InputNumber, Modal, Select, Switch, Tag, Typography } from "antd";
 import { fetchJson, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
@@ -7,6 +7,7 @@ import type { SettingsResponse } from "../lib/types.js";
 import { AdminPage } from "../components/AdminPage.js";
 import { Panel } from "../components/common.js";
 import { searchBackendIds, type SearchBackendId } from "../../../search-backends.js";
+import type { BackendScore } from "../../../agent/search-health.js";
 import "./SearchSettingsPage.css";
 
 const backendCopyKeys: Record<SearchBackendId, keyof Copy> = {
@@ -69,6 +70,7 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingBackend, setEditingBackend] = useState<SearchBackendId | null>(null);
+  const [scores, setScores] = useState<BackendScore[]>([]);
   const dragIndex = useRef<number | null>(null);
 
   useEffect(() => {
@@ -84,6 +86,23 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
       .catch((cause: unknown) => active && setError(errorMessage(cause)));
     return () => { active = false; };
   }, [copy]);
+
+  const loadScores = useCallback(() => {
+    fetchJson<{ items: BackendScore[] }>("/api/ops/search/scores", copy)
+      .then((result) => setScores(result.items ?? []))
+      .catch(() => undefined);
+  }, [copy]);
+
+  useEffect(() => {
+    loadScores();
+    const timer = window.setInterval(loadScores, 15_000);
+    return () => window.clearInterval(timer);
+  }, [loadScores]);
+
+  const scoreById = useMemo(
+    () => new Map(scores.map((entry) => [entry.id, entry])),
+    [scores],
+  );
 
   const dirty = useMemo(() => Boolean(initial && draft && JSON.stringify(initial) !== JSON.stringify(draft)), [initial, draft]);
 
@@ -196,9 +215,12 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
       title={copy.settingsGroupSearch}
       description={copy.settingsGroupSearchHint}
       actions={(
-        <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
-          {copy.settingsSave}
-        </Button>
+        <span className="search-settings-actions">
+          <Button onClick={loadScores}>{copy.searchSettingsRefresh}</Button>
+          <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
+            {copy.settingsSave}
+          </Button>
+        </span>
       )}
     >
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -269,6 +291,21 @@ export function SearchSettingsPage({ copy, onUpdated }: { copy: Copy; onUpdated:
                     {keyedBackends.has(id) && keyFor(id).trim()
                       ? <Tag color="blue">key</Tag>
                       : <Tag>keyless</Tag>}
+                    {(() => {
+                      const entry = scoreById.get(id);
+                      if (!entry) return null;
+                      return (
+                        <Tag
+                          className="search-backend-score"
+                          title={copy.searchSettingsScoreHint
+                            .replace("{success}", String(entry.successes))
+                            .replace("{failure}", String(entry.failures))
+                            .replace("{latency}", String(entry.latencyMs))}
+                        >
+                          {copy.searchSettingsScore} {entry.score < 0 ? "—" : entry.score.toFixed(2)}
+                        </Tag>
+                      );
+                    })()}
                   </div>
                   <div className="search-backend-desc">{copy[backendCopyKeys[id]] as string}</div>
                 </div>

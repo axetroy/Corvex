@@ -31,6 +31,7 @@ import type { SkillRegistry } from "../agent/skill-registry.js";
 import { assignSkillLabels } from "../agent/fs/virtual-path.js";
 import { isValidSkillName } from "../agent/skills.js";
 import { authorFromUser } from "../git/commit-identity.js";
+import type { SearchHealth } from "../agent/search-health.js";
 import { createProviderTokenCounter } from "../agent/token-counter.js";
 import { callAsyncHook, type CorvexHooks } from "./hooks.js";
 
@@ -88,6 +89,7 @@ export class ConversationRunner {
       getCached: () => undefined, listCached: () => [],
     },
     private readonly registry?: SkillRegistry,
+    private readonly searchHealth?: SearchHealth,
   ) {
     this.repo = new GitManager(config.storage.root, config.gitlab.baseUrl, (conversationId) => {
       const ownerId = store.getConversation(conversationId)?.ownerUserId;
@@ -1409,6 +1411,7 @@ export class ConversationRunner {
                       })),
                   }
                 : {}),
+              searchHealth: this.searchHealth,
               skillCommandCatalog: {
                 get: (name) => visibleSkills.find((skill) => skill.commandName === name && skill.status !== "missing"),
                 available: () => visibleSkills

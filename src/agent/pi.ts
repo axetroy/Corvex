@@ -60,6 +60,7 @@ import {
 import { createWebReadExtension } from "./web-read.js";
 import { createWebDownloadExtension } from "./web-download.js";
 import { createWebSearchExtension } from "./web-search.js";
+import type { SearchHealth } from "./search-health.js";
 
 export { getAgentToolAccess } from "./tool-access.js";
 
@@ -389,6 +390,8 @@ export interface ModelRequest {
   turnTools?: TurnToolAdapter;
   /** 当前会话可见的技能命令目录；只在启用执行环境的对话轮次中提供。 */
   skillCommandCatalog?: SkillCommandCatalog;
+  /** 共享搜索健康分；管理页展示各后端综合评分。 */
+  searchHealth?: SearchHealth;
   /** 托管技能根（全局与个人）：进入 Pi 发现与 skill:// 只读根；只由 Runner 注入。 */
   managedSkillRoots?: Array<{ path: string; alias: string }>;
   /** 模型可见的技能元数据；正文按需用 skill:// 读取，不在此注入。 */
@@ -939,6 +942,7 @@ export class PiAgent {
                   exa: config.agent.exaApiKey,
                   you: config.agent.youApiKey,
                 },
+                health: request.searchHealth,
               },
             )]
           : []),

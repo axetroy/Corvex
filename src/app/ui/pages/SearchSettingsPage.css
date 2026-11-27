@@ -1,4 +1,12 @@
 /* 搜索设置页只定义本页特有的行与后端列表；页头、宽度、面板沿用 AdminPage / Panel。 */
+.search-settings-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.search-backend-score {
+  color: var(--text-secondary);
+}
 .search-setting-row {
   display: flex;
   align-items: center;
