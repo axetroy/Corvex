@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { Alert, Button, Checkbox, Input, Modal, Segmented, Switch, Typography } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Segmented, Space, Switch, Typography } from "antd";
+import "./SkillImportDialog.css";
 import { sendBinary, sendJson } from "../lib/api.js";
 import { errorMessage } from "../../../errors.js";
 import type { Copy } from "../lib/i18n.js";
@@ -119,6 +120,7 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
     <Modal
       open={open}
       title={copy.skillImportTitle}
+      width={720}
       onCancel={onClose}
       footer={<Button onClick={onClose}>{copy.skillImportClose}</Button>}
       destroyOnClose
@@ -164,24 +166,49 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
         {copy.skillImportPreview}
       </Button>
       {preview ? (
-        <div style={{ marginTop: 12 }}>
-          <Typography.Paragraph type="secondary">
-            {copy.skillImportFound.replace("{count}", String(preview.skills.length))}
-          </Typography.Paragraph>
-          <Checkbox.Group
-            value={selected}
-            onChange={(values) => setSelected(values.map(String))}
-            style={{ display: "flex", flexDirection: "column", gap: 6 }}
-            options={preview.skills.map((skill) => ({
-              value: skill.sourcePath,
-              label: (
-                <span>
-                  <strong>{skill.name}</strong> — {skill.description || skill.sourcePath}
-                  {skill.issues.length ? <em> ({skill.issues.join("; ")})</em> : null}
-                </span>
-              ),
-            }))}
-          />
+        <div className="skill-import-results" style={{ marginTop: 12 }}>
+          <div className="skill-import-results-head">
+            <Typography.Text type="secondary">
+              {copy.skillImportFound.replace("{count}", String(preview.skills.length))}
+            </Typography.Text>
+            <Space size={4}>
+              <Button size="small" type="link" onClick={() => setSelected(preview.skills.map((skill) => skill.sourcePath))}>
+                {copy.skillImportSelectAll}
+              </Button>
+              <Button size="small" type="link" onClick={() => setSelected([])}>{copy.skillImportSelectNone}</Button>
+            </Space>
+          </div>
+          <div className="skill-import-list">
+            {preview.skills.map((skill) => {
+              const checked = selected.includes(skill.sourcePath);
+              return (
+                <div
+                  key={skill.sourcePath}
+                  className={`skill-import-item${checked ? " is-checked" : ""}`}
+                  onClick={() => setSelected((current) => checked
+                    ? current.filter((item) => item !== skill.sourcePath)
+                    : [...current, skill.sourcePath])}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => setSelected((current) => event.target.checked
+                      ? [...new Set([...current, skill.sourcePath])]
+                      : current.filter((item) => item !== skill.sourcePath))}
+                  />
+                  <div className="skill-import-item-body">
+                    <div className="skill-import-item-name">{skill.name}</div>
+                    <div className="skill-import-item-desc" title={skill.description || skill.sourcePath}>
+                      {skill.description || skill.sourcePath}
+                    </div>
+                    {skill.issues.length ? (
+                      <div className="skill-import-item-issues">{skill.issues.join("; ")}</div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           <Button type="primary" loading={busy} disabled={selected.length === 0} onClick={() => void runImport()} style={{ marginTop: 12 }}>
             {copy.skillImportConfirmSelected}
           </Button>
