@@ -2230,8 +2230,8 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 
 /* 附件预览弹窗：Monaco / 图片预览器都撑满弹窗内容区。 */
 .conversation-attachment-preview {
-  height: min(60vh, 520px);
-  min-height: 320px;
+  height: min(82vh, 900px);
+  min-height: 420px;
 }
 
 .conversation-attachment-preview-loading,
