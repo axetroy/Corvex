@@ -168,16 +168,41 @@ export function SkillImportDialog({ open, copy, onClose, onImported, basePath = 
       {preview ? (
         <div className="skill-import-results" style={{ marginTop: 12 }}>
           <div className="skill-import-results-head">
-            <Typography.Text type="secondary">
-              {copy.skillImportFound.replace("{count}", String(preview.skills.length))}
-            </Typography.Text>
+            <Checkbox
+              checked={preview.skills.length > 0 && selected.length === preview.skills.length}
+              indeterminate={selected.length > 0 && selected.length < preview.skills.length}
+              onChange={(event) => setSelected(event.target.checked
+                ? preview.skills.map((skill) => skill.sourcePath)
+                : [])}
+            >
+              <span className="skill-import-selected-count">
+                {copy.skillImportSelectedTemplate
+                  .replace("{selected}", String(selected.length))
+                  .replace("{total}", String(preview.skills.length))}
+              </span>
+            </Checkbox>
             <Space size={4}>
-              <Button size="small" type="link" onClick={() => setSelected(preview.skills.map((skill) => skill.sourcePath))}>
+              <Button
+                size="small"
+                type="link"
+                disabled={selected.length === preview.skills.length}
+                onClick={() => setSelected(preview.skills.map((skill) => skill.sourcePath))}
+              >
                 {copy.skillImportSelectAll}
               </Button>
-              <Button size="small" type="link" onClick={() => setSelected([])}>{copy.skillImportSelectNone}</Button>
+              <Button
+                size="small"
+                type="link"
+                disabled={selected.length === 0}
+                onClick={() => setSelected([])}
+              >
+                {copy.skillImportSelectNone}
+              </Button>
             </Space>
           </div>
+          <Typography.Paragraph type="secondary" className="skill-import-results-hint">
+            {copy.skillImportFound.replace("{count}", String(preview.skills.length))}
+          </Typography.Paragraph>
           <div className="skill-import-list">
             {preview.skills.map((skill) => {
               const checked = selected.includes(skill.sourcePath);

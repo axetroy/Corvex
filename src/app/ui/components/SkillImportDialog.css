@@ -4,7 +4,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+}
+
+.skill-import-selected-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.skill-import-results-hint {
+  margin: 6px 0 8px;
 }
 
 .skill-import-list {
