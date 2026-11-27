@@ -29,21 +29,33 @@ export const MiddleEllipsis = memo(function MiddleEllipsis({
       );
     };
     update();
-    if (typeof ResizeObserver === "undefined") return;
+    // 媒体查询改变 max-width 时元素宽度未必变化（父级同样按内容收缩），
+    // 额外监听窗口 resize 强制重算一次。
+    window.addEventListener("resize", update);
+    if (typeof ResizeObserver === "undefined") {
+      return () => window.removeEventListener("resize", update);
+    }
     const observer = new ResizeObserver(update);
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, [text]);
 
   return (
-    <span className={className} ref={ref} title={text}>
-      <span className="middle-ellipsis-head">{parts.head}</span>
-      {parts.tail ? (
-        <>
-          <span className="middle-ellipsis-ellipsis">...</span>
-          <span className="middle-ellipsis-tail">{parts.tail}</span>
-        </>
-      ) : null}
+    <span className={`middle-ellipsis${className ? ` ${className}` : ""}`} ref={ref} title={text}>
+      {/* 隐藏的完整文本撑出「未被截断时」的宽度，避免截断后变窄导致 ResizeObserver 不再放大。 */}
+      <span className="middle-ellipsis-sizer" aria-hidden="true">{text}</span>
+      <span className="middle-ellipsis-content">
+        <span className="middle-ellipsis-head">{parts.head}</span>
+        {parts.tail ? (
+          <>
+            <span className="middle-ellipsis-ellipsis">...</span>
+            <span className="middle-ellipsis-tail">{parts.tail}</span>
+          </>
+        ) : null}
+      </span>
     </span>
   );
 });

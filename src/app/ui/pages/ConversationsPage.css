@@ -122,7 +122,9 @@
 /* 仓库信息与标签页同处一行：项目名与分支可省略，标签与固定版本保持紧凑。 */
 .conversation-workspace-meta {
   display: flex;
+  width: 100%;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -130,7 +132,9 @@
 }
 
 .conversation-workspace-repo {
-  flex: 0 1 auto;
+  flex: 0 1 300px;
+  width: 300px;
+  max-width: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -1005,6 +1009,30 @@
   color: var(--conversation-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+  white-space: nowrap;
+}
+
+/*
+ * 尺寸基准层与显示层分离：sizer 用完整文本撑出宽度（受各自的 max-width/flex 约束），
+ * 显示层绝对定位覆盖在上面。这样窗口变大时 ResizeObserver 能观察到真实宽度增长，
+ * 不会被「截断后变窄 → 不再重新计算」卡住。
+ */
+.middle-ellipsis {
+  position: relative;
+  display: block;
+}
+
+.middle-ellipsis-sizer {
+  display: block;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.middle-ellipsis-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -2485,6 +2513,11 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 @media (max-width: 900px) {
+  .conversation-workspace-repo {
+    flex-basis: 140px;
+    width: 140px;
+  }
+
   .conversation-workspace-project {
     max-width: 140px;
   }
