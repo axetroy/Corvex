@@ -400,6 +400,7 @@ export interface ModelRequest {
     alias: string;
     scope: "global" | "personal";
     disableModelInvocation: boolean;
+    allowedTools?: string;
   }>;
   /**
    * 轮次内插话通道；由 Runner 创建，PiAgent 在会话就绪后绑定。仅对话轮次提供，
@@ -676,6 +677,7 @@ export class PiAgent {
               description: `[${skill.scope === "global" ? "global" : "personal"}] ${skill.description}`,
               location: `skill://${skill.alias}/${skill.name}/${skill.skillFile}`,
               baseDir: `skill://${skill.alias}/${skill.name}`,
+              ...(skill.allowedTools ? { allowedTools: skill.allowedTools } : {}),
             })),
           config.agent.responseLanguage,
         )

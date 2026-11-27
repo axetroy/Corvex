@@ -37,6 +37,12 @@ describe("managed skill catalog", () => {
     expect(captured).toContain("<available_skills>");
   });
 
+  it("surfaces allowed-tools as a hint without treating it as a grant", () => {
+    const section = buildSkillCatalogSection([{ ...entries[0]!, allowedTools: "read_file search_text" }], "en");
+    expect(section).toContain("[declared tools: read_file search_text]");
+    expect(section).toContain("Use read_file");
+  });
+
   it("caps single descriptions and falls back to names when the catalog grows too large", () => {
     const many = Array.from({ length: 60 }, (_, index) => ({
       name: `skill-${String(index).padStart(2, "0")}`,

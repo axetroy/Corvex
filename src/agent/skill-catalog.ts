@@ -9,6 +9,8 @@ export interface SkillCatalogEntry {
   location: string;
   /** skill://<alias>/<name> */
   baseDir: string;
+  /** 规范里的 allowed-tools；只作为行为提示，不用于授权。 */
+  allowedTools?: string;
 }
 
 /** 单条描述与整个目录的硬上限，避免技能数量增长线性挤占 system prompt。 */
@@ -51,7 +53,9 @@ export function buildSkillCatalogSection(entries: readonly SkillCatalogEntry[], 
       output.push(
         "  <skill>",
         `    <name>${escapeXml(entry.name)}</name>`,
-        ...(withDescription ? [`    <description>${escapeXml(describe(entry.description))}</description>`] : []),
+        ...(withDescription
+          ? [`    <description>${escapeXml(describe(entry.allowedTools ? `${entry.description} [declared tools: ${entry.allowedTools}]` : entry.description))}</description>`]
+          : []),
         `    <location>${escapeXml(entry.location)}</location>`,
         `    <baseDir>${escapeXml(entry.baseDir)}</baseDir>`,
         "  </skill>",

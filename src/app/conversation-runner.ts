@@ -1382,6 +1382,7 @@ export class ConversationRunner {
                         alias: skill.scope === "global" ? globalAlias : personalAlias,
                         scope: skill.scope,
                         disableModelInvocation: skill.disableModelInvocation,
+                        ...(skill.allowedTools ? { allowedTools: skill.allowedTools } : {}),
                       })),
                   }
                 : {}),
