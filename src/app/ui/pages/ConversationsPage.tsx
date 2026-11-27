@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import type { Layout } from "react-resizable-panels";
 import { Button, Dropdown, Modal, Space, Tabs, Tag, Typography } from "antd";
@@ -836,6 +836,26 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     }
   }
 
+  /**
+   * 粘贴图片/文件直接作为附件；超长文本也做成附件，避免输入框 20000 字符上限静默截断。
+   * 短文本走浏览器默认粘贴，不改变用户习惯。
+   */
+  function handleComposerPaste(event: ReactClipboardEvent<HTMLDivElement>) {
+    const clipboard = event.clipboardData;
+    const files = Array.from(clipboard.files);
+    if (files.length > 0) {
+      event.preventDefault();
+      void uploadFiles(files);
+      return;
+    }
+    const text = clipboard.getData("text/plain");
+    if (!text) return;
+    if (text.length <= 2_000 && text.split("\n").length <= 20) return;
+    event.preventDefault();
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    void uploadFiles([new File([text], `pasted-${stamp}.txt`, { type: "text/plain" })]);
+  }
+
   function attachmentSource(item: { id: string; draft?: boolean }, kind: "image" | "content"): string {
     const suffix = kind === "image" ? "image" : "content";
     return item.draft
@@ -1546,6 +1566,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
                     ) : null}
                     <div
                       className={`conversation-composer-area${draggingAttachment ? " is-dragging-attachment" : ""}`}
+                      onPaste={handleComposerPaste}
                       onDragOver={(event) => {
                         if (uploadingAttachment) return;
                         event.preventDefault();
