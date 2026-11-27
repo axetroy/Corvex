@@ -1130,6 +1130,7 @@ export function ConversationsPage({ conversationId, copy, locale, refreshToken, 
     ? []
     : skills
       .filter((skill) => skill.name.startsWith(commandQuery))
+      .slice(0, 50)
       .map((skill) => {
         const hint = skill.argumentHint ? ` ${skill.argumentHint}` : "";
         const text = `${skill.description}${hint}`;

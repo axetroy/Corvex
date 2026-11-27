@@ -2896,12 +2896,11 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  --suggestion-row-height: 25px;
-  --suggestion-gap: 2px;
-  gap: var(--suggestion-gap);
+  --suggestion-row-height: 46px;
   width: 100%;
-  /* 固定 5 行高度（行 + 间距 + padding 8 + 边框 2）；超出部分内部滚动，不露半行。 */
-  max-height: calc(var(--suggestion-row-height) * 5 + var(--suggestion-gap) * 4 + 10px);
+  /* 两行条目（名称 + 描述），一次显示 8 条；超出内部滚动，不露半行。 */
+  max-height: calc(var(--suggestion-row-height) * 8 + 10px);
+  gap: 0;
   margin: 4px 0 0;
   padding: 4px;
   overflow-x: hidden;
@@ -2914,16 +2913,17 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
 }
 
 .conversation-command-suggestion {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
   width: 100%;
-  height: var(--suggestion-row-height);
-  padding: 4px 8px;
+  min-height: var(--suggestion-row-height);
+  padding: 6px 10px;
   border: 0;
-  border-radius: 5px;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
   background: var(--conversation-brand-soft);
   color: var(--conversation-brand);
   cursor: pointer;
@@ -2931,12 +2931,25 @@ body .conversation-message-markdown .x-markdown:not(.x-md-disable-th) th {
   text-align: left;
 }
 
+.conversation-command-suggestion:last-child {
+  border-bottom: 0;
+}
+
 .conversation-command-suggestion code {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-command-suggestion span {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--conversation-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .conversation-command-suggestion:hover,
